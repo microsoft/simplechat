@@ -85,6 +85,18 @@ def _partial_dependency_recovery(record):
     """Complete-only consumers must recover their partial producer, not replay it unchanged."""
     saved_steps = {step['step_id']: step for step in _execution_steps(record)}
     rerun, blocked = set(), set()
+    for saved in saved_steps.values():
+        if saved.get('capability_id') != 'document_search' or saved.get('status') != 'partial':
+            continue
+        task = TaskResult.from_dict(saved['task_result']) if saved.get('task_result') is not None else None
+        if task is None:
+            raise CheckpointError('checkpoint_invalid')
+        if any(
+            reference.completeness.status == 'partial'
+            and 'retained_adapter_output' in reference.completeness.checks
+            for reference in task.outputs
+        ):
+            blocked.add(saved['step_id'])
     for step in record['plan'].get('steps') or []:
         if not step.get('enabled', True):
             continue
@@ -100,6 +112,9 @@ def _partial_dependency_recovery(record):
             if completeness.status != 'partial':
                 continue
             if (
+                task.producer.capability_id == 'document_search'
+                and 'retained_adapter_output' in completeness.checks
+            ) or (
                 task.producer.capability_id == 'document_analyze'
                 and 'analysis_response_schema:passed' in completeness.checks
                 and completeness.coverage.expected == completeness.coverage.completed
@@ -569,7 +584,12 @@ def recovery_projection(record):
         and (step.get('failure') or {}).get('code') != 'input_partial_not_accepted'
         for step in steps
     ):
-        reason, message = 'input_partial_not_recoverable', build_failure('input_partial_not_recoverable')['message']
+        search_partial = any(
+            step.get('step_id') in blocked_partial_producers and step.get('capability_id') == 'document_search'
+            for step in steps
+        )
+        reason = 'search_result_incomplete' if search_partial else 'input_partial_not_recoverable'
+        message = build_failure(reason)['message']
     return {
         'eligible': reason is None, 'reason_code': reason, 'message': message,
         'expected_version': record.get('recovery_version'),

@@ -1875,6 +1875,14 @@ FAILURE_MESSAGES = {
         'saved. Ask again to read the current result.'
     ),
     'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
+    'search_result_too_large': (
+        'The full search response exceeds the retained-result storage budget. No shortened result was '
+        'accepted. Narrow the search or select fewer sources and create a new plan.'
+    ),
+    'search_result_incomplete': (
+        'This saved search contains only a bounded or incomplete result. Its discarded content cannot '
+        'be recovered from the checkpoint. Review the source selection and create a new plan.'
+    ),
     'result_input_too_large': 'The complete named inputs exceed the selected model budget. No input was truncated. Use a larger model or revise the plan.',
     'result_not_ready': 'Required computation is still pending. Its result is not ready to consume.',
     'result_commit_unconfirmed': 'The producer stopped before its retained completion checkpoint was confirmed. Its work will not be repeated automatically.',
@@ -2102,6 +2110,7 @@ def failure_is_transient(failure):
 # Failures in which a service declined or rejected the planned request itself. A checkpoint
 # retry resends exactly the same request, so it would reproduce them.
 REQUEST_REFUSAL_FAILURE_CODES = frozenset({
+    'search_result_too_large', 'result_input_too_large',
     'image_content_refused', 'image_request_invalid', 'operation_recovery_required',
 })
 

@@ -1,8 +1,9 @@
 # test_chat_content_streaming.py
 """
 Functional regressions for content-check streaming and processing-note visibility.
-Version: 0.261.127
+Version: 0.261.341
 Implemented in: 0.261.127
+Semantic outcome and cancellation diagnostics implemented in: 0.261.341
 
 Execute the shipped stream session/bridge classes against an isolated cache.
 Cold-import probes use real modules with network access blocked.
@@ -77,6 +78,7 @@ def stream_classes(cache, authoritative):
         "queue": queue, "threading": threading, "time": time, "json": json,
         "logging": logging, "datetime": datetime, "app_settings_cache": cache,
         "log_event": Mock(), "strip_private_chat_checks": strip_private_chat_checks,
+        "log_chat_execution_outcome": Mock(), "VERSION": "0.261.341",
         "retracted_stream_payload": authoritative,
     }
     exec(compile(ast.Module(body=definitions, type_ignores=[]), str(source), "exec"), namespace)
@@ -135,6 +137,38 @@ class ChatContentStreamTests(unittest.TestCase):
         accepted = self.session.publish(frame({"content": "private-canary"}))
         self.assertFalse(accepted)
         self.assertNotIn("private-canary", json.dumps(self.cache.events))
+
+    def test_cancellation_is_correlated_once_and_not_logged_as_error(self):
+        terminal = frame({"done": True, "cancelled": True, "message_id": "answer"})
+        self.session.publish(terminal)
+        self.session.publish(terminal)
+        self.session.close()
+        calls = self.module.log_chat_execution_outcome.call_args_list
+        self.assertEqual(len(calls), 1)
+        fields = calls[0].kwargs
+        self.assertEqual(fields["execution_path"], "direct")
+        self.assertEqual(fields["conversation_id"], "conversation")
+        self.assertEqual(fields["status"], "cancelled")
+        self.assertEqual(fields["outcome"], "cancelled")
+        self.assertEqual(fields["failure"]["code"], "user_cancelled")
+        terminal_logs = [
+            call for call in self.module.log_event.call_args_list
+            if call.args[0] == "[STREAMING] Stream session cancelled"
+        ]
+        self.assertTrue(terminal_logs)
+        self.assertTrue(all(call.kwargs["level"] == logging.INFO for call in terminal_logs))
+
+    def test_error_emits_failed_outcome_without_provider_diagnostics(self):
+        self.session.publish(frame({"error": "PRIVATE_PROVIDER_MESSAGE"}))
+        fields = self.module.log_chat_execution_outcome.call_args.kwargs
+        self.assertEqual(fields["outcome"], "failed")
+        self.assertEqual(fields["failure"], {"code": "stream_failed"})
+        self.assertNotIn("PRIVATE_PROVIDER_MESSAGE", json.dumps(fields))
+
+    def test_implicit_close_records_an_outcome_once(self):
+        self.session.close()
+        self.session.close()
+        self.assertEqual(self.module.log_chat_execution_outcome.call_count, 1)
 
     def test_processing_note_polling_holds_pending_text_and_hides_retracted_text(self):
         source = APP / "functions_thoughts.py"

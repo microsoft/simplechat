@@ -81,7 +81,7 @@ HISTORY_MAX_TURNS = 6
 HISTORY_MAX_MESSAGES = 50
 HISTORY_MAX_BYTES = 16384
 HISTORY_SCAN_LIMIT = 200
-HISTORY_SCHEMA_VERSION = 1
+HISTORY_SCHEMA_VERSION = 2
 CLARIFICATION_MAX_BYTES = 32768
 
 # How much of a selected prompt the planner is shown.
@@ -1762,6 +1762,24 @@ class ConversationContextError(ValueError):
     """Conversation context could not be safely prepared or reused."""
 
 
+def authorize_conversation_source_access(conversation, user_id):
+    """Recheck the shared conversation behind an owned orchestration backing."""
+    # Collaboration initializes storage; ordinary personal history must not bootstrap it.
+    from functions_orchestration_collaboration import (
+        authorize_shared_orchestration, is_orchestration_backing, shared_conversation,
+    )
+
+    if not is_orchestration_backing(conversation):
+        return
+    collaboration = shared_conversation(conversation.get('collaboration_conversation_id'))
+    if not collaboration:
+        raise ConversationContextError('That conversation could not be opened.')
+    try:
+        authorize_shared_orchestration(collaboration, user_id)
+    except PermissionError as exc:
+        raise ConversationContextError('That conversation could not be opened.') from exc
+
+
 def history_message_limit(settings=None):
     """Honor the chat history setting, rounding up to an even, bounded message count."""
     try:
@@ -1851,6 +1869,21 @@ def conversation_snapshot_size(snapshot):
     return len(json.dumps(snapshot, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
 
 
+def _history_preview(content, length):
+    """Sample both constraints and the middle without claiming the omitted source is present."""
+    if len(content) <= length:
+        return content
+    head = (length + 2) // 3
+    tail = length // 3
+    middle = length - head - tail
+    start = max(head, (len(content) - middle) // 2)
+    marker = '\n[Conversation discovery preview; source text omitted.]\n'
+    return (
+        content[:head] + marker + content[start:start + middle]
+        + marker + (content[-tail:] if tail else '')
+    )
+
+
 def build_conversation_snapshot(
     messages, settings=None, *, turn_id=None, truncated=False, logical_order=False,
 ):
@@ -1885,6 +1918,17 @@ def build_conversation_snapshot(
         eligible.sort(key=_history_order)
     limit = history_message_limit(settings)
     retained = eligible[-limit:] if limit else []
+    excluded_count = len(eligible) - len(retained)
+    if retained and any(item['role'] == 'user' for item in eligible[:excluded_count]):
+        # Do not begin a bounded window with an answer whose source turn was excluded.
+        while retained and retained[0]['role'] == 'assistant':
+            retained.pop(0)
+    for item in retained:
+        item.update(
+            content_complete=True,
+            source={'kind': 'stored_message', 'message_id': item['id'], 'role': item['role']},
+            source_characters=len(item['content']),
+        )
     snapshot = {
         'schema_version': HISTORY_SCHEMA_VERSION,
         'messages': retained,
@@ -1892,34 +1936,48 @@ def build_conversation_snapshot(
     }
     if logical_order:
         snapshot['logical_order'] = True
-    while len(retained) > 1 and conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES:
-        retained.pop(0)
-        snapshot['truncated'] = True
     if retained and conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES:
-        # Preserve both ends of an oversized turn; constraints often occur at the end.
-        newest = retained[0]
-        original = newest['content']
-        newest['truncated'] = True
+        # Very long IDs or many turns can exhaust the reference metadata allowance
+        # itself. Evict oldest whole turns only after reserving discovery text for each.
+        def minimum_size():
+            return conversation_snapshot_size({
+                **snapshot,
+                'messages': [
+                    {**item, 'content': _history_preview(item['content'], 32),
+                     'content_complete': False, 'truncated': True}
+                    for item in retained
+                ],
+            })
+
+        while len(retained) > 2 and minimum_size() > HISTORY_MAX_BYTES:
+            next_turn = next(
+                (index for index, item in enumerate(retained[1:], 1) if item['role'] == 'user'),
+                1,
+            )
+            del retained[:next_turn]
+        # Share the discovery allowance across turns instead of evicting the user's
+        # source to retain only the associated assistant answer.
+        originals = [item['content'] for item in retained]
         snapshot['truncated'] = True
-        lower, upper = 0, len(original)
+        lower, upper = 0, max(map(len, originals))
+
+        def project(length):
+            for item, original in zip(retained, originals):
+                item['content'] = _history_preview(original, length)
+                item['content_complete'] = len(original) <= length
+                if item['content_complete']:
+                    item.pop('truncated', None)
+                else:
+                    item['truncated'] = True
+
         while lower < upper:
             length = (lower + upper + 1) // 2
-            tail_length = length // 2
-            newest['content'] = (
-                original[:length - tail_length]
-                + '\n[Conversation message truncated.]\n'
-                + (original[-tail_length:] if tail_length else '')
-            )
+            project(length)
             if conversation_snapshot_size(snapshot) <= HISTORY_MAX_BYTES:
                 lower = length
             else:
                 upper = length - 1
-        tail_length = lower // 2
-        newest['content'] = (
-            original[:lower - tail_length]
-            + '\n[Conversation message truncated.]\n'
-            + (original[-tail_length:] if tail_length else '')
-        )
+        project(lower)
     if conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES:
         raise ConversationContextError('The conversation context exceeds its size limit.')
     return snapshot
@@ -1929,7 +1987,7 @@ def validate_conversation_snapshot(snapshot, messages):
     """Reject a saved context if a source was edited, hidden, or removed after planning."""
     if (
         not isinstance(snapshot, dict)
-        or snapshot.get('schema_version') != HISTORY_SCHEMA_VERSION
+        or snapshot.get('schema_version') not in (1, HISTORY_SCHEMA_VERSION)
         or not isinstance(snapshot.get('messages'), list)
         or len(snapshot['messages']) > HISTORY_MAX_MESSAGES
         or conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES
@@ -1957,6 +2015,19 @@ def validate_conversation_snapshot(snapshot, messages):
                 'Conversation context changed. Create a new plan before running this request.'
             )
         seen.add(message_id)
+    if snapshot['schema_version'] == 1:
+        # Complete historical snapshots remain usable after current-access checks.
+        # A clipped legacy snapshot cannot prove which user source it discarded.
+        legacy = {
+            'schema_version': 1,
+            'messages': [current[item['id']] for item in snapshot['messages']],
+            'truncated': False,
+        }
+        if snapshot.get('logical_order'):
+            legacy['logical_order'] = True
+        if snapshot != legacy:
+            raise ConversationContextError('This plan needs to be created again with complete conversation sources.')
+        return legacy
     rebuilt = build_conversation_snapshot(
         [sources[item['id']] for item in snapshot['messages']],
         {'conversation_history_limit': len(snapshot['messages'])},
@@ -1969,13 +2040,50 @@ def validate_conversation_snapshot(snapshot, messages):
 
 
 def conversation_reference_messages(snapshot, message_ids=None):
-    """Return only role/content/ID fields, never stored metadata or citation payloads."""
+    """Discovery only: preserve completeness and provenance, never private stored metadata."""
     allowed = set(message_ids) if message_ids is not None else None
     return [
-        {'id': message['id'], 'role': message['role'], 'content': message['content']}
+        {
+            key: deepcopy(message[key])
+            for key in ('id', 'role', 'content', 'content_complete', 'source', 'source_characters', 'truncated')
+            if key in message
+        }
         for message in (snapshot or {}).get('messages', [])
         if allowed is None or message['id'] in allowed
     ]
+
+
+def resolve_conversation_source_messages(snapshot, messages, message_ids=None):
+    """Resolve exact, currently checked stored text; never upgrade discovery previews."""
+    selected = conversation_reference_messages(snapshot, message_ids)
+    if message_ids is not None and {item['id'] for item in selected} != set(message_ids):
+        raise ConversationContextError('The selected conversation source is unavailable. Create a new plan.')
+    current = {}
+    for message in messages:
+        normalized = normalize_history_message(message)
+        if normalized:
+            current[normalized['id']] = normalized
+    expected = {item['id']: item for item in snapshot.get('messages') or []}
+    resolved = []
+    for entry in selected:
+        source = current.get(entry['id'])
+        if not source or source['fingerprint'] != expected[entry['id']].get('fingerprint'):
+            raise ConversationContextError('Conversation context changed. Create a new plan before running this request.')
+        resolved.append({'id': source['id'], 'role': source['role'], 'content': source['content']})
+    return resolved
+
+
+def execution_conversation_messages(context):
+    """Read selected full messages through the runtime owner, with no preview fallback."""
+    snapshot = getattr(context, 'conversation_context', None) or {}
+    ids = getattr(context, 'context_message_ids', None)
+    reader = getattr(context, 'read_conversation_messages', None)
+    if callable(reader):
+        return reader()
+    selected = conversation_reference_messages(snapshot, ids)
+    if any(item.get('truncated') or item.get('content_complete') is False for item in selected):
+        raise ConversationContextError('The complete conversation source must be reloaded. Create a new plan.')
+    return selected
 
 
 def validate_clarification_answers(answers):
@@ -2089,7 +2197,11 @@ def build_conversation_signals(messages, user_message, *, truncated=False, messa
     """Project already bounded history for the planner; the route owns loading it."""
     allowed = set(message_ids) if message_ids is not None else None
     turns = [
-        {'id': message.get('id'), 'role': message['role'], 'content': _history_text(message.get('content'))}
+        {
+            key: deepcopy(message[key])
+            for key in ('id', 'role', 'content', 'content_complete', 'source', 'source_characters', 'truncated')
+            if key in message
+        }
         for message in messages or ()
         if isinstance(message, dict)
         and message.get('role') in ('user', 'assistant')

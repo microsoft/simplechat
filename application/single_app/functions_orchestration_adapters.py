@@ -59,7 +59,7 @@ import logging
 from copy import deepcopy
 
 from functions_appinsights import log_event
-from functions_orchestration_context import build_elicitation_user_request, conversation_reference_messages
+from functions_orchestration_context import build_elicitation_user_request, execution_conversation_messages
 from functions_orchestration_execution_policy import orchestration_file_policy
 from functions_orchestration_invocation_capture import (
     OrchestrationInvocationCapture,
@@ -72,6 +72,7 @@ from functions_orchestration_invocation_capture import (
 from functions_orchestration_result_contracts import (
     ProducerIdentity, ResultContractError, digest as validate_result_digest,
 )
+from functions_orchestration_result_runtime import retain_document_search_result, source_selection_provenance
 from functions_mixed_source_orchestration import (
     AUTHORIZATION_STATUS_AUTHORIZED,
     MixedSourceCancellationError,
@@ -386,10 +387,7 @@ def _step_visuals(context, settings, *planned_texts, step=None):
 
 
 def _conversation_reference(context):
-    return conversation_reference_messages(
-        _ctx(context, 'conversation_context', {}),
-        _ctx(context, 'context_message_ids', None),
-    )
+    return execution_conversation_messages(context)
 
 
 def _with_conversation_reference(task, context):
@@ -601,12 +599,14 @@ def run_document_search(step, context, *, settings, user_id, emit, cancel_reques
         workspace_ids = [document_id for document_id in requested_ids if document_id not in chat_ids]
         results = []
         seen_results = set()
-        for scope in _workspace_search_scopes(context, arguments, requested_ids, workspace_ids):
+        search_scopes = list(_workspace_search_scopes(context, arguments, requested_ids, workspace_ids))
+        top_n = _coerce_int(arguments.get('top_n'), 12)
+        for scope in search_scopes:
             workspace_results = hybrid_search(
                 query,
                 user_id,
                 document_ids=scope['document_ids'],
-                top_n=_coerce_int(arguments.get('top_n'), 12),
+                top_n=top_n,
                 doc_scope=scope['doc_scope'],
                 active_group_ids=scope['active_group_ids'] or None,
                 active_public_workspace_id=scope['active_public_workspace_id'] or None,
@@ -664,6 +664,21 @@ def run_document_search(step, context, *, settings, user_id, emit, cancel_reques
         if document_id and document_id not in document_ids:
             document_ids.append(document_id)
 
+    citations = _citations_from_search_results(results)
+    task_result = None
+    if _ctx(context, 'result_service') is not None:
+        raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_search_retention')
+        manifest = resolve_context_source_manifest(
+            context, document_ids, settings=settings, user_id=user_id, cancel_requested=cancel_requested,
+        )
+        task_result = retain_document_search_result(
+            step, context, results, source_manifest=manifest, citations=citations,
+            search_scope={
+                'workspace_scopes': search_scopes, 'chat_attachment_ids': selected_chat_ids,
+                'top_n_per_scope': top_n, 'tags_filter': _ctx(context, 'tags', None) or [],
+                'document_filter_mode': _ctx(context, 'document_filter_mode', 'intersection'),
+            },
+        )
     narrative_sources = [{'document_id': document_id} for document_id in document_ids]
     envelopes = build_narrative_evidence_envelopes(
         narrative_sources, results, _selection_mode(context)
@@ -677,7 +692,8 @@ def run_document_search(step, context, *, settings, user_id, emit, cancel_reques
         status=STEP_STATUS_COMPLETED,
         summary=summary,
         evidence=envelopes,
-        citations=_citations_from_search_results(results),
+        citations=citations,
+        task_result=task_result,
     )
 
 
@@ -824,6 +840,9 @@ def run_document_analyze(step, context, *, settings, user_id, emit, cancel_reque
             )
             if not prompt:
                 raise ValueError('The Analyze step has no analysis request.')
+            selection_upstream, selection_limitations = source_selection_provenance(context)
+            if selection_limitations:
+                prompt += '\n\nSource-selection coverage:\n' + '\n'.join(selection_limitations)
             checkpoints = _prepare_step_analysis_checkpoints(step, context)
             if checkpoints is None:
                 raise ResultContractError('result_analysis_checkpoint_required')
@@ -882,6 +901,7 @@ def run_document_analyze(step, context, *, settings, user_id, emit, cancel_reque
             task_result = persist_saved_analysis_result(
                 service=service, producer=producer, reader=reader, guard_token=token,
                 input_fingerprint=input_fingerprint,
+                upstream=selection_upstream, selection_limitations=selection_limitations,
             )
             raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_analysis_finalization')
     except MixedSourceCancellationError:

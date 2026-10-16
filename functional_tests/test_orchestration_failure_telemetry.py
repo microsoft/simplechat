@@ -1,10 +1,12 @@
 # test_orchestration_failure_telemetry.py
 """Specific orchestration failure rules reach telemetry without private plan text.
 
-Version: 0.261.191
+Version: 0.261.342
 Implemented in: 0.261.140
 Step, capability, format, and authority-reason codes covered in: 0.261.141
 Partial-input producer capability and step hash fields covered in: 0.261.191
+Semantic chat outcomes and persisted-state correlation implemented in: 0.261.341
+Bounded, non-regex application-version validation implemented in: 0.261.342
 
 Uses real planner/validation/logging modules with offline provider replies.
 The synthetic invalid proposals test diagnostics, not the unknown historical
@@ -23,7 +25,7 @@ from azure.cosmos._cosmos_responses import CosmosDict
 
 from test_orchestration_deliverables import _csv_plan
 from test_orchestration_harness_execution import harness, initialized_application  # noqa: F401
-from test_support.orchestration_harness_execution import compose_step, input_binding
+from test_support.orchestration_harness_execution import compose_step, decoded_frames, input_binding
 
 
 RULES = (
@@ -207,3 +209,150 @@ def test_preparation_diagnostic_identifies_stage_and_confirmed_failure(harness, 
     assert details["response_type"] == "dict"
     assert failure.value.durable_status == "failed"
     assert "run_id" not in details and "user_id" not in details
+
+
+@pytest.mark.parametrize("outcome", ["completed", "partial", "failed", "waiting", "cancelled"])
+@pytest.mark.parametrize("debug", [False, True])
+def test_chat_outcome_dimensions_survive_sanitization_without_private_text(
+    harness, monkeypatch, caplog, outcome, debug,
+):
+    telemetry = importlib.import_module("functions_appinsights")
+    logger = logging.getLogger("test.chat.outcome")
+    monkeypatch.setattr(telemetry, "get_appinsights_logger", lambda: logger)
+    monkeypatch.setattr(telemetry, "_load_logging_settings", lambda: {"enable_debug_logging": debug})
+    status = "failed" if outcome == "partial" else outcome
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        telemetry.log_chat_execution_outcome(
+            execution_path="orchestration", status=status, outcome=outcome,
+            conversation_id="PRIVATE_CONVERSATION", turn_id="PRIVATE_TURN", run_id="PRIVATE_RUN",
+            failure={
+                "code": "input_partial_not_accepted", "step_id": "PRIVATE_STEP",
+                "capability_id": "document_analyze", "message": "PRIVATE_DIAGNOSTIC",
+            },
+            application_version="0.261.341", attempt_index=2, message_saved=True,
+        )
+    records = [record for record in caplog.records if getattr(record, "sc_message", "") == "[CHAT_EXECUTION] Execution outcome recorded."]
+    assert len(records) == 1
+    record = records[0]
+    assert record.sc_execution_path == "orchestration"
+    assert record.sc_status == status and record.sc_outcome == outcome
+    assert record.sc_application_version == "0.261.341"
+    assert record.sc_attempt_index == 2 and record.sc_message_saved is True
+    assert record.sc_conversation_id_hash == hashlib.sha256(b"PRIVATE_CONVERSATION").hexdigest()
+    assert record.sc_turn_id_hash == hashlib.sha256(b"PRIVATE_TURN").hexdigest()
+    assert record.sc_run_id_hash == hashlib.sha256(b"PRIVATE_RUN").hexdigest()
+    assert record.sc_step_id_hash == hashlib.sha256(b"PRIVATE_STEP").hexdigest()
+    assert record.sc_failure_code == "input_partial_not_accepted"
+    assert record.sc_capability_id == "document_analyze"
+    properties = {key: value for key, value in record.__dict__.items() if key.startswith("sc_")}
+    assert "PRIVATE_" not in json.dumps(properties)
+    assert record.levelno < logging.ERROR
+    invalid = telemetry._build_logger_extra("Outcome.", {"application_version": "PRIVATE_VERSION"})
+    assert "sc_application_version" not in invalid
+
+
+@pytest.mark.parametrize(
+    "version",
+    ["0.261.342", "1.2.3", "00.001.0002", "١.٢.٣", f"{'0' * 60}.1.2"],
+    ids=["current", "short", "leading-zeroes", "decimal-unicode", "length-limit"],
+)
+def test_application_version_is_preserved_in_both_telemetry_boundaries(harness, monkeypatch, version):
+    telemetry = importlib.import_module("functions_appinsights")
+    events = []
+    monkeypatch.setattr(telemetry, "log_event", lambda message, **kwargs: events.append(kwargs))
+    telemetry.log_chat_execution_outcome(
+        execution_path="direct", status="completed", outcome="completed",
+        conversation_id="PRIVATE_CONVERSATION", application_version=version,
+    )
+    assert events[0]["extra"]["application_version"] == version
+    properties = telemetry._build_logger_extra("Outcome.", {"application_version": version})
+    assert properties["sc_application_version"] == version
+    assert properties["sc_application_version_length"] == len(version)
+    assert "PRIVATE_" not in json.dumps(events)
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "", "1.2", "1.2.3.4", ".1.2", "1..2", "1.2.", "1.2.3\n", " 1.2.3",
+        "1.2.3-private", "¹.2.3", "PRIVATE_VERSION",
+        f"{'0' * 61}.1.2", "0" * 100_000, f"1.2.{'0' * 100_000}",
+        f"1.2.3{'0' * 100_000}PRIVATE_VERSION",
+    ],
+    ids=[
+        "empty", "two-parts", "four-parts", "empty-major", "empty-minor", "empty-patch",
+        "newline", "whitespace", "suffix", "non-decimal-digit", "private",
+        "over-limit", "long-numeric", "long-last-part", "long-valid-prefix-private-suffix",
+    ],
+)
+def test_invalid_application_version_is_omitted_without_truncation(harness, monkeypatch, version):
+    telemetry = importlib.import_module("functions_appinsights")
+    events = []
+    monkeypatch.setattr(telemetry, "log_event", lambda message, **kwargs: events.append(kwargs))
+    telemetry.log_chat_execution_outcome(
+        execution_path="direct", status="completed", outcome="completed",
+        conversation_id="PRIVATE_CONVERSATION", application_version=version,
+    )
+    assert "application_version" not in events[0]["extra"]
+    properties = telemetry._build_logger_extra("Outcome.", {"application_version": version})
+    assert "sc_application_version" not in properties
+    assert properties["sc_application_version_length"] == len(version)
+    assert "PRIVATE_" not in json.dumps(events) + json.dumps(properties)
+
+
+def test_application_version_length_is_checked_before_parsing(harness):
+    telemetry = importlib.import_module("functions_appinsights")
+
+    class OversizedVersion(str):
+        def split(self, *args, **kwargs):
+            raise AssertionError("Oversized application version must not be parsed.")
+
+    version = OversizedVersion("0" * 100_000)
+    accepted = telemetry._is_application_version(version)
+    assert accepted is False
+    properties = telemetry._build_logger_extra("Outcome.", {"application_version": version})
+    assert "sc_application_version" not in properties
+
+
+@pytest.mark.parametrize("version", [None, 123, True, {}, []])
+def test_outcome_omits_non_string_application_versions(harness, monkeypatch, version):
+    telemetry = importlib.import_module("functions_appinsights")
+    events = []
+    monkeypatch.setattr(telemetry, "log_event", lambda message, **kwargs: events.append(kwargs))
+    telemetry.log_chat_execution_outcome(
+        execution_path="direct", status="completed", outcome="completed",
+        conversation_id="PRIVATE_CONVERSATION", application_version=version,
+    )
+    assert "application_version" not in events[0]["extra"]
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_durable_execution_outcome_is_recorded_once_not_on_sse_replay(harness, monkeypatch, failed):
+    telemetry = importlib.import_module("functions_appinsights")
+    execution_module = harness.execution
+    observations = []
+
+    def observe(**kwargs):
+        saved = harness.read()
+        observations.append((kwargs, saved["status"], saved.get("message_saved")))
+        telemetry.log_chat_execution_outcome(**kwargs)
+
+    monkeypatch.setattr(execution_module, "log_chat_execution_outcome", observe)
+    harness.create(replies=["Exact prepared answer."], final_response=input_binding("prepare"))
+    execution = harness.prepare()
+    if failed:
+        def fail_plan(*args, **kwargs):
+            raise execution_module.HarnessExecutionError("execution_interrupted")
+        monkeypatch.setattr(execution_module, "execute_plan", fail_plan)
+    frames = execution.execute()
+    replay = execution.execute()
+    done = decoded_frames(frames)[-1]
+    record = harness.read()
+    assert replay == frames and len(observations) == 1
+    fields, saved_status, message_saved = observations[0]
+    assert fields["status"] == fields["outcome"] == saved_status == done["status"]
+    assert saved_status == ("failed" if failed else "completed")
+    assert message_saved is True and fields["message_saved"] is True
+    assert fields["conversation_id"] == record["conversation_id"]
+    if failed:
+        assert fields["failure"]["code"] == "execution_interrupted"

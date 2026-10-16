@@ -1,12 +1,13 @@
 # test_orchestration_deliverables.py
 """The deliverables contract and planned image generation in Gather / Reason / Render plans.
 
-Version: 0.261.341
+Version: 0.261.342
 Implemented in: 0.261.138
 Single orchestration contract updated in: 0.261.139
 Planner kind-specific fields and absent answer bindings updated in: 0.261.140
 Row-shaped compose guidance and JSON mode for CSV scenarios updated in: 0.261.141
 Prior-answer visual correction fixture support added in: 0.261.341
+Explicit prior-answer source selection fixture support added in: 0.261.342
 
 Uses the initialized headless harness (real bootstrap, planner, schema, executor, result
 store, chat image persistence, rendering service and Office renderers) with the planning
@@ -177,7 +178,7 @@ def _president_plan(*, with_file=True, with_search=False, output_format="docx"):
     return {"deliverables": deliverables, "steps": steps, "final_response": input_binding("report", "report")}
 
 
-def _store(harness, plan, *, replies=(), history=()):
+def _store(harness, plan, *, replies=(), history=(), request_resolution=None):
     """Save a validated plan as run-1, exactly as the harness saves its own fixtures."""
     run_store = importlib.import_module("functions_orchestration_runs")
     context = importlib.import_module("functions_orchestration_context")
@@ -196,6 +197,8 @@ def _store(harness, plan, *, replies=(), history=()):
         "memory_audience": memory.validate_memory_audience(harness.conversation, "owner"),
         "memory_scope": None,
     }
+    if request_resolution is not None:
+        turn_context["request_resolution"] = deepcopy(request_resolution)
     harness.replies = list(replies)
     return run_store.create_orchestration_run(
         plan, "owner", "conversation-1", turn_index=1, turn_context=turn_context,

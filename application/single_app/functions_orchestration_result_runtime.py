@@ -20,7 +20,9 @@ from functions_orchestration_result_contracts import (
     InputBinding, PartialInputNotAcceptedError, ResultContractError, ResultNotReadyError, ResultRef, TaskResult,
     canonical_bytes, canonical_digest, output_name,
 )
-from functions_orchestration_results import MAX_LINEAGE_RESULTS, MAX_VALUE_BYTES, NamedOutput, OrchestrationResults
+from functions_orchestration_results import (
+    MAX_LINEAGE_RESULTS, MAX_VALUE_BYTES, NamedOutput, OrchestrationResults, ResultUnavailableError,
+)
 from functions_orchestration_schema import step_input_specs
 
 
@@ -301,6 +303,88 @@ def _complete(count, limitations=(), *, partial=False):
         Coverage(None if partial else 1, 0 if partial else 1, 'work_units'),
         'partial' if partial else 'valid', ('retained_adapter_output',), tuple(limitations),
     )
+
+
+def retain_document_search_result(step, context, results, *, source_manifest, citations, search_scope):
+    """Commit returned hits before any presentation envelope can shorten them.
+
+    Completion covers the returned response and its discovered identities, not every
+    match in an index or the complete contents of the discovered documents.
+    """
+    service = require_result_service(context)
+    sources = analysis_source_snapshot(source_manifest)
+    by_id = {source['document_id']: source for source in sources}
+    if (
+        len(by_id) != len(sources)
+        or any(source.get('authorization_status') != 'authorized' for source in source_manifest)
+        or set(by_id) != {hit.get('document_id') for hit in results}
+    ):
+        raise ResultUnavailableError('result_source_unavailable')
+    prior = {source['document_id']: source for source in context.execution_manifest}
+    for source in sources:
+        original = prior.get(source['document_id'])
+        if original and any(
+            original.get(key) != source.get(key)
+            for key in ('scope', 'scope_id', 'source_version', 'source_revision', 'content_sha256')
+        ):
+            raise ResultUnavailableError('result_source_snapshot_changed')
+    limitations = (
+        'Complete only for the returned search response and its discovered source identities.',
+        'Top-N retrieval is not exhaustive corpus discovery or whole-document coverage.',
+    )
+    retained, grouped = [], {}
+    for index, hit in enumerate(results):
+        if type(hit) is not dict or type(hit.get('chunk_text')) is not str:
+            raise ResultContractError('result_evidence_invalid')
+        source = by_id[hit['document_id']]
+        retained.append({'evidence_id': f'excerpt-{index}', 'source': source, 'text': hit['chunk_text']})
+        grouped.setdefault(hit['document_id'], []).append({
+            key: deepcopy(hit.get(key)) for key in ('chunk_text', 'page_number', 'chunk_sequence', 'score')
+        })
+    prepared = {
+        'version': 'orchestration-gathered-content-v1', 'capability_id': 'document_search',
+        'content_scope': 'returned_excerpts',
+        'evidence': [
+            {'document_id': document_id, 'status': 'completed', 'evidence': hits}
+            for document_id, hits in grouped.items()
+        ],
+        'notes': [], 'citations': deepcopy(citations), 'limitations': list(limitations),
+        'search_results': deepcopy(results),
+        'search_scope': deepcopy(search_scope),
+        'coverage': {
+            'returned_excerpt_count': len(results), 'discovered_source_count': len(sources),
+            'whole_document_coverage': False, 'exhaustive_corpus_coverage': False,
+        },
+    }
+    return service.persist_task_result(
+        producer=context.result_producer(step), role='gather', status='complete',
+        outputs=[
+            NamedOutput('evidence', 'evidence-set-v1', retained, Completeness(
+                'complete', len(retained), len(retained), Coverage(len(retained), len(retained), 'items'),
+                'valid', ('lossless_search_response',), limitations,
+            )),
+            NamedOutput('sources', 'source-set-v1', sources, Completeness(
+                'complete', len(sources), len(sources), Coverage(len(sources), len(sources), 'sources'),
+                'valid', ('authorized_discovered_source_identities',), limitations,
+            )),
+            NamedOutput('prepared', 'structured-v1', prepared, _complete(1, limitations)),
+        ],
+        sources=sources, origin='grounded' if sources else 'generated',
+        guard_token=context.result_guard_token_for_step(step['step_id']),
+        input_fingerprint=context.result_input_fingerprint_for_step(step['step_id']),
+    )
+
+
+def source_selection_provenance(context):
+    """Keep a search-selected Analyze scoped to those sources, not an entire corpus."""
+    reader = getattr(context, 'source_selection_reader', None)
+    if reader is None:
+        return (), ()
+    if reader.result_kind != 'source-set-v1':
+        raise ResultContractError('result_input_kind_mismatch')
+    reader.completeness.require_readable()
+    reader.recheck()
+    return (reader.reference,), reader.completeness.limitations
 
 
 def retain_gather_result(step, context, result, *, source_manifest):

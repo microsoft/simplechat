@@ -1,13 +1,14 @@
 # test_v2_orchestration_recovery.py
 """
 Real-component browser coverage for orchestration failure and checkpoint recovery.
-Version: 0.261.317
+Version: 0.261.341
 Implemented in: 0.261.105
 Earlier-version run refusals covered in: 0.261.139
 Settled runs whose stored plan still reads running covered in: 0.261.141
 Configurable step failure, reused by Microsoft 365 recovery coverage, in: 0.261.238
 Ended runs show unfinished steps and retry them; files that cannot be retried alone offer
 Retry from failed step, in: 0.261.303
+Empty pending-credential polling fixture updated in: 0.261.341
 
 The production controller, SSE reader, stores, message list, and Run drawer execute
 in the existing local/Azure Playwright harness. Only API responses are deterministic.
@@ -169,6 +170,9 @@ class RecoveryApi:
         path = urlsplit(request.url).path
         if is_pending_actions_list(request.method, path):
             route.fulfill(json=pending_actions_payload())
+            return
+        if path == "/api/action-credentials/pending" and request.method == "GET":
+            route.fulfill(json={"requests": []})
             return
         body = request.post_data_json if request.post_data else None
         self.requests.append({"path": path, "method": request.method, "body": body})

@@ -1,7 +1,7 @@
 # test_orchestration_compose_output_retry.py
 """Records guidance, JSON mode and the single corrective call for content preparation.
 
-Version: 0.261.341
+Version: 0.261.342
 Implemented in: 0.261.141
 Explicit chart/diagram omission correction implemented in: 0.261.341
 
@@ -379,7 +379,10 @@ def _store_visual(harness, replies, *, kind="diagram", requested="explicit", mul
         ],
         "steps": [step], "final_response": input_binding("schedule"),
     })
-    _store(harness, plan, replies=replies, history=[PRIOR_PLAN])
+    _store(harness, plan, replies=replies, history=[PRIOR_PLAN], request_resolution={
+        "relationship": "follow_up", "resolved_message": step["arguments"]["instruction"],
+        "message_ids": [PRIOR_PLAN["id"]], "requires_retrieval": False,
+    })
     return plan
 
 

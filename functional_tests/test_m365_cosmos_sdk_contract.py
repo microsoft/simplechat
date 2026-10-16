@@ -1,9 +1,10 @@
 # test_m365_cosmos_sdk_contract.py
 """
 Functional regressions for Microsoft 365 Cosmos replacement calls.
-Version: 0.261.324
+Version: 0.261.341
 Implemented in: 0.261.031
 Point/query response representation coverage added in: 0.261.324
+Conditional scheduler lock deletion coverage added in: 0.261.341
 
 Uses the installed Cosmos SDK and RequestsTransport with an autospecced HTTP
 session. Only remote responses are faked; the real SDK derives partition routing
@@ -93,7 +94,7 @@ class CosmosHttpResponses:
                     status, payload = 409, {"code": "Conflict", "message": "The scoped item already exists."}
                 else:
                     status, payload = 201, self.seed(request)
-        elif "/docs/" in path and method in {"GET", "PUT", "PATCH"}:
+        elif "/docs/" in path and method in {"GET", "PUT", "PATCH", "DELETE"}:
             partition = json.loads(headers["x-ms-documentdb-partitionkey"])[0]
             item_id = path.rsplit("/", 1)[-1]
             existing = self.records.get((partition, item_id))
@@ -103,6 +104,9 @@ class CosmosHttpResponses:
                 payload = deepcopy(existing)
             elif headers.get("If-Match") != existing["_etag"]:
                 status, payload = 412, {"code": "PreconditionFailed", "message": "The item changed."}
+            elif method == "DELETE":
+                del self.records[(partition, item_id)]
+                status, payload = 204, {}
             else:
                 body = json.loads(data)
                 if method == "PATCH":

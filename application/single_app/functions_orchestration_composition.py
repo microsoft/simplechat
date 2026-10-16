@@ -34,7 +34,7 @@ from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE, normalize_in
 from functions_diagram_operations import MERMAID_BLOCK_LANGUAGE
 from functions_m365_citations import M365_ANSWER_STYLE_INSTRUCTIONS
 from functions_mixed_source_orchestration import MixedSourceCancellationError
-from functions_orchestration_context import conversation_reference_messages
+from functions_orchestration_context import ConversationContextError, execution_conversation_messages
 from functions_orchestration_deliverables import (
     compose_deliverable_guidance, missing_compose_visuals, place_deck_images, place_image_tokens,
 )
@@ -444,10 +444,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 JSON_OUTPUT_POLICY, *(_output_shape(output) for output in outputs),
             )),
         ) if part)
-        history = conversation_reference_messages(
-            getattr(context, 'conversation_context', None) or {},
-            getattr(context, 'context_message_ids', None),
-        )
+        history = execution_conversation_messages(context)
         messages = [{'role': 'system', 'content': policy}]
         # What the user asked to receive frames the work before the visual guidance.
         messages.extend(
@@ -668,7 +665,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             failure = build_failure('result_input_too_large')
         elif isinstance(exc, workflow_results_error):
             failure = build_failure(exc.code)
-        elif isinstance(exc, OrchestrationMemoryError):
+        elif isinstance(exc, (OrchestrationMemoryError, ConversationContextError)):
             failure = build_failure('context_unavailable')
         elif isinstance(exc, (ResultUnavailableError, PermissionError, ScreeningError)):
             failure = access_failure(exc)

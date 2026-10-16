@@ -28,6 +28,7 @@ import * as plan from '../../../application/v2_ui/src/lib/orchestrationPlan';
 import * as orchestration from '../../../application/v2_ui/src/lib/orchestration';
 import * as resume from '../../../application/v2_ui/src/lib/orchestrationResume';
 import * as sharing from '../../../application/v2_ui/src/lib/sharing';
+import { conversationModes } from '../../../application/v2_ui/src/lib/conversationMode';
 
 import { OrchestrationPlanCard } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanCard';
 import { ElicitationCard } from '../../../application/v2_ui/src/components/chat/ElicitationCard';
@@ -48,6 +49,7 @@ import { ParticipantsPanel } from '../../../application/v2_ui/src/components/cha
 import { Toaster } from '../../../application/v2_ui/src/components/ui/Toaster';
 import { Dropdown } from '../../../application/v2_ui/src/components/ui/Dropdown';
 import { AppShell } from '../../../application/v2_ui/src/components/layout/AppShell';
+import { Sidebar } from '../../../application/v2_ui/src/components/layout/Sidebar';
 import { ChatPage } from '../../../application/v2_ui/src/pages/ChatPage';
 import { HomePage } from '../../../application/v2_ui/src/pages/HomePage';
 import { PageHeader } from '../../../application/v2_ui/src/components/layout/PageHeader';
@@ -225,6 +227,7 @@ type ComponentName =
     | 'Composer'
     | 'PromptExperience'
     | 'SessionChatExperience'
+    | 'Sidebar'
     | 'ChatExperience'
     | 'HomeExperience'
     | 'HeaderExperience'
@@ -256,6 +259,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     Composer,
     PromptExperience,
     SessionChatExperience,
+    Sidebar,
     ChatExperience,
     HomeExperience,
     HeaderExperience,
@@ -323,6 +327,7 @@ function unmount(containerId: string): void {
 
 /** Unmount everything and clear both stores and persisted runs, for isolation between tests. */
 function reset(): void {
+    conversationModes.reset();
     for (const [containerId, root] of roots) {
         root.unmount();
         const container = document.getElementById(containerId);

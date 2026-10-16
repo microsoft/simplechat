@@ -16,6 +16,8 @@
 
 import { createConversation, type AttemptOrchestrationRequest } from './endpoints';
 import { ApiError } from './apiClient';
+import { adoptConversationModeDraft, conversationModes } from './conversationMode';
+import { useBootstrapStore } from '../stores/bootstrapStore';
 import type { CredentialRequest } from './actionCredentialTypes';
 import { legacyPlanErrorMessage } from './orchestrationErrors';
 import {
@@ -212,8 +214,10 @@ async function ensureConversation(
     // Taken before the round trip: New chat leaves the id null too, so only the epoch says the
     // reader has moved on to a different new chat.
     const epoch = currentConversationEpoch();
+    const draftMode = conversationModes.captureDraft(useBootstrapStore.getState().data?.user?.id ?? '');
     try {
         const created = await createConversation(message);
+        adoptConversationModeDraft(draftMode, created.conversation_id);
         const chat = useChatStore.getState();
         if (chat.activeConversationId === null && currentConversationEpoch() === epoch) {
             useChatStore.setState({

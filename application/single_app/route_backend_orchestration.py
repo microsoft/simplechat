@@ -86,6 +86,7 @@ from functions_orchestration_context import (
     HISTORY_SCAN_LIMIT,
     CatalogResolutionError,
     ConversationContextError,
+    authorize_conversation_source_access,
     build_capability_request_context as _capability_request_context,
     build_conversation_snapshot,
     build_conversation_signals,
@@ -184,6 +185,7 @@ from functions_assist_submissions import SubmissionIdError, normalize_submission
 from functions_orchestration_planner import (
     ConversationResolutionError,
     PlannerError,
+    conversation_retrieval_allowed,
     plan_request,
     resolve_conversation_request,
 )
@@ -642,6 +644,7 @@ def _authorize_context_conversation(conversation_id, user_id):
         raise ConversationContextError('That conversation could not be opened.') from None
     if conversation.get('user_id') != user_id or conversation.get('orchestration_deleted'):
         raise ConversationContextError('That conversation could not be opened.')
+    authorize_conversation_source_access(conversation, user_id)
     return conversation
 
 
@@ -1186,6 +1189,8 @@ def _validate_saved_conversation_context(snapshot, conversation_id, user_id):
 def _conversation_context_for_run(record, user_id, settings):
     conversation_id = record['conversation_id']
     _authorize_context_conversation(conversation_id, user_id)
+    if history_message_limit(settings) == 0 and (record.get('conversation_context') or {}).get('messages'):
+        raise ConversationContextError('Conversation history is disabled. Create a new request without prior content.')
     for context in record.get('analysis_result_contexts') or []:
         load_saved_analysis(user_id, context)
     if record.get('user_message_id'):
@@ -2664,7 +2669,7 @@ def register_route_backend_orchestration(bp):
                     return
                 resolution = resolve_conversation_request(
                     message, snapshot, settings=settings, answered_questions=answered_record,
-                    planner_model=planner_model,
+                    planner_model=planner_model, seeds=seeds,
                 )
                 reasoning_adjustments = build_model_reasoning_metadata(
                     planner_model, 'planner',
@@ -2677,12 +2682,10 @@ def register_route_backend_orchestration(bp):
                 turn_context['planning_token_usage'] = planning_usage
                 if resolution['relationship'] == 'clarification':
                     if not allow_elicitation:
-                        resolution.update({
-                            'relationship': 'follow_up',
-                            'resolved_message': message,
-                            'message_ids': [item['id'] for item in snapshot['messages']],
-                            'requires_retrieval': False,
-                        })
+                        raise PlannerError(
+                            'Select or paste the text you want to use, then create a new request.',
+                            reason='conversation_target_required',
+                        )
                 if resolution['relationship'] == 'clarification':
                     question = resolution['clarification']
                     elicitation = normalize_elicitation({
@@ -2720,11 +2723,7 @@ def register_route_backend_orchestration(bp):
                 turn_context['memory_scope'] = memory_context['scope']
                 for notice in memory_context['notices']:
                     yield build_planning_thought(notice)
-                if (
-                    resolution.get('requires_retrieval') is False
-                    and not seeds.get('document_ids') and not seeds.get('elicitation_references')
-                    and not seeds.get('public_workspace_selection')
-                ):
+                if not conversation_retrieval_allowed(resolution, message, seeds):
                     candidates = []
                 else:
                     candidates, _probed = resolve_candidate_documents(

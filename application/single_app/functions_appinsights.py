@@ -102,6 +102,7 @@ LOGGER_FALLBACK_MESSAGE = "[SIMPLE_CHAT_LOG_FALLBACK]"
 LOGGER_EXTERNAL_EVENT_MESSAGE = "[SIMPLE_CHAT_EXTERNAL_EVENT]"
 MAX_EXTERNAL_EVENT_STRING_LENGTH = 256
 LOGGER_SAFE_TEXT_MAX_LENGTH = 1024
+LOGGER_APPLICATION_VERSION_MAX_LENGTH = 64
 # Diagnostic keys whose sanitized text may be retained; everything else stays a length.
 LOGGER_SAFE_TEXT_KEYS = frozenset({
     "attempt",
@@ -131,6 +132,7 @@ LOGGER_WORKFLOW_HASH_KEYS = frozenset({
 LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     "validationcode", "validationrule", "responsefailure", "executioncode", "outputcode", "durablestatus",
     "failurecode", "authorityreason", "capabilityid", "outputformat", "producercapabilityid",
+    "executionpath", "outcome",
 })
 
 
@@ -144,6 +146,46 @@ def workflow_log_context(*, conversation_id=None, turn_id=None, run_id=None, ste
         )
         if isinstance(value, str) and value
     }
+
+
+def _is_application_version(value: Any) -> bool:
+    """Accept bounded three-part decimal versions without regex backtracking."""
+    if not isinstance(value, str) or len(value) > LOGGER_APPLICATION_VERSION_MAX_LENGTH:
+        return False
+    parts = value.split(".", 2)
+    return len(parts) == 3 and all(part.isdecimal() for part in parts)
+
+
+def log_chat_execution_outcome(
+    *, execution_path, status, outcome, conversation_id, turn_id=None, run_id=None,
+    failure=None, application_version=None, attempt_index=None, message_saved=None,
+):
+    """Record business outcomes independently of a successful SSE/HTTP transport."""
+    if execution_path not in {"direct", "orchestration"}:
+        raise ValueError("Invalid chat execution path.")
+    outcomes = {"completed", "partial", "failed", "waiting", "cancelled"}
+    if outcome not in outcomes or status not in outcomes:
+        raise ValueError("Invalid chat execution outcome.")
+    failure = failure if isinstance(failure, dict) else {}
+    fields = {
+        **workflow_log_context(
+            conversation_id=conversation_id, turn_id=turn_id, run_id=run_id,
+            step_id=failure.get("step_id"),
+        ),
+        "execution_path": execution_path, "status": status, "outcome": outcome,
+        "failure_code": failure.get("code"), "capability_id": failure.get("capability_id"),
+    }
+    if _is_application_version(application_version):
+        fields["application_version"] = application_version
+    if type(attempt_index) is int and attempt_index > 0:
+        fields["attempt_index"] = attempt_index
+    if type(message_saved) is bool:
+        fields["message_saved"] = message_saved
+    log_event(
+        "[CHAT_EXECUTION] Execution outcome recorded.",
+        extra=fields,
+        level=logging.WARNING if outcome in {"failed", "partial"} else logging.INFO,
+    )
 
 
 def _format_message(message: Any, message_args: Optional[Tuple[Any, ...]] = None) -> str:
@@ -280,6 +322,9 @@ def _build_logger_extra(
                         logger_extra[normalized_key] = value
                 elif diagnostic_key in LOGGER_WORKFLOW_CODE_KEYS:
                     if re.fullmatch(r"[a-z][a-z0-9_]{0,79}", value):
+                        logger_extra[normalized_key] = value
+                elif diagnostic_key == "applicationversion":
+                    if _is_application_version(value):
                         logger_extra[normalized_key] = value
                 elif _is_safe_log_text_key(key):
                     logger_extra[normalized_key] = (

@@ -340,7 +340,7 @@ from functions_chat_vision import (
     vision_thought_text,
 )
 from functions_image_references import references_from_metadata
-from functions_appinsights import log_event
+from functions_appinsights import log_chat_execution_outcome, log_event
 from functions_debug import debug_print
 from functions_governance import ensure_governance_access
 from functions_notifications import create_chat_response_notification
@@ -8907,10 +8907,25 @@ class ActiveConversationStreamSession:
     def get_terminal_replacement(self):
         return self._terminal_replacement or self._get_metadata().get("terminal_replacement")
 
+    def _log_outcome(self, metadata):
+        status = metadata.get("status")
+        outcome = (
+            "cancelled" if status == STREAM_STATUS_CANCELED
+            else "failed" if status == STREAM_STATUS_ERROR else "completed"
+        )
+        code = "user_cancelled" if outcome == "cancelled" else "stream_failed" if outcome == "failed" else None
+        log_chat_execution_outcome(
+            execution_path="direct", status=outcome, outcome=outcome,
+            conversation_id=self.conversation_id,
+            turn_id=metadata.get("user_message_id") or self._analysis_message_id,
+            failure={"code": code}, application_version=VERSION,
+        )
+
     def retract(self, payload):
         if not isinstance(payload, dict) or not payload.get("blocked"):
             raise ValueError("A terminal content replacement is required.")
         with self._condition:
+            was_terminal = self._get_metadata().get("status") in TERMINAL_STREAM_STATUSES
             self._terminal_replacement = strip_private_chat_checks(payload)
             self._accepting_events = False
             metadata = self._build_metadata(active=False, existing=self._get_metadata())
@@ -8927,6 +8942,8 @@ class ActiveConversationStreamSession:
                 ttl_seconds=self.session_ttl_seconds,
             )
             self._condition.notify_all()
+        if not was_terminal:
+            self._log_outcome(metadata)
         return True
 
     def publish(self, event_text):
@@ -8948,7 +8965,9 @@ class ActiveConversationStreamSession:
         )
         is_terminal_event = isinstance(payload, dict) and (payload.get('done') or payload.get('error') or is_cancel_event)
 
-        metadata = self._build_metadata(active=not is_terminal_event, existing=self._get_metadata())
+        existing = self._get_metadata()
+        was_terminal = existing.get("status") in TERMINAL_STREAM_STATUSES
+        metadata = self._build_metadata(active=not is_terminal_event, existing=existing)
         if isinstance(payload, dict) and payload.get('user_message_id'):
             metadata['user_message_id'] = payload['user_message_id']
         if isinstance(payload, dict) and payload.get("message_id") and payload.get("type") != "user_message_persisted":
@@ -9005,8 +9024,14 @@ class ActiveConversationStreamSession:
             )
 
         if is_terminal_event:
+            if not was_terminal:
+                self._log_outcome(metadata)
+            cancelled = metadata.get('status') == STREAM_STATUS_CANCELED
             log_event(
-                '[Streaming] Stream session completed' if metadata.get('status') == STREAM_STATUS_COMPLETED else '[Streaming] Stream session failed',
+                '[STREAMING] Stream session cancelled' if cancelled else (
+                    '[STREAMING] Stream session completed' if metadata.get('status') == STREAM_STATUS_COMPLETED
+                    else '[STREAMING] Stream session failed'
+                ),
                 extra={
                     'conversation_id': self.conversation_id,
                     'user_id': self.user_id,
@@ -9020,7 +9045,7 @@ class ActiveConversationStreamSession:
                     'reattach_count': metadata.get('reattach_count'),
                     'last_error': metadata.get('last_error'),
                 },
-                level=logging.INFO if metadata.get('status') == STREAM_STATUS_COMPLETED else logging.ERROR,
+                level=logging.INFO if metadata.get('status') == STREAM_STATUS_COMPLETED or cancelled else logging.ERROR,
             )
 
         with self._condition:
@@ -9040,6 +9065,7 @@ class ActiveConversationStreamSession:
             if metadata['status'] == STREAM_STATUS_CANCELED:
                 metadata['canceled_at'] = metadata.get('canceled_at') or metadata['completed_at']
             self._persist_metadata(metadata)
+            self._log_outcome(metadata)
             log_event(
                 '[STREAMING] Stream session closed without explicit terminal event',
                 extra={

@@ -1,6 +1,15 @@
 # Gather / Reason / Render orchestration
 
-**Version: 0.261.309**
+**Version: 0.261.341**
+
+Search/result integrity fixed in version: **0.261.341**, recorded in
+`application/single_app/config.py`. Search retains authoritative returned
+content before creating bounded previews. Preview clipping alone does not
+contaminate a complete source-identity selection. Selection completeness,
+evidence coverage, and exhaustive corpus coverage remain distinct; an
+incomplete upstream result still cannot become complete through a downstream
+Analyze or Compose task. See the
+[chat reliability fix](../fixes/ORCHESTRATION_CHAT_RELIABILITY_FIX.md).
 
 Document-derived handoff reliability implemented in version: **0.261.309**,
 recorded in `application/single_app/config.py`. Native Analyze requests explicit

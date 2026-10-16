@@ -8,6 +8,7 @@ import { fetchActiveScope, fetchBootstrap } from '../lib/endpoints';
 import { ApiError, isAccessRestricted, isTermsOfUseRequired } from '../lib/apiClient';
 import type { BootstrapPayload, PromptOption } from '../lib/types';
 import { useAppSessionStore } from './appSessionStore';
+import { conversationModes } from '../lib/conversationMode';
 
 /**
  * Orders concurrent refreshes so a slower earlier one cannot land after a newer one.
@@ -279,6 +280,18 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
             };
         }),
 }));
+
+useBootstrapStore.subscribe((state, previous) => {
+    if (state.data?.user?.id !== previous.data?.user?.id) {
+        conversationModes.reset();
+    }
+});
+
+useAppSessionStore.subscribe((state, previous) => {
+    if (state.status === 'changed' && previous.status !== 'changed') {
+        conversationModes.reset();
+    }
+});
 
 /** Read a feature flag, defaulting to off when bootstrap has not resolved. */
 export function useFeature(key: string): boolean {
