@@ -153,19 +153,20 @@ async def close_agent_resources(kernel):
                 log_event("[AGENT_DELEGATION] Client cleanup failed.", extra={"error_type": type(exc).__name__})
 
 
-def _build_local_agent(target, settings):
+def _build_local_agent(target, settings, *, construction_profile="agent-core"):
     from semantic_kernel import Kernel
     from semantic_kernel_loader import load_agent_core_plugins, load_single_agent_for_kernel
 
     frame = current_agent_execution()
     capture_kwargs = {"invocation_capture": frame.invocation_capture} if frame.invocation_capture is not None else {}
     kernel = Kernel()
-    load_agent_core_plugins(kernel, settings, **capture_kwargs)
+    load_agent_core_plugins(kernel, settings, construction_profile=construction_profile, **capture_kwargs)
     kernel, agents = load_single_agent_for_kernel(
         kernel, deepcopy(target), settings, SimpleNamespace(),
         mode_label="group" if target.get("is_group") else "global" if target.get("is_global") else "per-user",
         group_scope_id=target.get("group_id"),
         execution_user_id=frame.identity.user_id,
+        construction_profile=construction_profile,
         **capture_kwargs,
     )
     agent = (agents or {}).get(target.get("name"))
@@ -576,10 +577,7 @@ class AgentExecution:
         invocation_retry_state = None
         retry_override = self._stream_retry_override
         selected = self.agent
-        descriptor = _continuation.get() or {
-            "mode": "chat", "checkpoint_id": self.credential_checkpoint_id,
-            "agent_reference": deepcopy(self.reference),
-        }
+        descriptor = _continuation.get()
         try:
             with agent_execution(frame) as frame:
                 frame.budget.raise_authentication_requirement(frame.identity)
@@ -606,6 +604,12 @@ class AgentExecution:
                         kernel, selected = _build_local_agent(canonical, invocation_settings)
                 if retry_override:
                     invocation_retry_state = retry_override[1](selected, retry_override[0])
+            if descriptor is None:
+                descriptor = {
+                    "mode": "chat", "checkpoint_id": self.credential_checkpoint_id,
+                    "agent_reference": deepcopy(self.reference),
+                    "construction_profile": getattr(selected, "construction_profile", "agent-core"),
+                }
             if streaming:
                 with agent_execution(frame), credential_continuation(descriptor):
                     # Stream wrappers such as the M365 continuation journal set

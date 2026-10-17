@@ -20,6 +20,22 @@ import functions_action_credential_state as state
 from swagger_wrapper import swagger_route, get_auth_security
 
 
+CONTINUATION_FAILURE_CODES = frozenset({
+    "credential_execution_changed", "credential_checkpoint_changed", "credential_request_changed",
+    "credential_continuation_unavailable", "credential_request_closed", "credentials_unavailable",
+    "action_credentials_required", "trusted_origin_required",
+})
+
+
+def _log_continuation_failure(error, item, stage):
+    code = error.code if isinstance(error, ActionCredentialError) else None
+    log_event("[PLUGINS] Credential continuation stopped.", level=logging.WARNING, extra={
+        **workflow_log_context(conversation_id=item["conversation_id"], turn_id=item["id"]),
+        "stage": stage, "error_type": type(error).__name__,
+        "failure_code": code if code in CONTINUATION_FAILURE_CODES else "credentials_unavailable",
+    })
+
+
 def _csrf_token():
     if not session.get("action_credentials_csrf_token"):
         session["action_credentials_csrf_token"] = secrets.token_urlsafe(32)
@@ -145,16 +161,27 @@ def _chat_continue(item, user_id):
     import asyncio
 
     descriptor = {**item["continuation"], "resume": True}
-    checkpoint = state.read(user_id, descriptor["checkpoint_id"], record_type="credential_checkpoint")
-    if checkpoint["conversation_id"] != item["conversation_id"] or "root" not in checkpoint["value"]:
-        raise ActionCredentialError("credential_checkpoint_changed")
-    identity = capture_execution_identity(user_id, item["conversation_id"])
-    settings = get_settings()
-    target = resolve_delegation_agent(descriptor["agent_reference"], user_id=user_id, settings=settings)
-    frame = AgentExecutionFrame(identity, target, DelegationBudget())
-    # Reconstruct a new invocation-local kernel under the current actor's bridge.
-    with identity.bridge(target), agent_execution(frame):
-        kernel, agent = _build_local_agent(target, settings)
+    stage = "credential_checkpoint_validation"
+    try:
+        checkpoint = state.read(user_id, descriptor["checkpoint_id"], record_type="credential_checkpoint")
+        if checkpoint["conversation_id"] != item["conversation_id"] or "root" not in checkpoint["value"]:
+            raise ActionCredentialError("credential_checkpoint_changed")
+        stage = "credential_reconstruction"
+        identity = capture_execution_identity(user_id, item["conversation_id"])
+        settings = get_settings()
+        target = resolve_delegation_agent(descriptor["agent_reference"], user_id=user_id, settings=settings)
+        frame = AgentExecutionFrame(identity, target, DelegationBudget())
+        # Reconstruct a new invocation-local kernel under the current actor's bridge.
+        with identity.bridge(target), agent_execution(frame):
+            profile = descriptor.get("construction_profile")
+            # Existing requests retain their historical agent-core path; no backfill/replay.
+            kernel, agent = (
+                _build_local_agent(target, settings) if profile is None
+                else _build_local_agent(target, settings, construction_profile=profile)
+            )
+    except Exception as error:
+        _log_continuation_failure(error, item, stage)
+        raise
 
     async def execute():
         with identity.bridge(target), agent_execution(frame), credential_continuation(descriptor):
@@ -165,8 +192,10 @@ def _chat_continue(item, user_id):
 
     @stream_with_context
     def frames():
+        stage = "credential_tool_resume"
         try:
             result = asyncio.run(execute())
+            stage = "credential_response_persistence"
             authorize_conversation(user_id, item["conversation_id"])
             message = {
                 "id": uuid.uuid4().hex, "conversation_id": item["conversation_id"], "user_id": user_id,
@@ -175,6 +204,7 @@ def _chat_continue(item, user_id):
                 "metadata": {"action_credential_continuation": True},
             }
             saved = _persist_screened_assistant(message, user_id, settings=settings)
+            stage = "credential_continuation_finalization"
             _finish_request(user_id, item["id"], item["continuation_claim"], "completed")
             yield serialize_sse({"content": saved["content"]})
             yield serialize_sse({
@@ -186,7 +216,7 @@ def _chat_continue(item, user_id):
             yield serialize_sse(error.event)
         except Exception as error:
             _finish_request(user_id, item["id"], item["continuation_claim"], "failed")
-            log_event("[PLUGINS] Credential continuation stopped.", extra={"error_type": type(error).__name__})
+            _log_continuation_failure(error, item, stage)
             yield serialize_sse({"error": "Saved work could not be continued. Refresh this conversation."})
 
     return Response(frames(), mimetype="text/event-stream", headers={"Cache-Control": "no-store"})
