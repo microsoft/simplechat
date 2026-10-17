@@ -1,7 +1,7 @@
 # test_v2_action_credentials_backend.py
 """Real React Save and continue through Flask and freshly constructed SK agents.
 
-Version: 0.261.345
+Version: 0.261.346
 Implemented in: 0.261.345
 
 Only Cosmos and external model/provider transport are offline. Browser fetch is
@@ -26,9 +26,11 @@ sys.path[:0] = [str(ROOT / "functional_tests"), str(ROOT / "ui_tests" / "fixture
 
 # Shared test infrastructure lives outside the UI test module directory.
 import harness_build as hb
-from playwright_connection import connect_options
+import playwright_connection
 from test_action_credentials_chat_reconstruction import PROBE
 from test_orchestration_result_imports import run_probe
+
+connect_options = playwright_connection.connect_options
 
 
 @contextmanager

@@ -4,6 +4,13 @@ Fixed/Implemented in version: **0.261.345**.
 
 Related version update: `application/single_app/config.py`.
 
+Test-maintenance follow-up in **0.261.346** explicitly exposes the shared
+Playwright fixture through its imported module. This preserves module-local
+pytest discovery and local/Azure browser selection without an unused import.
+The credential browser and connection-contract suites passed **26 tests**.
+The application continuation behavior remains the fix implemented in
+**0.261.345**.
+
 ## Issue and root cause
 
 A personal action identity could save successfully, yet **Save and continue**

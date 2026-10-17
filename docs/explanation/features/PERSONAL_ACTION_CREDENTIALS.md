@@ -2,7 +2,7 @@
 
 Fixed/Implemented in version: **0.261.333**.
 
-Current application version: **0.261.345**.
+Current application version: **0.261.346**.
 
 Related version update: `application/single_app/config.py`.
 
