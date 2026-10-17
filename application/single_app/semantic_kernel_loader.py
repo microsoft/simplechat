@@ -1254,8 +1254,8 @@ def load_core_plugins_only(kernel: Kernel, settings):
         log_event(f"[SK_LOADER] Failed to load Conversation Charts plugin: {e}", level=logging.WARNING)
 
 # =================== Semantic Kernel Initialization ===================
-def load_agent_core_plugins(kernel: Kernel, settings, *, invocation_capture=None):
-    """Load the normal enabled agent core tools without any stored action manifests."""
+def load_agent_core_plugins(kernel: Kernel, settings, *, invocation_capture=None, construction_profile="agent-core"):
+    """Rebuild an entrypoint's existing tool surface, not the agent's storage scope."""
     active = current_agent_execution()
     capture = invocation_capture if invocation_capture is not None else (
         active.invocation_capture if active is not None else None
@@ -1263,7 +1263,41 @@ def load_agent_core_plugins(kernel: Kernel, settings, *, invocation_capture=None
     if capture is not None:
         # Implicit search/embedding/core tools have no complete prepared-manifest proof.
         require_invocation_capture(capture).refuse()
-    load_plugins_for_kernel(kernel, [], settings, mode_label="agent-core")
+    if construction_profile == "per-user":
+        load_per_user_core_plugins(kernel, settings)
+    elif construction_profile == "global":
+        load_plugins_for_kernel(kernel, get_global_actions(return_type=SecretReturnType.NAME), settings, mode_label="global")
+    elif construction_profile == "agent-core":
+        load_plugins_for_kernel(kernel, [], settings, mode_label="agent-core")
+    else:
+        raise ValueError("Unsupported agent construction profile.")
+
+
+def load_per_user_core_plugins(kernel, settings):
+    """Keep workspace-chat defaults identical before and after a credential pause."""
+    for key, loader, label in (
+        ("enable_time_plugin", load_time_plugin, "Time"),
+        ("enable_fact_memory_plugin", load_fact_memory_plugin, "Fact Memory"),
+        ("enable_math_plugin", load_math_plugin, "Math"),
+        ("enable_text_plugin", load_text_plugin, "Text"),
+        ("enable_http_plugin", load_http_plugin, "HTTP"),
+        ("enable_wait_plugin", load_wait_plugin, "Wait"),
+    ):
+        if settings.get(key, True):
+            loader(kernel)
+            log_event(f"[SK_LOADER] Loaded {label} plugin.", level=logging.INFO)
+    if settings.get("enable_default_embedding_model_plugin", True):
+        load_embedding_model_plugin(kernel, settings)
+        log_event("[SK_LOADER] Loaded Default Embedding Model plugin.", level=logging.INFO)
+    if is_tabular_processing_enabled(settings):
+        load_tabular_processing_plugin(kernel)
+        log_event("[SK_LOADER] Loaded Tabular Processing plugin.", level=logging.INFO)
+    try:
+        if load_chart_plugin(kernel):
+            log_event("[SK_LOADER] Loaded Conversation Charts plugin.", level=logging.INFO)
+    except Exception as error:
+        log_event("[SK_LOADER] Failed to load Conversation Charts plugin.",
+                  extra={"error_type": type(error).__name__}, level=logging.WARNING)
 
 
 def initialize_semantic_kernel(user_id: str=None, redis_client=None):
@@ -2103,7 +2137,7 @@ def _has_agent_delegation_actions(agent_cfg, settings, user_id):
 
 def load_single_agent_for_kernel(
     kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global",
-    group_scope_id=None, execution_user_id=None, *, invocation_capture=None,
+    group_scope_id=None, execution_user_id=None, *, invocation_capture=None, construction_profile="agent-core",
 ):
     """
     DRY helper to load a single agent (default agent) for the kernel.
@@ -2163,6 +2197,7 @@ def load_single_agent_for_kernel(
     if delegation_enabled:
         kernel = Kernel()
         load_agent_core_plugins(kernel, settings)
+        construction_profile = "agent-core"
     agent_config = resolve_agent_config(agent_cfg, settings, group_scope_id=group_scope_id, execution_user_id=execution_user_id)
     agent_config["reasoning_effort"] = agent_cfg.get("reasoning_effort", agent_config.get("reasoning_effort"))
     if invocation_capture is not None and (
@@ -2478,6 +2513,7 @@ def load_single_agent_for_kernel(
                 "azure_endpoint": agent_config["endpoint"],
                 "api_version": agent_config["api_version"],
                 "model_token_budget": model_budget,
+                "construction_profile": construction_profile,
                 "arguments": (
                     captured_arguments if invocation_capture is not None
                     else build_agent_budget_arguments(chat_service, agent_config, model_budget)
@@ -3312,50 +3348,7 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     # DON'T load all user plugins globally - only load core plugins for per-user mode
     # Agent-specific plugins will be loaded by the agent itself based on actions_to_load
     # Only load core Semantic Kernel plugins here
-    if settings.get('enable_time_plugin', True):
-        load_time_plugin(kernel)
-        print(f"[SK_LOADER] Loaded Time plugin.")
-        log_event("[SK_LOADER] Loaded Time plugin.", level=logging.INFO)
-
-    if settings.get('enable_fact_memory_plugin', True):
-        load_fact_memory_plugin(kernel)
-        print(f"[SK_LOADER] Loaded Fact Memory plugin.")
-        log_event("[SK_LOADER] Loaded Fact Memory plugin.", level=logging.INFO)
-
-    if settings.get('enable_math_plugin', True):
-        load_math_plugin(kernel)
-        print(f"[SK_LOADER] Loaded Math plugin.")
-        log_event("[SK_LOADER] Loaded Math plugin.", level=logging.INFO)
-
-    if settings.get('enable_text_plugin', True):
-        load_text_plugin(kernel)
-        print(f"[SK_LOADER] Loaded Text plugin.")
-        log_event("[SK_LOADER] Loaded Text plugin.", level=logging.INFO)
-
-    if settings.get('enable_http_plugin', True):
-        load_http_plugin(kernel)
-        print(f"[SK_LOADER] Loaded HTTP plugin.")
-        log_event("[SK_LOADER] Loaded HTTP plugin.", level=logging.INFO)
-
-    if settings.get('enable_wait_plugin', True):
-        load_wait_plugin(kernel)
-        print(f"[SK_LOADER] Loaded Wait plugin.")
-        log_event("[SK_LOADER] Loaded Wait plugin.", level=logging.INFO)
-
-    if settings.get('enable_default_embedding_model_plugin', True):
-        load_embedding_model_plugin(kernel, settings)
-        print(f"[SK_LOADER] Loaded Default Embedding Model plugin.")
-        log_event("[SK_LOADER] Loaded Default Embedding Model plugin.", level=logging.INFO)
-
-    if is_tabular_processing_enabled(settings):
-        load_tabular_processing_plugin(kernel)
-        log_event("[SK_LOADER] Loaded Tabular Processing plugin.", level=logging.INFO)
-
-    try:
-        if load_chart_plugin(kernel):
-            log_event("[SK_LOADER] Loaded Conversation Charts plugin.", level=logging.INFO)
-    except Exception as e:
-        log_event(f"[SK_LOADER] Failed to load Conversation Charts plugin: {e}", level=logging.WARNING)
+    load_agent_core_plugins(kernel, settings, construction_profile="per-user")
 
     # Get selected agent from user settings (this still needs to be in user settings for UI state)
     user_settings = get_user_settings(user_id).get('settings', {})
@@ -3467,16 +3460,16 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     agent_type = (agent_cfg.get('agent_type') or 'local').lower()
     agent_cfg['agent_type'] = agent_type
     if agent_type == 'local':
-        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id)
+        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id, construction_profile="per-user")
     elif agent_type in ('aifoundry', 'new_foundry', 'foundry_workflow'):
-        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id)
+        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id, construction_profile="per-user")
     else:
         log_event(
             f"[SK_LOADER] Unsupported agent_type '{agent_type}' for agent '{agent_cfg.get('name')}'. Defaulting to local path.",
             level=logging.WARNING,
             extra={'agent_type': agent_type, 'agent_name': agent_cfg.get('name')}
         )
-        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id)
+        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id, construction_profile="per-user")
     print(f"[SK_LOADER] User {user_id} Agent loading completed. Agent objects: {type(agent_objs)} with {len(agent_objs) if agent_objs else 0} items")
     return kernel, agent_objs
 
@@ -3775,16 +3768,16 @@ def load_semantic_kernel(kernel: Kernel, settings):
             agent_type = (global_selected_agent_cfg.get('agent_type') or 'local').lower()
             global_selected_agent_cfg['agent_type'] = agent_type
             if agent_type == 'local':
-                kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global")
+                kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global", construction_profile="global")
             elif agent_type in ('aifoundry', 'new_foundry', 'foundry_workflow'):
-                kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global")
+                kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global", construction_profile="global")
             else:
                 log_event(
                     f"[SK_LOADER] Unsupported agent_type '{agent_type}' for global agent '{global_selected_agent_cfg.get('name')}'. Defaulting to local path.",
                     level=logging.WARNING,
                     extra={'agent_type': agent_type, 'agent_name': global_selected_agent_cfg.get('name')}
                 )
-                kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global")
+                kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global", construction_profile="global")
             log_event(f"[SK_LOADER] load_single_agent_for_kernel returned agent_objs: {type(agent_objs)} with {len(agent_objs) if agent_objs else 0} agents", level=logging.INFO)
         else:
             log_event("[SK_LOADER] No global_selected_agent found. Proceeding in kernel-only mode.", level=logging.WARNING)

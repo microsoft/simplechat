@@ -2,7 +2,7 @@
 
 Fixed/Implemented in version: **0.261.333**.
 
-Current application version: **0.261.337**.
+Current application version: **0.261.345**.
 
 Related version update: `application/single_app/config.py`.
 
@@ -110,6 +110,21 @@ under a server-owned, revision-fenced continuation. Completed operations are
 retained, not replayed by retrying the whole question. A credential request is
 not an approval for side effects.
 
+Fresh chat reconstruction was fixed in **0.261.345**. New requests retain the
+server-owned construction profile of the agent that actually paused. A global
+agent selected in a per-user workspace therefore resumes with the workspace
+tool inventory and defaults, not the different agent-core inventory. The
+continuation constructs a fresh agent under the current actor and rechecks
+configuration, model, tools, action access, and destination before executing.
+It does not weaken the execution-signature guard or add Document Search to
+workspace chat.
+
+**Save and continue** resolves the saved identity at the blocked tool boundary
+and persists the assistant's answer in the original conversation. A successful
+save alone is not a completed action. Existing failed requests are not migrated
+or replayed. See the
+[chat reconstruction fix](../fixes/ACTION_CREDENTIAL_CHAT_RECONSTRUCTION_FIX.md).
+
 Yamcs is read-only. Future write-capable adapters must handle operation
 journaling and uncertain effects before acquiring equivalent continuation
 support.
@@ -175,6 +190,14 @@ credential contract, actor-private bindings, storage, and request lifecycle.
 Semantic Kernel suspension and continuation, including nested agent execution.
 `ui_tests/test_classic_action_credentials.py` covers the classic action editor
 and private chat cards.
+
+`functional_tests/test_action_credentials_chat_reconstruction.py` uses real
+application loaders, authorization, identity storage, credential routes,
+journals, and message persistence with offline Cosmos, model, and provider
+transport. Unlike same-instance journal tests, it constructs a fresh agent for
+continuation. `ui_tests/test_v2_action_credentials_backend.py` additionally
+drives the bundled React card through real Flask routes and checks that the
+provider result becomes the same conversation's assistant response.
 
 Local validation for **0.261.333** passed 44 dedicated backend tests and 36
 credential browser cases, plus the React type check and production build.

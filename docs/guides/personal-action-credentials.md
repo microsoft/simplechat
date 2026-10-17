@@ -4,7 +4,7 @@ title: "Use your own credentials with a shared action"
 description: "Provide a private personal identity when a shared Yamcs action needs your sign-in."
 section: "Guides"
 audience: user
-version: "0.261.343"
+version: "0.261.345"
 ---
 
 ## What this does
@@ -18,6 +18,8 @@ Yamcs.
 Fixed/Implemented in version: **0.261.333**, recorded in
 `application/single_app/config.py`.
 Continuation failure feedback and status recovery were fixed in **0.261.343**.
+Fresh agent reconstruction for new same-conversation requests was fixed in
+**0.261.345**.
 
 ## When a credential card appears
 
@@ -39,6 +41,12 @@ for every field.
 3. Choose **Save and continue**. SimpleChat saves the identity privately and
    resumes the blocked work. It does not send a new question or replay completed
    operations.
+
+The action's result and the assistant's response return in this same
+conversation; you do not need to resend the question or start a new chat.
+This also applies to a new credential request in a conversation with existing
+messages. SimpleChat rebuilds the paused agent with its original tool setup,
+while still rejecting changes to its configuration or your access.
 
 Credential inputs are separate from the chat composer. Do not paste passwords,
 tokens, or API keys into a message. Credentials are not saved as conversation
