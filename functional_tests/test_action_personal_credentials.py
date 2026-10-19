@@ -1,7 +1,7 @@
 # test_action_personal_credentials.py
 """Backend functional tests for actor-bound personal action credentials.
 
-Version: 0.261.337
+Version: 0.261.348
 Implemented in: 0.261.333
 
 Exercises real storage owners, identity CRUD, resolver, schema and Flask routes
@@ -105,6 +105,8 @@ def environment(monkeypatch):
             f"cosmos_{scope}_workspace_identities_container": identities
             for scope in ("personal", "group", "global", "public")
         })
+        config.cosmos_collaboration_conversations_container = CredentialContainer("id")
+        config.cosmos_collaboration_messages_container = CredentialContainer("conversation_id")
         monkeypatch.setitem(sys.modules, "config", config)
         monkeypatch.setitem(sys.modules, "functions_keyvault", module(
             "functions_keyvault", SecretReturnType=SimpleNamespace(VALUE="value", TRIGGER="trigger", NAME="name"),
@@ -157,11 +159,15 @@ def environment(monkeypatch):
         ))
         monkeypatch.setitem(sys.modules, "route_backend_chats", module(
             "route_backend_chats", _authorize_personal_conversation_access=authorize,
+            cosmos_conversations_container=CredentialContainer("id"),
         ))
         continuation = importlib.import_module("functions_action_credential_continuation")
         monkeypatch.setattr(credentials, "_services", None)
         monkeypatch.setattr(continuation, "_services", None)
         importlib.import_module("functions_action_credential_runtime").configure_action_credential_runtime()
+        monkeypatch.setattr(credentials, "_services", replace(
+            credentials.credential_services(), authorize_request_context=None,
+        ))
         monkeypatch.delitem(sys.modules, "route_backend_action_credentials", raising=False)
         routes = importlib.import_module("route_backend_action_credentials")
         monkeypatch.setattr(routes, "authorize_conversation", authorize)

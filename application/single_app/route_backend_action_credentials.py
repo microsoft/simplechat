@@ -2,10 +2,10 @@
 """Credential-only interaction API. General workspace authoring stays unchanged."""
 
 from functools import wraps
+import hashlib
 import hmac
 import logging
 import secrets
-import uuid
 from datetime import datetime, timezone
 
 from flask import Response, jsonify, request, session, stream_with_context
@@ -14,7 +14,8 @@ from action_credential_contracts import ActionCredentialError, ActionCredentials
 from functions_authentication import get_current_user_id, login_required, user_required
 from functions_appinsights import log_event, workflow_log_context
 from functions_action_credentials import (
-    authorize_conversation, authorize_request, credential_continuation, safe_request, submit_credentials,
+    authorize_conversation, authorize_request, credential_continuation, credential_services,
+    pending_execution_ids, request_conversation, safe_request, submit_credentials,
 )
 import functions_action_credential_state as state
 from swagger_wrapper import swagger_route, get_auth_security
@@ -125,7 +126,7 @@ def _orchestration_continue(item, user_id):
     conversation_id, run_id = item["conversation_id"], item["continuation"]["run_id"]
     owned = claim_run_continuation(
         run_id, user_id, conversation_id,
-        authorize=lambda: authorize_conversation(user_id, conversation_id),
+        authorize=lambda: request_conversation(item),
         message_container=cosmos_messages_container, credential_request_id=item["id"],
     )
     if owned is None:
@@ -186,6 +187,7 @@ def _chat_continue(item, user_id):
     async def execute():
         with identity.bridge(target), agent_execution(frame), credential_continuation(descriptor):
             try:
+                request_conversation(item)
                 return await invoke_credential_agent(agent, None)
             finally:
                 await close_agent_resources(kernel)
@@ -196,26 +198,42 @@ def _chat_continue(item, user_id):
         try:
             result = asyncio.run(execute())
             stage = "credential_response_persistence"
-            authorize_conversation(user_id, item["conversation_id"])
+            context = request_conversation(item)
             message = {
-                "id": uuid.uuid4().hex, "conversation_id": item["conversation_id"], "user_id": user_id,
+                "id": "credential_answer_" + hashlib.sha256(item["id"].encode()).hexdigest(),
+                "conversation_id": item["conversation_id"], "user_id": user_id,
                 "role": "assistant", "content": str(result),
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "metadata": {"action_credential_continuation": True},
+                "agent_name": target.get("name"),
+                "agent_display_name": target.get("display_name") or target.get("name"),
             }
             saved = _persist_screened_assistant(message, user_id, settings=settings)
+            publish = credential_services().publish_chat_result
+            if publish:
+                saved = publish(user_id, item, saved)
             stage = "credential_continuation_finalization"
             _finish_request(user_id, item["id"], item["continuation_claim"], "completed")
             yield serialize_sse({"content": saved["content"]})
             yield serialize_sse({
-                "done": True, "conversation_id": item["conversation_id"], "message_id": saved["id"],
+                "done": True,
+                "conversation_id": context.get("credential_visible_conversation_id", item["conversation_id"]),
+                "conversation_kind": context.get("credential_conversation_kind", "personal"),
+                "message_id": saved["id"],
                 "reload_messages": True,
             })
         except ActionCredentialsRequired as error:
             _finish_request(user_id, item["id"], item["continuation_claim"], "superseded")
             yield serialize_sse(error.event)
         except Exception as error:
-            _finish_request(user_id, item["id"], item["continuation_claim"], "failed")
+            status = "failed"
+            if descriptor.get("visible_conversation_id") and stage in {
+                "credential_response_persistence", "credential_continuation_finalization",
+            }:
+                # The journal is already complete: an explicit retry may deliver its
+                # saved response, but must not invoke the external operation again.
+                status = "ready"
+            _finish_request(user_id, item["id"], item["continuation_claim"], status)
             _log_continuation_failure(error, item, stage)
             yield serialize_sse({"error": "Saved work could not be continued. Refresh this conversation."})
 
@@ -231,14 +249,18 @@ def register_route_backend_action_credentials(bp):
     def action_credentials_pending():
         user_id = get_current_user_id()
         conversation_id = request.args.get("conversation_id")
-        authorize_conversation(user_id, conversation_id)
+        context = authorize_conversation(user_id, conversation_id)
         requests = []
-        for row in state.pending(user_id, conversation_id):
-            try:
-                item, manifest = authorize_request(user_id, row["id"])
-                requests.append(safe_request(item, manifest))
-            except (PermissionError, LookupError, ActionCredentialError):
-                continue
+        for execution_id in pending_execution_ids(context, conversation_id):
+            for row in state.pending(user_id, execution_id):
+                try:
+                    item, manifest = authorize_request(user_id, row["id"])
+                    requests.append(safe_request(item, manifest))
+                except (PermissionError, LookupError):
+                    continue
+                except ActionCredentialError as error:
+                    if error.status_code >= 500:
+                        raise
         return jsonify({"requests": requests, "csrf_token": _csrf_token()})
 
     @bp.route("/api/action-credentials/<request_id>", methods=["GET"])
@@ -298,6 +320,6 @@ def register_route_backend_action_credentials(bp):
 
             request_cancellation(
                 item["continuation"]["run_id"], user_id, item["conversation_id"],
-                lambda: authorize_conversation(user_id, item["conversation_id"]),
+                lambda: request_conversation(item),
             )
         return jsonify({"credential_request": safe_request(item, manifest)})

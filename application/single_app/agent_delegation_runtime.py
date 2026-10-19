@@ -563,7 +563,7 @@ class AgentExecution:
         return {"citations": _delegation_records_citations(records), "usage": _delegation_records_usage(records)}
 
     async def _run(self, messages, *, streaming=False, **kwargs):
-        from functions_action_credentials import _continuation, credential_continuation
+        from functions_action_credentials import _continuation, capture_chat_origin, credential_continuation
         from functions_action_credential_continuation import invoke_credential_agent, stream_credential_agent
 
         if self.prevent_replay and self._invocations and self.budget.attempts:
@@ -609,6 +609,7 @@ class AgentExecution:
                     "mode": "chat", "checkpoint_id": self.credential_checkpoint_id,
                     "agent_reference": deepcopy(self.reference),
                     "construction_profile": getattr(selected, "construction_profile", "agent-core"),
+                    **capture_chat_origin(self.identity.user_id, self.identity.conversation_id),
                 }
             if streaming:
                 with agent_execution(frame), credential_continuation(descriptor):

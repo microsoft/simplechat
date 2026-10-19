@@ -2,7 +2,7 @@
 
 Fixed/Implemented in version: **0.261.333**.
 
-Current application version: **0.261.346**.
+Current application version: **0.261.348**.
 
 Related version update: `application/single_app/config.py`.
 
@@ -92,15 +92,37 @@ endpoint.
 ### Dedicated credential interaction
 
 The SSE event is `action_credentials_required`, with a safe
-`credential_request`. Both chat interfaces recover pending requests for the
-owned conversation.
+`credential_request`. Both chat interfaces recover only the invoking actor's
+pending requests for a currently authorized personal, group-scoped, or shared
+conversation.
 
 The credential form is distinct from ordinary elicitation. Its inputs are
 ephemeral and submitted only to the credential API. They do not enter generic
 prompt drafts, tool/model arguments, chat transcripts, exports, telemetry,
-browser storage, or collaboration views. Input elements are cleared on
+browser storage, or other participants' collaboration views. Input elements are cleared on
 submission, cancellation, unmount, and conversation/account changes. This is a
 data-flow boundary, not a promise that JavaScript can zero all browser memory.
+
+### Shared conversation routing
+
+Fixed/Implemented in version: **0.261.348**. Credential-specific authorization
+maps the visible shared conversation to its verified hidden execution source.
+It does not relax the general personal-conversation authorizer. Requests and
+checkpoints retain their original execution ID in the invoking user's partition;
+the private browser DTO uses the visible conversation ID and
+`conversation_kind: "collaborative"`.
+
+The server records and verifies the original shared AI question and its sender.
+Live credential events stay on the requesting HTTP stream, never the shared
+event registry. Reopening the shared conversation recovers only the current
+actor's prompts. Empty authorized lists are successful responses, not connection
+errors. This works with each actor's own authorized personal agents without
+making those agents available to the other participants.
+
+Current participation, group status, source linkage and original question are
+rechecked before saving, resuming and publishing. Shared Orchestrate continues
+to use its same-ID backing and existing creator-only authorization. Credential
+reads do not create a backing conversation or persist missing participant state.
 
 ### Continuation
 
@@ -125,6 +147,14 @@ save alone is not a completed action. Existing failed requests are not migrated
 or replayed. See the
 [chat reconstruction fix](../fixes/ACTION_CREDENTIAL_CHAT_RECONSTRUCTION_FIX.md).
 
+For shared chat, the resumed answer is screened and mirrored into the shared
+thread with the original question, agent and invoking-actor attribution. Stable
+answer IDs prevent duplicate messages. If publication fails after the journal
+has completed, an explicit refreshed continuation can deliver the retained
+answer without calling the external action again. Private request IDs, identity
+choices and secrets are not published with that answer. See the
+[shared-chat fix](../fixes/SHARED_CHAT_ACTION_CREDENTIALS_FIX.md).
+
 Yamcs is read-only. Future write-capable adapters must handle operation
 journaling and uncertain effects before acquiring equivalent continuation
 support.
@@ -133,7 +163,7 @@ support.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/action-credentials/pending?conversation_id=...` | Recover safe outstanding requests for an owned conversation. |
+| `GET /api/action-credentials/pending?conversation_id=...` | Recover the current actor's safe outstanding requests for an authorized conversation, including a visible shared ID. |
 | `GET /api/action-credentials/<id>` | Read an authorized request's safe current state. |
 | `POST /api/action-credentials/<id>/submit` | Select compatible personal identities or save new credentials for the requested slots. |
 | `POST /api/action-credentials/<id>/continue` | Resume the server-owned blocked work, using only the expected request revision. |
@@ -198,6 +228,14 @@ transport. Unlike same-instance journal tests, it constructs a fresh agent for
 continuation. `ui_tests/test_v2_action_credentials_backend.py` additionally
 drives the bundled React card through real Flask routes and checks that the
 provider result becomes the same conversation's assistant response.
+
+Shared routing and privacy are covered by
+`functional_tests/test_action_credentials_shared_conversations.py` and the
+shared scenarios in `test_action_credentials_chat_reconstruction.py`: private
+per-actor lists, read-only recovery, membership/origin revocation, both live
+event formats, one external invocation, and idempotent shared answer delivery.
+The V2 browser suites cover shared routing, empty states, error-specific copy,
+single-flight retry, stale-response isolation, and real shared Flask history.
 
 Local validation for **0.261.333** passed 44 dedicated backend tests and 36
 credential browser cases, plus the React type check and production build.

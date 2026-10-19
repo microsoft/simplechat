@@ -71,14 +71,16 @@ def shared_conversation(conversation_id):
         return None
 
 
-def authorize_shared_orchestration(collaboration, user_id):
+def authorize_shared_orchestration(collaboration, user_id, *, read_only=False):
     """Require a current participant who started the conversation; return the backing fields."""
     from functions_collaboration import (
         assert_user_can_participate_in_collaboration_conversation,
         is_group_collaboration_conversation,
     )
 
-    assert_user_can_participate_in_collaboration_conversation(user_id, collaboration)
+    assert_user_can_participate_in_collaboration_conversation(
+        user_id, collaboration, **({"read_only": True} if read_only else {}),
+    )
     if str(collaboration.get('created_by_user_id') or '').strip() != str(user_id or '').strip():
         raise SharedOrchestrationError()
     return {

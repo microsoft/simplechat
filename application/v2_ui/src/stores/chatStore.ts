@@ -1680,7 +1680,9 @@ async function runChatStream(
  */
 export async function continueCredentialChat(credentialRequest: CredentialRequest): Promise<void> {
     const state = useChatStore.getState();
-    if (state.activeConversationId !== credentialRequest.conversation_id || state.streaming) {
+    const kind = credentialRequest.conversation_kind ?? 'personal';
+    if (state.activeConversationId !== credentialRequest.conversation_id || state.streaming ||
+        (state.activeConversationKind && state.activeConversationKind !== kind)) {
         throw new Error('Open this conversation and wait for its current response before continuing.');
     }
     useChatStore.setState({
@@ -1693,6 +1695,7 @@ export async function continueCredentialChat(credentialRequest: CredentialReques
     let failure: Error | null = null;
     await runChatStream(null, credentialRequest.conversation_id, {
         reloadOnDone: true,
+        kind,
         transport: async (handlers, signal) => {
             try {
                 const response = await openCredentialContinuation(credentialRequest, signal);

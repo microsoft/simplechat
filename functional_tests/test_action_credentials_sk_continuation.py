@@ -1,7 +1,7 @@
 # test_action_credentials_sk_continuation.py
 """Real SK direct-action credential suspension and exact tool-boundary resume.
 
-Version: 0.261.337
+Version: 0.261.348
 Implemented in: 0.261.333
 No model/provider network is used; the existing real SK scripted-provider harness
 proves completed tools are retained rather than replayed.
@@ -29,9 +29,26 @@ from test_action_personal_credentials import CredentialContainer, manifest, modu
 @pytest.fixture(autouse=True)
 def continuation_services(runtime, monkeypatch):
     continuation = importlib.import_module("functions_action_credential_continuation")
+    credentials = importlib.import_module("functions_action_credentials")
     screening = importlib.import_module("content_screening.access")
     agents = importlib.import_module("functions_agent_delegation")
     settings = importlib.import_module("functions_settings")
+
+    def authorize(user_id, conversation_id):
+        if (user_id, conversation_id) != ("actor", "conversation"):
+            raise PermissionError("Execution identity changed.")
+        return {"id": conversation_id, "user_id": user_id}
+
+    def unused(*args, **kwargs):
+        raise AssertionError("The SK journal test must not perform identity CRUD.")
+
+    monkeypatch.setattr(credentials, "_services", credentials.CredentialServices(
+        current_user_id=lambda: "actor", authorize_conversation=authorize,
+        resolve_manifest=lambda *args, **kwargs: runtime.manifest,
+        read_identity=unused, list_identities=lambda *args: [],
+        identity_supports_usage=unused, read_identity_auth=unused,
+        create_identity=unused, update_identity=unused,
+    ))
     monkeypatch.setattr(continuation, "_services", continuation.CredentialContinuationServices(
         collect_sources=lambda: screening.current_request_source_provenance(),
         authorize_source=lambda *args, **kwargs: screening.assert_document_available(*args, **kwargs),

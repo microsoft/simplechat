@@ -62,6 +62,13 @@ credentials; it is not an ordinary chat message or a generic follow-up question.
 | Cancel blocked work | Cancels the outstanding credential request rather than continuing with missing credentials. | Pending or ready credential request |
 | Reload requests | Reads current request state after a save/continuation conflict or transport error. Unsaved secret inputs are not recovered. | Credential request load/recovery error |
 
+Shared-conversation routing was fixed in **0.261.348**. These cards are private
+to the invoking participant even when the eventual answer is shared. Each
+participant can use their own authorized personal agents, not another person's
+agents or identities. **Reload requests** becomes **Checking requests...**
+and is disabled during its check. An empty list shows no credential notice;
+session/access errors are distinguished from a failed request-state check.
+
 Credential values go directly to the credential API, never the composer,
 model, or shared transcript. See [Use your own credentials with a shared action]({{ '/guides/personal-action-credentials/' | relative_url }}).
 

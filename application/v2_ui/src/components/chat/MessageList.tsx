@@ -1585,6 +1585,7 @@ export function MessageList() {
         streamError,
         streamAuthUrl,
         activeConversationId,
+        activeConversationKind,
         retryPresentation,
         completedReply,
     } = useChatStore();
@@ -1741,7 +1742,8 @@ export function MessageList() {
                         {activeConversationId && tailPlan && (
                             <ActiveOrchestrationCard conversationId={activeConversationId} />
                         )}
-                        {activeConversationId ? <CredentialRequestCards conversationId={activeConversationId} /> : null}
+                        {activeConversationId ? <CredentialRequestCards conversationId={activeConversationId}
+                            conversationKind={activeConversationKind} /> : null}
                         <AgentActivityIndicator />
                         <TypingIndicator />
                     </div>
