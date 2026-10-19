@@ -33,6 +33,9 @@ import { conversationModes } from '../../../application/v2_ui/src/lib/conversati
 import { OrchestrationPlanCard } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanCard';
 import { ElicitationCard } from '../../../application/v2_ui/src/components/chat/ElicitationCard';
 import { CredentialRequestCards } from '../../../application/v2_ui/src/components/chat/CredentialRequestCard';
+import { ActionRecoveryNotice } from '../../../application/v2_ui/src/components/chat/ActionRecoveryNotice';
+import * as actionRecovery from '../../../application/v2_ui/src/lib/actionRecovery';
+import * as chatSse from '../../../application/v2_ui/src/lib/sse';
 import * as credentialEvents from '../../../application/v2_ui/src/lib/actionCredentialEvents';
 import { ActionAuthentication } from '../../../application/v2_ui/src/components/workspaceActions/ActionAuthentication';
 import type { ActionConfiguration, ActionTypeDefinition } from '../../../application/v2_ui/src/lib/workspaceAuthoring';
@@ -218,6 +221,7 @@ type ComponentName =
     | 'OrchestrationPlanCard'
     | 'ElicitationCard'
     | 'CredentialRequestCards'
+    | 'ActionRecoveryNotice'
     | 'ActionCredentialAuthoring'
     | 'OrchestrationPlanPanel'
     | 'OrchestrationRunView'
@@ -250,6 +254,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     OrchestrationPlanCard,
     ElicitationCard,
     CredentialRequestCards,
+    ActionRecoveryNotice,
     ActionCredentialAuthoring,
     OrchestrationPlanPanel,
     OrchestrationRunView,
@@ -417,6 +422,8 @@ const harness = {
     sharing,
     components,
     credentialEvents,
+    actionRecovery,
+    chatSse,
 };
 
 declare global {

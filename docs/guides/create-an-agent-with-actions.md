@@ -4,7 +4,7 @@ title: "Create an agent with actions"
 description: "Attach approved actions to an agent so it can use tools while answering."
 section: "Guides"
 audience: user
-version: "0.261.096"
+version: "0.261.347"
 ---
 
 ## What this does
@@ -79,10 +79,25 @@ See [Personal action credentials]({{ '/guides/personal-action-credentials/' | re
 
 ## Troubleshooting
 
+Since **0.261.347** (`application/single_app/config.py`), classic and V2 chat
+identify assigned actions that cannot load before starting a local-agent
+response. **Recheck** after fixing the action, keep the message unsent with
+**Cancel / choose another agent**, or explicitly **Continue without these
+actions** for this request. An editor link appears only when you may edit the
+action's owning scope. **Notify owner/admin** sends an optional in-app report;
+it does not disclose your question.
+
+Saved action names may contain hyphens. SimpleChat now gives those actions
+compatible runtime-only identifiers; you do not need to rename saved actions
+or recreate their assignments. Successful loading still does not establish
+service sign-in, consent, or successful delivery. Never resend an uncertain
+calendar/email operation merely because an availability check passes.
+
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | The action is not listed | It is not in the same allowed scope or actions are disabled | Confirm the action exists in the workspace and governance allows it. |
 | A Foundry agent cannot attach actions | Foundry agents cannot attach local SimpleChat actions | Use a **Local** agent for SimpleChat actions. |
+| Chat identifies unavailable assigned actions | One or more actions failed registration or preparation | Review the named actions, use an authorized editor or report, then recheck. Continue without them only if the remaining capabilities are sufficient. |
 
 ## Related
 

@@ -51,7 +51,7 @@ class ClassicCredentialFixture:
         self.submit_status = 200
         self.continue_status = 200
         self.get_status = 200
-        self.page.on("pageerror", lambda error: self.errors.append(str(error)))
+        self.page.on("pageerror", lambda error: self.errors.append(error.stack or str(error)))
         self.page.route(f"{ORIGIN}/**", self._route)
 
     def _json(self, route, value, status=200):
@@ -111,6 +111,7 @@ class ClassicCredentialFixture:
             asset = APP / "static" / relative
             if self.real_stream and relative.startswith("js/chat/") and relative not in {
                 "js/chat/chat-action-credentials.js", "js/chat/chat-streaming.js",
+                "js/chat/chat-action-recovery.js",
             }:
                 source = (APP / "static" / "js" / "chat" / "chat-streaming.js").read_text(encoding="utf-8")
                 exports = []

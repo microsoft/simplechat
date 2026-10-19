@@ -21,6 +21,9 @@ import { escapeHtml } from './chat-utils.js';
 import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNotification } from './chat-desktop-notifications.js';
 import { getMessageReasoningAdjustments, renderMessageReasoningAdjustments } from './chat-reasoning.js';
 import { getAnalysisContextRevision, offerSavedAnalysis } from './chat-analysis-results.js';
+import {
+    actionRecoveryHeaders, getActionRecoveryRevision, prepareActionRequest, setActionRecoveryResume, showActionRecovery,
+} from './chat-action-recovery.js';
 
 let currentStreamController = null;
 let currentStreamContext = null;
@@ -28,6 +31,12 @@ const MAX_STREAM_CLIENT_ERROR_LENGTH = 500;
 const USER_MESSAGE_PERSISTED_EVENT_TYPE = 'user_message_persisted';
 
 window.SimpleChatActionCredentials?.setContinuationConsumer(continueActionCredentialStream);
+setActionRecoveryResume(body => {
+    const { action_recovery: previousDecision, ...pending } = body;
+    sendMessageWithStreaming(
+        { ...pending, action_recovery_nonce: crypto.randomUUID() }, null, pending.conversation_id,
+    );
+});
 
 export function continueActionCredentialStream(requestFactory, conversationId) {
     if (!isConversationCurrentlyActive(conversationId)) {
@@ -727,6 +736,8 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         fallbackAgentInfo = null,
         initialPersistedUserMessageId = null,
         onM365Resume = null,
+        actionRecoveryBody = null,
+        actionRecoveryRevision = getActionRecoveryRevision(),
         analysisContextRevision = getAnalysisContextRevision(),
     } = options;
 
@@ -806,6 +817,19 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         );
     }
 
+    function pauseForActionRecovery(data) {
+        if (data?.type !== 'action_recovery_required' || !actionRecoveryBody) return false;
+        streamCompleted = true;
+        stopThoughtPolling();
+        clearStreamingThoughtSession(tempAiMessageId);
+        removeStreamingStopButton(tempAiMessageId);
+        getStreamingMessageElement(tempAiMessageId)?.remove();
+        clearCurrentStreamController(abortController);
+        showActionRecovery(data, actionRecoveryBody, actionRecoveryRevision);
+        if (typeof onFinally === 'function') onFinally();
+        return true;
+    }
+
     function pauseForActionCredentials(data) {
         if (data?.type !== 'action_credentials_required') return false;
         streamCompleted = true;
@@ -863,6 +887,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         if (response.headers?.get('Content-Type')?.includes('application/json')) {
             return response.json().then(data => {
                 capturePendingActions(data);
+                if (pauseForActionRecovery(data)) return;
                 if (pauseForActionCredentials(data)) return;
                 if (pauseForMicrosoft365SignIn(data)) {
                     recoverPendingActions();
@@ -911,6 +936,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         function processStreamData(data) {
             eventCount += 1;
             lastChunkAt = Date.now();
+            if (pauseForActionRecovery(data)) return true;
             if (pauseForActionCredentials(data)) return true;
             if (Array.isArray(data.reasoning_adjustments) || Array.isArray(data.metadata?.reasoning_adjustments)) {
                 reasoningAdjustments = getMessageReasoningAdjustments(data, reasoningAdjustments);
@@ -1309,6 +1335,16 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         readStream();
         
     }).catch(async error => {
+        if (error.actionRecoveryStopped) {
+            stopThoughtPolling();
+            clearStreamingThoughtSession(tempAiMessageId);
+            removeStreamingStopButton(tempAiMessageId);
+            getStreamingMessageElement(tempAiMessageId)?.remove();
+            clearCurrentStreamController(abortController);
+            if (!error.actionRecoveryCancelled && !abortController.signal.aborted && typeof onError === 'function') onError(error.message, error);
+            if (typeof onFinally === 'function') onFinally();
+            return;
+        }
         capturePendingActions(getStreamErrorPayload(error));
         recoverPendingActions();
         if (abortController.signal.aborted) {
@@ -1329,6 +1365,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
             return;
         }
 
+        if (pauseForActionRecovery(getStreamErrorPayload(error))) return;
         if (pauseForMicrosoft365SignIn(getStreamErrorPayload(error))) {
             return;
         }
@@ -1387,19 +1424,33 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
     const recoveryConversationId = currentConversationId || messageData?.conversation_id || window.currentConversationId || null;
 
     return consumeStreamingResponse(
-        signal => fetch(endpoint, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            credentials: 'same-origin',
-            body: JSON.stringify(messageData),
-            signal,
-        }),
+        async signal => {
+            let prepared;
+            try {
+                prepared = await prepareActionRequest(messageData, signal);
+                if (!prepared || signal.aborted) {
+                    const cancelled = new Error('Request cancelled before sending. Your message is preserved.');
+                    cancelled.actionRecoveryCancelled = true;
+                    throw cancelled;
+                }
+            } catch (error) {
+                error.actionRecoveryStopped = true;
+                throw error;
+            }
+            return fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...actionRecoveryHeaders() },
+                credentials: 'same-origin',
+                body: JSON.stringify(prepared),
+                signal,
+            });
+        },
         tempAiMessageId,
         tempUserMessageId,
         {
             ...options,
+            actionRecoveryBody: messageData,
+            actionRecoveryRevision: getActionRecoveryRevision(),
             recoveryConversationId,
             onM365Resume: approvalData => {
                 const resumedPayload = {

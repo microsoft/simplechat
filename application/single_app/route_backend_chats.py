@@ -26,7 +26,11 @@ from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoic
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
 from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
 from semantic_kernel_fact_memory_store import FactMemoryStore
-from semantic_kernel_loader import initialize_semantic_kernel, load_user_semantic_kernel
+from semantic_kernel_loader import (
+    initialize_semantic_kernel, initialize_selected_global_agent, load_user_semantic_kernel,
+)
+from action_runtime_contracts import ActionLoadRequired, ActionRecoveryError, ActionRecoveryRequired, action_binding_key
+from functions_action_recovery import check_chat_actions, validate_recovery_agent
 from semantic_kernel_plugins.plugin_invocation_thoughts import (
     register_plugin_invocation_thought_callback,
 )
@@ -3955,6 +3959,15 @@ def _set_authorized_chat_request_context(user_id, conversation_id, scope_context
             allow_new=bool(getattr(g, 'm365_new_conversation', False)),
         )
     agent_selection = request_body.get('agent_info')
+    if agent_selection:
+        validate_recovery_agent(
+            _resolve_canonical_chat_agent(user_id, get_settings(), agent_selection), request_body,
+        )
+    elif request_body.get('action_recovery') is not None:
+        raise ActionRecoveryError()
+    if agent_selection and not getattr(g, 'action_recovery_admitted', False):
+        check_chat_actions(request_body, admit=True)
+        g.action_recovery_admitted = True
     if agent_selection and not getattr(g, 'm365_chat_preflight_complete', False):
         agent = _resolve_canonical_chat_agent(user_id, get_settings(), agent_selection)
         if agent:
@@ -3968,6 +3981,8 @@ def _set_authorized_chat_request_context(user_id, conversation_id, scope_context
                 'selected_agent': agent,
                 'tasks': [],
             })
+            excluded = getattr(g, 'action_recovery_excluded_keys', set())
+            manifests = [manifest for manifest in manifests if action_binding_key(manifest) not in excluded]
             if manifests and getattr(g, 'm365_new_conversation', False):
                 g.m365_initial_conversation = _create_personal_conversation(user_id, conversation_id)
                 g.m365_new_conversation = False
@@ -20911,9 +20926,11 @@ def register_route_backend_chats(bp):
                 redis_client = current_app.config.get('SESSION_REDIS') if 'current_app' in globals() else None
                 initialize_semantic_kernel(user_id=user_id, redis_client=redis_client)
             elif enable_semantic_kernel:
-                # Global mode: set g.kernel/g.kernel_agents from builtins
-                g.kernel = getattr(builtins, 'kernel', None)
-                g.kernel_agents = getattr(builtins, 'kernel_agents', None)
+                if getattr(g, 'action_recovery_selected_agent', None):
+                    initialize_selected_global_agent(g.action_recovery_selected_agent, settings, user_id)
+                else:
+                    g.kernel = getattr(builtins, 'kernel', None)
+                    g.kernel_agents = getattr(builtins, 'kernel_agents', None)
             if per_user_semantic_kernel:
                 settings_agents = user_settings.get('agents', [])
                 logging.debug(f"[SK_CHAT] Per-user Semantic Kernel enabled. Using user-specific settings.")
@@ -22045,6 +22062,12 @@ def register_route_backend_chats(bp):
                 'thoughts_enabled': thought_tracker.enabled
             })), 200
 
+        except ActionRecoveryRequired as error:
+            return jsonify(error.event), 409
+        except ActionLoadRequired:
+            return jsonify({"error": "An assigned action became unavailable. No request was automatically replayed."}), 409
+        except ActionRecoveryError:
+            return jsonify({"error": "Action recovery changed or expired. Recheck the selected agent."}), 409
         except ActionCredentialsRequired as error:
             return jsonify(error.event), 409
         except M365ApprovalRequired as error:
@@ -22463,9 +22486,11 @@ def register_route_backend_chats(bp):
                     initialize_semantic_kernel(user_id=user_id, redis_client=redis_client)
                     debug_print(f"[DEBUG] Initialized Semantic Kernel for user {user_id}")
                 elif enable_semantic_kernel:
-                    # Global mode: set g.kernel/g.kernel_agents from builtins
-                    g.kernel = getattr(builtins, 'kernel', None)
-                    g.kernel_agents = getattr(builtins, 'kernel_agents', None)
+                    if getattr(g, 'action_recovery_selected_agent', None):
+                        initialize_selected_global_agent(g.action_recovery_selected_agent, settings, user_id)
+                    else:
+                        g.kernel = getattr(builtins, 'kernel', None)
+                        g.kernel_agents = getattr(builtins, 'kernel_agents', None)
                     debug_print(f"[DEBUG] Using global Semantic Kernel")
 
                 if enable_semantic_kernel and per_user_semantic_kernel:
@@ -26591,6 +26616,12 @@ def register_route_backend_chats(bp):
                         **interrupted_citation_tracking,
                     )
 
+            except ActionRecoveryRequired as error:
+                yield f"data: {json.dumps(error.event)}\n\n"
+            except ActionLoadRequired:
+                yield f"data: {json.dumps({'error': 'An assigned action became unavailable. No request was automatically replayed.', 'done': True})}\n\n"
+            except ActionRecoveryError:
+                yield f"data: {json.dumps({'error': 'Action recovery changed or expired. Recheck the selected agent.', 'done': True})}\n\n"
             except M365ApprovalRequired as error:
                 yield f"data: {json.dumps(record_m365_pending(error, user_message_id=locals().get('user_message_id')))}\n\n"
             except M365SignInRequired as error:

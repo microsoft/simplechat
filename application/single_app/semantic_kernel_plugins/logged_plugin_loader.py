@@ -11,7 +11,6 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Type
 from semantic_kernel import Kernel
 from semantic_kernel.functions import kernel_function
-from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger, plugin_function_logger, auto_wrap_plugin_functions
 from semantic_kernel_plugins.plugin_loader import discover_plugins
@@ -38,6 +37,9 @@ from semantic_kernel_plugins.sql_query_plugin import SQLQueryPlugin
 from semantic_kernel_plugins.tableau_plugin_factory import TableauPluginFactory
 from semantic_kernel_plugins.yamcs_plugin_factory import YamcsPluginFactory
 from app_settings_cache import get_settings_cache
+from action_runtime_contracts import register_action_plugin, runtime_plugin_name, runtime_plugin_names
+from action_credential_contracts import ActionCredentialsRequired
+from functions_m365_approvals import M365PolicyError
 
 class LoggedPluginLoader:
     """Enhanced plugin loader that automatically adds invocation logging."""
@@ -61,6 +63,8 @@ class LoggedPluginLoader:
             bool: True if plugin loaded successfully, False otherwise
         """
         plugin_name = manifest.get('name')
+        if manifest.get("_simplechat_load_failure"):
+            return False
         plugin_type = resolve_action_type(manifest)
         execution_status = get_action_execution_status(manifest)
         if execution_status:
@@ -97,7 +101,7 @@ class LoggedPluginLoader:
             self._wrap_plugin_functions(plugin_instance, plugin_name)
             
             # Register the plugin with the kernel
-            self._register_plugin_with_kernel(plugin_instance, plugin_name)
+            register_action_plugin(self.kernel, plugin_instance, manifest)
             
             # Auto-create companion SQL Schema plugin when loading a SQL Query plugin
             if plugin_type == 'sql_query':
@@ -116,6 +120,8 @@ class LoggedPluginLoader:
             
             return True
             
+        except (ActionCredentialsRequired, M365PolicyError):
+            raise
         except Exception as e:
             log_event(
                 f"[LOGGED_PLUGIN_LOADER] Failed to load plugin: {plugin_name}",
@@ -391,7 +397,7 @@ class LoggedPluginLoader:
                 return
             
             # Create schema manifest from query manifest (same connection details)
-            schema_manifest = dict(query_manifest)
+            schema_manifest = copy_action_manifest(query_manifest)
             schema_manifest['type'] = 'sql_schema'
             schema_manifest['name'] = schema_plugin_name
             
@@ -408,7 +414,7 @@ class LoggedPluginLoader:
                 self._wrap_plugin_functions(schema_instance, schema_plugin_name)
             
             # Register with kernel
-            self._register_plugin_with_kernel(schema_instance, schema_plugin_name)
+            register_action_plugin(self.kernel, schema_instance, schema_manifest, runtime_role="sql_schema")
             
             log_event(
                 f"[LOGGED_PLUGIN_LOADER] Auto-created companion SQL Schema plugin: {schema_plugin_name}",
@@ -416,6 +422,8 @@ class LoggedPluginLoader:
                 level=logging.INFO
             )
             
+        except (ActionCredentialsRequired, M365PolicyError):
+            raise
         except Exception as e:
             log_event(
                 f"[LOGGED_PLUGIN_LOADER] Warning: Failed to auto-create companion schema plugin",
@@ -471,49 +479,20 @@ class LoggedPluginLoader:
         # Return the original method unchanged since logging is handled by decorators
         return original_method
     
-    def _register_plugin_with_kernel(self, plugin_instance, plugin_name: str):
-        """Register the plugin with the Semantic Kernel."""
-        try:
-            if hasattr(plugin_instance, 'get_kernel_plugin'):
-                kernel_plugin = plugin_instance.get_kernel_plugin(plugin_name)
-                if hasattr(self.kernel, 'add_plugin'):
-                    self.kernel.add_plugin(kernel_plugin)
-                else:
-                    self.kernel.plugins.add(kernel_plugin)
-                self.logger.info(f"Registered plugin {plugin_name} with kernel")
-                return
-
-            # Try different registration methods based on SK version
-            if hasattr(self.kernel, 'add_plugin'):
-                # Newer SK versions
-                self.kernel.add_plugin(plugin_instance, plugin_name=plugin_name)
-            elif hasattr(self.kernel, 'import_plugin_from_object'):
-                # Older SK versions
-                self.kernel.import_plugin_from_object(plugin_instance, plugin_name)
-            else:
-                # Fallback method
-                plugin = KernelPlugin.from_object(plugin_instance, plugin_name)
-                self.kernel.plugins.add(plugin)
-            
-            self.logger.info(f"Registered plugin {plugin_name} with kernel")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to register plugin {plugin_name} with kernel: {e}")
-            raise
-    
     def load_multiple_plugins(self, manifests: List[Dict[str, Any]], 
                             user_id: Optional[str] = None) -> Dict[str, bool]:
         """
         Load multiple plugins from manifests.
         
         Returns:
-            Dict[str, bool]: Plugin name -> success status
+            Dict[str, bool]: Unique runtime plugin name -> success status
         """
         results = {}
+        runtime_plugin_names(self.kernel, manifests)
         
         for manifest in manifests:
-            plugin_name = manifest.get('name', 'unknown')
-            results[plugin_name] = self.load_plugin_from_manifest(manifest, user_id)
+            success = self.load_plugin_from_manifest(manifest, user_id)
+            results[runtime_plugin_name(self.kernel, manifest)] = success
         
         successful_count = sum(1 for success in results.values() if success)
         total_count = len(results)

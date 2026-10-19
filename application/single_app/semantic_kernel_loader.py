@@ -83,10 +83,15 @@ from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_
 from functions_authentication import get_current_user_id_or_none
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
 from semantic_kernel_plugins.logged_plugin_loader import create_logged_plugin_loader
+from action_runtime_contracts import (
+    ActionLoadRequired, ActionRecoveryError, action_binding_key, register_action_plugin,
+    runtime_plugin_name, runtime_plugin_names,
+)
+from action_credential_contracts import ActionCredentialsRequired
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from semantic_kernel_plugins.smart_http_plugin import SmartHttpPlugin
 from functions_debug import debug_print
-from flask import g
+from flask import g, has_request_context, request
 from config import cognitive_services_scope
 from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
 from functions_snowflake_operations import SNOWFLAKE_PLUGIN_TYPE, SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS
@@ -1300,6 +1305,17 @@ def load_per_user_core_plugins(kernel, settings):
                   extra={"error_type": type(error).__name__}, level=logging.WARNING)
 
 
+def initialize_selected_global_agent(agent, settings, user_id):
+    """Never apply an actor's temporary exclusions to a shared cached kernel."""
+    kernel = Kernel()
+    load_agent_core_plugins(kernel, settings)
+    kernel, agents = load_single_agent_for_kernel(
+        kernel, agent, settings, g, mode_label="global", execution_user_id=user_id,
+        construction_profile="global",
+    )
+    g.kernel, g.kernel_agents = kernel, agents
+
+
 def initialize_semantic_kernel(user_id: str=None, redis_client=None):
     debug_print(f"[SK_LOADER] Initializing Semantic Kernel and plugins...")
     log_event(
@@ -1393,7 +1409,6 @@ def _require_captured_agent_plugins(plugin_manifests, plugin_names):
         type(plugin_names) is not list or not plugin_names
         or any(type(name) is not str or not name for name in plugin_names)
         or len(set(plugin_names)) != len(plugin_names)
-        or len({manifest.get("name") for manifest in plugin_manifests}) != len(plugin_manifests)
         or any(
             sum(name in (manifest.get("id"), manifest.get("name")) for manifest in plugin_manifests) != 1
             for name in plugin_names
@@ -1448,6 +1463,7 @@ def load_agent_specific_plugins(
         
     print(f"[SK_LOADER] Loading {len(plugin_names)} agent-specific plugins: {plugin_names}")
     
+    recovery_manifests = []
     try:
         merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
         # Create logged plugin loader for enhanced logging
@@ -1469,8 +1485,8 @@ def load_agent_specific_plugins(
                 all_plugin_manifests = _get_governed_personal_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
                 if merge_global:
                     global_plugins = _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
-                    for g in global_plugins:
-                        all_plugin_manifests.append(g)
+                    for global_manifest in global_plugins:
+                        all_plugin_manifests.append(global_manifest)
                 debug_print(f"[SK_LOADER] Retrieved {len(all_plugin_manifests)} personal plugin manifests for user {user_id}")
             else:
                 debug_print(f"[SK_LOADER] Warning: No user_id provided for per-user plugin loading")
@@ -1492,7 +1508,36 @@ def load_agent_specific_plugins(
             plugin_manifests,
             agent_other_settings=agent_other_settings,
             group_id=group_id,
+            preflight=False,
         )
+        recovery_manifests = [copy_action_manifest(manifest) for manifest in plugin_manifests]
+        missing = [
+            reference for reference in plugin_names
+            if not any(reference in (manifest.get("id"), manifest.get("name")) for manifest in plugin_manifests)
+        ]
+        for reference in missing:
+            recovery_manifests.append({
+                "id": reference, "type": "unavailable", "name": "Unavailable assigned action",
+            })
+        # Only ordinary chat may consume a one-shot user decision. Captured and
+        # unattended executions must retain their complete authorized action set.
+        if before_plugins_load is None and current_agent_execution() is None and has_request_context() and (
+            getattr(g, "action_health_probe", False)
+            or request.path in {"/api/chat", "/api/chat/stream", "/api/chat/action-health"}
+        ):
+            from functions_action_recovery import apply_action_recovery
+
+            permitted = apply_action_recovery(recovery_manifests)
+            permitted_keys = {action_binding_key(manifest) for manifest in permitted}
+            plugin_manifests = [
+                manifest for manifest in plugin_manifests if action_binding_key(manifest) in permitted_keys
+            ]
+            missing = [
+                manifest for manifest in permitted if manifest.get("type") == "unavailable"
+            ]
+        else:
+            missing = [manifest for manifest in recovery_manifests if manifest.get("type") == "unavailable"]
+        plugin_manifests = _preflight_m365_plugin_manifests(plugin_manifests)
 
         debug_print(f"[SK_LOADER] Filtered to {len(plugin_manifests)} plugin manifests after matching names/IDs")
         debug_print(f"[SK_LOADER] Plugin names to load: {[manifest.get('name') for manifest in plugin_manifests]}")
@@ -1505,6 +1550,8 @@ def load_agent_specific_plugins(
             plugin_manifests = _prepare_plugin_manifests_for_runtime(plugin_manifests, settings)
         
         if not plugin_manifests:
+            if missing:
+                raise ActionLoadRequired(recovery_manifests, [action_binding_key(manifest) for manifest in missing])
             print(f"[SK_LOADER] Warning: No plugin manifests found for names/IDs: {plugin_names}")
             print(f"[SK_LOADER] Available plugin names: {[p.get('name') for p in all_plugin_manifests]}")
             print(f"[SK_LOADER] Available plugin IDs: {[p.get('id') for p in all_plugin_manifests]}")
@@ -1519,7 +1566,7 @@ def load_agent_specific_plugins(
         successful_count = sum(1 for success in results.values() if success)
         total_count = len(results)
         if before_plugins_load is not None and (
-            set(results) != {manifest["name"] for manifest in plugin_manifests}
+            set(results) != {runtime_plugin_name(kernel, manifest) for manifest in plugin_manifests}
             or not all(results.values())
         ):
             raise OrchestrationInvocationCaptureError()
@@ -1542,17 +1589,28 @@ def load_agent_specific_plugins(
             level=logging.INFO
         )
         
-        # Fallback to original method if logged loader fails completely
-        if successful_count == 0 and total_count > 0:
-            print(f"[SK_LOADER] WARNING: Logged plugin loader failed for all plugins, falling back to original method")
-            log_event("[SK_LOADER] Falling back to original plugin loading method for agent plugins", level=logging.WARNING)
-            _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
-        else:
-            print(f"[SK_LOADER] Logged plugin loader completed successfully: {successful_count}/{total_count}")
+        failures = [action_binding_key(manifest) for manifest in missing] + [
+            action_binding_key(manifest) for manifest in plugin_manifests
+            if not results.get(runtime_plugin_name(kernel, manifest), False)
+        ]
+        if failures and before_plugins_load is None:
+            failed_manifests = [
+                manifest for manifest in plugin_manifests if action_binding_key(manifest) in failures
+            ]
+            _load_agent_plugins_original_method(kernel, failed_manifests, mode_label)
+            failures = [action_binding_key(manifest) for manifest in missing] + [
+                action_binding_key(manifest) for manifest in failed_manifests
+                if runtime_plugin_name(kernel, manifest) not in kernel.plugins
+                or not kernel.plugins[runtime_plugin_name(kernel, manifest)].functions
+            ]
+        if failures:
+            if has_request_context():
+                failures = sorted(set(failures) | set(getattr(g, "action_recovery_excluded_keys", ())))
+            raise ActionLoadRequired(recovery_manifests, failures)
         if before_plugins_load is not None:
             return plugin_manifests
         
-    except (M365PolicyError, ImportError):
+    except (ActionLoadRequired, ActionRecoveryError, ActionCredentialsRequired, M365PolicyError, ImportError, PermissionError):
         raise
     except Exception as e:
         if before_plugins_load is not None:
@@ -1564,52 +1622,18 @@ def load_agent_specific_plugins(
             exceptionTraceback=True
         )
         print(f"[SK_LOADER][Error] Error in agent-specific plugin loading: {e}")
-        
-        # Fallback to original method
-        try:
-            # Get plugin manifests again for fallback
-            if mode_label == "group":
-                if group_id:
-                    all_plugin_manifests = _get_governed_group_plugin_manifests(user_id, group_id, return_type=SecretReturnType.NAME)
-                    if merge_global:
-                        global_plugins = _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
-                        all_plugin_manifests.extend(global_plugins)
-                else:
-                    all_plugin_manifests = []
-            elif mode_label == "per-user":
-                if user_id:
-                    all_plugin_manifests = _get_governed_personal_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
-                    if merge_global:
-                        global_plugins = _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
-                        for g in global_plugins:
-                            all_plugin_manifests.append(g)
-                else:
-                    all_plugin_manifests = []
-            else:
-                all_plugin_manifests = _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
-
-            plugin_manifests = [
-                p for p in all_plugin_manifests
-                if (p.get('type') != 'agent' or allow_agent_actions)
-                and (p.get('id') in plugin_names or (p.get('type') != 'agent' and p.get('name') in plugin_names))
-            ]
-            plugin_manifests = _apply_agent_plugin_runtime_overlays(
-                plugin_manifests,
-                agent_other_settings=agent_other_settings,
-                group_id=group_id,
-            )
-            plugin_manifests = _prepare_plugin_manifests_for_runtime(plugin_manifests, settings)
-            _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
-        except (M365PolicyError, ImportError):
+        if not recovery_manifests:
             raise
-        except Exception as fallback_error:
-            log_event(
-                f"[SK_LOADER][Error] Fallback plugin loading also failed: {fallback_error}",
-                extra={"error": str(fallback_error), "mode": mode_label, "user_id": user_id},
-                level=logging.ERROR,
-                exceptionTraceback=True
-            )
-            print(f"[SK_LOADER][Error] Fallback plugin loading also failed: {fallback_error}")
+        plugin_manifests = _preflight_m365_plugin_manifests(plugin_manifests)
+        _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
+        failures = [
+            action_binding_key(manifest) for manifest in recovery_manifests
+            if runtime_plugin_name(kernel, manifest) not in kernel.plugins
+            or not kernel.plugins[runtime_plugin_name(kernel, manifest)].functions
+        ]
+        if failures:
+            raise ActionLoadRequired(recovery_manifests, failures) from e
+        return
 
 
 def _preflight_m365_plugin_manifests(plugin_manifests):
@@ -1652,7 +1676,7 @@ def prepare_action_plugin_manifest(manifest, settings):
     return hydrate_workspace_identity_in_plugin(prepared)
 
 
-def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=None, group_id=None):
+def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=None, group_id=None, *, preflight=True):
     action_capabilities = {}
     if isinstance(agent_other_settings, dict):
         raw_action_capabilities = agent_other_settings.get('action_capabilities')
@@ -1774,7 +1798,7 @@ def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=
 
         overlaid_manifests.append(manifest_copy)
 
-    return _preflight_m365_plugin_manifests(overlaid_manifests)
+    return _preflight_m365_plugin_manifests(overlaid_manifests) if preflight else overlaid_manifests
 
 
 def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="global"):
@@ -1782,11 +1806,14 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
     Original agent plugin loading method as fallback.
     """
     plugin_manifests = _apply_agent_plugin_runtime_overlays(plugin_manifests)
+    runtime_plugin_names(kernel, plugin_manifests)
     try:
         # Load the filtered plugins using original method
         discovered_plugins = discover_plugins()
         
         for manifest in plugin_manifests:
+            if manifest.get("_simplechat_load_failure"):
+                continue
             try:
                 plugin_type = resolve_action_type(manifest)
             except ValueError:
@@ -1844,27 +1871,17 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                         )
                         
                         if plugin_instance is None:
-                            plugin_instance = PluginErrorRecovery.create_fallback_plugin(name, plugin_type)
-                            
-                        if plugin_instance is None:
                             raise Exception(f"Plugin creation failed: {'; '.join(instantiation_errors)}")
                             
                         plugin = plugin_instance
                     
-                    # Special handling for OpenAPI plugins with dynamic functions
-                    if hasattr(plugin, 'get_kernel_plugin'):
-                        print(f"[SK_LOADER] Using custom kernel plugin method for: {name}")
-                        kernel_plugin = plugin.get_kernel_plugin(name)
-                        kernel.add_plugin(kernel_plugin)
-                    else:
-                        # Standard plugin registration
-                        kernel.add_plugin(KernelPlugin.from_object(name, plugin, description=description))
+                    register_action_plugin(kernel, plugin, manifest)
                     
                     print(f"[SK_LOADER] Successfully loaded agent plugin: {name} (type: {plugin_type})")
                     log_event(f"[SK_LOADER] Successfully loaded agent plugin: {name} (type: {plugin_type}) [{mode_label}]",
                             {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
                             
-                except M365PolicyError:
+                except (ActionCredentialsRequired, M365PolicyError):
                     raise
                 except Exception as e:
                     print(f"[SK_LOADER] Failed to load agent plugin {name}: {e}")
@@ -1876,7 +1893,7 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                 log_event(f"[SK_LOADER] No matching plugin class found for: {name} (type: {plugin_type})",
                         {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
                         
-    except M365PolicyError:
+    except (ActionCredentialsRequired, M365PolicyError):
         raise
     except Exception as e:
         print(f"[SK_LOADER] Error loading agent-specific plugins: {e}")
@@ -2493,7 +2510,7 @@ def load_single_agent_for_kernel(
 
         if invocation_capture is not None:
             if (
-                set(kernel.plugins) != {manifest["name"] for manifest in captured_plugins}
+                set(kernel.plugins) != {runtime_plugin_name(kernel, manifest) for manifest in captured_plugins}
                 or any(not plugin.functions for plugin in kernel.plugins.values())
             ):
                 invocation_capture.refuse()
@@ -2834,16 +2851,20 @@ def _prepare_plugin_manifests_for_runtime(plugin_manifests, settings):
                 prepared = resolve_key_vault_secrets_in_plugins(prepared, settings)
             prepared = hydrate_workspace_identity_in_plugin(prepared)
             prepared_manifests.append(prepared)
+        except (ActionCredentialsRequired, M365PolicyError):
+            raise
         except Exception as exc:
             if mcp_action:
                 _log_unavailable_mcp_action(manifest, exc)
-                continue
-            log_event(
-                "[SK_LOADER] Could not prepare action credentials",
-                extra={"plugin_name": manifest.get("name"), "exception_type": type(exc).__name__},
-                level=logging.WARNING,
-            )
-            prepared_manifests.append(manifest)
+            else:
+                log_event(
+                    "[SK_LOADER] Could not prepare action credentials",
+                    extra={"plugin_name": manifest.get("name"), "exception_type": type(exc).__name__},
+                    level=logging.WARNING,
+                )
+            unavailable = copy_action_manifest(manifest)
+            unavailable["_simplechat_load_failure"] = True
+            prepared_manifests.append(unavailable)
     return prepared_manifests
 
 
@@ -2986,9 +3007,12 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
     Original plugin loading method as fallback.
     """
     plugin_manifests = _apply_agent_plugin_runtime_overlays(plugin_manifests)
+    runtime_plugin_names(kernel, plugin_manifests)
     try:
         discovered_plugins = discover_plugins()
         for manifest in plugin_manifests:
+            if manifest.get("_simplechat_load_failure"):
+                continue
             try:
                 plugin_type = resolve_action_type(manifest)
             except ValueError:
@@ -3056,19 +3080,16 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                             log_event(f"[SK_LOADER] Plugin {name} exposes {len(functions) if functions else 0} functions",
                                     {"plugin_name": name, "plugin_type": plugin_type, "function_count": len(functions) if functions else 0}, 
                                     level=logging.DEBUG)
-                        except M365PolicyError:
+                        except (ActionCredentialsRequired, M365PolicyError):
                             raise
                         except Exception as e:
                             log_event(f"[SK_LOADER] Warning: Plugin {name} get_functions() failed: {e}",
                                     {"plugin_name": name, "plugin_type": plugin_type, "error": str(e)}, level=logging.WARNING)
                     
-                    if hasattr(plugin, 'get_kernel_plugin'):
-                        kernel.add_plugin(plugin.get_kernel_plugin(name))
-                    else:
-                        kernel.add_plugin(KernelPlugin.from_object(name, plugin, description=description))
+                    register_action_plugin(kernel, plugin, manifest)
                     log_event(f"[SK_LOADER] Successfully loaded plugin: {name} (type: {plugin_type}) [{mode_label}]",
                             {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
-                except M365PolicyError:
+                except (ActionCredentialsRequired, M365PolicyError):
                     raise
                 except Exception as e:
                     log_event(f"[SK_LOADER] Failed to instantiate plugin: {name}: {e}",
@@ -3079,7 +3100,7 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
             else:
                 log_event(f"[SK_LOADER] Unknown plugin type: {plugin_type} for plugin '{name}' [{mode_label}]",
                         {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
-    except M365PolicyError:
+    except (ActionCredentialsRequired, M365PolicyError):
         raise
     except Exception as e:
         log_event(f"[SK_LOADER] Error discovering plugin types for {mode_label} mode: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)

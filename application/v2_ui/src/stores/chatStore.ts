@@ -1637,7 +1637,9 @@ async function runChatStream(
     if (options.transport) {
         await options.transport(handlers, controller.signal);
     } else if (requestBody) {
-        await streamChat(requestBody, handlers, controller.signal, options.stream);
+        await streamChat({
+            ...requestBody, action_recovery_client_message_id: options.pendingUserMessageId ?? null,
+        }, handlers, controller.signal, options.stream);
     }
 
     // Only tear down if this stream is still the active one; a newer send may already have
@@ -1678,6 +1680,33 @@ async function runChatStream(
  *
  * Returns false when there is nothing live to attach to, which is the ordinary case.
  */
+export async function resumeActionRecoveryChat(body: ChatStreamRequest): Promise<void> {
+    const current = useChatStore.getState();
+    const conversationId = body.conversation_id;
+    if (!conversationId || current.activeConversationId !== conversationId || current.streaming) {
+        throw new Error('Open the original conversation and wait for its current response before rechecking.');
+    }
+    // This request stopped before persistence. Reuse its optimistic bubble when
+    // still present, rather than appending the same question a second time.
+    const originalId = body.action_recovery_client_message_id;
+    let pendingId = typeof originalId === 'string' ? current.messages.find((message) =>
+        message.id === originalId && message.id.startsWith('pending-user-'))?.id : undefined;
+    if (!pendingId) {
+        pendingId = `pending-user-${crypto.randomUUID()}`;
+        useChatStore.setState({ messages: [...current.messages, {
+            id: pendingId, conversation_id: conversationId, role: 'user',
+            content: body.message, timestamp: new Date().toISOString(),
+        }] });
+    }
+    useChatStore.setState({
+        streaming: true, streamingContent: '', streamError: null, thoughts: [],
+        streamAuthUrl: null, streamingReasoningAdjustments: [],
+    });
+    const { action_recovery: previousDecision, ...pending } = body;
+    await runChatStream({ ...pending, action_recovery_nonce: crypto.randomUUID() },
+        conversationId, { pendingUserMessageId: pendingId, reloadOnDone: true });
+}
+
 export async function continueCredentialChat(credentialRequest: CredentialRequest): Promise<void> {
     const state = useChatStore.getState();
     if (state.activeConversationId !== credentialRequest.conversation_id || state.streaming) {

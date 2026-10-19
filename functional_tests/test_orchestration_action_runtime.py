@@ -1,7 +1,7 @@
 # test_orchestration_action_runtime.py
 """Functional coverage for isolated multi-function action execution.
 
-Version: 0.261.321
+Version: 0.261.347
 Implemented in: 0.261.098; chart sub-step added in 0.261.132
 Operation replay protection added in: 0.261.321
 
@@ -742,12 +742,14 @@ def test_selected_model_governance_precedes_secret_hydration(monkeypatch, scope,
 @pytest.mark.parametrize('plugin_type', ['openapi', 'mcp', 'sql_query'])
 def test_single_manifest_loader_preserves_enabled_functions_and_tracks_companions(runtime, plugin_type):
     """Exercise the real loader seam without importing its live connection factories."""
+    runtime_contracts = importlib.import_module('action_runtime_contracts')
+    credential_contracts = importlib.import_module('action_credential_contracts')
+    approval_contracts = importlib.import_module('functions_m365_approvals')
     action_manifests = importlib.import_module('functions_action_manifest')
     tree = ast.parse((APP_ROOT / 'semantic_kernel_plugins' / 'logged_plugin_loader.py').read_text(encoding='utf-8'))
     loader_class = next(node for node in tree.body if isinstance(node, ast.ClassDef)
                         and node.name == 'LoggedPluginLoader')
-    methods = {'__init__', 'load_plugin_from_manifest', '_register_plugin_with_kernel',
-               '_auto_create_companion_schema_plugin'}
+    methods = {'__init__', 'load_plugin_from_manifest', '_auto_create_companion_schema_plugin'}
     loader_class.body = [
         node for node in loader_class.body if isinstance(node, ast.FunctionDef) and node.name in methods
     ]
@@ -781,6 +783,10 @@ def test_single_manifest_loader_preserves_enabled_functions_and_tracks_companion
         'get_plugin_logger': lambda: None, 'BasePlugin': Plugin, 'SQLSchemaPlugin': Plugin,
         'resolve_action_type': action_manifests.resolve_action_type,
         'get_action_execution_status': action_manifests.get_action_execution_status,
+        'copy_action_manifest': action_manifests.copy_action_manifest,
+        'register_action_plugin': runtime_contracts.register_action_plugin,
+        'ActionCredentialsRequired': credential_contracts.ActionCredentialsRequired,
+        'M365PolicyError': approval_contracts.M365PolicyError,
     }
     exec(compile(ast.Module(body=[loader_class], type_ignores=[]), '<single-action-loader>', 'exec'), namespace)
     kernel = Kernel()
@@ -793,7 +799,10 @@ def test_single_manifest_loader_preserves_enabled_functions_and_tracks_companion
 
     loader._create_plugin_instance = create
     loader._wrap_plugin_functions = lambda *args: None
-    assert loader.load_plugin_from_manifest({'id': 'one-action', 'name': 'chosen', 'type': plugin_type}, 'actor')
+    loaded_successfully = loader.load_plugin_from_manifest(
+        {'id': 'one-action', 'name': 'chosen', 'type': plugin_type}, 'actor',
+    )
+    assert loaded_successfully
     assert loaded == ['one-action']
     expected = {'chosen', 'chosen_schema'} if plugin_type == 'sql_query' else {'chosen'}
     assert set(kernel.plugins) == expected

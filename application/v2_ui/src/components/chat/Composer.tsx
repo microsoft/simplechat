@@ -130,6 +130,7 @@ import {
     type PromptDraft,
 } from '../prompts/PromptEditorDialog';
 import { AiNotice } from './AiNotice';
+import { ActionRecoveryNotice } from './ActionRecoveryNotice';
 import { requestDesktopNotificationPermission } from '../../lib/desktopNotifications';
 import { VoiceInput } from './VoiceInput';
 import { WebSearchNotice } from './WebSearchNotice';
@@ -1680,6 +1681,8 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         </div>
                     )}
 
+                    <ActionRecoveryNotice conversationId={activeConversationId} hasAgent={Boolean(options.agentSelection)}
+                        agentSelection={options.agentSelection} />
                     <ComposerEditor
                         publicWorkspaceSelection={publicWorkspaceSelection}
                         documentScopeControl={!shared && (features.enable_public_workspaces || publicWorkspaceSelection) ? {
