@@ -1,7 +1,7 @@
 # functions_orchestration_memory.py
 """Read-only, audience-bound saved memory for orchestration.
 
-Version: 0.261.214
+Version: 0.261.349
 """
 
 from azure.core.exceptions import AzureError
@@ -12,7 +12,7 @@ from collaboration_models import (
     GROUP_MULTI_USER_CHAT_TYPE,
     PERSONAL_MULTI_USER_CHAT_TYPE,
 )
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 
 
 class OrchestrationMemoryError(ValueError):
@@ -156,4 +156,21 @@ def load_orchestration_memory(
             status='partial' if messages else 'unavailable',
             notices=['Saved facts could not be searched. Any available instruction memories are still included.'],
         )
+    instructions = payload.get('instruction_payload') or {}
+    recall = payload['recall_payload']
+    log_event(
+        '[ORCHESTRATION] Loaded saved memory context.',
+        extra={
+            **workflow_log_context(conversation_id=conversation['id']),
+            'stage': 'saved_memory', 'status': result['status'],
+            'reason': recall['search_mode'],
+            'context_included': bool(messages),
+            'instruction_available_count': instructions.get('total_available', 0),
+            'instruction_selected_count': len(instructions.get('matched_facts') or []),
+            'fact_available_count': recall.get('total_available', 0),
+            'fact_selected_count': len(recall.get('matched_facts') or []),
+            'fact_unembedded_count': recall.get('unembedded_count', 0),
+            'fact_incompatible_count': recall.get('incompatible_count', 0),
+        },
+    )
     return result

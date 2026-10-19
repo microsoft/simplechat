@@ -1,7 +1,7 @@
 # test_orchestration_conversation_sources.py
 """
 Functional regressions for exact conversation-source transformations.
-Version: 0.261.341
+Version: 0.261.349
 Implemented in: 0.261.341
 
 Exercises real discovery, resolver, Flask planning and initialized execution with
@@ -125,31 +125,58 @@ def test_long_paste_is_reloaded_exactly_for_composition_not_used_as_a_preview(re
     assert saved['status'] == 'completed'
 
 
-def test_missing_target_clarifies_without_a_model_or_workspace_fallback(real_http_harness):
+def missing_source_resolution(message):
+    return json.dumps({
+        'relationship': 'clarification', 'resolved_message': message,
+        'message_ids': [], 'requires_retrieval': False,
+        'clarification': 'Which message or text should I use?',
+    })
+
+
+def test_missing_target_clarifies_without_workspace_fallback(real_http_harness, modules, monkeypatch):
     runtime = real_http_harness
     _replace_history(runtime.harness, [])
+    probe = Mock(side_effect=AssertionError('A missing source must not trigger workspace search.'))
+    monkeypatch.setattr(modules.route, 'resolve_candidate_documents', probe)
+    runtime.harness.replies = [missing_source_resolution('Please rewrite that answer.')]
     events = _plan(runtime, 'Please rewrite that answer.')
     assert not any(event.get('type') == 'orchestration_plan' for event in events), events
     assert any('Which message or text' in json.dumps(event) for event in events), events
-    assert runtime.harness.model_calls == []
+    assert len(runtime.harness.model_calls) == 1
+    assert runtime.harness.model_calls[0]['max_tokens'] == 1200
+    probe.assert_not_called()
 
 
 def test_history_disabled_does_not_restore_pasted_content(real_http_harness):
     runtime = real_http_harness
     _replace_history(runtime.harness, long_sources())
     runtime.harness.settings['conversation_history_limit'] = 0
-    events = _plan(runtime, REQUEST)
-    assert any('Which message or text' in json.dumps(event) for event in events), events
-    assert runtime.harness.model_calls == []
-
-
-def test_ambiguous_resolver_new_topic_transformation_cannot_search_all_workspaces(real_http_harness):
-    runtime = real_http_harness
-    _replace_history(runtime.harness, long_sources())
-    runtime.harness.replies = [_new_topic(REQUEST)]
+    runtime.harness.replies = [missing_source_resolution(REQUEST)]
     events = _plan(runtime, REQUEST)
     assert any('Which message or text' in json.dumps(event) for event in events), events
     assert len(runtime.harness.model_calls) == 1
+    payload = json.loads(runtime.harness.model_calls[0]['messages'][1]['content'])
+    assert payload['conversation'] == []
+    assert 'pasted source material' not in json.dumps(payload)
+
+
+def test_resolver_new_topic_transformation_cannot_search_all_workspaces(real_http_harness, modules, monkeypatch):
+    runtime = real_http_harness
+    _replace_history(runtime.harness, long_sources())
+    probe = Mock(side_effect=AssertionError('A transformation must not trigger workspace search.'))
+    monkeypatch.setattr(modules.route, 'resolve_candidate_documents', probe)
+    resolution = json.loads(_new_topic(REQUEST))
+    resolution['requires_retrieval'] = True
+    runtime.harness.replies = [
+        json.dumps(resolution), _search_then_answer_plan(REQUEST), _compose_only_plan(),
+    ]
+    plan = _planned(runtime, REQUEST)
+    assert [step['capability_id'] for step in plan['steps']] == ['compose']
+    payload = json.loads(runtime.harness.model_calls[1]['messages'][1]['content'])
+    assert payload['source_policy'] == 'conversation_only'
+    assert payload['request_resolution']['requires_retrieval'] is False
+    assert len(runtime.harness.model_calls) == 3
+    probe.assert_not_called()
 
 
 def test_no_retrieval_resolution_repairs_inconsistent_workspace_audit_plan(real_http_harness):

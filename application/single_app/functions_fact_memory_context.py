@@ -251,6 +251,7 @@ def retrieve_relevant_fact_memory_entries(
     result = {
         'matched_facts': [], 'search_mode': 'disabled', 'total_available': 0,
         'query_text': str(query_text or '').strip(), 'embedding_backfill_count': 0,
+        'unembedded_count': 0, 'incompatible_count': 0,
     }
     if read_only:
         result['query_text'] = result['query_text'][:READ_ONLY_MEMORY_VALUE_LIMIT]
@@ -280,7 +281,10 @@ def retrieve_relevant_fact_memory_entries(
         return result
     if not read_only:
         result['embedding_backfill_count'] = _backfill_missing_fact_memory_embeddings(fact_store, facts)
-    elif not any(_is_embedding_vector(fact.get('value_embedding')) for fact in facts):
+    result['unembedded_count'] = sum(
+        not _is_embedding_vector(fact.get('value_embedding')) for fact in facts
+    )
+    if read_only and result['unembedded_count'] == len(facts):
         result['search_mode'] = 'embedding_unavailable'
         return result
     try:
@@ -327,6 +331,7 @@ def retrieve_relevant_fact_memory_entries(
             extra={'count': incompatible_count},
             debug_only=True,
         )
+    result['incompatible_count'] = incompatible_count
     candidates.sort(
         key=lambda fact: (
             float(fact.get('similarity') or 0.0),
