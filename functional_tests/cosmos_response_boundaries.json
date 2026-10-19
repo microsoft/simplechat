@@ -15722,7 +15722,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e84fc160cad4acaebc296f8b0864dc040f1bb1d704a55785ee4c65e60c81a80e"
+        "module_sha256": "e1e1d5fd22d370d860867adf4561e3d492ee3e9450a6ba9dfa5eb6f1282c4d95"
       },
       "classification": "sdk-compatible",
       "contract": "_authorize_chat_upload_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
@@ -15749,7 +15749,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e84fc160cad4acaebc296f8b0864dc040f1bb1d704a55785ee4c65e60c81a80e"
+        "module_sha256": "e1e1d5fd22d370d860867adf4561e3d492ee3e9450a6ba9dfa5eb6f1282c4d95"
       },
       "classification": "sdk-compatible",
       "contract": "_resolve_chat_upload_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",

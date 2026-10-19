@@ -1053,13 +1053,12 @@ def get_document_chunks_payload(
     return {
         "document": _serialize_document(document_context.get("document"), document_context.get("scope")),
         "scope": document_context.get("scope"),
-        "scope_id": (
-            document_context.get("conversation_id")
-            or document_context.get("document", {}).get("conversation_id")
-            or document_context.get("public_workspace_id")
-            or document_context.get("group_id")
-            or document_context.get("document", {}).get("user_id")
-        ),
+        "scope_id": {
+            "personal": document_context["document"].get("user_id"),
+            "group": document_context.get("group_id"),
+            "public": document_context.get("public_workspace_id"),
+            "chat": document_context.get("conversation_id") or document_context["document"].get("conversation_id"),
+        }[document_context["scope"]],
         "conversation_id": document_context.get("conversation_id") or document_context.get("document", {}).get("conversation_id"),
         "chunk_count": len(chunks),
         "returned_chunk_count": len(selected_chunks),
