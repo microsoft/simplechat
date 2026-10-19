@@ -15,7 +15,10 @@ from functions_model_endpoint_validation import (
     validate_custom_model_endpoints,
 )
 from functions_settings import *
-from functions_content_safety import normalize_content_safety_violation_message
+from functions_content_safety import (
+    normalize_content_safety_category_threshold,
+    normalize_content_safety_violation_message,
+)
 from functions_rate_limit import normalize_rate_limit_message
 from functions_mcp_server_config import (
     check_inbound_mcp_easy_auth_exclusions,
@@ -1198,6 +1201,20 @@ def register_route_frontend_admin_settings(bp):
             file_download_allowed_public_workspace_ids = normalize_file_download_allowed_public_workspace_ids(
                 form_data.get('file_download_allowed_public_workspace_ids', '')
             )
+            content_safety_category_thresholds = {
+                'Violence': normalize_content_safety_category_threshold(
+                    form_data.get('content_safety_threshold_violence')
+                ),
+                'Hate': normalize_content_safety_category_threshold(
+                    form_data.get('content_safety_threshold_hate')
+                ),
+                'Sexual': normalize_content_safety_category_threshold(
+                    form_data.get('content_safety_threshold_sexual')
+                ),
+                'SelfHarm': normalize_content_safety_category_threshold(
+                    form_data.get('content_safety_threshold_self_harm')
+                ),
+            }
             content_safety_violation_message = normalize_content_safety_violation_message(
                 form_data.get('content_safety_violation_message')
             )
@@ -2765,6 +2782,7 @@ def register_route_frontend_admin_settings(bp):
 
                 # Safety (Content Safety Direct & APIM)
                 'enable_content_safety': form_data.get('enable_content_safety') == 'on',
+                'content_safety_category_thresholds': content_safety_category_thresholds,
                 'content_safety_violation_message': content_safety_violation_message,
                 'content_safety_include_trigger_information': content_safety_include_trigger_information,
                 'content_safety_endpoint': form_data.get('content_safety_endpoint', '').strip(),

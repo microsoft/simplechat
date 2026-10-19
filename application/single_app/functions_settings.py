@@ -17,6 +17,8 @@ from app_settings_store import (
 from config import *
 from functions_appinsights import log_event
 from functions_content_safety import (
+    CONTENT_SAFETY_CATEGORY_KEYS,
+    CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT,
     CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
 )
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
@@ -1750,6 +1752,10 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
+        'content_safety_category_thresholds': {
+            category_key: CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT
+            for category_key in CONTENT_SAFETY_CATEGORY_KEYS
+        },
         'content_safety_violation_message': CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
         'content_safety_include_trigger_information': True,
         'require_member_of_safety_violation_admin': False,
