@@ -1071,9 +1071,8 @@ function getPublicDocumentProcessingState(doc) {
   const pctString = String((doc.percentage_complete ?? doc.percentage) || '0');
   const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
   const docStatus = doc.status || '';
-  const normalizedStatus = docStatus.toLowerCase();
-  const hasError = normalizedStatus.includes('error') || normalizedStatus.includes('failed');
-  const isComplete = pct >= 100 || normalizedStatus.includes('complete') || hasError;
+  const hasError = window.DocumentStatus.isFailure(docStatus);
+  const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
   return { pct, docStatus, hasError, isComplete };
 }
 
@@ -1667,8 +1666,8 @@ function renderPublicDocumentRow(doc) {
   const pctString = String((doc.percentage_complete ?? doc.percentage) || "0");
   const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
   const docStatus = doc.status || "";
-  const isComplete = pct >= 100 || docStatus.toLowerCase().includes("complete") || docStatus.toLowerCase().includes("error");
-  const hasError = docStatus.toLowerCase().includes("error") || docStatus.toLowerCase().includes("failed");
+  const hasError = window.DocumentStatus.isFailure(docStatus);
+  const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
   const isPendingGeneratedArtifact = isPendingGeneratedArtifactDocument(doc);
 
   let firstTdHtml = "";
@@ -1896,8 +1895,8 @@ function pollPublicDocumentStatus(documentId) {
       const pctString = String((doc.percentage_complete ?? doc.percentage) || "0");
       const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
       const docStatus = doc.status || "";
-      const isComplete = pct >= 100 || docStatus.toLowerCase().includes("complete") || docStatus.toLowerCase().includes("error");
-      const hasError = docStatus.toLowerCase().includes("error") || docStatus.toLowerCase().includes("failed");
+      const hasError = window.DocumentStatus.isFailure(docStatus);
+      const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
 
       if (!isComplete && statusRow) {
         // Update progress bar and status text if still processing
@@ -3374,8 +3373,8 @@ function buildPublicFolderDocumentsTable(docs) {
     const pctString = String((doc.percentage_complete ?? doc.percentage) || '0');
     const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
     const docStatus = doc.status || '';
-    const isComplete = pct >= 100 || docStatus.toLowerCase().includes('complete') || docStatus.toLowerCase().includes('error');
-    const hasError = docStatus.toLowerCase().includes('error') || docStatus.toLowerCase().includes('failed');
+    const hasError = window.DocumentStatus.isFailure(docStatus);
+    const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
     const isSelected = publicSelectedDocuments.has(doc.id);
     let firstColHtml = `<input type="checkbox" class="form-check-input document-checkbox${publicSelectionMode ? '' : ' d-none'}" data-document-id="${doc.id}"${isSelected ? ' checked' : ''}>`;
     let actionsHtml = '';

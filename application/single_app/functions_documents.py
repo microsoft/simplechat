@@ -49,6 +49,7 @@ from content_screening.service import (
 )
 from config import *
 from functions_appinsights import log_event
+from functions_document_status import is_document_processing_complete, is_document_processing_failure
 from functions_document_provenance import (
     ORIGIN_FIELD_NAMES,
     ORIGIN_KIND_FIELD,
@@ -3508,10 +3509,10 @@ def calculate_processing_percentage(doc_metadata):
     total_chunks_saved = doc_metadata.get('current_file_chunk', 0)
 
     # --- Final States ---
-    if "processing complete" in status or current_pct == 100:
+    if is_document_processing_complete(status) or current_pct == 100:
         # Ensure it stays 100 if it ever reached it
         return 100
-    if "error" in status or "failed" in status:
+    if is_document_processing_failure(status):
         # Keep the last known percentage on error/failure
         return current_pct
 
@@ -3694,7 +3695,7 @@ def update_document(**kwargs):
         marker = existing_document.get(SCREENING_FIELD)
         if marker is not None and not document_is_available(existing_document):
             requested_status = str(kwargs.get("status") or "").lower()
-            if "complete" in requested_status:
+            if is_document_processing_complete(requested_status):
                 kwargs["status"] = "Content review required" if marker.get("review_required") else "Content screening pending"
             if kwargs.get("percentage_complete") == 100:
                 kwargs["percentage_complete"] = 99
@@ -3763,14 +3764,14 @@ def update_document(**kwargs):
             elif isinstance(status_lower, dict):
                 status_lower = json.dumps(status_lower).lower()
 
-            if "processing complete" in status_lower:
+            if is_document_processing_complete(status_lower):
                 new_percentage = 100
-            elif "error" in status_lower or "failed" in status_lower:
+            elif is_document_processing_failure(status_lower):
                  pass # Percentage already calculated by helper based on 'failed' status
 
             # Ensure percentage doesn't decrease (unless reset on failure or hitting 100)
             # Compare against original_percentage fetched *before* any updates in this call
-            if new_percentage < original_percentage and new_percentage != 0 and "failed" not in status_lower and "error" not in status_lower:
+            if new_percentage < original_percentage and new_percentage != 0 and not is_document_processing_failure(status_lower):
                  existing_document['percentage_complete'] = original_percentage
             else:
                  existing_document['percentage_complete'] = new_percentage
@@ -6881,7 +6882,7 @@ def detect_doc_type(document_id, user_id=None):
 
 def _update_document_for_job(*, operation_guard=None, safe_errors=False, **arguments):
     status = arguments.get("status")
-    if safe_errors and isinstance(status, str) and any(word in status.lower() for word in ("error", "failed")):
+    if safe_errors and is_document_processing_failure(status):
         arguments["status"] = "Document processing failed. Contact an administrator if the problem persists."
     if operation_guard is None:
         return update_document(**arguments)

@@ -132,15 +132,13 @@ function getChatWorkspaceProgressValue(value) {
 function isChatWorkspaceDocumentComplete(doc) {
   const statusText = String(doc?.status || '').toLowerCase();
   return getChatWorkspaceProgressValue(doc?.percentage_complete) >= 100
-    || statusText.includes('processing complete')
-    || statusText.includes('complete')
-    || statusText.includes('error')
-    || statusText.includes('failed');
+    || window.DocumentStatus.isComplete(statusText)
+    || window.DocumentStatus.isFailure(statusText);
 }
 
 function isChatWorkspaceDocumentFailure(doc) {
   const statusText = String(doc?.status || '').toLowerCase();
-  return statusText.includes('error') || statusText.includes('failed');
+  return window.DocumentStatus.isFailure(statusText);
 }
 
 function isChatWorkspaceDocumentSuccessComplete(doc) {
@@ -148,8 +146,7 @@ function isChatWorkspaceDocumentSuccessComplete(doc) {
   return !isChatWorkspaceDocumentFailure(doc)
     && (
       getChatWorkspaceProgressValue(doc?.percentage_complete) >= 100
-      || statusText.includes('processing complete')
-      || statusText.includes('complete')
+      || window.DocumentStatus.isComplete(statusText)
     );
 }
 
@@ -231,9 +228,9 @@ function buildChatWorkspaceAttachmentHtml(attachment) {
   const statusText = String(attachment?.status || 'Queued for workspace processing').trim() || 'Queued for workspace processing';
   const detailsId = getChatWorkspaceProgressDetailsId(workspaceDocumentId);
   const statusLower = statusText.toLowerCase();
-  const progressClass = statusLower.includes('error') || statusLower.includes('failed')
+  const progressClass = window.DocumentStatus.isFailure(statusLower)
     ? 'bg-danger'
-    : (pct >= 100 || statusLower.includes('complete') ? 'bg-success' : 'progress-bar-striped progress-bar-animated bg-info');
+    : (pct >= 100 || window.DocumentStatus.isComplete(statusLower) ? 'bg-success' : 'progress-bar-striped progress-bar-animated bg-info');
 
   return `
     <div class="chat-workspace-upload-progress mt-2 p-2 border rounded bg-body-tertiary"
@@ -302,8 +299,8 @@ function updateChatWorkspaceProgressContainer(container, doc) {
   const pct = getChatWorkspaceProgressValue(doc?.percentage_complete);
   const statusText = String(doc?.status || 'Processing workspace document...').trim() || 'Processing workspace document...';
   const statusLower = statusText.toLowerCase();
-  const hasFailure = statusLower.includes('error') || statusLower.includes('failed');
-  const hasCompleted = !hasFailure && (pct >= 100 || statusLower.includes('complete'));
+  const hasFailure = window.DocumentStatus.isFailure(statusLower);
+  const hasCompleted = !hasFailure && (pct >= 100 || window.DocumentStatus.isComplete(statusLower));
   const progressBar = container.querySelector('.progress-bar');
   const statusElement = container.querySelector('.chat-workspace-upload-status-text');
   const progressElement = container.querySelector('.progress');

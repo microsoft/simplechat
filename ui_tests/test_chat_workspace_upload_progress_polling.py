@@ -1,7 +1,7 @@
 # test_chat_workspace_upload_progress_polling.py
 """
 UI test for chat workspace upload progress polling.
-Version: 0.241.203
+Version: 0.261.349
 Implemented in: 0.241.203
 
 This test ensures workspace-backed chat upload cards keep the progress bar
@@ -13,6 +13,9 @@ registers completed uploads as conversation task documents.
 from pathlib import Path
 
 import pytest
+from playwright.sync_api import expect
+
+from test_v2_chat_context_selection import connect_options  # noqa: F401
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -20,23 +23,9 @@ CHAT_MESSAGES_JS = REPO_ROOT / "application" / "single_app" / "static" / "js" / 
 
 
 @pytest.mark.ui
-def test_chat_workspace_upload_progress_polling_recovers_from_transient_error():
+def test_chat_workspace_upload_progress_polling_recovers_from_transient_error(page):
     """Validate workspace upload progress polling updates the visible chat card."""
-    playwright_sync_api = pytest.importorskip("playwright.sync_api")
-    expect = playwright_sync_api.expect
-    sync_playwright = playwright_sync_api.sync_playwright
-
-    with sync_playwright() as playwright:
-        try:
-            browser = playwright.chromium.launch()
-        except Exception as exc:
-            pytest.skip(f"Playwright browser unavailable: {exc}")
-
-        page = browser.new_page()
-        try:
-            run_chat_workspace_upload_progress_polling_scenario(page, expect)
-        finally:
-            browser.close()
+    run_chat_workspace_upload_progress_polling_scenario(page, expect)
 
 
 def run_chat_workspace_upload_progress_polling_scenario(page, expect):
@@ -56,6 +45,7 @@ def run_chat_workspace_upload_progress_polling_scenario(page, expect):
         </main>
         """
     )
+    page.add_script_tag(path=str(REPO_ROOT / "application" / "single_app" / "static" / "js" / "document-status.js"))
     page.add_script_tag(
         content=f"""
         const chatWorkspaceUploadPolls = new Map();

@@ -1,7 +1,7 @@
 // test_v2_documents_explorer_logic.ts
 //
 // Runtime test for the V2 documents explorer rules.
-// Version: 0.261.048
+// Version: 0.261.349
 // Implemented in: 0.261.048
 //
 // The companion test, test_v2_documents_explorer.py, asserts that the pieces are wired
@@ -75,6 +75,22 @@ function check(name: string, fn: () => void) {
 
 const query = (overrides: Record<string, unknown> = {}): any => ({ ...DEFAULT_DOCUMENT_QUERY, ...overrides });
 const params = (input: string): Record<string, string> => Object.fromEntries(new URLSearchParams(input));
+
+check('document state ignores filename failure words and retains progress and approval contracts', () => {
+    for (const status of [
+        'Processing file failed-policy.md, type: .md',
+        'Processing file error-budget.txt, type: .txt',
+        'Processing file completed-checklist.pdf, type: .pdf',
+        'Retrying Markdown after a transient error',
+    ]) {
+        assert.equal(documentStatus({ status, percentage_complete: 25 }).state, 'processing');
+    }
+    assert.equal(documentStatus({ status: 'Error: failed', percentage_complete: 100 }).state, 'error');
+    assert.equal(documentStatus({ percentage_complete: 'invalid' }).state, 'ready');
+    assert.equal(documentStatus({ status: 'Processing' }).state, 'ready');
+    assert.equal(documentStatus({ percentage_complete: -10 }).percent, 0);
+    assert.equal(documentStatus({ percentage_complete: 100, shared_approval_status: 'not_approved' }).state, 'pending_approval');
+});
 
 /* ------------------------------ query parameters ------------------------------ */
 

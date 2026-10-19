@@ -1,7 +1,7 @@
 # test_group_document_filename_xss_rendering.py
 """
 Browser regressions for group document filename rendering.
-Version: 0.261.029
+Version: 0.261.349
 Implemented in: 0.261.029
 
 Run the real template renderers, access/processing checks, fetch/refresh/polling
@@ -201,6 +201,7 @@ def group_page(page, group_render_sources):
     page.goto("https://simplechat.test/")
     page.add_style_tag(path=str(APP_ROOT / "static" / "css" / "bootstrap.min.css"))
     page.add_script_tag(path=str(APP_ROOT / "static" / "js" / "bootstrap" / "bootstrap.bundle.min.js"))
+    page.add_script_tag(path=str(APP_ROOT / "static" / "js" / "document-status.js"))
     page.add_script_tag(path=str(APP_ROOT / "static" / "js" / "workspace" / "group-documents-sharing.js"))
     page.add_script_tag(content=script)
     page.evaluate("initializeGroupSharing()")

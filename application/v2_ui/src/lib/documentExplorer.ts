@@ -18,6 +18,7 @@ import type {
     WorkspaceDocument,
 } from './types';
 import { isScreeningAvailable } from './contentScreening';
+import { isDocumentProcessingFailure } from './documentProcessingStatus';
 
 /* -------------------------------------------------------------------------- */
 /* Query state                                                                 */
@@ -364,13 +365,11 @@ export function generatedArtifactRestriction(document: WorkspaceDocument): strin
  * it as permanently stuck at 0% would be worse than saying nothing.
  */
 export function documentStatus(document: WorkspaceDocument): DocumentStatus {
-    const statusText = String(document.status ?? '').toLowerCase();
-
     if (document.generated_artifact_promotion_status === 'approval_failed') {
         return { state: 'error', percent: 0, label: 'Publication handoff failed' };
     }
 
-    if (statusText.includes('error') || statusText.includes('failed')) {
+    if (isDocumentProcessingFailure(document.status)) {
         return { state: 'error', percent: 0, label: 'Error' };
     }
 

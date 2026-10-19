@@ -13,6 +13,7 @@ from content_screening.access import (
     guard_model_callable,
 )
 from content_screening.contracts import DocumentHeldError, ScreeningConflictError, ScreeningError, document_is_available
+from functions_document_status import is_document_processing_complete, is_document_processing_failure
 from agent_execution_context import AgentExecutionCancelled, DelegationBudget
 from action_credential_contracts import ActionCredentialsRequired
 from agent_delegation_runtime import AgentExecution, delegation_citations, delegation_usage, prepare_agent_execution
@@ -1533,7 +1534,7 @@ def _is_search_ready_chat_upload_workspace_document(document_item):
         return False
 
     status = str(document_item.get('status') or '').strip().lower()
-    if 'error' in status or 'failed' in status:
+    if is_document_processing_failure(status):
         return False
 
     try:
@@ -1548,7 +1549,7 @@ def _is_search_ready_chat_upload_workspace_document(document_item):
     except (TypeError, ValueError):
         percentage_complete = 0
 
-    return percentage_complete >= 100 or 'processing complete' in status
+    return percentage_complete >= 100 or is_document_processing_complete(status)
 
 
 def _get_chat_upload_workspace_document_scope(document_item):

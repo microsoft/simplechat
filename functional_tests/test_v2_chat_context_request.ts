@@ -1,7 +1,7 @@
 // test_v2_chat_context_request.ts
 //
 // Runtime test for how the V2 composer's context chips become a chat request.
-// Version: 0.261.096
+// Version: 0.261.349
 // Implemented in: 0.261.089
 // Independent context selection implemented in: 0.261.094
 // Shared editor implemented in: 0.261.096
@@ -409,6 +409,28 @@ check('legacy uploads require actual conversation and file-message identities', 
     }, 'notes.txt'), /group workspace/);
 });
 
+check('upload states ignore filenames and stage details without relaxing real failures or approvals', () => {
+    for (const status of [
+        'Processing file failed-policy.md, type: .md',
+        'Processing file error-budget.txt, type: .txt',
+        'Processing file processing complete.md, type: .md',
+        'Retrying Markdown processing after a transient parser concurrency error (1/3)...',
+        'Vision analysis completed (no results)',
+    ]) {
+        assert.equal(chatUploadDocumentStatus({ status, percentage_complete: 0 }).state, 'processing');
+        assert.equal(chatUploadDocumentStatus({ status }).state, 'processing');
+    }
+    assert.equal(chatUploadDocumentStatus({ status: 'Processing complete - no content indexed' }).state, 'ready');
+    assert.equal(chatUploadDocumentStatus({ status: 'Error: failed', percentage_complete: 100 }).state, 'failed');
+    assert.equal(chatUploadDocumentStatus({ status: 'Complete', shared_approval_status: 'not_approved' }).state, 'failed');
+    assert.equal(chatUploadDocumentStatus({
+        status: 'Complete', percentage_complete: 100, generated_artifact_promotion_status: 'approval_failed',
+    }).state, 'failed');
+    assert.equal(chatUploadDocumentStatus({
+        status: 'Complete', percentage_complete: 100, generated_artifact_promotion_status: 'pending_approval',
+    }).state, 'failed');
+});
+
 check('upload validation preserves chat format, account and size gates', () => {
     const text = new File(['source'], 'notes.txt');
     assert.equal(chatUploadValidationError(text, true, 10), null);
@@ -484,6 +506,34 @@ check('processing polls the authorized document endpoint until ready and honors 
         await assert.rejects(pollChatUpload(reference, controller.signal, () => controller.abort()),
             (error: Error) => error.name === 'AbortError');
         assert.equal(calls, 1);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+check('filename-bearing processing and transient errors do not stop personal or group polling', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+        for (const kind of ['personal', 'group'] as const) {
+            let calls = 0;
+            const statuses = [
+                'Processing file FED-failed-harness-followup-20261019-a-FED-17-policy-v1.md, type: .md',
+                'Processing file processing complete.md, type: .md',
+                'Retrying Markdown processing after a transient parser concurrency error (1/3)...',
+                'Processing complete - final metadata extracted',
+            ];
+            globalThis.fetch = async (url) => {
+                assert.equal(String(url), `/api/${kind === 'group' ? 'group_' : ''}documents/workspace-id`);
+                const status = statuses[calls++];
+                return new Response(JSON.stringify({ status, percentage_complete: calls === 4 ? 100 : 20 }),
+                    { headers: { 'Content-Type': 'application/json' } });
+            };
+            const states: string[] = [];
+            await pollChatUpload({ kind: 'document', id: 'workspace-id', scope: { kind, id: 'scope-id' } },
+                new AbortController().signal, (status) => states.push(status.state));
+            assert.deepEqual(states, ['processing', 'processing', 'processing', 'ready']);
+            assert.equal(calls, 4);
+        }
     } finally {
         globalThis.fetch = originalFetch;
     }

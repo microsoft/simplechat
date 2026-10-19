@@ -648,10 +648,8 @@ function buildFolderDocumentsTable(docs) {
         const pctStr = String(doc.percentage_complete);
         const pct = /^\d+(\.\d+)?$/.test(pctStr) ? parseFloat(pctStr) : 0;
         const docStatus = doc.status || '';
-        const isComplete = pct >= 100
-            || docStatus.toLowerCase().includes('complete')
-            || docStatus.toLowerCase().includes('error');
-        const hasError = docStatus.toLowerCase().includes('error');
+        const hasError = window.DocumentStatus.isFailure(docStatus);
+        const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
 
         const currentUserId = window.current_user_id;
         const isOwner = doc.user_id === currentUserId;

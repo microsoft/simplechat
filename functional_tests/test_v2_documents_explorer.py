@@ -3,7 +3,7 @@
 """
 Functional test for the V2 workspace documents explorer.
 
-Version: 0.261.323
+Version: 0.261.349
 Implemented in: 0.261.048
 Shared workspace shell integration: 0.261.127
 
@@ -60,6 +60,8 @@ USERS_ROUTE = APP_DIR / "route_backend_users.py"
 SECTIONS_PY = APP_DIR / "functions_workspace_sections.py"
 DOCUMENTS_FUNCTIONS = APP_DIR / "functions_documents.py"
 DOCUMENT_QUERY_FUNCTIONS = APP_DIR / "functions_document_queries.py"
+sys.path.insert(0, str(APP_DIR))
+from functions_document_status import is_document_processing_failure  # noqa: E402
 
 ENDPOINTS_TS = V2_SRC / "lib" / "endpoints.ts"
 EXPLORER_TS = V2_SRC / "lib" / "documentExplorer.ts"
@@ -119,6 +121,7 @@ def _load_module_functions(path, names):
         "datetime": datetime,
         "timedelta": timedelta,
         "timezone": timezone,
+        "is_document_processing_failure": is_document_processing_failure,
     }
 
     # Constants are executed one at a time and failures are skipped: these modules also
