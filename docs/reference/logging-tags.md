@@ -44,7 +44,7 @@ replaying a cached response does not record another execution.
 
 ## SQL connection diagnostics
 
-Since **0.261.349**, `[SQL_CONNECTION]` records connection-check and runtime
+Since **0.261.351**, `[SQL_CONNECTION]` records connection-check and runtime
 connection failures at WARNING level, independently of debug logging. Application
 Insights must already be configured for these records to reach Azure.
 
@@ -81,6 +81,22 @@ AppTraces
 An `InterfaceError` without structured evidence remains `sql_connection_failed`.
 SQLSTATE class `08` alone does not prove a firewall, TLS, or identity problem.
 See the [SQL action troubleshooting categories]({{ '/reference/actions/sql-query/' | relative_url }}#connection-failure-categories).
+
+## Request-resolution memory diagnostics
+
+Since **0.261.349**, `[ORCHESTRATION_PLANNER]` records
+`stage=request_resolution`, the relationship in `outcome`, memory `status`,
+`memory_context_included`, and `clarification_answer_count`. Hashed conversation
+and turn IDs correlate this decision without logging the request or answers.
+
+`[ORCHESTRATION] Loaded saved memory context.` records instruction/fact available
+and selected counts, unembedded/incompatible fact counts, recall mode in `reason`,
+and the hashed conversation ID. These counts expose selection pressure without
+logging memory values. A selected count below the available count does not alone
+prove a cap omission: relevance, empty values, and embedding compatibility also
+affect selection. Inclusion proves context delivery, not that the model used it.
+See the [request-memory resolution fix](../explanation/fixes/ORCHESTRATION_REQUEST_MEMORY_RESOLUTION_FIX.md)
+for availability states and live-UI validation limits.
 
 ## Current tag inventory
 

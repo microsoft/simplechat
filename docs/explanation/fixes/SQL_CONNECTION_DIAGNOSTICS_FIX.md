@@ -1,4 +1,4 @@
-# SQL connection diagnostics fix - v0.261.349
+# SQL connection diagnostics fix - v0.261.351
 
 ## Issue and root cause
 
@@ -9,8 +9,12 @@ classic callers and runtime plugins could expose raw provider exception text.
 Adding fields at the call site alone was insufficient: the logging boundary
 normally reduces unapproved string properties to their lengths.
 
-**Fixed in version: 0.261.349**, recorded in
+**Fixed in version: 0.261.351**, recorded in
 `application/single_app/config.py`.
+
+The base-branch integration preserves its saved-memory diagnostics and advances
+the application from **0.261.350** to **0.261.351**. SQL implementation-version
+references were updated from the initial branch-only **0.261.349**.
 
 This fixes the diagnostic gap, **not the unresolved cause of FED-16's live
 connection failure**. Successful SQL access using an operator's account does not
@@ -120,6 +124,13 @@ Validation results:
 - The repository-wide logging-tag check remains failing on unrelated existing
   mixed-case tags and inventory drift. All tags in modified product files are
   normalized, and `[SQL_CONNECTION]` is documented.
+
+After integrating base version **0.261.350**, the 114 focused SQL cases, 38
+optimized cases, and 13 documentation checks passed again. Additional inherited
+saved-memory validation reached ten passing cases and five passing subtests, but
+47 cases could not set up because the shared Python installation's OpenSSL dependency lacks
+`lib.GEN_EMAIL`, the environment limitation already noted in the base fix.
+No shared packages, inherited memory code, or assertions were changed to bypass it.
 
 The original live FED-16 acceptance outcome remains unqualified. A separately
 approved deployment and observed connection check are needed to obtain the

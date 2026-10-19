@@ -57,7 +57,7 @@ The V2 editor no longer offers ad hoc custom fields; preserved legacy values rem
 | The agent cannot see relationships | Metadata permissions are missing or relationships are not defined as foreign keys. | Grant metadata visibility or document the relationship in agent instructions. |
 | The action type is not visible as a separate card | `sql_schema` is hidden from the create-action UI. | Use SQL Database for new actions; existing records still open for compatibility. |
 
-Since **0.261.349**, SQL Schema uses the same credential-safe connection diagnostics as SQL Database. A connection failure in `get_database_schema` includes an application-owned `error_code`; the table-list, table-detail, and relationship methods raise the same safe connection exception. This does not change metadata permissions or the handling of errors after a connection succeeds.
+Since **0.261.351**, SQL Schema uses the same credential-safe connection diagnostics as SQL Database. A connection failure in `get_database_schema` includes an application-owned `error_code`; the table-list, table-detail, and relationship methods raise the same safe connection exception. This does not change metadata permissions or the handling of errors after a connection succeeds.
 
 ## Related
 

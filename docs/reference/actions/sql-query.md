@@ -52,7 +52,7 @@ Use SQL Database when the answer depends on exact relational data: joins, filter
 
 ### Connection failure categories
 
-Since **0.261.349**, connection testing and SQL action runtime share safe error messages. The API and supported plugin result objects include an application-owned `error_code` for connection failures; provider details remain in server telemetry.
+Since **0.261.351**, connection testing and SQL action runtime share safe error messages. The API and supported plugin result objects include an application-owned `error_code` for connection failures; provider details remain in server telemetry.
 
 | Error code | Meaning and next step |
 | --- | --- |

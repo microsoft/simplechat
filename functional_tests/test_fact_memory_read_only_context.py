@@ -1,7 +1,7 @@
 # test_fact_memory_read_only_context.py
 """Functional tests for shared read-only saved-memory context.
 
-Version: 0.261.106
+Version: 0.261.349
 Implemented in: 0.261.104
 
 Executes the real leaf module with storage, membership, embeddings and network
@@ -103,6 +103,8 @@ class MemoryContextTests(unittest.TestCase):
             [fact["id"] for fact in payload["recall_payload"]["matched_facts"]],
             ["memory-1"],
         )
+        self.assertEqual(payload["recall_payload"]["incompatible_count"], 2)
+        self.assertEqual(payload["recall_payload"]["unembedded_count"], 0)
         self.embedding.assert_called_once_with("Relevant request", purpose="query")
         self.batch_embeddings.assert_not_called()
         self.store.update_fact_embedding.assert_not_called()
@@ -156,6 +158,7 @@ class MemoryContextTests(unittest.TestCase):
         self.assertEqual(len(payload['citations']), 2)
         self.assertEqual(len(payload['context_messages']), 3)
         self.assertEqual(payload['recall_payload']['embedding_backfill_count'], 0)
+        self.assertEqual(payload['recall_payload']['unembedded_count'], 1)
         for citation in payload['citations']:
             for fact in citation['function_result']['facts']:
                 self.assertLessEqual(len(fact['value']), 2000)

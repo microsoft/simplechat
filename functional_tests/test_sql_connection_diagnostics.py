@@ -1,8 +1,8 @@
 # test_sql_connection_diagnostics.py
 """
 Functional tests for credential-safe SQL connection diagnostics.
-Version: 0.261.349
-Implemented in: 0.261.349
+Version: 0.261.351
+Implemented in: 0.261.351
 
 Validate structured evidence, conservative classification, privacy, and cold import
 behavior without SQL drivers, application bootstrap, Azure access, or network I/O.
