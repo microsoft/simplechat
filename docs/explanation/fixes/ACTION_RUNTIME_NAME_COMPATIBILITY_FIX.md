@@ -4,6 +4,8 @@ Fixed/Implemented in version: **0.261.347**.
 
 Related version update: `application/single_app/config.py`.
 
+Review hardening implemented in version: **0.261.348**.
+
 Issue: [#1781](https://github.com/microsoft/simplechat/issues/1781).
 
 ## Issue and root cause
@@ -83,3 +85,31 @@ workflow owner or its test harness.
 These are registration and recovery checks, not live Graph delivery tests.
 No saved production agent needs renaming, and this fix does not resend
 previously failed or uncertain calendar/email operations.
+
+## Python review hardening
+
+Version **0.261.348** removes an unreachable final raise and redundant manifest
+condition in the exception fallback. The earlier empty-manifest guard still
+re-raises the original failure; a populated fallback either registers usable
+functions or raises `ActionLoadRequired` with the original exception as its
+cause. `test_m365_loader_preflight.py` covers both fallback outcomes.
+
+Recovery's authentication, settings, chat-loader and reporting imports remain
+request-local because their owners depend on completed application bootstrap.
+This deliberately defers dependency-graph cycles; it does not make that graph
+acyclic. `test_action_runtime_recovery.py` checks both real-module import orders
+in fresh normal and optimized Python processes, including bootstrap-free
+discovery, uninitialized storage rejection, request-time health/remediation,
+and rejection of an unknown report incident, with external I/O blocked.
+Existing credential bootstrap coverage separately exercises the real web and
+scheduler initialization paths.
+
+The browser test's `connect_options` import is pytest fixture registration, not
+an unused runtime dependency. Keeping it preserves the configured Azure
+Playwright connection and local-browser fallback.
+
+Review validation passed **88 focused backend tests**, including the normal
+and optimized web/scheduler bootstrap cases, and **26 browser/connection-fixture
+tests**. The reviewed Cosmos inventory still covers 1,066 owners and 411 doubles
+with zero review gaps; only the unchanged continuation-race seam's import
+fingerprint needed reapproval after the test import cleanup.

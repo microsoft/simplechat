@@ -1,5 +1,10 @@
 # functions_action_recovery.py
-"""Private pre-model action recovery, using the existing expiring interaction store."""
+"""Private pre-model action recovery, using the existing expiring interaction store.
+
+Authentication, settings, chat loading and reporting imports stay request-local:
+their owners depend on completed web/scheduler bootstrap. This defers dependency
+cycles rather than removing them, while keeping discovery bootstrap-free.
+"""
 
 from hashlib import sha256
 import hmac

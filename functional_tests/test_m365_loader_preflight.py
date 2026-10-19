@@ -1,13 +1,14 @@
 # test_m365_loader_preflight.py
 """
 Runtime tests for authoritative Microsoft 365 loader preflight and propagation.
-Version: 0.261.347
+Version: 0.261.348
 Implemented in: 0.261.029
 
 Loads the complete real loader module and real M365 context/capability/policy
 modules. Unrelated model, plugin, settings, and cloud adapters are scoped import
 seams; these tests verify loader control flow, not full application cold startup.
 Single-action orchestration provenance/preflight integration was added in 0.261.122.
+Exception fallback cleanup coverage was added in 0.261.348.
 """
 
 import ast
@@ -639,3 +640,43 @@ def test_early_manifest_read_failure_preserves_its_cause(loader_runtime):
         runtime.loader.load_agent_specific_plugins(
             types.SimpleNamespace(plugins={}), ["calendar"], {}, "per-user", user_id="owner",
         )
+
+
+@pytest.mark.parametrize("recovered", [False, True])
+def test_registration_exception_fallback_returns_or_preserves_explicit_failure(loader_runtime, monkeypatch, recovered):
+    from semantic_kernel.functions import kernel_function
+    from action_runtime_contracts import ActionLoadRequired, runtime_plugin_name
+    from functions_action_manifest import bind_action_origin
+
+    runtime = loader_runtime
+
+    class M365CalendarPlugin:
+        @kernel_function
+        def create_calendar_invite(self, subject: str) -> str:
+            raise AssertionError("Recovery must never invoke an action.")
+
+    action = bind_action_origin({
+        "id": "fixture-calendar", "type": "m365_calendar", "name": "FED-fixture-calendar",
+    }, "global", "global")
+    original = deepcopy(action)
+    failure = RuntimeError("Synthetic primary registration failure.")
+    runtime.loader._get_governed_global_plugin_manifests = lambda *args, **kwargs: [action]
+    runtime.log_loader.load_multiple_plugins.side_effect = failure
+    runtime.loader.discover_plugins = lambda: {"M365CalendarPlugin": M365CalendarPlugin} if recovered else {}
+    runtime.loader.PluginHealthChecker.create_plugin_safely.return_value = (M365CalendarPlugin(), [])
+    fallback = Mock(wraps=runtime.loader._load_agent_plugins_original_method)
+    monkeypatch.setattr(runtime.loader, "_load_agent_plugins_original_method", fallback)
+    kernel = Kernel()
+
+    if recovered:
+        result = runtime.loader.load_agent_specific_plugins(kernel, ["fixture-calendar"], {})
+        assert result is None
+        alias = runtime_plugin_name(kernel, action)
+        assert "create_calendar_invite" in kernel.plugins[alias].functions
+    else:
+        with pytest.raises(ActionLoadRequired) as captured:
+            runtime.loader.load_agent_specific_plugins(kernel, ["fixture-calendar"], {})
+        assert captured.value.__cause__ is failure
+        assert not kernel.plugins
+    assert fallback.call_count == 1
+    assert action == original

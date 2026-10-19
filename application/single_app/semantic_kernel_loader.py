@@ -1631,11 +1631,9 @@ def load_agent_specific_plugins(
             if runtime_plugin_name(kernel, manifest) not in kernel.plugins
             or not kernel.plugins[runtime_plugin_name(kernel, manifest)].functions
         ]
-        if recovery_manifests:
-            if failures:
-                raise ActionLoadRequired(recovery_manifests, failures) from e
-            return
-        raise
+        if failures:
+            raise ActionLoadRequired(recovery_manifests, failures) from e
+        return
 
 
 def _preflight_m365_plugin_manifests(plugin_manifests):

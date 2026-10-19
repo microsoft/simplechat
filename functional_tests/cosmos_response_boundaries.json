@@ -32696,7 +32696,7 @@
           "replace_item"
         ],
         "kind": "seam",
-        "imports_sha256": "77e281908a1c1e133deb5f537c7f66d94fe021d1e2ec64cee4836c09947fa4fb"
+        "imports_sha256": "e654b15af64a72cc0e66617e0f69cad0ab687600402c6b25ba685625b99d8792"
       },
       "classification": "fault-injection",
       "contract": "Scoped replace_item fault injection raises an explicit Cosmos 412 only for a continuation claim; all other operations delegate to the installed-SDK CosmosDict container. The regression proves the injected branch ran once and the real state owner kept the incident pending.",

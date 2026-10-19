@@ -1,8 +1,9 @@
 # test_action_runtime_recovery.py
 """
 Actor-bound, pre-model action recovery and authorized reporting regressions.
-Version: 0.261.347
+Version: 0.261.348
 Implemented in: 0.261.347
+Request-time import lifecycle coverage added in: 0.261.348
 
 Runs the real recovery service and conditional interaction storage owner with
 installed-SDK CosmosDict responses. No model, tool, or remote service is called.
@@ -17,7 +18,7 @@ import sys
 import time
 from types import ModuleType, SimpleNamespace
 
-from flask import Blueprint, Flask, g, session
+from flask import Blueprint, Flask, session
 import pytest
 import werkzeug
 
@@ -450,6 +451,57 @@ def test_shared_admission_is_fail_closed_and_never_creates_a_personal_replay(rec
         healthy = env.recovery.check_chat_actions(value, admit=True)
     assert healthy["state"] == "ready"
     assert env.container.items == {}
+
+
+@pytest.mark.parametrize("optimized", [False, True])
+@pytest.mark.parametrize("order", ["recovery-first", "web-first"])
+def test_request_time_recovery_dependencies_resolve_after_real_bootstrap(optimized, order):
+    from test_orchestration_result_imports import run_probe
+
+    probe = r'''
+import sys
+sys.path[:0] = sys.argv[1:3]
+from test_support.offline_bootstrap import offline_app_imports
+
+def check(value, message):
+    if not value:
+        raise AssertionError(message)
+
+with offline_app_imports() as environment:
+    if sys.argv[3] == "recovery-first":
+        import functions_action_recovery as recovery
+        check("config" not in sys.modules, "Recovery discovery initialized application owners.")
+        try:
+            recovery.state.container()
+        except recovery.state.ActionCredentialError as error:
+            check(error.code == "credential_storage_unavailable", "Unexpected early storage failure.")
+        else:
+            raise AssertionError("Recovery silently initialized private storage.")
+    import app as web
+    import functions_action_recovery as recovery
+    import route_backend_chats as chats
+    from flask import session
+    from functions_action_manifest import bind_action_origin
+
+    check(chats.check_chat_actions is recovery.check_chat_actions, "Chat retained a different recovery service.")
+    check(recovery.state.is_configured(), "Web bootstrap did not configure recovery storage.")
+    with web.app.test_request_context():
+        session["user"] = {"oid": "owner", "roles": ["User"]}
+        health = recovery.check_chat_actions({}, check_only=True)
+        check(health["state"] == "not_checked", "No-agent health unexpectedly loaded actions.")
+        manifest = bind_action_origin({"id": "fixture", "name": "FED-fixture"}, "personal", "owner")
+        remediation = recovery._remediation(manifest, "owner")
+        check(remediation["scope"] == "personal", "Request-time remediation lost trusted ownership.")
+        try:
+            recovery.report_action_failure("missing-recovery", "unavailable-action")
+        except LookupError:
+            pass
+        else:
+            raise AssertionError("Reporting accepted an incident that does not exist.")
+    check(not environment.network_attempts, "Deferred recovery services attempted external I/O.")
+print("PASS: recovery discovery and request-time dependencies use completed real bootstrap")
+'''
+    run_probe(probe, (order,), optimized)
 
 
 @pytest.mark.parametrize("endpoint", ["/api/chat", "/api/chat/stream"])
