@@ -39,6 +39,7 @@ PLUGIN_INFRASTRUCTURE_FILES = {
     "plugin_invocation_thoughts.py",
     "plugin_loader.py",
     "plugin_logging_examples.py",
+    "sql_connection_diagnostics.py",
     "sql_odbc_utils.py",
     "ui_test_plugin.py",
 }

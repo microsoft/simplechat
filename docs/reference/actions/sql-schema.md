@@ -52,13 +52,15 @@ The V2 editor no longer offers ad hoc custom fields; preserved legacy values rem
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| Connection fails before metadata discovery | The app cannot establish the configured database connection. | Use the shared [SQL connection failure categories]({{ '/reference/actions/sql-query/' | relative_url }}#connection-failure-categories) and have an administrator inspect the correlated server diagnostic. |
 | Schema output includes too much noise | System tables or broad schemas are included. | Turn off **Include System Tables** and add a **Table Filter**. |
 | The agent cannot see relationships | Metadata permissions are missing or relationships are not defined as foreign keys. | Grant metadata visibility or document the relationship in agent instructions. |
 | The action type is not visible as a separate card | `sql_schema` is hidden from the create-action UI. | Use SQL Database for new actions; existing records still open for compatibility. |
+
+Since **0.261.349**, SQL Schema uses the same credential-safe connection diagnostics as SQL Database. A connection failure in `get_database_schema` includes an application-owned `error_code`; the table-list, table-detail, and relationship methods raise the same safe connection exception. This does not change metadata permissions or the handling of errors after a connection succeeds.
 
 ## Related
 
 - [SQL Query](../sql-query/)
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
 - [Agents administration]({{ '/admin/agents-actions/' | relative_url }})
-

@@ -17,6 +17,7 @@ from semantic_kernel_plugins.sql_odbc_utils import (
     build_sql_server_odbc_connection_string,
     connect_with_sql_server_odbc_fallback,
 )
+from semantic_kernel_plugins.sql_connection_diagnostics import classify_sql_connection_error
 from semantic_kernel_plugins.rocksdb_plugin import (
     AUTH_SCHEME_API_KEY,
     AUTH_SCHEME_BEARER,
@@ -3417,30 +3418,16 @@ def test_sql_connection():
         else:
             return jsonify({'success': False, 'error': f'Unsupported database type: {database_type}'}), 400
 
-    except ImportError as e:
-        if editor_call:
-            return jsonify({'success': False, 'error': 'The required database driver is not available on the server.'}), 400
-        if database_type == 'sqlserver' and 'libodbc' in str(e):
-            return jsonify({
-                'success': False,
-                'error': 'Database driver not installed: the container image is missing the unixODBC runtime required for SQL Server connections.'
-            }), 400
-        return jsonify({'success': False, 'error': f'Database driver not installed: {str(e)}'}), 400
     except Exception as e:
-        if editor_call:
-            log_event(
-                '[PLUGINS] SQL editor connection test failed.',
-                level=logging.WARNING,
-                extra={'database_type': database_type, 'error_type': type(e).__name__},
-            )
-            return jsonify({'success': False, 'error': 'SQL connection failed. Verify the connection and authentication settings.'}), 400
-        error_msg = str(e)
-        if database_type == 'sqlserver' and "Can't open lib 'ODBC Driver 17 for SQL Server'" in error_msg:
-            error_msg = 'The selected ODBC Driver 17 is not installed in this container image. Select ODBC Driver 18 for SQL Server or rebuild the image with Driver 17.'
-        # Sanitize error message to avoid leaking sensitive details
-        if 'password' in error_msg.lower() or 'pwd' in error_msg.lower():
-            error_msg = 'Authentication failed. Please check your credentials.'
-        return jsonify({'success': False, 'error': f'Connection failed: {error_msg}'}), 400
+        diagnostic = classify_sql_connection_error(e, database_type)
+        log_event(
+            '[SQL_CONNECTION] SQL connection check failed.',
+            level=logging.WARNING,
+            extra={**diagnostic.log_properties(), 'operation': 'sql_connection_test'},
+        )
+        return jsonify({
+            'success': False, 'error': diagnostic.message, 'error_code': diagnostic.code,
+        }), 400
 
 
 @bpap.route('/api/plugins/test-cosmos-connection', methods=['POST'])

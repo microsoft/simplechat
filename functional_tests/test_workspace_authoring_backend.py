@@ -1,7 +1,7 @@
 # test_workspace_authoring_backend.py
 """Executable contracts for native personal agent/action authoring.
 
-Version: 0.261.122
+Version: 0.261.349
 Implemented in: 0.261.096
 
 Real Flask route definitions, validators, payload normalizers, Key Vault helpers,
@@ -253,6 +253,10 @@ def environment(monkeypatch):
         rocks = _load_module(stack, "semantic_kernel_plugins.rocksdb_plugin", r"semantic_kernel_plugins\rocksdb_plugin.py")
         modules.append(rocks)
         modules.append(_load_module(stack, "semantic_kernel_plugins.sql_odbc_utils", r"semantic_kernel_plugins\sql_odbc_utils.py"))
+        modules.append(_load_module(
+            stack, "semantic_kernel_plugins.sql_connection_diagnostics",
+            r"semantic_kernel_plugins\sql_connection_diagnostics.py",
+        ))
         keyvault = _load_module(stack, "functions_keyvault")
         schema = _load_module(stack, "json_schema_validation")
         modules.extend([
