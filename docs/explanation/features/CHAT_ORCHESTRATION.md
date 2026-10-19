@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.341** (tracked in `application/single_app/config.py`)
+**Version: 0.261.349** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -26,6 +26,7 @@
 **Photorealistic planned images and reference images implemented in version: 0.261.192**
 **One progress indicator per phase (Planning label, run progress on the plan card only) fixed in version: 0.261.256**
 **Conversation-first source retention, conversation-mode persistence, and semantic diagnostics fixed in version: 0.261.341**
+**Current-message source interpretation and memory-aware request resolution fixed in version: 0.261.349**
 
 ## Overview
 
@@ -605,6 +606,9 @@ enablement lives in a nested capability record rather than a flag.
   Current instructions take precedence. Private conversations use the caller's memory, or
   the first active group's authorized memory in group/all source mode. Shared conversations,
   including owner-held hidden source records, do not receive saved memory.
+  Since **0.261.349**, this context also reaches the early request resolver, before it can
+  ask a clarification. A relevant saved name, role, or preference can therefore resolve
+  the question at that stage, not only after planning has begun.
 
 #### Conversational follow-ups
 
@@ -636,6 +640,11 @@ limits can still exclude older whole turns; this is not an unlimited transcript.
 If the intended conversation source is absent or ambiguous,
 the resolver asks for clarification instead of assuming a search across all
 workspaces. Existing explicit source selections retain their precedence.
+Since **0.261.349**, a current request can supply that source in ordinary prose.
+Words such as "this", "above", or the noun "review" are a reason to check the
+meaning, not proof that historical text is missing. The bounded resolver decides
+whether the request already supplies the source; the no-unrelated-retrieval
+restriction remains in force.
 
 Masked text, inactive attempts, hidden generated artifacts, system/tool records, and
 binary payloads are excluded. Current block revisions are respected. The snapshot and
@@ -653,8 +662,9 @@ production verification limits.
 
 These rules apply to Auto, countdown, and manual approval. They do not introduce rolling
 summaries or cross-conversation transcript lookup. Existing scoped saved memories are
-separate from this history window. First turns without history and simple
-acknowledgments do not require a resolution completion.
+separate from this history window. First turns without history retain the
+inexpensive path unless a potentially ambiguous source transformation needs
+interpretation. Simple acknowledgments still need no resolution completion.
 
 Saved memory recall is read-only: it does not autosave facts or fill missing embeddings.
 Unavailable fact search is identified explicitly; query embeddings may still require a
@@ -662,9 +672,15 @@ model call. Only audience and scope markers are retained with the plan or cached
 clarification, not the raw memory prompt. Current settings, membership, and audience are
 checked again before final synthesis; the recalled scope is reauthorized after the model
 call before publication. Questions and replays also enforce those boundaries.
+An unchanged effective request reuses the authorized recall for planning after
+rechecking access; a changed request refreshes its fact query. An accepted
+clarification and final composition read current memory again. Memory is never
+treated as an accepted clarification answer, missing source text, or permission.
 Answers preserve memory citations. See the
 [capability-context fix](../fixes/ORCHESTRATION_CAPABILITY_CONTEXT_FIX.md#read-only-saved-memory)
-for scope and availability details.
+for scope and availability details, and the
+[request-memory resolution fix](../fixes/ORCHESTRATION_REQUEST_MEMORY_RESOLUTION_FIX.md)
+for diagnostics and the separate live-UI harness repair contract.
 
 Since **0.261.103**, an unused `clarification: null` in the resolver's JSON is
 accepted as "no clarification needed", just like an empty string. It does not
