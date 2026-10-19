@@ -10,7 +10,6 @@ Only external document/chunk, membership, model and result-storage I/O is double
 """
 
 from contextlib import contextmanager
-from copy import deepcopy
 import importlib
 import json
 import sys
