@@ -214,6 +214,10 @@ NOTIFICATION_TYPES = {
         'icon': 'bi-shield-lock',
         'color': 'danger'
     },
+    'action_load_failure': {
+        'icon': 'bi-exclamation-triangle',
+        'color': 'warning'
+    },
     # A reviewer's response to feedback the user sent, sent only when the reviewer chooses to.
     'feedback_response': {
         'icon': 'bi-chat-heart',

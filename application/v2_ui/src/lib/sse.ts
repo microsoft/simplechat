@@ -11,6 +11,9 @@
 import { apiUrl, API_BASE } from './apiClient';
 import type { ChatStreamEvent, ChatStreamRequest } from './types';
 import { publishCredentialRequest } from './actionCredentialEvents';
+import {
+    currentActionRecoveryHeaders, getActionRecoveryRevision, prepareActionRequest, publishActionRecoveryFailure,
+} from './actionRecovery';
 
 const CREDENTIALS_MODE: RequestCredentials = API_BASE ? 'include' : 'same-origin';
 
@@ -84,6 +87,7 @@ export interface ChatStreamHandlers {
     onCancelled?: (event: ChatStreamEvent, accumulated: string) => void;
     /** An error frame arrived, or the transport failed. */
     onError?: (message: string, event?: ChatStreamEvent) => void;
+    onActionRecovery?: (event: ChatStreamEvent) => void;
     /**
      * A reconnect is being attempted; nothing is arriving yet.
      *
@@ -112,6 +116,7 @@ export interface ChatStreamResult {
     /** True when the answer was finished by a reattached stream rather than the original. */
     reconnected: boolean;
     credentialWaiting?: boolean;
+    actionRecoveryWaiting?: boolean;
 }
 
 /**
@@ -292,6 +297,11 @@ async function consumeStreamResponse(
 ): Promise<void> {
     /** Returns true when the frame was terminal and reading should stop. */
     const handleEvent = (event: ChatStreamEvent): boolean => {
+        if (event.type === 'action_recovery_required') {
+            handlers.onActionRecovery?.(event);
+            result.actionRecoveryWaiting = true;
+            return true;
+        }
         if (event.type === 'action_credentials_required') {
             publishCredentialRequest(event.credential_request);
             result.credentialWaiting = true;
@@ -469,7 +479,6 @@ export async function reattachChatStream(
         errored: false,
         reconnected: false,
     };
-
     const attached = await attachToLiveStream(conversationId, handlers, result, signal);
     return attached ? result : null;
 }
@@ -510,6 +519,7 @@ export async function streamChat(
     signal?: AbortSignal,
     options: ChatStreamOptions = {},
 ): Promise<ChatStreamResult> {
+    const recoveryRevision = getActionRecoveryRevision();
     const result: ChatStreamResult = {
         accumulated: '',
         completed: false,
@@ -518,10 +528,30 @@ export async function streamChat(
         reconnected: false,
     };
 
+    try {
+        const prepared = await prepareActionRequest(body, signal);
+        if (!prepared || signal?.aborted) {
+            result.cancelled = true;
+            return result;
+        }
+        body = prepared;
+    } catch (error) {
+        if (signal?.aborted) {
+            result.cancelled = true;
+        } else {
+            result.errored = true;
+            handlers.onError?.(error instanceof Error ? error.message : 'Action availability could not be checked.');
+        }
+        return result;
+    }
     // A new conversation has no id until the server assigns one, and recovery needs it.
     let conversationId = body.conversation_id ?? undefined;
     const trackingHandlers: ChatStreamHandlers = {
         ...handlers,
+        onActionRecovery: (event) => {
+            publishActionRecoveryFailure(event, body, recoveryRevision);
+            handlers.onActionRecovery?.(event);
+        },
         onConversationMetadata: (event) => {
             if (typeof event.conversation_id === 'string' && event.conversation_id) {
                 conversationId = event.conversation_id;
@@ -543,6 +573,7 @@ export async function streamChat(
             headers: {
                 'Content-Type': 'application/json',
                 Accept: 'text/event-stream',
+                ...currentActionRecoveryHeaders(),
             },
             body: JSON.stringify(body),
             signal,
@@ -578,6 +609,11 @@ export async function streamChat(
         }
         // A refused request can still say that its outgoing actions could not be listed.
         if (carriesPendingActions(event)) handlers.onM365PendingActions?.(event);
+        if (event?.type === 'action_recovery_required') {
+            trackingHandlers.onActionRecovery?.(event);
+            result.actionRecoveryWaiting = true;
+            return result;
+        }
         // Reported through onError and returned rather than thrown: failure is already
         // modelled by result.errored, and throwing here would escape as an unhandled
         // rejection and skip the caller's post-stream cleanup.

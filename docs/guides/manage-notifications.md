@@ -51,6 +51,14 @@ Use notifications to catch workflow activity, shared conversation events, approv
 
 ## Use the bell in the V2 interface
 
+Since **0.261.347** (`application/single_app/config.py`), an authorized user can
+report an assigned action's loading failure through **Notify owner/admin** in
+chat. The report points to the action editor and contains safe failure context,
+not the user's question or private conversation. Owners, responsible group
+managers, or application administrators receive it according to the action's
+owning scope. Retrying an uncertain report does not reset an existing notice's
+read or dismissal state.
+
 Since **0.261.195**, the V2 bell sits at the top of the navigation rail, beside the
 application's name or logo. Its badge counts unread notifications up to **9+**. When the rail
 is collapsed to icons, a dot on the bell shows that something is unread.

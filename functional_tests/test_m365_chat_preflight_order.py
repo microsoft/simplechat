@@ -1,7 +1,7 @@
 # test_m365_chat_preflight_order.py
 """
 Regression coverage for binding chat actions before Semantic Kernel loading.
-Version: 0.261.032
+Version: 0.261.347
 Implemented in: 0.261.032
 
 Reproduces the empty-tool selection with the real execution preflight, then
@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # Repository imports follow the standalone source-path setup.
 import functions_m365_execution as execution
 from functions_m365_citations import set_request_m365_display_time_zone
+from action_runtime_contracts import action_binding_key
 from m365_interaction import M365SignInRequired
 from test_support.m365 import CosmosContainer
 
@@ -84,6 +85,9 @@ def test_selected_action_is_bound_before_preflight_and_new_chat_survives_auth_pa
         "workflow_m365_manifests": lambda workflow: ([manifest], workflow),
         "preflight_m365_manifests": preflight,
         "set_request_m365_display_time_zone": set_request_m365_display_time_zone,
+        "validate_recovery_agent": Mock(),
+        "check_chat_actions": Mock(return_value={"state": "ready"}),
+        "action_binding_key": action_binding_key,
     })
     app = Flask(__name__)
     # Since 0.261.303 the helper also records the browser time zone for Microsoft 365 display times.

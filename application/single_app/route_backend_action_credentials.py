@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from flask import Response, jsonify, request, session, stream_with_context
 
 from action_credential_contracts import ActionCredentialError, ActionCredentialsRequired
+from action_runtime_contracts import ActionRecoveryError
+from functions_action_recovery import check_chat_actions, read_recovery, report_action_failure
 from functions_authentication import get_current_user_id, login_required, user_required
 from functions_appinsights import log_event, workflow_log_context
 from functions_action_credentials import (
@@ -77,6 +79,45 @@ def _credential_boundary(function):
         result.headers["Pragma"] = "no-cache"
         return result
     return guarded
+
+
+def _recovery_boundary(function):
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        try:
+            response = function(*args, **kwargs)
+        except ActionRecoveryError:
+            response = jsonify({"error": "Action recovery changed or expired. Recheck the selected agent."}), 409
+        except (PermissionError, LookupError):
+            response = jsonify({"error": "This action recovery is unavailable."}), 404
+        except ActionCredentialError as error:
+            response = jsonify({"error": "Refresh action recovery and try again."}), error.status_code
+        except (TypeError, ValueError):
+            response = jsonify({"error": "Invalid action recovery request."}), 400
+        except Exception as error:
+            log_event("[PLUGINS] Action recovery could not be completed.",
+                      extra={"error_type": type(error).__name__}, level=logging.WARNING)
+            response = jsonify({"error": "Action recovery could not be confirmed. Recheck or retry."}), 503
+        from flask import make_response
+
+        result = make_response(response)
+        result.headers["Cache-Control"] = "no-store"
+        result.headers["Pragma"] = "no-cache"
+        return result
+    return guarded
+
+
+def _recovery_body(fields):
+    expected = session.get("action_credentials_csrf_token") or ""
+    supplied = request.headers.get("X-CSRFToken") or ""
+    if not expected or not hmac.compare_digest(expected, supplied):
+        raise ActionCredentialError("credential_csrf_invalid", 403)
+    if request.content_length is None or request.content_length > state.MAX_CHECKPOINT_BYTES:
+        raise ValueError("Invalid request size.")
+    body = request.get_json(silent=True)
+    if type(body) is not dict or set(body) != fields:
+        raise ValueError("Invalid request.")
+    return body
 
 
 def _finish_request(user_id, request_id, claim, status):
@@ -223,6 +264,59 @@ def _chat_continue(item, user_id):
 
 
 def register_route_backend_action_credentials(bp):
+    @bp.route("/api/action-recovery/context", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @_recovery_boundary
+    def action_recovery_context():
+        return jsonify({"csrf_token": _csrf_token()})
+
+    @bp.route("/api/chat/action-health", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @_recovery_boundary
+    def action_recovery_health():
+        body = _recovery_body({"request"})
+        if type(body["request"]) is not dict:
+            raise ValueError("Invalid request.")
+        return jsonify(check_chat_actions(body["request"]))
+
+    @bp.route("/api/action-recovery/<request_id>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @_recovery_boundary
+    def action_recovery_read(request_id):
+        return jsonify(read_recovery(request_id))
+
+    @bp.route("/api/action-recovery/<request_id>/report", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @_recovery_boundary
+    def action_recovery_report(request_id):
+        body = _recovery_body({"action_key"})
+        if type(body["action_key"]) is not str or len(body["action_key"]) != 64:
+            raise ValueError("Invalid action key.")
+        return jsonify(report_action_failure(request_id, body["action_key"]))
+
+    @bp.route("/api/action-recovery/<request_id>/cancel", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @_recovery_boundary
+    def action_recovery_cancel(request_id):
+        _recovery_body(set())
+        user_id = get_current_user_id()
+        item = state.read(user_id, request_id, record_type="action_recovery")
+        authorize_conversation(user_id, item["conversation_id"])
+        if item["status"] != "pending":
+            raise ActionRecoveryError()
+        state.replace(user_id, item, {"status": "cancelled"}, item["_etag"])
+        return jsonify({"cancelled": True})
+
     @bp.route("/api/action-credentials/pending", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required

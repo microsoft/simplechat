@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.341"
+version: "0.261.347"
 ---
 
 ## How to use this reference
@@ -69,6 +69,27 @@ The conversation details dialog includes a paginated **Microsoft 365 sharing
 and analysis acknowledgements** section. It shows the recorded source, decision,
 effective duration, and approval reference without exposing credentials or
 private profile preferences.
+
+### Unavailable assigned actions
+
+Fixed/Implemented in version: **0.261.347** (`application/single_app/config.py`).
+Classic and V2 chat identify actions that a selected local agent cannot load
+before starting its response. The request remains unsent until you choose;
+the dialog lists affected capabilities and explicitly discloses when none of
+the assigned actions can be used.
+
+| Control | Purpose | Availability |
+| --- | --- | --- |
+| Cancel / choose another agent | Keeps the current request unsent, so you can change the agent instead of accepting reduced capabilities. | Action-loading decision |
+| Recheck | Tests loading again after configuration has been corrected. | Action-loading decision |
+| Continue without these actions | Authorizes one request without the listed failed actions, not a saved change or permission bypass. | Action-loading decision |
+| Open action in a new tab | Opens the existing editor for the action's actual owning scope without leaving chat. | Current action-management permission |
+| Notify owner/admin | Sends a deduplicated, safe in-app failure report to the responsible owner/managers/administrators. | Currently authorized failed action |
+| Preserved unsent message | Lets you inspect the private pending question before deciding to send it. | Recovery dialog or retained notice |
+| Recheck and send preserved request | Starts a fresh availability check of the retained unsent request; healthy restoration alone never sends it. | Retained recovery notice |
+
+Sign-in, personal credential, and Microsoft 365 approval controls remain
+separate. These decisions do not replay earlier calendar/email operations.
 
 ### React V2 navigation on narrow screens
 

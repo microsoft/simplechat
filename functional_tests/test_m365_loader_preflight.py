@@ -1,7 +1,7 @@
 # test_m365_loader_preflight.py
 """
 Runtime tests for authoritative Microsoft 365 loader preflight and propagation.
-Version: 0.261.122
+Version: 0.261.347
 Implemented in: 0.261.029
 
 Loads the complete real loader module and real M365 context/capability/policy
@@ -24,6 +24,8 @@ from unittest.mock import Mock
 
 import pytest
 from flask import Flask, g
+# Initialize the real SDK before the fixture replaces model-client constructors.
+from semantic_kernel import Kernel
 
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -36,6 +38,11 @@ REAL_MODULES = {
     "functions_m365_approvals",
     "functions_msgraph_operations",
     "functions_action_manifest",
+    "action_runtime_contracts",
+    "action_credential_contracts",
+    "functions_yamcs_operations",
+    "semantic_kernel",
+    "semantic_kernel.functions",
 }
 
 
@@ -95,7 +102,9 @@ def loader_runtime(monkeypatch):
     ):
         setattr(loader, name, Mock(return_value=None))
     loader.get_current_user_id_or_none = lambda: "owner"
-    log_loader = types.SimpleNamespace(load_multiple_plugins=Mock(return_value={"calendar": True}))
+    log_loader = types.SimpleNamespace(load_multiple_plugins=Mock(
+        side_effect=lambda values, user_id: {manifest["name"]: True for manifest in values},
+    ))
     loader.create_logged_plugin_loader = lambda kernel: log_loader
     context = execution.M365ExecutionContext(
         actor_user_id="owner",
@@ -320,7 +329,7 @@ def test_pending_approval_escapes_every_loader_before_registration(loader_runtim
     preflight = Mock(side_effect=runtime.pending)
     install_preflight(monkeypatch, runtime, preflight)
     runtime.loader._get_governed_global_plugin_manifests = lambda *args, **kwargs: manifests()
-    kernel = types.SimpleNamespace(add_plugin=Mock())
+    kernel = types.SimpleNamespace(add_plugin=Mock(), plugins={})
     with runtime.execution.m365_execution_context(runtime.context):
         with pytest.raises(runtime.approvals.M365ApprovalRequired) as captured:
             if entry == "agent":
@@ -349,7 +358,7 @@ def test_logged_loader_policy_failure_never_invokes_recovery(loader_runtime, mon
     with runtime.execution.m365_execution_context(runtime.context):
         with pytest.raises(runtime.approvals.M365ApprovalRequired) as captured:
             if entry == "agent":
-                runtime.loader.load_agent_specific_plugins(Mock(), ["calendar", "unrelated"], {})
+                runtime.loader.load_agent_specific_plugins(Mock(plugins={}), ["calendar", "unrelated"], {})
             else:
                 runtime.loader.load_plugins_for_kernel(Mock(), manifests(), {})
     assert captured.value is runtime.pending
@@ -388,28 +397,65 @@ def test_recovery_rechecks_preflight_and_propagates_new_pending_state(loader_run
     monkeypatch.setattr(runtime.loader, "_load_agent_plugins_original_method", fallback)
     with runtime.execution.m365_execution_context(runtime.context):
         with pytest.raises(runtime.approvals.M365ApprovalRequired) as captured:
-            runtime.loader.load_agent_specific_plugins(Mock(), ["calendar", "unrelated"], {})
+            runtime.loader.load_agent_specific_plugins(Mock(plugins={}), ["calendar", "unrelated"], {})
     assert captured.value is runtime.pending
     assert preflight.call_count == 2
     assert fallback.call_count == 0
 
 
 @pytest.mark.parametrize("entry", ["agent_fallback", "global_fallback"])
-def test_original_registration_policy_failure_is_not_logged_away(loader_runtime, monkeypatch, entry):
+@pytest.mark.parametrize("pause", ["approval", "credentials"])
+def test_original_registration_policy_failure_is_not_logged_away(loader_runtime, monkeypatch, entry, pause):
     runtime = loader_runtime
     install_preflight(monkeypatch, runtime, lambda effective: effective)
-    plugin = types.SimpleNamespace(get_kernel_plugin=Mock(side_effect=runtime.pending))
+    from action_credential_contracts import ActionCredentialsRequired
+
+    failure = runtime.pending if pause == "approval" else ActionCredentialsRequired({"id": "fixture"})
+    plugin = types.SimpleNamespace(get_kernel_plugin=Mock(side_effect=failure))
     runtime.loader.discover_plugins = lambda: {"M365CalendarPlugin": type("M365CalendarPlugin", (), {})}
     runtime.loader.PluginHealthChecker.create_plugin_safely.return_value = (plugin, [])
-    kernel = types.SimpleNamespace(add_plugin=Mock())
+    kernel = types.SimpleNamespace(add_plugin=Mock(), plugins={})
     with runtime.execution.m365_execution_context(runtime.context):
-        with pytest.raises(runtime.approvals.M365ApprovalRequired) as captured:
+        with pytest.raises(type(failure)) as captured:
             if entry == "agent_fallback":
                 runtime.loader._load_agent_plugins_original_method(kernel, manifests()[:1])
             else:
                 runtime.loader._load_plugins_original_method(kernel, manifests()[:1], {})
-    assert captured.value is runtime.pending
+    assert captured.value is failure
     assert kernel.add_plugin.call_count == 0
+
+
+@pytest.mark.parametrize("execution", ["ordinary-chat", "delegated", "captured"])
+def test_only_ordinary_chat_can_apply_parent_request_action_exclusions(
+    loader_runtime, monkeypatch, execution,
+):
+    runtime = loader_runtime
+    install_preflight(monkeypatch, runtime, lambda effective: effective)
+    action = manifests()[0]
+    runtime.loader._get_governed_personal_plugin_manifests = Mock(return_value=[action])
+    frame = None if execution == "ordinary-chat" else types.SimpleNamespace(
+        invocation_capture=Mock() if execution == "captured" else None,
+    )
+    runtime.loader.current_agent_execution = lambda: frame
+    recovery = types.ModuleType("functions_action_recovery")
+    recovery.apply_action_recovery = Mock(return_value=[])
+    monkeypatch.setitem(sys.modules, "functions_action_recovery", recovery)
+    kernel = Kernel()
+    app = Flask(__name__)
+    with app.test_request_context("/api/chat/stream", method="POST", json={
+        "action_recovery": {"id": "parent-recovery", "decision": "continue"},
+    }):
+        runtime.loader.load_agent_specific_plugins(
+            kernel, ["calendar"], {}, "per-user", user_id="owner",
+        )
+    if execution == "ordinary-chat":
+        assert recovery.apply_action_recovery.call_count == 1
+        assert runtime.log_loader.load_multiple_plugins.call_count == 0
+    else:
+        assert recovery.apply_action_recovery.call_count == 0
+        assert runtime.log_loader.load_multiple_plugins.call_count == 1
+        loaded = runtime.log_loader.load_multiple_plugins.call_args.args[0]
+        assert [manifest["id"] for manifest in loaded] == ["calendar"]
 
 
 @pytest.fixture
@@ -461,7 +507,7 @@ def test_canonical_preflight_pauses_then_prunes_only_declined_source(actual_poli
     with app.test_request_context():
         g.m365_execution_context = runtime.context
         with pytest.raises(runtime.approvals.M365ApprovalRequired) as captured:
-            runtime.loader.load_agent_specific_plugins(Mock(), ["calendar", "unrelated"], {})
+            runtime.loader.load_agent_specific_plugins(Mock(plugins={}), ["calendar", "unrelated"], {})
         pending = captured.value
         assert runtime.log_loader.load_multiple_plugins.call_count == 0
         with pytest.raises(runtime.approvals.M365ApprovalRequired) as repeated:
@@ -470,7 +516,7 @@ def test_canonical_preflight_pauses_then_prunes_only_declined_source(actual_poli
         saved = runtime.service.decide(pending.approval_id, "owner", {
             "decisions": {"calendar": {"duration": "no"}},
         })
-        runtime.loader.load_agent_specific_plugins(Mock(), ["calendar", "unrelated"], {})
+        runtime.loader.load_agent_specific_plugins(Mock(plugins={}), ["calendar", "unrelated"], {})
         loaded = runtime.log_loader.load_multiple_plugins.call_args.args[0]
         denied = g.m365_declined_sources
     assert saved["status"] == "denied"
@@ -550,3 +596,46 @@ def test_source_denial_keeps_published_snapshot_tools(actual_policy_runtime):
     assert result[0]["enabled_functions"] == ["read_file_chunk"]
     assert result[1] == manifests()[1]
     assert repeated[0]["enabled_functions"] == ["read_file_chunk"]
+
+
+@pytest.mark.parametrize("entry", ["agent", "global"])
+def test_legacy_registration_uses_the_same_runtime_alias(loader_runtime, entry):
+    from semantic_kernel import Kernel
+    from semantic_kernel.functions import kernel_function
+    from action_runtime_contracts import runtime_plugin_name
+    from functions_action_manifest import bind_action_origin
+
+    runtime = loader_runtime
+
+    class M365CalendarPlugin:
+        @kernel_function
+        def create_calendar_invite(self, subject: str) -> str:
+            raise AssertionError("No operation may run during registration.")
+
+    action = bind_action_origin({
+        "id": "fixture-calendar", "type": "m365_calendar", "name": "FED-fixture-calendar",
+    }, "personal", "owner")
+    kernel = Kernel()
+    runtime.loader.discover_plugins = lambda: {"M365CalendarPlugin": M365CalendarPlugin}
+    runtime.loader.PluginHealthChecker.create_plugin_safely.return_value = (M365CalendarPlugin(), [])
+    if entry == "agent":
+        runtime.loader._load_agent_plugins_original_method(kernel, [action])
+    else:
+        runtime.loader._load_plugins_original_method(kernel, [action], {})
+    alias = runtime_plugin_name(kernel, action)
+    assert alias in kernel.plugins
+    assert "create_calendar_invite" in kernel.plugins[alias].functions
+    assert action["name"] == "FED-fixture-calendar"
+
+
+def test_early_manifest_read_failure_preserves_its_cause(loader_runtime):
+    runtime = loader_runtime
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("Synthetic manifest service unavailable.")
+
+    runtime.loader._get_governed_personal_plugin_manifests = unavailable
+    with pytest.raises(RuntimeError, match="Synthetic manifest service unavailable"):
+        runtime.loader.load_agent_specific_plugins(
+            types.SimpleNamespace(plugins={}), ["calendar"], {}, "per-user", user_id="owner",
+        )

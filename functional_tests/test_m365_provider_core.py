@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional tests for source-bounded Microsoft 365 providers and file evidence.
-Version: 0.261.038
+Version: 0.261.347
 Implemented in: 0.261.029
 
 External Graph, authentication, logging, and storage I/O is mocked. The tests
@@ -1475,6 +1475,43 @@ def test_all_typed_plugins_register_without_source_access_or_execution_context(g
         assert set(kernel.functions) == set(functions)
         assert {method["name"] for method in metadata["methods"]} == set(functions)
     assert forbidden.call_count == 0
+
+
+@pytest.mark.parametrize("action_type", ["m365_calendar", "m365_email", "m365_onedrive", "m365_sharepoint"])
+def test_typed_custom_fed_names_register_without_source_access(graph_plugins, monkeypatch, action_type):
+    from action_runtime_contracts import register_action_plugin
+    from functions_action_manifest import bind_action_origin, get_action_origin
+    from semantic_kernel import Kernel
+    from semantic_kernel_plugins.m365_onedrive_plugin import M365OneDrivePlugin
+    from semantic_kernel_plugins.m365_sharepoint_plugin import M365SharePointPlugin
+
+    modules, _ = graph_plugins
+    forbidden = Mock(side_effect=AssertionError("Registration must not authorize, authenticate, or access a source."))
+    for module, names in (
+        (modules["msgraph_plugin"], ("authorize_m365_source", "authorize_m365_capability", "get_m365_context", "get_current_user_info")),
+        (transport_module, ("authorize_m365_source", "authorize_m365_capability", "get_m365_context", "_delegated_token")),
+        (retrieval, ("authorize_m365_source", "authorize_m365_capability", "get_m365_context", "_memory_resolver")),
+    ):
+        for name in names:
+            monkeypatch.setattr(module, name, forbidden)
+    classes = {
+        "m365_calendar": modules["m365_calendar_plugin"].M365CalendarPlugin,
+        "m365_email": modules["m365_email_plugin"].M365EmailPlugin,
+        "m365_onedrive": M365OneDrivePlugin, "m365_sharepoint": M365SharePointPlugin,
+    }
+    action = bind_action_origin({
+        "id": action_type, "name": "FED-unblock-seven-20261019-a-FED-29-send-" + action_type,
+        "type": action_type,
+    }, "personal", "owner")
+    original = deepcopy(action)
+    plugin = classes[action_type](action)
+    kernel = Kernel()
+    alias = register_action_plugin(kernel, plugin, action)
+    assert kernel.plugins[alias].functions
+    assert action == original
+    assert get_action_origin(action).action_id == action_type
+    assert all(len(function.metadata.fully_qualified_name) <= 64 for function in kernel.plugins[alias].functions.values())
+    assert not forbidden.called
 
 
 def test_all_typed_direct_guards_preserve_approval_required_exceptions(graph_plugins, monkeypatch):
