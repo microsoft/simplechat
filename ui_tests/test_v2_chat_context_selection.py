@@ -1,7 +1,7 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.315
+Version: 0.261.347
 Implemented in: 0.261.094
 Single orchestration contract updated in: 0.261.181 (the React V2 branch's 0.261.139)
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
@@ -106,6 +106,7 @@ class ContextApi:
 
     def __init__(self):
         self.requests = []
+        self.public_documents = [dict(document) for document in DOCUMENTS["public"]]
         self.unexpected = []
         self.deferred_document_ids = set()
         self.pending_documents = []
@@ -133,6 +134,9 @@ class ContextApi:
         if is_pending_actions_list(request.method, path):
             # The open conversation's saved outgoing actions: none here.
             route.fulfill(json=pending_actions_payload())
+            return
+        if request.method == "GET" and path == "/api/action-credentials/pending":
+            route.fulfill(json={"success": True, "requests": []})
             return
 
         if request.method == "POST" and path in STREAM_PATHS.values():
@@ -203,16 +207,15 @@ class ContextApi:
                     route.fulfill(json={"tags": [{"name": TAGS[scope]}]})
                     return
                 if path == collection:
-                    # A mock convenience: the real public chat list route ignores `search` and `page`.
+                    if scope == "public":
+                        route.fulfill(json=chat_list(self.public_documents, parse_qs(url.query)))
+                        return
                     query = parse_qs(url.query).get("search", [""])[0].casefold()
                     documents = [
                         document
                         for document in DOCUMENTS[scope]
                         if query in f"{document['title']} {document['file_name']}".casefold()
                     ]
-                    if scope == "public":
-                        route.fulfill(json=chat_list(documents))
-                        return
                     route.fulfill(
                         json={
                             "documents": documents,
@@ -388,6 +391,51 @@ def choose_mention(page: Page, label, *, query=None, keyboard=False):
         "element => element.selectionStart === element.value.length"
         " && element.selectionEnd === element.value.length"
     )
+
+
+def test_public_filename_search_finds_an_older_document(context_page):
+    page, api = context_page
+    api.public_documents = [
+        {"id": f"newer-{index}", "title": f"Unrelated {index}", "file_name": f"newer-{index}.pdf",
+         "public_workspace_id": "public-1", "status": "completed", "_ts": 100 + index}
+        for index in range(8)
+    ] + [{"id": "older-guide", "title": "", "file_name": "older-guide.md",
+          "public_workspace_id": "public-1", "status": "completed", "_ts": 1}]
+    mount_workflow(page)
+    open_picker(page)
+    page.get_by_role("searchbox", name="Search documents", exact=True).fill("OLDER-GUIDE.md")
+    candidate = picker_candidate(page, "older-guide.md")
+    expect(candidate).to_be_visible()
+    expect(picker_candidate(page, "Unrelated")).to_have_count(0)
+    candidate.click()
+    page.get_by_role("button", name="Done", exact=True).click()
+    expect_pills(page, "older-guide.md")
+
+
+@pytest.mark.parametrize("scope", ["personal", "group", "public"])
+@pytest.mark.parametrize("surface", ["picker", "mentions"])
+def test_partial_source_failure_keeps_results_and_can_retry(context_page, scope, surface):
+    page, api = context_page
+    collection = next(path for path, name in COLLECTIONS.items() if name == scope)
+    pattern = f"**{collection}?*"
+    api.expected_resource_errors.add((collection, 503))
+    page.route(pattern, lambda route: route.fulfill(status=503, json={"error": "private-server-detail"}))
+    mount_workflow(page)
+    if surface == "picker":
+        open_picker(page)
+        menu = page.locator("[data-context-picker]")
+    else:
+        page.get_by_role("textbox", name="Message", exact=True).fill("#")
+        menu = page.get_by_role("listbox", name="Context suggestions")
+    expect(menu.get_by_role("alert")).to_contain_text("Other results are still available")
+    expect(menu).not_to_contain_text("private-server-detail")
+    surviving = "Travel policy" if scope == "personal" else "Quarterly brief"
+    expect(menu.get_by_text(surviving, exact=True)).to_be_visible()
+    page.unroute(pattern)
+    menu.get_by_role("button", name="Retry sources", exact=True).click()
+    expect(menu.get_by_role("alert")).to_have_count(0)
+    recovered = {"personal": "Quarterly brief", "group": "Campaign outline", "public": "Travel policy"}[scope]
+    expect(menu.get_by_text(recovered, exact=True)).to_be_visible()
 
 
 def delete_range(page: Page, start, end):

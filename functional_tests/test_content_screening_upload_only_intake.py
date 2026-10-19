@@ -1,7 +1,7 @@
 # test_content_screening_upload_only_intake.py
 """
 Functional tests for upload-only content screening intake.
-Version: 0.261.268
+Version: 0.261.347
 Implemented in: 0.261.230
 Model-generated metadata reaches the search chunks through the background search sync: 0.261.268
 
@@ -509,7 +509,9 @@ def test_a_rename_may_not_change_the_inspected_source_format():
 def test_model_generated_metadata_applies_without_a_hold(management):
     env = management
     env.settings["enable_content_screening"] = True
+    env.settings["enable_extract_meta_data"] = True
     source = env.source.records["document-a"]
+    original_status = source.get("status")
     env.seed_release(source)
     marker = deepcopy(source[SCREENING_FIELD])
     namespace = env.document_helpers
@@ -517,12 +519,15 @@ def test_model_generated_metadata_applies_without_a_hold(management):
         "title": "Generated title", "authors": ["Model author"], "abstract": "Generated abstract",
         "keywords": ["generated"], "publication_date": "2026", "organization": "Contoso",
     }
-    execute_functions("functions_documents.py", {"process_metadata_extraction_background"}, namespace)
+    execute_functions("functions_documents.py", {
+        "process_metadata_extraction_background", "_build_document_scope_args", "is_effectively_empty",
+    }, namespace)
     namespace["process_metadata_extraction_background"]("document-a", "owner", group_id="group-a")
     current = env.source.records["document-a"]
     assert current["title"] == "Generated title" and current["abstract"] == "Generated abstract"
     assert current[SCREENING_FIELD] == marker
-    assert current["status"] == "Metadata extraction complete"
+    assert current.get("status") == original_status
+    assert current["metadata_extraction_status"] == "succeeded"
     assert document_is_available(current)
     available = env.access.assert_document_available("document-a", user_id="owner", group_id="group-a")
     assert available["title"] == "Generated title"

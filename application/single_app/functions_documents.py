@@ -6894,117 +6894,39 @@ def _update_document_for_job(*, operation_guard=None, safe_errors=False, **argum
 def process_metadata_extraction_background(
     document_id, user_id, group_id=None, public_workspace_id=None, *, operation_guard=None, safe_errors=False,
 ):
-    """
-    Background function that calls extract_document_metadata(...)
-    and updates Cosmos DB accordingly.
-    """
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
+    """Analyze metadata without changing the indexed content's readiness."""
     update_doc = update_document if operation_guard is None and not safe_errors else partial(
         _update_document_for_job, operation_guard=operation_guard, safe_errors=safe_errors,
     )
-
+    scope = _build_document_scope_args(
+        document_id, user_id, group_id=group_id, public_workspace_id=public_workspace_id,
+    )
     try:
-        # Log status: starting
-        args = {
-            "document_id": document_id,
-            "user_id": user_id,
-            "percentage_complete": 5,
-            "status": "Metadata extraction started..."
-        }
-
-        if is_public_workspace:
-            args["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args["group_id"] = group_id
-
-        update_doc(**args)
-
-        # Call your existing extraction function
-        args = {
-            "document_id": document_id,
-            "user_id": user_id
-        }
-
-        if is_public_workspace:
-            args["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args["group_id"] = group_id
-
-        if operation_guard is not None or safe_errors:
-            metadata = extract_document_metadata(**args, operation_guard=operation_guard, safe_errors=safe_errors)
-        else:
-            metadata = extract_document_metadata(**args)
-
-
-        if not metadata:
-            # If it fails or returns nothing, log an error status and quit
-            args = {
-                "document_id": document_id,
-                "user_id": user_id,
-                "status": "Metadata extraction returned empty or failed"
-            }
-
-            if is_public_workspace:
-                args["public_workspace_id"] = public_workspace_id
-            elif is_group:
-                args["group_id"] = group_id
-
-            update_doc(**args)
-
+        if not get_settings().get("enable_extract_meta_data", False):
+            update_doc(**scope, metadata_extraction_status="disabled")
             return
-
-        # Persist the returned metadata fields back into Cosmos
-        args_metadata = {
-            "document_id": document_id,
-            "user_id": user_id,
-            "title": metadata.get('title'),
-            "authors": ensure_list(metadata.get('authors')),
-            "abstract": metadata.get('abstract'),
-            "keywords": metadata.get('keywords'),
-            "publication_date": metadata.get('publication_date'),
-            "organization": metadata.get('organization')
+        update_doc(**scope, metadata_extraction_status="running")
+        metadata = extract_document_metadata(
+            **scope, operation_guard=operation_guard, safe_errors=safe_errors,
+        )
+        updates = {
+            key: value for key, value in (metadata or {}).items()
+            if not is_effectively_empty(value)
         }
-
-        if is_public_workspace:
-            args_metadata["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args_metadata["group_id"] = group_id
-
-        saved = update_doc(**args_metadata)
+        saved = update_doc(
+            **scope, **updates, metadata_extraction_status="succeeded" if updates else "empty",
+        )
         if safe_errors and isinstance(saved, dict) and SCREENING_FIELD in saved and not document_is_available(saved):
             return
-
-        args_status = {
-            "document_id": document_id,
-            "user_id": user_id,
-            "status": "Metadata extraction complete",
-            "percentage_complete": 100
-        }
-
-        if is_public_workspace:
-            args_status["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args_status["group_id"] = group_id
-
-        update_doc(**args_status)
-
-    except Exception as e:
-        # Log any exceptions
-        args = {
-            "document_id": document_id,
-            "user_id": user_id,
-            "status": f"Metadata extraction failed: {str(e)}"
-        }
-
-        if is_public_workspace:
-            args["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args["group_id"] = group_id
-
-        update_doc(**args)
+    except Exception as error:
+        log_event(
+            "[DOCUMENT_METADATA_EXTRACTION] Metadata analysis failed.",
+            extra={**scope, "error_type": type(error).__name__}, level=logging.WARNING,
+        )
+        # The guarded write rechecks scope/version; a revoked job must not persist even its failure.
+        update_doc(**scope, metadata_extraction_status="failed")
         if safe_errors:
-            raise
+            raise RuntimeError("Metadata analysis failed.") from error
 
 def extract_document_metadata(
     document_id, user_id, group_id=None, public_workspace_id=None, *, operation_guard=None, safe_errors=False,
@@ -7025,8 +6947,6 @@ def extract_document_metadata(
     if screening_document and SCREENING_FIELD in screening_document:
         require_document_available(screening_document)
     settings = get_settings()
-    enable_user_workspace = settings.get('enable_user_workspace', False)
-    enable_group_workspaces = settings.get('enable_group_workspaces', False)
 
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -7054,8 +6974,8 @@ def extract_document_metadata(
     meta_data_example = {
         "title": "Title here",
         "authors": ["Author 1", "Author 2"],
-        "organization": "Organization or Unknown",
-        "publication_date": "MM/YYYY or N/A",
+        "organization": "Organization if identified",
+        "publication_date": "MM/YYYY if identified",
         "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
         "abstract": "two sentence abstract"
     }
@@ -7117,7 +7037,7 @@ def extract_document_metadata(
         args = {
             "document_id": document_id,
             "user_id": user_id,
-            "status": f"Retrieved document items for document {document_id}"
+            "metadata_extraction_status": "running",
         }
 
         if is_public_workspace:
@@ -7133,15 +7053,8 @@ def extract_document_metadata(
             user_id=group_id if is_group else user_id,
             content=f"Retrieved {len(document_items)} metadata record(s) for document {document_id}"
         )
-    except Exception as e:
-        if operation_guard is not None:
-            raise
-        add_file_task_to_file_processing_log(
-            document_id=document_id,
-            user_id=group_id if is_group else user_id,
-            content=f"Error querying document items for document {document_id}: {e}"
-        )
-        print(f"Error querying document items for document {document_id}: {e}")
+    except Exception:
+        raise
 
     if not document_items:
         return None
@@ -7166,13 +7079,13 @@ def extract_document_metadata(
     add_file_task_to_file_processing_log(
         document_id=document_id,
         user_id=group_id if is_group else user_id,
-        content=f"Extracted metadata for document {document_id}, metadata: {meta_data}"
+        content=f"Read existing metadata fields for document {document_id}"
     )
 
     args = {
         "document_id": document_id,
         "user_id": user_id,
-        "status": f"Extracted metadata for document {document_id}"
+        "metadata_extraction_status": "running",
     }
 
     if is_public_workspace:
@@ -7238,7 +7151,11 @@ def extract_document_metadata(
 
     # --- Step 4: Hybrid Search ---
     try:
-        if enable_user_workspace or enable_group_workspaces:
+        workspace_flag = (
+            "enable_public_workspaces" if is_public_workspace
+            else "enable_group_workspaces" if is_group else "enable_user_workspace"
+        )
+        if settings.get(workspace_flag, False):
             add_file_task_to_file_processing_log(
                 document_id=document_id,
                 user_id=group_id if is_group else user_id,
@@ -7248,7 +7165,7 @@ def extract_document_metadata(
             args = {
                 "document_id": document_id,
                 "user_id": user_id,
-                "status": f"Collecting document data to generate metadata from document: {document_id}"
+                "metadata_extraction_status": "running",
             }
 
             if is_public_workspace:
@@ -7309,16 +7226,11 @@ def extract_document_metadata(
 
         else:
             search_results = "No Hybrid results"
-    except Exception as e:
-        if operation_guard is not None:
-            raise
-        add_file_task_to_file_processing_log(
-            document_id=document_id,
-            user_id=group_id if is_group else user_id,
-            content=f"Error processing Hybrid search for document {document_id}: {e}"
-        )
-        print(f"Error processing Hybrid search for document {document_id}: {e}")
-        search_results = "No Hybrid results"
+    except Exception:
+        raise
+
+    if not search_results or search_results == "No Hybrid results":
+        raise RuntimeError("No indexed content is available for metadata analysis.")
 
     # --- Step 5: Prepare GPT Client ---
     if operation_guard is not None:
@@ -7328,16 +7240,8 @@ def extract_document_metadata(
             settings,
             identity_context={'user_id': user_id},
         )
-    except Exception as e:
-        if operation_guard is not None:
-            raise
-        add_file_task_to_file_processing_log(
-            document_id=document_id,
-            user_id=group_id if is_group else user_id,
-            content=f"Error resolving metadata extraction model for document {document_id}: {e}"
-        )
-        print(f"Error resolving metadata extraction model for document {document_id}: {e}")
-        return meta_data
+    except Exception:
+        raise
 
     # --- Step 6: GPT Prompt and JSON Parsing ---
     if screening_document and SCREENING_FIELD in screening_document:
@@ -7360,6 +7264,7 @@ def extract_document_metadata(
                     f"Current known metadata:\n{json.dumps(meta_data, indent=2)}\n\n"
                     f"Desired metadata structure:\n{json.dumps(meta_data_example, indent=2)}\n\n"
                     f"Please attempt to fill in any missing, or empty values."
+                    f" Leave unknown fields empty. Do not invent authors, dates, or organizations."
                     f"If generating keywords, please create 5-10 keywords."
                     f"Return only JSON."
                 )
@@ -7371,31 +7276,14 @@ def extract_document_metadata(
             messages=messages
         )
 
-    except Exception as e:
-        if operation_guard is not None:
-            raise
-        if screening_document and SCREENING_FIELD in screening_document:
-            log_event(
-                "[CONTENT_SCREENING] Approved-source metadata generation failed.",
-                extra={"document_id": document_id, "error_type": type(e).__name__},
-                level=logging.ERROR,
-            )
-            raise ScreeningError(code="screening_metadata_failed") from e
-        add_file_task_to_file_processing_log(
-            document_id=document_id,
-            user_id=group_id if is_group else user_id,
-            content=f"Error processing GPT request for document {document_id}: {e}"
-        )
-        print(f"Error processing GPT request for document {document_id}: {e}")
-        return meta_data  # Return what we have so far
+    except Exception:
+        raise
 
     if screening_document and SCREENING_FIELD in screening_document:
         require_document_available(get_document_metadata(document_id, user_id, group_id, public_workspace_id))
 
     if not response:
-        if operation_guard is not None:
-            raise RuntimeError("Metadata generation returned no response.")
-        return meta_data  # or None, depending on your logic
+        raise RuntimeError("Metadata generation returned no response.")
 
     response_content = response.choices[0].message.content
     add_file_task_to_file_processing_log(
@@ -7421,27 +7309,33 @@ def extract_document_metadata(
         )
 
         gpt_output = json.loads(cleaned_str)
+        if not isinstance(gpt_output, dict):
+            raise ValueError("Metadata generation did not return an object.")
+        for key in ("title", "organization", "publication_date", "abstract"):
+            if gpt_output.get(key) is not None and not isinstance(gpt_output[key], str):
+                raise ValueError("Metadata generation returned an invalid text field.")
+        for key in ("authors", "keywords"):
+            value = gpt_output.get(key)
+            if value is not None and not (
+                isinstance(value, str)
+                or isinstance(value, list) and all(isinstance(item, str) for item in value)
+            ):
+                raise ValueError("Metadata generation returned an invalid list field.")
+        if not any(not is_effectively_empty(gpt_output.get(key)) for key in meta_data):
+            return None
 
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
-            content=f"Decoded JSON from GPT response for document {document_id}: {gpt_output}"
+            content=f"Decoded metadata JSON for document {document_id}"
         )
 
         # Ensure authors and keywords are always lists
         gpt_output["authors"] = ensure_list(gpt_output.get("authors", []))
         gpt_output["keywords"] = ensure_list(gpt_output.get("keywords", []))
 
-    except (json.JSONDecodeError, TypeError) as e:
-        if operation_guard is not None:
-            raise
-        add_file_task_to_file_processing_log(
-            document_id=document_id,
-            user_id=group_id if is_group else user_id,
-            content=f"Error decoding JSON from GPT response for document {document_id}: {e}"
-        )
-        print(f"Error decoding JSON from response: {e}")
-        return meta_data  # or None
+    except (json.JSONDecodeError, TypeError):
+        raise
 
     # --- Step 8: Merge GPT Output with Existing Metadata ---
     #
@@ -7456,8 +7350,7 @@ def extract_document_metadata(
 
     # Authors
     if is_effectively_empty(meta_data["authors"]):
-        # If GPT has no authors either, fallback to ["Unknown"]
-        meta_data["authors"] = gpt_output["authors"] or ["Unknown"]
+        meta_data["authors"] = gpt_output["authors"]
 
     # Organization
     if is_effectively_empty(meta_data["organization"]):
@@ -7478,13 +7371,13 @@ def extract_document_metadata(
     add_file_task_to_file_processing_log(
         document_id=document_id,
         user_id=group_id if is_group else user_id,
-        content=f"Final metadata for document {document_id}: {meta_data}"
+        content=f"Metadata analysis completed for document {document_id}"
     )
 
     args = {
         "document_id": document_id,
         "user_id": user_id,
-        "status": f"Metadata generated for document {document_id}"
+        "metadata_extraction_status": "running",
     }
 
     if is_public_workspace:
@@ -12698,52 +12591,59 @@ def queue_group_workspace_upload_from_temp_file(
         raise
 
 
-def _run_final_metadata_extraction(document_id, user_id, total_chunks_saved, enable_extract_meta_data, update_callback, group_id=None, public_workspace_id=None):
+def _run_final_metadata_extraction(
+    document_id, user_id, total_chunks_saved, enable_extract_meta_data, update_callback,
+    group_id=None, public_workspace_id=None, *, operation_guard=None, safe_errors=False,
+):
     if total_chunks_saved <= 0:
+        update_callback(metadata_extraction_status="empty" if enable_extract_meta_data else "disabled")
         return "skipped_no_chunks"
 
     if not enable_extract_meta_data:
+        update_callback(metadata_extraction_status="disabled")
         return "disabled"
 
     try:
-        update_callback(status="Extracting final metadata...")
+        update_callback(metadata_extraction_status="running")
         args = _build_document_scope_args(
             document_id,
             user_id,
             group_id=group_id,
             public_workspace_id=public_workspace_id
         )
-        document_metadata = extract_document_metadata(**args)
+        document_metadata = extract_document_metadata(
+            **args, operation_guard=operation_guard, safe_errors=safe_errors,
+        )
 
         if not document_metadata:
-            update_callback(status="Metadata extraction returned empty or failed")
+            update_callback(metadata_extraction_status="empty")
             return "returned_empty"
 
         update_fields = {
             key: value
             for key, value in document_metadata.items()
-            if value is not None and value != ""
+            if not is_effectively_empty(value)
         }
 
         if update_fields:
-            update_fields['status'] = "Final metadata extracted"
+            update_fields['metadata_extraction_status'] = "succeeded"
             update_callback(**update_fields)
             return "extracted"
 
-        update_callback(status="Final metadata extraction yielded no new info")
+        update_callback(metadata_extraction_status="empty")
         return "no_new_info"
     except Exception as metadata_error:
         log_event(
-            f"[DOCUMENT_METADATA_EXTRACTION] Error extracting final metadata for document {document_id}: {metadata_error}",
+            "[DOCUMENT_METADATA_EXTRACTION] Final metadata analysis failed.",
             extra={
                 "document_id": document_id,
                 "group_id": group_id,
-                "public_workspace_id": public_workspace_id
+                "public_workspace_id": public_workspace_id,
+                "error_type": type(metadata_error).__name__,
             },
             level=logging.WARNING,
-            exceptionTraceback=True
         )
-        update_callback(status="Processing complete (metadata extraction warning)")
+        update_callback(metadata_extraction_status="failed")
         return "warning"
 
 
@@ -12762,7 +12662,7 @@ def _resolve_processing_complete_status(total_chunks_saved, file_ext, image_exte
     if metadata_extraction_result == "no_new_info":
         return "Processing complete - metadata extraction yielded no new info"
     if metadata_extraction_result == "returned_empty":
-        return "Processing complete - metadata extraction returned empty or failed"
+        return "Processing complete (metadata extraction warning)"
     if metadata_extraction_result == "warning":
         return "Processing complete (metadata extraction warning)"
 
@@ -13111,7 +13011,9 @@ def _process_document_upload_background_impl(
                 enable_extract_meta_data,
                 update_doc_callback,
                 group_id=group_id,
-                public_workspace_id=public_workspace_id
+                public_workspace_id=public_workspace_id,
+                operation_guard=operation_guard,
+                safe_errors=safe_errors,
             )
 
         final_status = _resolve_processing_complete_status(

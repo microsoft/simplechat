@@ -2,7 +2,7 @@
 # test_document_auto_metadata_extraction_consistency.py
 """
 Functional test for document auto metadata extraction consistency.
-Version: 0.261.268
+Version: 0.261.347
 Implemented in: 0.241.110
 Updated in: 0.250.172
 Updated in: 0.261.268
@@ -14,8 +14,6 @@ for all supported file types and preserves public workspace scope for media file
 import ast
 import os
 import sys
-from test_support.versioning import assert_app_version_at_least
-
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -93,9 +91,12 @@ def test_dispatcher_owns_final_metadata_extraction():
         'process_audio_document',
     }
     for processor_name in processors_with_legacy_auto_extract:
+        wrapper = {
+            'process_md': '_process_markdown_with_ordered_dict_retry',
+        }.get(processor_name, processor_name)
         processor_calls = [
             call for call in dispatcher_calls
-            if call_name(call) == processor_name
+            if call_name(call) == wrapper
         ]
         assert processor_calls, f'Dispatcher should call {processor_name}'
         assert any(
@@ -125,7 +126,7 @@ def test_final_status_preserves_metadata_outcome():
     module_ast, _ = parse_functions_documents()
     resolver = get_function(module_ast, '_resolve_processing_complete_status')
     isolated_module = ast.Module(body=[resolver], type_ignores=[])
-    namespace = {}
+    namespace = {'TEMPLATE_EXTENSIONS': ()}
     exec(compile(isolated_module, FUNCTIONS_DOCUMENTS_FILE, 'exec'), namespace)
     resolve_status = namespace['_resolve_processing_complete_status']
 

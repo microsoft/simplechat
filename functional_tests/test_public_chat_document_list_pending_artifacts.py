@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test: the public chat document list and its tag counts leave out pending artifacts.
-Version: 0.261.183
+Version: 0.261.347
 Implemented in: 0.261.183
 
 GET /api/public_workspace_documents and GET /api/public_workspace_documents/tags serve the V2 and
@@ -170,6 +170,9 @@ def chat_routes(documents, *, index_ready):
             "get_user_visible_public_workspace_ids_from_settings": lambda user_id: [
                 workspace_id for workspace_id, shown in DIRECTORY.items() if shown
             ],
+            "resolve_public_chat_workspace_ids": lambda user_id, selection: [
+                workspace_id for workspace_id, shown in DIRECTORY.items() if shown or selection == "all"
+            ],
             "logging": logging,
             "log_event": lambda message, **kwargs: env.logs.append(message),
             "cosmos_public_documents_container": env.source,
@@ -214,6 +217,49 @@ def chat_answers(documents, *, read_path, actor):
 
 def test_version_is_at_least_the_implementing_release():
     assert_app_version_at_least("0.261.176")
+
+
+@pytest.mark.parametrize("read_path", READ_PATHS)
+@pytest.mark.parametrize("field", ["file_name", "title"])
+def test_search_filters_before_paging_and_preserves_totals(read_path, field):
+    documents = [
+        _document(f"new-{index}", "uploader", public_workspace_id="public-a",
+                  file_name=f"unrelated-{index}.md", title=f"Newer document {index}", _ts=100 - index)
+        for index in range(8)
+    ]
+    documents.extend([
+        _document(f"target-{index}", "uploader", public_workspace_id="public-a",
+                  **{"file_name": f"different-{index}.md", "title": "Untitled Document",
+                     "_ts": index + 1, field: f"Older-Guide-{index}.md"})
+        for index in range(3)
+    ])
+    with chat_routes(documents, index_ready=READ_PATHS[read_path]) as env:
+        env.args.update(search="OLDER-GUIDE", page="1", page_size="2", sort_by="_ts", sort_order="asc")
+        first = answer(env.list)
+        env.args["page"] = "2"
+        second = answer(env.list)
+        env.args["page"] = "3"
+        empty = answer(env.list)
+    assert [row["id"] for row in first["documents"]] == ["target-0", "target-1"]
+    assert [row["id"] for row in second["documents"]] == ["target-2"]
+    assert first["total_count"] == second["total_count"] == empty["total_count"] == 3
+    assert empty["documents"] == []
+
+
+@pytest.mark.parametrize("read_path", READ_PATHS)
+def test_search_does_not_revive_old_revision_or_pending_artifact(read_path):
+    documents = [
+        _document("old", "uploader", public_workspace_id="public-a", file_name="guide.md",
+                  revision_family_id="family", version=1, title="Old matching title", _ts=1),
+        _document("current", "uploader", public_workspace_id="public-a", file_name="guide.md",
+                  revision_family_id="family", version=2, title="New title", _ts=2),
+        *pending_documents(),
+    ]
+    with chat_routes(documents, index_ready=READ_PATHS[read_path]) as env:
+        env.args.update(search="Old matching title")
+        result = answer(env.list)
+    assert result["documents"] == []
+    assert result["total_count"] == 0
 
 
 @pytest.mark.parametrize("read_path", READ_PATHS)
@@ -266,6 +312,31 @@ def test_the_fixtures_chat_list_is_the_routes(read_path):
     )
 
 
+@pytest.mark.parametrize("read_path", READ_PATHS)
+@pytest.mark.parametrize("query", [
+    {"search": "STRASSE", "page_size": "1"},
+    {"page": "2", "page_size": "1", "sort_by": "title", "sort_order": "asc"},
+    {"sort_by": "file_name", "sort_order": "asc"},
+    {"page": "invalid", "page_size": "invalid", "sort_by": "invalid"},
+    {"page": "0", "page_size": "0"},
+    {"search": "no matching document"},
+])
+def test_fixture_query_contract_matches_route(read_path, query):
+    documents = [
+        _document("guide", "uploader", public_workspace_id="public-a",
+                  file_name="Stra\u00dfe.md", title="Guide", _ts=1),
+        _document("newer", "uploader", public_workspace_id="public-a",
+                  file_name="another.md", title="Another", _ts=2),
+    ]
+    with chat_routes(documents, index_ready=READ_PATHS[read_path]) as env:
+        env.args.update(query)
+        listed = answer(env.list)
+    served = chat_list(documents, query)
+    assert [row["id"] for row in served["documents"]] == [row["id"] for row in listed["documents"]]
+    for field in ("total_count", "page", "page_size"):
+        assert served[field] == listed[field]
+
+
 class _FakePage:
     def __init__(self):
         self.url = "about:blank"
@@ -296,7 +367,7 @@ def test_the_workflow_document_picker_is_served_the_chat_list_rule():
     ))
 
     served = route.fulfilled["json"]
-    assert served == chat_list(fixture.public_documents)
+    assert served == chat_list(fixture.public_documents, {"page_size": ["25"]})
     assert "pending-handbook" not in [document["id"] for document in served["documents"]]
     assert [document["id"] for document in served["documents"]] == ["public-policy"]
 

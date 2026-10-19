@@ -1,7 +1,7 @@
 # test_group_document_management.py
 """
 Functional tests for immutable-target group document management.
-Version: 0.261.268
+Version: 0.261.347
 Implemented in: 0.261.129
 A tag vocabulary conflict answers one coded sentence, from the pre-check or a lost patch: 0.261.167
 New tags are defined before any document carries them, so a conflict writes no document: 0.261.168
@@ -1235,10 +1235,10 @@ def test_metadata_extraction_honors_explicit_group_when_personal_id_collides(man
     namespace.update({
         "require_document_available": lambda _document: None,
         "detect_doc_type": Mock(side_effect=AssertionError("Explicit scope must not be rediscovered.")),
-        "hybrid_search": Mock(return_value=[]),
+        "hybrid_search": Mock(return_value=[{"content": "Group document content"}]),
         "_resolve_metadata_extraction_client": Mock(return_value=(
             SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=Mock(return_value=SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content='{"authors":[],"keywords":[]}'))],
+                choices=[SimpleNamespace(message=SimpleNamespace(content='{"abstract":"Group summary","authors":[],"keywords":[]}'))],
             ))))), "fixture-model",
         )),
         "is_effectively_empty": lambda value: value in (None, "", []),
