@@ -1,7 +1,7 @@
 # test_v2_workspace_authoring.py
 """
 Real-SPA browser workflows for native V2 My Workspace Agents and Actions.
-Version: 0.261.333
+Version: 0.261.349
 Implemented in: 0.261.096
 Contextual action return labels extended in: 0.261.333
 
@@ -1561,6 +1561,85 @@ def test_existing_openapi_connection_uses_owned_stored_credentials(workspace_ui)
     assert SECRET_MASK not in connection.value.post_data
 
 
+@pytest.mark.parametrize("theme,width,height", LAYOUTS)
+@pytest.mark.parametrize("saved", [False, True], ids=["new-draft", "saved-credentials"])
+@pytest.mark.parametrize("kind,path,button", [
+    ("openapi", "/api/plugins/test-openapi-connection", "Test OpenAPI connection"),
+    ("mcp", "/api/plugins/test-mcp-connection", "Test MCP connection"),
+    ("mcp", "/api/plugins/mcp/discover", "Discover MCP tools"),
+])
+def test_no_auth_connector_commands_use_only_owned_clear_intent(
+    workspace_ui, kind, path, button, saved, theme, width, height,
+):
+    """Exercise the built SPA without saving or executing connector operations."""
+    ui, page = workspace_ui, workspace_ui.page
+    identifier = ACTION_ID if kind == "openapi" else MCP_ACTION_ID
+    before = copy.deepcopy(ui.actions)
+    ui.open(
+        f"/workspace/actions/{identifier}" if saved else "/workspace/actions/new",
+        theme=theme, width=width, height=height,
+    )
+    if not saved:
+        action_field(page, "Action type").select_option(kind)
+        name_field(page, "action").fill("Unsaved no-auth connector")
+        page.get_by_label("Description", exact=True).fill("Synthetic read-only connector.")
+        editor_section(page, "Configuration")
+        if kind == "openapi":
+            page.get_by_label("OpenAPI specification file", exact=True).set_input_files({
+                "name": "review.openapi.json", "mimeType": "application/json",
+                "buffer": json.dumps(ui.openapi_import_spec).encode(),
+            })
+            expect(page.get_by_role("heading", name="Imported review API", exact=True)).to_be_visible()
+        else:
+            action_field(page, "MCP server endpoint").fill("https://mcp.example.test/synthetic")
+    editor_section(page, "Authentication")
+    page.get_by_label("Authentication method", exact=True).select_option("none")
+    editor_section(page, "Configuration")
+    with page.expect_request(
+        lambda request: request.method == "POST" and urlsplit(request.url).path == path
+    ) as command:
+        page.get_by_role("button", name=button, exact=True).click()
+    body = command.value.post_data_json
+    assert body["auth"] == ({"type": "key", "key": ""} if kind == "openapi" else {"type": "NoAuth"})
+    assert body["clear_secret_paths"] == (["/auth/key"] if saved else [])
+    assert body["action_scope"] == "personal"
+    if saved:
+        assert body["plugin_context"] == {
+            "scope": "personal", "id": identifier, "name": before[identifier]["name"],
+        }
+    else:
+        assert "plugin_context" not in body
+    expect(page.get_by_role("status").filter(has_text=re.compile("succeeded|Discovered"))).to_be_visible()
+    assert ui.actions == before
+    assert not ui.editor_writes
+    assert len([request for request in ui.writes if request.path == path]) == 1
+    editor_section(page, "Authentication")
+    expect(page.get_by_label("Authentication method", exact=True)).to_have_value("none")
+    ui.assert_no_overflow()
+
+
+@pytest.mark.parametrize("kind,path,button", [
+    ("openapi", "/api/plugins/test-openapi-connection", "Test OpenAPI connection"),
+    ("mcp", "/api/plugins/mcp/discover", "Discover MCP tools"),
+])
+def test_connector_preparation_diagnostic_remains_visible_without_retries(workspace_ui, kind, path, button):
+    ui, page = workspace_ui, workspace_ui.page
+    identifier = ACTION_ID if kind == "openapi" else MCP_ACTION_ID
+    before = copy.deepcopy(ui.actions)
+    ui.open(f"/workspace/actions/{identifier}")
+    message = "Only an existing secret can be cleared."
+    ui.reject_next(
+        "POST", path, status=400, error=message, success=False,
+        error_type="invalid_editor_configuration", details={"stage": "request_preparation"},
+    )
+    editor_section(page, "Configuration")
+    page.get_by_role("button", name=button, exact=True).click()
+    expect(page.get_by_role("alert").filter(has_text=message)).to_be_visible()
+    assert ui.actions == before
+    assert not ui.editor_writes
+    assert len([request for request in ui.writes if request.path == path]) == 1
+
+
 def test_failed_openapi_import_retains_processed_specification_and_pending_source(workspace_ui):
     ui, page = workspace_ui, workspace_ui.page
     before = copy.deepcopy(ui.actions[ACTION_ID])
@@ -1635,13 +1714,19 @@ def test_mcp_discovery_failure_retry_preserves_credentials_and_unavailable_tools
     assert save_resource(ui, "action", identifier=MCP_ACTION_ID).status == 200
     assert_patch(
         ui, f"/api/user/plugins/{MCP_ACTION_ID}", revision,
-        {"additionalFields": {"allowed_tool_names": ["legacy-tool", "search"], "mcp_tools": expected_tools}},
+        {"additionalFields": {
+            "allowed_tool_names": ["legacy-tool", "search"], "mcp_tools": expected_tools,
+            "mcp_prompts": [], "mcp_tool_fingerprints": ui.extra_posts["/api/plugins/mcp/discover"]["fingerprints"],
+            "mcp_tool_drift": None,
+        }},
     )
     assert ui.actions[MCP_ACTION_ID] == {
         **before,
         "additionalFields": {
             **before["additionalFields"],
             "allowed_tool_names": ["legacy-tool", "search"], "mcp_tools": expected_tools,
+            "mcp_prompts": [], "mcp_tool_fingerprints": ui.extra_posts["/api/plugins/mcp/discover"]["fingerprints"],
+            "mcp_tool_drift": None,
         },
     }
 

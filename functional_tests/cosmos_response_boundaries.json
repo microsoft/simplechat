@@ -809,9 +809,6 @@
     "application/single_app/route_backend_groups.py::register_route_backend_groups.api_group_activity": "b68cf13c1361c5df6a62e49dd97426deeacf9389b2889dcb7efc02697d528696",
     "application/single_app/route_backend_groups.py::register_route_backend_groups.api_group_stats": "99baefcd65410b84b8eef2e3c7a2113dc43b3a16444f930e077e4c9311f98cf7",
     "application/single_app/route_backend_m365.py::register_route_backend_m365.list_m365_waiting_requests": "a08dfc34823a0019c09d30bf38f7e25ac1dfd6e81944665f3912f2e4daa7a73f",
-    "application/single_app/route_backend_plugins.py::set_user_plugins": "6521a2fc13713578fcabc57c611d5a73467630fe3b4006082b579cb1dc7db82a",
-    "application/single_app/route_backend_plugins.py::edit_plugin": "e4294468015daedc797eb287aa58c9066c8efe91a9f593a07936b55da9e3e1b1",
-    "application/single_app/route_backend_plugins.py::test_cosmos_connection": "2914add8869a52f46cf5639d26e9dda1a163ab1b980935aa459b85a760b3c9be",
     "application/single_app/route_backend_public_workspaces.py::register_route_backend_public_workspaces.discover_public_workspaces": "062c6c6441e6af64ba3ad877183fbe0c6e5b1b7557e4d98888d37ebb255c2300",
     "application/single_app/route_backend_public_workspaces.py::register_route_backend_public_workspaces.api_public_file_count": "81af253b9f8a788afaa40eed182e0a941eab4c63290cf512516a0ccd8ae29ec8",
     "application/single_app/route_backend_public_workspaces.py::register_route_backend_public_workspaces.api_public_workspace_stats": "0c7b1bca8b55d4380e5fede0efcf6f785f8e4657006c7b65e2e2eb02627c294c",
@@ -23742,13 +23739,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c0b926e2dd2d7fed9999a9136c944270753cba204c11539937ef49ebe9cad9ed"
+        "module_sha256": "bf83fa55150f9f344abc114bbce33c2c4168b1a6a5486d49aeda092895e260e2"
       },
       "classification": "sdk-compatible",
-      "contract": "set_user_plugins: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The unchanged classic collection-save branch passes its actor-partitioned point read to the real legacy-update validator. Installed CosmosDict fields and ETag reach that mapping-compatible validator unchanged; a missing exact point ID cannot fall back to a same-name action or invoke a writer. Editor creation remains a separate repository-owned path.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_point_reads_reach_real_legacy_validator_as_sdk_documents",
+        "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_missing_exact_point_read_cannot_fall_back_to_a_name"
       ]
     },
     "application/single_app/route_backend_plugins.py::edit_plugin": {
@@ -23763,13 +23761,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c0b926e2dd2d7fed9999a9136c944270753cba204c11539937ef49ebe9cad9ed"
+        "module_sha256": "bf83fa55150f9f344abc114bbce33c2c4168b1a6a5486d49aeda092895e260e2"
       },
       "classification": "sdk-compatible",
-      "contract": "edit_plugin: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The unchanged route passes the exact scoped point read to validate_legacy_action_update, which accepts dictionary subclasses and reads fields without strict JSON copying. Runtime coverage uses installed CosmosDict via the shared SDK-default container, preserves ID and ETag, and rejects a missing exact ID before the repository writer.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_point_reads_reach_real_legacy_validator_as_sdk_documents",
+        "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_missing_exact_point_read_cannot_fall_back_to_a_name"
       ]
     },
     "application/single_app/route_backend_plugins.py::test_cosmos_connection": {
@@ -23784,13 +23783,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "c0b926e2dd2d7fed9999a9136c944270753cba204c11539937ef49ebe9cad9ed"
+        "module_sha256": "bf83fa55150f9f344abc114bbce33c2c4168b1a6a5486d49aeda092895e260e2"
       },
-      "classification": "sdk-compatible",
-      "contract": "test_cosmos_connection: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "classification": "response-unused",
+      "contract": "The unchanged Cosmos connection probe drains SELECT TOP 1 VALUE c.id only to establish query permission; scalar query rows are discarded, never copied into a strict document/domain contract. Database/container metadata reads are likewise ignored. Runtime coverage verifies query draining, exact query shape, and configured client routing.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_action_route_cosmos_response_contract.py::test_cosmos_connection_drains_query_rows_without_treating_them_as_documents"
       ]
     },
     "application/single_app/route_backend_public_documents.py::register_route_backend_public_documents.api_list_public_documents": {

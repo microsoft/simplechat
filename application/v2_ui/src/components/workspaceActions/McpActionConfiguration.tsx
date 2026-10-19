@@ -7,7 +7,7 @@ import { ActionConnectionCheck } from './ActionConnectionCheck';
 import { ACTION_INPUT_CLASS, ActionField, ActionJsonInput, ActionSecretInput } from './ActionFields';
 import { ActionSchemaValue } from './ActionSchemaFields';
 import {
-    ConnectorIdentitySelect, useConnectorRequest, useConnectorValidity,
+    ConnectorFeedbackPanel, ConnectorIdentitySelect, useConnectorRequest, useConnectorValidity,
 } from './OpenApiActionConfiguration';
 import { EDITOR_SECRET_MASK, pointerPart } from '../../lib/workspaceAuthoring';
 import { actionHasStoredArraySecrets } from '../../lib/workspaceActionLogic';
@@ -200,7 +200,7 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
     const [discovery, setDiscovery] = useState<{
         result: McpDiscoveryResult; endpoint: string; transport: string; signature: string; approvedBefore: unknown;
     } | null>(null);
-    const { busy, run } = useConnectorRequest(props);
+    const { busy, feedback, stale, run } = useConnectorRequest(props);
     useEffect(() => setPresetChoice(profile), [profile]);
     useEffect(() => setPreconfigurationChoice(preconfigurationId), [preconfigurationId]);
     const serverTemplateChoice = preconfigurationChoice ? `pre:${preconfigurationChoice}` : presetChoice === 'generic' ? 'custom' : `preset:${presetChoice}`;
@@ -383,6 +383,8 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                     <GlassButton type="button" variant="subtle" disabled={blockedExecution} onClick={() => void doDiscovery()}>Discover MCP tools</GlassButton>
                     <p className="text-xs text-text-3">Discovery connects, lists tools and prompts, and records approved fingerprints. It does not invoke tools.</p>
                 </div>
+                {busy ? <p role="status" className="text-xs text-text-3">{busy}</p> : null}
+                <ConnectorFeedbackPanel feedback={feedback} stale={stale} />
                 {pinningError ? <p role="alert" className="alert alert-warning rounded-lg bg-warn-soft p-2 text-xs text-warn">{pinningError}</p> : null}
                 {approvedFingerprints ? <p className="text-xs text-text-3">Approved manifest: <span className="font-mono">{approvedFingerprints.manifest_hash.slice(0, 12)}</span> · discovered {approvedFingerprints.discovered_at}</p> : null}
                 {Object.keys(drift).length ? <div className="alert alert-warning space-y-1 rounded-lg bg-warn-soft p-2 text-xs text-warn">

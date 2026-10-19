@@ -2940,10 +2940,11 @@ def discover_mcp_tools():
 
         auth = discovery_manifest.get('auth') if isinstance(discovery_manifest.get('auth'), dict) else {}
         existing_auth = existing_plugin.get('auth') if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict) else {}
-        if auth.get('key') in ('', None, ui_trigger_word, "***REDACTED***") and existing_auth.get('key'):
-            auth['key'] = existing_auth.get('key')
-        if auth.get('identity') in ('', None) and existing_auth.get('identity'):
-            auth['identity'] = existing_auth.get('identity')
+        if auth.get('type') != 'NoAuth':
+            if auth.get('key') in ('', None, ui_trigger_word, "***REDACTED***") and existing_auth.get('key'):
+                auth['key'] = existing_auth.get('key')
+            if auth.get('identity') in ('', None) and existing_auth.get('identity'):
+                auth['identity'] = existing_auth.get('identity')
         discovery_manifest['auth'] = auth
 
         if discovery_manifest.get('identity_id'):
@@ -3077,6 +3078,23 @@ def discover_mcp_tools():
             'error_type': exc.code,
             'mcp_operation_id': mcp_operation_id,
         }), 400
+    except WorkspaceAuthoringValidation as exc:
+        log_event(
+            "[MCP_DISCOVERY] Configuration rejected",
+            extra={
+                "error_type": "invalid_editor_configuration",
+                "failure_stage": "request_preparation",
+                "mcp_operation_id": mcp_operation_id,
+            },
+            level=logging.WARNING,
+        )
+        return jsonify({
+            'success': False,
+            'error': exc.public_message,
+            'error_type': 'invalid_editor_configuration',
+            'details': {'stage': 'request_preparation'},
+            'mcp_operation_id': mcp_operation_id,
+        }), 400
     except (LookupError, ValueError) as exc:
         log_event(
             "[MCP_DISCOVERY] Failed",
@@ -3129,7 +3147,7 @@ def discover_mcp_tools():
         }), http_status
     except Exception as exc:
         log_event(
-            f"[MCP_DISCOVERY] Failed unexpectedly: {exc}",
+            "[MCP_DISCOVERY] Failed unexpectedly",
             extra=_build_mcp_discovery_log_context(
                 mcp_operation_id,
                 user_id,
@@ -3144,7 +3162,6 @@ def discover_mcp_tools():
                 },
             ),
             level=logging.ERROR,
-            exceptionTraceback=True,
         )
         return jsonify({'error': 'Failed to discover MCP tools.', 'mcp_operation_id': mcp_operation_id}), 500
 
@@ -4185,8 +4202,31 @@ def _run_action_connection_test(plugin_type, plugin_label, tester, before_test=N
         return jsonify({'success': False, 'error': 'This action connection test is not authorized.'}), 403
     except LookupError:
         return jsonify({'success': False, 'error': 'The requested action was not found.'}), 404
+    except WorkspaceAuthoringValidation as exc:
+        log_event(
+            '[ACTION_TEST] Configuration rejected',
+            extra={
+                'plugin_type': plugin_type, 'error_type': 'invalid_editor_configuration',
+                'failure_stage': 'request_preparation',
+                'plugin_context_present': isinstance(data.get('plugin_context'), dict),
+            },
+            level=logging.WARNING,
+        )
+        return jsonify({
+            'success': False, 'error': exc.public_message,
+            'error_type': 'invalid_editor_configuration',
+            'details': {'stage': 'request_preparation'},
+        }), 400
     except ValueError:
-        return jsonify({'success': False, 'error': 'Invalid action connection test configuration.'}), 400
+        log_event(
+            '[ACTION_TEST] Configuration rejected',
+            extra={'plugin_type': plugin_type, 'error_type': 'invalid_configuration', 'failure_stage': 'request_preparation'},
+            level=logging.WARNING,
+        )
+        return jsonify({
+            'success': False, 'error': 'Invalid action connection test configuration.',
+            'error_type': 'invalid_configuration', 'details': {'stage': 'request_preparation'},
+        }), 400
     except McpRuntimeError as exc:
         return jsonify({'success': False, 'error': 'MCP operation failed.', 'error_type': exc.category}), get_mcp_error_http_status(exc.category)
 
@@ -4197,10 +4237,9 @@ def _run_action_connection_test(plugin_type, plugin_label, tester, before_test=N
             result = tester(manifest)
     except Exception as exc:
         log_event(
-            f'[ACTION_TEST] {plugin_label} connection test raised an unexpected error: {exc}',
-            extra={'plugin_type': plugin_type},
+            '[ACTION_TEST] Connection test raised an unexpected error',
+            extra={'plugin_type': plugin_type, 'error_type': type(exc).__name__, 'failure_stage': 'connector_test'},
             level=logging.ERROR,
-            exceptionTraceback=True,
         )
         return jsonify({
             'success': False,

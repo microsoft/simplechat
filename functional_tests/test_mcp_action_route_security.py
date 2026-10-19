@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional tests for MCP discovery and connection-test authorization ordering.
-Version: 0.261.036
+Version: 0.261.349
 Implemented in: 0.261.029
 
 Executes real route/helper bodies with Flask requests and mocked I/O boundaries.
@@ -36,6 +36,7 @@ from functions_legacy_action_management import (
 )
 import functions_mcp_operations as operations
 import json_schema_validation as validation
+from functions_workspace_authoring import WorkspaceAuthoringValidation
 from test_mcp_legacy_stdio_management import GROUP, OWNER, action_services, remote
 
 
@@ -112,6 +113,7 @@ class McpActionRouteSecurityTests(unittest.TestCase):
             "LEGACY_ACTION_PREFIX": LEGACY_ACTION_PREFIX,
             "LegacyActionConflictError": LegacyActionConflictError,
             "LegacyActionSourceUpdateError": LegacyActionSourceUpdateError,
+            "WorkspaceAuthoringValidation": WorkspaceAuthoringValidation,
             "SecretReturnType": types.SimpleNamespace(NAME="name", VALUE="value"),
             "get_current_user_id": lambda: session["user"]["oid"],
             "require_active_group": lambda user_id: "group-a",

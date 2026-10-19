@@ -1005,6 +1005,13 @@ export function buildConnectorSupportPayload(
     };
     if (Object.keys(errors).length) throw new Error(Object.values(errors).join(' '));
     const clearPaths = new Set(buildEditorWrite(draft, original).clear_secret_paths);
+    const noAuthentication = connectorAuthMethod(draft, kind) === 'none';
+    if (noAuthentication) {
+        // Clear only owned secrets: a new draft has no stored fallback to suppress.
+        for (const path of original?.secret_paths ?? []) {
+            if (path.startsWith('/auth/')) clearPaths.add(path);
+        }
+    }
     const translate = (value: unknown, path = ''): unknown => {
         if (value === EDITOR_SECRET_MASK || value === STORED_CONNECTOR_SECRET) {
             if (!original?.secret_paths.includes(path)) {
@@ -1028,16 +1035,18 @@ export function buildConnectorSupportPayload(
             .map(([key, item]) => [key, translate(item, `${path}/${pointerPart(key)}`)]));
         return value;
     };
+    const auth = noAuthentication
+        ? { type: kind === 'mcp' ? 'NoAuth' : 'key', ...(kind === 'openapi' ? { key: '' } : {}) }
+        : draft.auth;
     const manifest = translate({
         name: draft.name || `${kind}_${purpose}`, displayName: draft.displayName || `${kind.toUpperCase()} ${purpose}`,
         type: draft.type, description: draft.description, endpoint: draft.endpoint || draft.additionalFields.base_url,
-        auth: draft.auth, additionalFields: draft.additionalFields, metadata: draft.metadata,
+        auth,
+        additionalFields: draft.additionalFields, metadata: draft.metadata,
         ...(draft.identity_id ? { identity_id: draft.identity_id } : {}),
     }) as Record<string, unknown>;
-    if (connectorAuthMethod(draft, kind) === 'none') {
-        // Do not let V1's edit-time empty-value fallback resurrect an inactive credential.
-        manifest.auth = { type: kind === 'mcp' ? 'NoAuth' : 'key', ...(kind === 'openapi' ? { key: '' } : {}) };
-        for (const key of ['key', 'identity', 'tenantId', 'token', 'value', 'password']) clearPaths.add(`/auth/${key}`);
+    if (noAuthentication) {
+        manifest.auth = auth;
     } else if (draft.identity_id) {
         manifest.auth = { type: 'identity', identity: draft.identity_id };
     }

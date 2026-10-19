@@ -1,6 +1,6 @@
 # Action Test Connection
 
-Current documentation version: **0.261.029**
+Current documentation version: **0.261.349**
 
 ## Overview
 
@@ -13,6 +13,9 @@ This extends the pattern already used by SQL, Cosmos DB, Yamcs, and RocksDB acti
 MCP transport removal and authorization update implemented in version: **0.261.029**.
 
 Related configuration update: `application\single_app\config.py` advances `VERSION` from `0.261.028` to `0.261.029`.
+
+V2 no-auth credential intent and preparation diagnostics fixed in version:
+**0.261.349**, tracked in the same `config.py`.
 
 **Related issue:** [microsoft/simplechat#1267](https://github.com/microsoft/simplechat/issues/1267)
 
@@ -106,6 +109,31 @@ Every outbound call is capped at `ACTION_CONNECTION_TEST_MAX_TIMEOUT_SECONDS` (2
 
 `action_scope` is one of `personal`, `group`, or `global`. `plugin_context` is only sent when editing an existing action; it lets the backend resolve masked secrets from storage.
 
+### Unsaved V2 tests and explicit credential removal
+
+The V2 full-page editors use `workspaceActionConnectors.ts` for OpenAPI tests,
+MCP tests, and MCP discovery in personal, group, and global workspaces. Testing a
+new no-auth draft does not require saving it: its `clear_secret_paths` is empty
+because it has no stored credentials to clear.
+
+When a saved action is switched to no authentication, the request omits inactive
+auth values and clears only auth-secret paths owned by that saved action.
+Independent MCP custom-header removals remain explicit; other headers are
+preserved. Preparation and discovery must not restore inactive credentials.
+The stored action is unchanged until the user explicitly saves.
+
+Clear paths are not permission to access secrets. The backend still verifies
+ownership, scope, and that every path names an existing stored secret. A malformed
+or non-secret path is rejected before connector I/O, not ignored. Known authoring
+failures return a fixed explanation, `error_type: invalid_editor_configuration`,
+and `details.stage: request_preparation`; MCP discovery also returns its
+`mcp_operation_id`. Unknown exception text remains private.
+
+Connection success establishes only the connector check described below.
+OpenAPI does not invoke a selected operation; MCP discovery and connection tests
+do not invoke tools. The application does not automatically retry a failed
+command or save a draft to make it testable.
+
 ### Response payload
 
 ```json
@@ -185,6 +213,8 @@ Because Log Analytics is now a structured configuration type, Step 4 no longer r
 | `functional_tests/test_action_test_connection_modal_wiring.py` | The modal renders a button, result container, and alert for all eight types; each button maps to a registered route; results render without an `innerHTML` sink; the Log Analytics section exists, is a structured config type, and preserves `query_history`. |
 | `functional_tests/test_mcp_stdio_removal.py`, `functional_tests/test_mcp_authorization_context.py` | Remote-only connector behavior and consistent authorization for probes, discovery, connection tests, and runtime use, including current policy and the environment restriction floor. |
 | `functional_tests/test_mcp_action_route_security.py` | MCP authorization and retirement checks in selected actual route/helper bodies, using real Flask request dispatch with mocked I/O. |
+| `functional_tests/test_action_connection_payload_contract.py` | Actual V2 TypeScript payloads through Flask preparation, validators and route bodies; new/saved no-auth commands across scopes, partial header clears, no credential resurrection, and safe rejection diagnostics with external sockets blocked. |
+| `functional_tests/test_v2_workspace_action_connectors_logic.mjs` | Shared payload, auth-method, identity, owned-mask, and explicit-clear client contracts. |
 
 Run them with:
 
@@ -204,8 +234,12 @@ These are validation commands and coverage descriptions, not recorded passing re
 | `ui_tests/test_workspace_action_test_connection_controls.py` | Parametrized over all eight action types: warning state without required fields, success alert with a mocked 200, danger alert with a mocked 403, and the submitted payload shape. |
 | `ui_tests/test_workspace_log_analytics_action_modal.py` | The dedicated Log Analytics section renders, custom cloud and service principal fields toggle correctly, validation blocks an empty workspace ID, and the saved manifest keeps `query_history`. |
 | `ui_tests/test_workspace_azure_maps_action_modal.py`, `test_workspace_blob_storage_action_modal.py`, `test_workspace_databricks_action_modal.py`, `test_workspace_mcp_action_modal.py`, `test_tableau_action_modal_workflow.py` | Updated to assert the Test Connection control renders alongside the existing configuration flow. |
+| `ui_tests/test_v2_workspace_authoring.py` | Built-SPA no-auth test/discovery requests, preserved unsaved drafts, visible preparation failures, and MCP discovery feedback in the existing responsive editor. |
 
-UI tests skip unless `SIMPLECHAT_UI_BASE_URL` and `SIMPLECHAT_UI_STORAGE_STATE` are set.
+The classic live UI tests skip unless `SIMPLECHAT_UI_BASE_URL` and
+`SIMPLECHAT_UI_STORAGE_STATE` are set. The V2 fixture suite uses a fresh local
+production build and synthetic HTTP responses; it is not live connector
+qualification.
 
 ### Known limitations
 
