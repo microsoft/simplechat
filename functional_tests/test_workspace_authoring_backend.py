@@ -1,7 +1,7 @@
 # test_workspace_authoring_backend.py
 """Executable contracts for native personal agent/action authoring.
 
-Version: 0.261.351
+Version: 0.261.352
 Implemented in: 0.261.096
 
 Real Flask route definitions, validators, payload normalizers, Key Vault helpers,

@@ -1,4 +1,4 @@
-# SQL connection diagnostics fix - v0.261.351
+# SQL connection diagnostics fix - v0.261.352
 
 ## Issue and root cause
 
@@ -20,6 +20,41 @@ This fixes the diagnostic gap, **not the unresolved cause of FED-16's live
 connection failure**. Successful SQL access using an operator's account does not
 qualify the App Service identity's connection. No deployment or live connection
 retry was performed for this fix.
+
+### Cosmos review integration - v0.261.352
+
+PR #1787's SQL route edit changed `route_backend_plugins.py`'s module fingerprint.
+The Cosmos contract check therefore invalidated its three source-only reviews:
+`set_user_plugins`, `edit_plugin`, and `test_cosmos_connection`. Their function
+bodies and Cosmos behavior were unchanged, but the inventory intentionally binds
+reviews to the entire owning module.
+
+**Fixed in version: 0.261.352**, recorded in `application/single_app/config.py`.
+The reviewed inventory now links each owner to its own runtime regression and
+removes only these three stale source-review baseline entries. No gate, baseline
+assurance, or production Cosmos behavior was relaxed.
+
+`functional_tests/test_plugin_routes_cosmos_contract.py` executes the real
+handlers and legacy-update validator with installed-SDK `CosmosDict` point
+responses. It covers successful personal/global updates, exact-ID and personal
+partition misses, global name mismatches, ETag preservation, and lazy Cosmos
+query consumption including empty results and request-charge headers. External
+services are offline seams; the contract runner blocks network access before
+collection.
+
+Validation for **0.261.352**, using a repository-local Python environment with
+the declared application/test pins and without changing shared Python packages:
+
+- `python scripts/check_cosmos_response_boundaries.py --run-contracts`:
+  **1,151 passed and 244 subtests passed**; **1,067 owners, 412 doubles, zero
+  review gaps**. The runner automatically includes all three new owner selectors.
+- New plugin-owner regressions: **8 passed** with Flask **3.1.3** and Cosmos SDK
+  **4.9.0**; SQL diagnostics regressions: **106 passed**.
+- Optimized new owner and SQL classifier selection: **46 passed**. Required
+  operations remain outside assertions; optimized execution is not treated as
+  proof of assertion coverage.
+- Route policy checks: **15/15**, **10/10**, and **3/3** passed; documentation
+  coverage and quality: **7/7** and **6/6** passed.
 
 ## Technical details
 
