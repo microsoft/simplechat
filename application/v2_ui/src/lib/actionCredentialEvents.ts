@@ -15,6 +15,10 @@ export function readCredentialRequest(value: unknown): CredentialRequest {
         !Array.isArray(value.requirements) || !Array.isArray(value.identities)) {
         throw new Error('The credential request could not be read. Reload this conversation.');
     }
+    if (value.conversation_kind !== undefined && value.conversation_kind !== 'personal' &&
+        value.conversation_kind !== 'collaborative') {
+        throw new Error('The credential request belongs to an unsupported conversation.');
+    }
     const requirements = value.requirements.map((item) => {
         if (!record(item) || !slotType(item.slot) || !authType(item.auth_type) ||
             (item.slot === 'proxy' && item.auth_type !== 'username_password')) {
@@ -29,6 +33,7 @@ export function readCredentialRequest(value: unknown): CredentialRequest {
         id: text(value.id), etag: text(value.etag), conversation_id: text(value.conversation_id),
         action_name: text(value.action_name), destination_label: text(value.destination_label),
         reason: text(value.reason), status: text(value.status), requirements,
+        ...(value.conversation_kind ? { conversation_kind: value.conversation_kind } : {}),
         identities: value.identities.flatMap((item) => record(item) && text(item.id)
             ? [{ id: text(item.id), name: text(item.name), auth_type: text(item.auth_type),
                 ...(text(item.etag) ? { etag: text(item.etag) } : {}) }] : []),

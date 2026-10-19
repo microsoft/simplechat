@@ -34,6 +34,7 @@ export async function fetchActionCredentialRequest(
     );
     const current = readCredentialRequest(result.credential_request);
     if (current.id !== credentialRequest.id || current.conversation_id !== credentialRequest.conversation_id ||
+        (current.conversation_kind ?? 'personal') !== (credentialRequest.conversation_kind ?? 'personal') ||
         current.run_id !== credentialRequest.run_id || current.turn_id !== credentialRequest.turn_id) {
         throw new Error('The credential request no longer belongs to this work.');
     }
@@ -61,6 +62,8 @@ export async function saveActionCredentials(
     );
     const updated = readCredentialRequest(result.credential_request);
     if (updated.id !== credentialRequest.id || updated.conversation_id !== credentialRequest.conversation_id ||
+        (updated.conversation_kind ?? 'personal') !== (credentialRequest.conversation_kind ?? 'personal') ||
+        updated.run_id !== credentialRequest.run_id || updated.turn_id !== credentialRequest.turn_id ||
         updated.status !== 'ready') {
         throw new Error('Saving could not be confirmed. Reload this credential request before continuing.');
     }

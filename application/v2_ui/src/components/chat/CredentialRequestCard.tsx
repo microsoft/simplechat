@@ -11,6 +11,7 @@ import { cancelActionCredentials, clearCredentialSession, fetchActionCredentialR
 import { fetchOrchestrationRun, isOrchestrationRunWaiting } from '../../lib/orchestration';
 import type { CredentialRequest, CredentialSlot, CredentialSubmission } from '../../lib/actionCredentialTypes';
 import { ApiError } from '../../lib/apiClient';
+import type { ConversationKind } from '../../lib/endpoints';
 
 const inputClass = 'w-full rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20';
 const reasonMessages: Record<string, string> = {
@@ -21,19 +22,24 @@ const reasonMessages: Record<string, string> = {
     identity_removed: 'The previously selected identity is no longer available. Choose another identity or save a new one.',
 };
 
-export function CredentialRequestCards({ conversationId }: { conversationId: string }) {
+export function CredentialRequestCards({ conversationId, conversationKind = 'personal' }: {
+    conversationId: string; conversationKind?: ConversationKind | null;
+}) {
     const userId = useBootstrapStore((state) => state.data?.user?.id);
-    return <CredentialRequestList key={`${userId}:${conversationId}`} conversationId={conversationId} />;
+    if (!conversationKind) return null;
+    return <CredentialRequestList key={`${userId}:${conversationId}:${conversationKind}`} conversationId={conversationId} />;
 }
 
 function CredentialRequestList({ conversationId }: { conversationId: string }) {
     const [requests, setRequests] = useState<CredentialRequest[]>([]);
     const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
     const refresh = useRef<() => void>(() => {});
     useEffect(() => {
         clearCredentialSession();
         const controller = new AbortController();
         let eventSeen = false;
+        let inFlight = false;
         const accept = (credentialRequest: CredentialRequest) => {
             if (credentialRequest.conversation_id !== conversationId) return;
             setRequests((current) => [...current.filter((item) => item.id !== credentialRequest.id), credentialRequest]);
@@ -50,6 +56,9 @@ function CredentialRequestList({ conversationId }: { conversationId: string }) {
             }
         };
         const load = () => {
+            if (inFlight || controller.signal.aborted) return;
+            inFlight = true;
+            setLoading(true);
             eventSeen = false;
             void fetchCredentialRequests(conversationId, controller.signal).then((pending) => {
                 if (controller.signal.aborted) return;
@@ -63,7 +72,14 @@ function CredentialRequestList({ conversationId }: { conversationId: string }) {
             }).catch((failure: unknown) => {
                 if (controller.signal.aborted) return;
                 if (failure instanceof ApiError && [401, 403, 404].includes(failure.status)) setRequests([]);
-                setError('Pending action credentials could not be loaded.');
+                setError(failure instanceof ApiError && failure.status === 401
+                    ? 'Your session has expired. Sign in again, then reopen this conversation.'
+                    : failure instanceof ApiError && [403, 404].includes(failure.status)
+                        ? 'Your access to this conversation could not be confirmed. Reopen it or ask its owner.'
+                        : 'Unfinished action sign-in requests could not be checked. Try again.');
+            }).finally(() => {
+                inFlight = false;
+                if (!controller.signal.aborted) setLoading(false);
             });
         };
         refresh.current = load;
@@ -76,8 +92,10 @@ function CredentialRequestList({ conversationId }: { conversationId: string }) {
         };
     }, [conversationId]);
     return <div className="space-y-3">
-        {error ? <div role="alert" className="rounded-xl bg-danger-soft p-3 text-sm text-danger">
-            {error} <GlassButton size="sm" onClick={() => refresh.current()}>Reload requests</GlassButton>
+        {error ? <div role="alert" aria-busy={loading} className="rounded-xl bg-danger-soft p-3 text-sm text-danger">
+            {error} <GlassButton size="sm" disabled={loading} onClick={() => refresh.current()}>
+                {loading ? 'Checking requests...' : 'Reload requests'}
+            </GlassButton>
         </div> : null}
         {requests.filter((item) => item.status === 'pending' || item.status === 'ready').map((item) =>
             <CredentialRequestCard key={`${item.id}:${item.etag}`} credentialRequest={item}

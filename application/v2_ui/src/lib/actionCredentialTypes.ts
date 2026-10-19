@@ -1,5 +1,7 @@
 // actionCredentialTypes.ts
 
+import type { ConversationKind } from './endpoints';
+
 export type CredentialSlot = 'service' | 'proxy';
 export type PersonalCredentialAuth = 'username_password' | 'api_key' | 'bearer_token';
 
@@ -12,6 +14,7 @@ export interface CredentialRequest {
     id: string;
     etag: string;
     conversation_id: string;
+    conversation_kind?: ConversationKind;
     action_name: string;
     destination_label: string;
     reason: string;

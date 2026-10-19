@@ -4,7 +4,7 @@ title: "Use your own credentials with a shared action"
 description: "Provide a private personal identity when a shared Yamcs action needs your sign-in."
 section: "Guides"
 audience: user
-version: "0.261.345"
+version: "0.261.348"
 ---
 
 ## What this does
@@ -20,6 +20,8 @@ Fixed/Implemented in version: **0.261.333**, recorded in
 Continuation failure feedback and status recovery were fixed in **0.261.343**.
 Fresh agent reconstruction for new same-conversation requests was fixed in
 **0.261.345**.
+Private prompts and continuation in shared conversations were fixed in
+**0.261.348**.
 
 ## When a credential card appears
 
@@ -27,6 +29,10 @@ Use an authorized shared agent, or ask orchestration to perform work using an
 authorized action directly. A custom agent is not required. If the action
 requires your personal identity and none is bound to it, chat pauses that work
 and shows a **Personal action credentials** card.
+
+This is the action's connection to its configured service, not your SimpleChat
+login. Checking for unfinished requests does not mean that an action needs
+credentials; a conversation with no unfinished requests shows no card.
 
 The card names the action and destination. A proxy sign-in is not necessarily
 your Yamcs sign-in: a deployment can have proxy authentication while Yamcs
@@ -55,6 +61,22 @@ content, sent to the model, or shared with conversation participants.
 Saving credentials does not grant access to an action or approve an unrelated
 write operation. The action's governance and current group membership still
 apply.
+
+## Using an agent in a shared conversation
+
+You can invoke your own personal agent in a shared personal or group conversation
+when that agent is available to you. Another participant can use their own
+personal agent, but sharing the conversation does not let either of you select
+the other's personal agents or identities.
+
+An action sign-in card belongs only to the person who invoked the action. Other
+participants cannot see its identity choices, enter credentials on your behalf,
+or continue your paused work. After you continue, the normal assistant answer
+is posted to the shared thread as a reply to your original question. Consider
+what your agent may return before asking it to share information with the group.
+
+Shared **Orchestrate** remains available only to the person who started the
+conversation, while they are still a participant.
 
 ## Returning later or cancelling
 
@@ -86,6 +108,15 @@ If saving itself cannot be confirmed, refresh before entering credentials again:
 the server may already have saved them even if the response was lost. If refresh
 fails too, reload the conversation. Neither refresh nor reload automatically
 replays the action or sends the original question again.
+
+If a completed shared answer could not be delivered, refreshing its saved
+request can make **Continue** available to retry delivery. This uses the retained
+answer, not a second call to the external action.
+
+If the unfinished-request check fails, **Reload requests** checks again and
+shows **Checking requests...** while it runs. A session-expired notice requires
+signing in again; an access notice requires reopening the conversation or
+contacting its owner. Neither notice means you should supply a service password.
 
 ## When credentials stop working
 
@@ -120,6 +151,11 @@ Only Yamcs exposes personal action credential sources in this release. Other
 connectors retain their existing authentication behavior. Application managed
 identity and SimpleChat's session cookie are not personal credentials to paste
 into a card. Scheduled/background prompting is outside this release.
+
+Requests expire after 24 hours. Removed conversation/group access, a deleted
+original shared question, or a changed agent/action can prevent continuation.
+Older shared requests without a verified original question are not automatically
+reconstructed or replayed.
 
 ## Related
 

@@ -1,7 +1,7 @@
 # test_v2_action_credentials.py
 """
 Functional UI test for private credential cards in React V2.
-Version: 0.261.343
+Version: 0.261.348
 Implemented in: 0.261.333
 Continuation recovery regressions added in: 0.261.343
 
@@ -40,7 +40,10 @@ SETUP = r"""
 (request) => {
     const H = window.OrchHarness;
     H.reset();
-    H.stores.chat.useChatStore.setState({activeConversationId: request.conversation_id});
+    H.stores.chat.useChatStore.setState({
+        activeConversationId: request.conversation_id,
+        activeConversationKind: request.conversation_kind || 'personal',
+    });
     H.stores.bootstrap.useBootstrapStore.setState({data: {user: {id: 'actor-1'}}});
     window.__credentialCalls = [];
     window.fetch = async (url, options = {}) => {
@@ -69,16 +72,20 @@ SETUP = r"""
         if (path.includes('/messages')) return new Response(JSON.stringify([]), {headers: {'Content-Type': 'application/json'}});
         return new Response(JSON.stringify({}), {headers: {'Content-Type': 'application/json'}});
     };
-    H.mount('mount-a', 'CredentialRequestCards', {conversationId: request.conversation_id});
+    H.mount('mount-a', 'CredentialRequestCards', {
+        conversationId: request.conversation_id, conversationKind: request.conversation_kind || 'personal',
+    });
 }
 """
 
 
-def test_private_credentials_save_continue_and_navigation():
+@pytest.mark.parametrize("conversation_kind", ["personal", "collaborative"])
+def test_private_credentials_save_continue_and_navigation(conversation_kind):
     errors = []
+    request = {**REQUEST, "conversation_kind": conversation_kind}
     try:
         with hb.harness_page(collect_errors=errors) as page:
-            page.evaluate(SETUP, REQUEST)
+            page.evaluate(SETUP, request)
             card = page.get_by_role("region", name="Personal action credentials")
             card.wait_for()
             card.get_by_label("Username", exact=True).fill("private-user-sentinel")
@@ -109,15 +116,15 @@ def test_private_credentials_save_continue_and_navigation():
             })""")
             assert "private-password-sentinel" not in captured
             assert "private-user-sentinel" not in captured
-            page.evaluate(SETUP, REQUEST)
+            page.evaluate(SETUP, request)
             card.wait_for()
             card.get_by_label("Password", exact=True).fill("discard-on-navigation")
             page.evaluate("""() => window.OrchHarness.mount('mount-a', 'CredentialRequestCards',
-                {conversationId: 'conversation-2'})""")
+                {conversationId: 'conversation-2', conversationKind: 'collaborative'})""")
             page.wait_for_function('() => document.querySelectorAll(\'input[type="password"]\').length === 0')
             assert page.locator('input[type="password"]').count() == 0
-            page.evaluate("""() => window.OrchHarness.mount('mount-a', 'CredentialRequestCards',
-                {conversationId: 'conversation-1'})""")
+            page.evaluate("""(kind) => window.OrchHarness.mount('mount-a', 'CredentialRequestCards',
+                {conversationId: 'conversation-1', conversationKind: kind})""", conversation_kind)
             card.wait_for()
             assert card.get_by_label("Password", exact=True).input_value() == ""
             card.get_by_label("Personal identity", exact=True).select_option("identity-1")
@@ -127,7 +134,7 @@ def test_private_credentials_save_continue_and_navigation():
             page.wait_for_function("() => window.__credentialCalls.filter(call => call.path.endsWith('/submit')).length === 1")
             latest = page.evaluate("window.__credentialCalls.find(call => call.path.endsWith('/submit')).body")
             assert latest["slots"] == [{"slot": "proxy", "identity_id": "identity-1"}]
-            page.evaluate(SETUP, REQUEST)
+            page.evaluate(SETUP, request)
             card.wait_for()
             card.get_by_label("Password", exact=True).fill("discard-on-account-change")
             page.evaluate("""() => window.OrchHarness.stores.bootstrap.useBootstrapStore.setState({
@@ -138,6 +145,75 @@ def test_private_credentials_save_continue_and_navigation():
             assert not errors, errors
     except hb.HarnessUnavailable as exc:
         pytest.skip(str(exc))
+
+
+@pytest.mark.parametrize("status, copy", [
+    (401, "Your session has expired."),
+    (404, "Your access to this conversation could not be confirmed."),
+    (503, "Unfinished action sign-in requests could not be checked."),
+])
+def test_pending_load_errors_have_truthful_copy_and_single_flight_retry(status, copy):
+    errors = []
+    with hb.harness_page(collect_errors=errors) as page:
+        page.evaluate("""(status) => {
+            const H = window.OrchHarness;
+            H.reset();
+            H.stores.bootstrap.useBootstrapStore.setState({data: {user: {id: 'actor-1'}}});
+            window.__pendingChecks = 0;
+            window.fetch = () => {
+                window.__pendingChecks += 1;
+                if (window.__pendingChecks === 1) return Promise.resolve(new Response('{}', {status}));
+                return new Promise(resolve => { window.__finishPendingCheck = () => resolve(new Response(
+                    JSON.stringify({requests: [], csrf_token: 'fixture-csrf-token'}),
+                    {headers: {'Content-Type': 'application/json'}}
+                )); });
+            };
+            H.mount('mount-a', 'CredentialRequestCards', {conversationId: 'shared', conversationKind: null});
+        }""", status)
+        assert page.evaluate("window.__pendingChecks") == 0
+        page.evaluate("""() => window.OrchHarness.mount('mount-a', 'CredentialRequestCards',
+            {conversationId: 'shared', conversationKind: 'collaborative'})""")
+        alert = page.get_by_role("alert")
+        alert.filter(has_text=copy).wait_for()
+        page.get_by_role("button", name="Reload requests", exact=True).click()
+        checking = page.get_by_role("button", name="Checking requests...", exact=True)
+        checking.wait_for()
+        assert checking.is_disabled()
+        checking.evaluate("(node) => { node.click(); node.click(); }")
+        assert page.evaluate("window.__pendingChecks") == 2
+        assert alert.get_attribute("aria-busy") == "true"
+        page.evaluate("window.__finishPendingCheck()")
+        alert.wait_for(state="detached")
+        assert page.get_by_role("region", name="Personal action credentials").count() == 0
+        assert not errors, errors
+
+
+def test_navigation_discards_stale_pending_response():
+    errors = []
+    with hb.harness_page(collect_errors=errors) as page:
+        page.evaluate("""() => {
+            const H = window.OrchHarness;
+            H.reset();
+            H.stores.bootstrap.useBootstrapStore.setState({data: {user: {id: 'actor-1'}}});
+            window.__resolvePending = {};
+            window.fetch = url => new Promise(resolve => {
+                const id = new URL(url, location.origin).searchParams.get('conversation_id');
+                window.__resolvePending[id] = payload => resolve(new Response(JSON.stringify(payload),
+                    {headers: {'Content-Type': 'application/json'}}));
+            });
+            H.mount('mount-a', 'CredentialRequestCards', {conversationId: 'conversation-1', conversationKind: 'collaborative'});
+        }""")
+        page.wait_for_function("() => Boolean(window.__resolvePending['conversation-1'])")
+        page.evaluate("""() => window.OrchHarness.mount('mount-a', 'CredentialRequestCards',
+            {conversationId: 'conversation-2', conversationKind: 'collaborative'})""")
+        page.wait_for_function("() => Boolean(window.__resolvePending['conversation-2'])")
+        page.evaluate("""request => {
+            window.__resolvePending['conversation-2']({requests: [], csrf_token: 'current-token'});
+            window.__resolvePending['conversation-1']({requests: [request], csrf_token: 'stale-token'});
+        }""", {**REQUEST, "conversation_kind": "collaborative"})
+        page.wait_for_function("() => document.querySelectorAll('input[type=password]').length === 0")
+        assert page.get_by_role("region", name="Personal action credentials").count() == 0
+        assert not errors, errors
 
 
 def test_action_source_controls_and_responsive_card():

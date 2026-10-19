@@ -336,7 +336,9 @@ def ensure_collaboration_user_state_for_participant(
     return state_doc
 
 
-def _bootstrap_collaboration_user_state_from_participant(conversation_doc, participant_record, invited_by_user_id=None):
+def _bootstrap_collaboration_user_state_from_participant(
+    conversation_doc, participant_record, invited_by_user_id=None, *, persist=True,
+):
     if not isinstance(participant_record, dict):
         return None
 
@@ -350,7 +352,8 @@ def _bootstrap_collaboration_user_state_from_participant(conversation_doc, parti
         or (conversation_doc or {}).get('created_at')
         or utc_now_iso()
     )
-    state_doc = ensure_collaboration_user_state_for_participant(
+    builder = ensure_collaboration_user_state_for_participant if persist else build_collaboration_user_state
+    state_doc = builder(
         conversation_doc,
         participant_record,
         role=participant_record.get('role') or MEMBERSHIP_ROLE_MEMBER,
@@ -363,7 +366,8 @@ def _bootstrap_collaboration_user_state_from_participant(conversation_doc, parti
         state_doc['responded_at'] = participant_record.get('responded_at')
     if participant_record.get('removed_at'):
         state_doc['removed_at'] = participant_record.get('removed_at')
-    cosmos_collaboration_user_state_container.upsert_item(state_doc)
+    if persist:
+        cosmos_collaboration_user_state_container.upsert_item(state_doc)
     return state_doc
 
 
@@ -1646,7 +1650,7 @@ def list_group_collaboration_conversations_for_user(user_id):
     return conversations
 
 
-def assert_user_can_view_collaboration_conversation(user_id, conversation_doc, allow_pending=False):
+def assert_user_can_view_collaboration_conversation(user_id, conversation_doc, allow_pending=False, *, read_only=False):
     if not is_collaboration_conversation(conversation_doc):
         raise LookupError('Collaboration conversation not found')
 
@@ -1702,6 +1706,7 @@ def assert_user_can_view_collaboration_conversation(user_id, conversation_doc, a
                 conversation_doc,
                 participant,
                 invited_by_user_id=conversation_doc.get('created_by_user_id'),
+                persist=not read_only,
             )
 
         if user_state is None:
@@ -1733,11 +1738,12 @@ def assert_user_can_view_collaboration_conversation(user_id, conversation_doc, a
     raise PermissionError('Unsupported collaboration conversation type')
 
 
-def assert_user_can_participate_in_collaboration_conversation(user_id, conversation_doc):
+def assert_user_can_participate_in_collaboration_conversation(user_id, conversation_doc, *, read_only=False):
     access_context = assert_user_can_view_collaboration_conversation(
         user_id,
         conversation_doc,
         allow_pending=False,
+        read_only=read_only,
     )
 
     if is_group_collaboration_conversation(conversation_doc):

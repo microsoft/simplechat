@@ -1,5 +1,5 @@
 // test_v2_action_personal_credentials.mjs
-// Version: 0.261.343
+// Version: 0.261.348
 // Implemented in: 0.261.333
 // Continuation recovery regressions added in: 0.261.343
 // Exercises real authoring, safe DTO projection, credential transport, and stream waiting.
@@ -85,6 +85,8 @@ const request = {
 };
 const safe = readCredentialRequest(request);
 assert.equal(JSON.stringify(safe).includes('never-store'), false);
+assert.equal(readCredentialRequest({ ...request, conversation_kind: 'collaborative' }).conversation_kind, 'collaborative');
+assert.throws(() => readCredentialRequest({ ...request, conversation_kind: 'source' }), /unsupported/);
 assert.throws(() => readCredentialRequest({ ...request, requirements: [{ slot: 'unknown', auth_type: 'api_key' }] }), /unsupported/);
 const windowBefore = globalThis.window;
 const fetchBefore = globalThis.fetch;
@@ -128,7 +130,8 @@ try {
     assert.equal(refreshed.etag, 'etag-2');
     assert.equal(calls.at(-1).options.cache, 'no-store');
     assert.equal(calls.at(-1).options.method, 'GET', 'refresh must read the server, not submit credentials');
-    for (const change of [{ id: 'foreign' }, { conversation_id: 'foreign' }, { run_id: 'foreign' }, { turn_id: 'foreign' }]) {
+    for (const change of [{ id: 'foreign' }, { conversation_id: 'foreign' }, { conversation_kind: 'collaborative' },
+        { run_id: 'foreign' }, { turn_id: 'foreign' }]) {
         globalThis.fetch = async () => new Response(JSON.stringify({
             credential_request: { ...safe, ...change }, csrf_token: 'wrong-work',
         }), { headers: { 'Content-Type': 'application/json' } });

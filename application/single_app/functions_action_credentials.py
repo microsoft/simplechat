@@ -34,6 +34,9 @@ class CredentialServices:
     read_identity_auth: Callable
     create_identity: Callable
     update_identity: Callable
+    authorize_request_context: Callable | None = None
+    capture_chat_origin: Callable | None = None
+    publish_chat_result: Callable | None = None
 
 
 def configure_action_credential_services(services):
@@ -74,6 +77,20 @@ def authorize_conversation(user_id, conversation_id):
     return credential_services().authorize_conversation(user_id, conversation_id)
 
 
+def capture_chat_origin(user_id, conversation_id):
+    callback = _services.capture_chat_origin if _services is not None else None
+    return callback(user_id, conversation_id) if callback else {}
+
+
+def request_conversation(item):
+    callback = credential_services().authorize_request_context
+    return callback(item["user_id"], item) if callback else authorize_conversation(item["user_id"], item["conversation_id"])
+
+
+def pending_execution_ids(context, conversation_id):
+    return context.get("credential_execution_ids", (conversation_id,))
+
+
 def authorized_manifest(user_id, action_ref):
     return credential_services().resolve_manifest(user_id, action_ref)
 
@@ -106,18 +123,22 @@ def safe_identities(user_id, requirements):
 
 def safe_request(item, manifest):
     user_id = item["user_id"]
+    context = request_conversation(item)
     requirements = [
         {"slot": slot, "auth_type": auth_type,
          "label": "Proxy sign-in" if slot == "proxy" else "YAMCS sign-in"}
         for slot, auth_type in item["requirements"].items()
     ]
     result = {
-        "id": item["id"], "etag": item["_etag"], "conversation_id": item["conversation_id"],
+        "id": item["id"], "etag": item["_etag"],
+        "conversation_id": context.get("credential_visible_conversation_id", item["conversation_id"]),
         "action_name": manifest.get("displayName") or manifest.get("name") or "YAMCS",
         "destination_label": destination_label(manifest), "reason": item["reason"],
         "requirements": requirements, "identities": safe_identities(user_id, requirements),
         "status": "pending" if item["status"] == "saving" else item["status"],
     }
+    if context.get("credential_conversation_kind") == "collaborative":
+        result["conversation_kind"] = "collaborative"
     if item["status"] == "saving":
         result["etag"] = item["submission_etag"]
     for key in ("run_id", "turn_id"):
@@ -128,7 +149,7 @@ def safe_request(item, manifest):
 
 def authorize_request(user_id, request_id):
     item = state.read(user_id, request_id, record_type="credential_request")
-    authorize_conversation(user_id, item["conversation_id"])
+    request_conversation(item)
     manifest = authorized_manifest(user_id, item["action_ref"])
     if credential_fingerprint(manifest) != item["fingerprint"]:
         raise ActionCredentialError("action_destination_changed")

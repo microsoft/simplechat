@@ -20,7 +20,7 @@ from action_credential_contracts import ActionCredentialError, find_credential_s
 from agent_execution_context import current_agent_execution
 from functions_action_manifest import get_action_origin
 import functions_action_credential_state as state
-from functions_action_credentials import _continuation
+from functions_action_credentials import _continuation, authorize_conversation
 
 
 _journal = ContextVar("action_credential_journal", default=None)
@@ -61,6 +61,8 @@ async def _function_boundary(context, next):
         journal.deferred.add(_call_id.get())
         raise journal.pending
     try:
+        if (_continuation.get() or {}).get("resume"):
+            authorize_conversation(journal.user_id, journal.conversation_id)
         await next(context)
     except Exception as error:
         pending = find_credential_stop(error)

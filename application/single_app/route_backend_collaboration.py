@@ -2973,6 +2973,24 @@ def register_route_backend_collaboration(bp):
                             except json.JSONDecodeError:
                                 return normalized_event_block + '\n\n'
 
+                            credential_event = stream_payload.get('type') == 'action_credentials_required' or any(
+                                line.strip() == 'event: action_credentials_required'
+                                for line in normalized_event_block.split('\n')
+                            )
+                            if credential_event:
+                                # This response belongs only to its requesting actor.
+                                # Never publish a credential DTO to the shared event registry.
+                                from functions_action_credentials import authorize_request, safe_request
+
+                                pending = stream_payload.get('credential_request') or {}
+                                item, manifest = authorize_request(current_user['user_id'], pending.get('id'))
+                                if (
+                                    item['conversation_id'] != source_conversation_id
+                                    or item['continuation'].get('collaboration_message_id') != user_message_doc['id']
+                                ):
+                                    return collaboration_stream_error('This action sign-in request is no longer available.')
+                                return f'data: {json.dumps({"type": "action_credentials_required", "credential_request": safe_request(item, manifest)})}\n\n'
+
                             ai_activity.step(describe_ai_activity_step(stream_payload))
 
                             if stream_payload.get('type') == 'm365_pending_action' or 'm365_pending_actions' in stream_payload:

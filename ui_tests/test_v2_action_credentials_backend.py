@@ -1,7 +1,7 @@
 # test_v2_action_credentials_backend.py
 """Real React Save and continue through Flask and freshly constructed SK agents.
 
-Version: 0.261.346
+Version: 0.261.348
 Implemented in: 0.261.345
 
 Only Cosmos and external model/provider transport are offline. Browser fetch is
@@ -69,6 +69,7 @@ def credential_browser(options):
                 url = urlsplit(request.url)
                 if not (url.path.startswith("/api/action-credentials/") or url.path in {
                     "/api/get_messages", "/api/msgraph/pending-actions",
+                    "/api/collaboration/conversations/visible-chat/messages",
                 }):
                     errors.append(f"Unexpected application request: {url.path}")
                     route.abort()
@@ -98,8 +99,11 @@ def credential_browser(options):
                 H.stores.bootstrap.useBootstrapStore.setState({data: {user: {id: 'owner'}}});
                 H.stores.chat.useChatStore.setState({
                     activeConversationId: pending.conversation_id, messages: [userMessage],
+                    activeConversationKind: pending.conversation_kind || 'personal',
                 });
-                H.mount('mount-a', 'CredentialRequestCards', {conversationId: pending.conversation_id});
+                H.mount('mount-a', 'CredentialRequestCards', {
+                    conversationId: pending.conversation_id, conversationKind: pending.conversation_kind || 'personal',
+                });
             }""", {"pending": pending, "userMessage": user_message})
             card = page.get_by_role("region", name="Personal action credentials")
             card.wait_for()
@@ -133,7 +137,8 @@ def credential_browser(options):
 
 
 @pytest.mark.ui
-def test_save_continue_executes_tool_and_displays_same_conversation_answer(connect_options, monkeypatch):
+@pytest.mark.parametrize("shared_kind", [None, "personal", "group"])
+def test_save_continue_executes_tool_and_displays_same_conversation_answer(connect_options, monkeypatch, shared_kind):
     # Run cold, real app imports without polluting other UI suites' module state.
     monkeypatch.setenv("SIMPLECHAT_CREDENTIAL_BROWSER_OPTIONS", json.dumps(connect_options))
     prefix = """
@@ -146,7 +151,8 @@ sys.path.insert(0, str(Path(sys.argv[2]).parent / "ui_tests"))
 from test_v2_action_credentials_backend import run_browser_probe
 run_browser_probe(json.loads(os.environ.pop("SIMPLECHAT_CREDENTIAL_BROWSER_OPTIONS")))
 """
-    run_probe(prefix, (), False)
+    scenario = {"shared": shared_kind, "scope": "personal", "participant": True} if shared_kind else {}
+    run_probe(prefix, (json.dumps(scenario),), False)
 
 
 def run_browser_probe(options):

@@ -1,7 +1,7 @@
 # test_action_credentials_chat_reconstruction.py
 """Fresh-agent save/continue integration through real application owners.
 
-Version: 0.261.345
+Version: 0.261.348
 Implemented in: 0.261.345
 
 Cold subprocesses keep bootstrap, loaders, authorization, identities, journals,
@@ -18,6 +18,7 @@ from test_orchestration_result_imports import run_probe
 PROBE = r'''
 import asyncio
 import base64
+import hashlib
 from contextlib import ExitStack, nullcontext
 from copy import deepcopy
 from functools import wraps
@@ -54,6 +55,11 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
     import functions_authentication as authentication
     import route_backend_action_credentials as credential_routes
     import functions_appinsights as telemetry
+    import functions_collaboration as collaboration
+    from collaboration_models import (
+        build_personal_collaboration_conversation, build_group_collaboration_conversation,
+        build_collaboration_user_state,
+    )
     from action_credential_contracts import ActionCredentialsRequired
     from flask import g, session
     from semantic_kernel import Kernel
@@ -67,6 +73,7 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
         "enable_user_workspace": True, "per_user_semantic_kernel": True,
         "merge_global_semantic_kernel_with_workspace": True,
         "enable_key_vault_secret_storage": False, "enable_content_safety": False,
+        "enable_collaborative_conversations": True,
         "enable_default_embedding_model_plugin": False, "enable_tabular_processing": False,
         "azure_openai_gpt_endpoint": "https://model.example.invalid",
         "azure_openai_gpt_key": "local-model-key", "azure_openai_gpt_deployment": "test-model",
@@ -78,6 +85,8 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
         "instructions": "List the available telemetry instances.", "actions_to_load": ["mission"],
     }
     scope = scenario.get("scope", "global")
+    shared_kind = scenario.get("shared")
+    creator = "creator" if scenario.get("participant") else "owner"
     if scope != "global":
         target.update(is_global=False, is_group=scope == "group")
         target["group_id" if scope == "group" else "user_id"] = "team" if scope == "group" else "owner"
@@ -103,12 +112,14 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
     agent_container.upsert_item(target)
     action_container.upsert_item(action)
     config.cosmos_groups_container.upsert_item({
-        "id": "team", "name": "Telemetry Team", "owner": {"id": "owner"}, "users": [{"userId": "owner"}],
+        "id": "team", "name": "Telemetry Team", "owner": {"id": "owner"},
+        "users": [{"userId": "owner"}, {"userId": "creator"}],
     })
     user_settings = {"settings": {"enable_agents": True, "selected_agent": target}}
     if scope == "group":
         user_settings["settings"]["activeGroupOid"] = "team"
     state.configure_action_credential_state(CredentialContainer("user_id"))
+    shared_events = []
     models, provider_calls, completed_calls, histories, diagnostics, responses = [], [], [], [], [], [
         ChatMessageContent(role="assistant", items=[
             FunctionCallContent(id="completed-sum", name="math-Add", arguments='{"input":2,"amount":3}'),
@@ -191,6 +202,12 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
                 deepcopy(row) for row in config.cosmos_messages_container.items.values()
                 if row.get("conversation_id") == "credential-chat"
             ]),
+            patch.object(config.cosmos_collaboration_messages_container, "query_items", side_effect=lambda **kwargs: [
+                deepcopy(row) for row in config.cosmos_collaboration_messages_container.items.values()
+                if row.get("conversation_id") == "visible-chat"
+            ]),
+            patch.object(collaboration, "publish_collaboration_event",
+                         side_effect=lambda conversation_id, event: shared_events.append(deepcopy(event))),
             patch.object(loader, "create_model_endpoint_chat_completion_service", side_effect=model_service),
             patch.object(AzureChatCompletion, "_inner_get_chat_message_contents", model_reply),
             patch.object(AzureChatCompletion, "_inner_get_streaming_chat_message_contents", stream_reply),
@@ -209,11 +226,45 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
                                 "password": "old-password" if scenario["identity"] == "rotate" else "private-password-sentinel"},
             }, "owner", identity_id="existing-proxy")
             selected_identity = identities.get_workspace_identity("personal", "owner", "existing-proxy")
-        with web.app.test_request_context("/"):
+        origin_payload = {"m365_collaboration_message_id": "shared-question"} if shared_kind else {}
+        with web.app.test_request_context("/", json=origin_payload):
             session["user"] = {"oid": "owner", "roles": ["User"]}
             g.conversation_id = "credential-chat"
             g.request_agent_info = deepcopy(target)
             chats._create_personal_conversation("owner", "credential-chat")
+            if shared_kind:
+                builder = (
+                    build_group_collaboration_conversation
+                    if shared_kind == "group" else build_personal_collaboration_conversation
+                )
+                shared = builder(
+                    title="Shared telemetry", creator_user={"user_id": creator, "display_name": "Creator"},
+                    invited_participants=[{"user_id": "owner", "display_name": "Actor"}] if creator != "owner" else [],
+                    conversation_id="visible-chat",
+                    **({"group_id": "team", "group_name": "Telemetry Team"} if shared_kind == "group" else {}),
+                )
+                shared["source_conversation_id"] = "credential-chat"
+                for participant in shared.get("participants", []):
+                    participant["status"] = "accepted"
+                    config.cosmos_collaboration_user_state_container.upsert_item(build_collaboration_user_state(
+                        conversation_doc=shared, user_summary=participant,
+                        role=participant["role"], membership_status="accepted",
+                    ))
+                shared["accepted_participant_ids"] = list({creator, "owner"})
+                config.cosmos_collaboration_conversations_container.upsert_item(shared)
+                source = dict(config.cosmos_conversations_container.read_item("credential-chat", "credential-chat"))
+                source.update(
+                    conversation_kind="collaboration_source", collaboration_conversation_id="visible-chat",
+                    user_id=creator, is_hidden=True,
+                )
+                config.cosmos_conversations_container.upsert_item(source)
+                config.cosmos_collaboration_messages_container.upsert_item({
+                    "id": "shared-question", "conversation_id": "visible-chat", "role": "user",
+                    "content": "List the actual telemetry instances.", "message_kind": "ai_request",
+                    "timestamp": "2026-10-17T12:00:00Z",
+                    "metadata": {"sender": {"user_id": "owner", "display_name": "Actor"},
+                                 "source_conversation_id": "credential-chat"},
+                })
             user_message = {
                 "id": "original-question", "conversation_id": "credential-chat", "user_id": "owner",
                 "role": "user", "content": "List the actual telemetry instances.",
@@ -229,6 +280,16 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
                 })
             config.cosmos_messages_container.upsert_item(user_message)
             canonical = runtime.resolve_delegation_agent(target, user_id="owner", settings=settings)
+            if shared_kind and scope == "personal":
+                try:
+                    runtime.resolve_delegation_agent(
+                        {**canonical, "scope_id": "another-participant", "user_id": "another-participant"},
+                        user_id="owner", settings=settings,
+                    )
+                except PermissionError:
+                    pass
+                else:
+                    raise AssertionError("Sharing a conversation granted another participant's personal agent.")
             if profile == "global":
                 original_kernel, agents = loader.load_semantic_kernel(Kernel(), settings)
             elif profile == "agent-core":
@@ -259,6 +320,15 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
                 pending = error.credential_request
             else:
                 raise AssertionError("Tool did not pause for personal credentials.")
+        if shared_kind:
+            check(pending["conversation_id"] == "visible-chat", "Prompt used the hidden execution ID.")
+            check(pending["conversation_kind"] == "collaborative", "Prompt lost shared routing.")
+            retained = state.read("owner", pending["id"])
+            check(retained["conversation_id"] == "credential-chat", "Private execution ID was rewritten.")
+            check(retained["continuation"]["collaboration_message_id"] == "shared-question",
+                  "The trusted original question was not retained.")
+            if scenario.get("legacy_participant_state"):
+                config.cosmos_collaboration_user_state_container.items.pop("owner:visible-chat")
         check(not provider_calls and len(completed_calls) == 1, "Initial tool boundaries were not retained.")
         checkpoint = state.read("owner", execution.credential_checkpoint_id)
         check("root" in checkpoint["value"], "No retained root tool history.")
@@ -266,6 +336,20 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
         with client.session_transaction() as browser:
             browser["user"] = {"oid": "owner", "roles": ["User"]}
         path = "/api/action-credentials/" + pending["id"]
+        visible_id = "visible-chat" if shared_kind else "credential-chat"
+        state_revision = config.cosmos_collaboration_user_state_container.revision
+        refreshed = client.get("/api/action-credentials/pending", query_string={"conversation_id": visible_id})
+        check(refreshed.status_code == 200 and refreshed.json["requests"][0]["id"] == pending["id"],
+              "Reopening the conversation did not recover the private prompt.")
+        check(config.cosmos_collaboration_user_state_container.revision == state_revision,
+              "Reading pending requests changed participant state.")
+        if shared_kind:
+            with client.session_transaction() as browser:
+                browser["user"] = {"oid": creator if creator != "owner" else "outsider", "roles": ["User"]}
+            other_request = client.get(path)
+            check(other_request.status_code == 404, "Another participant accessed the actor's private request.")
+            with client.session_transaction() as browser:
+                browser["user"] = {"oid": "owner", "roles": ["User"]}
         info = client.get(path)
         check(info.status_code == 200, "Credential request was not authorized.")
         slot = {
@@ -304,14 +388,36 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
             elif mutation == "group":
                 config.cosmos_groups_container.items["team"]["owner"] = {"id": "other-user"}
                 config.cosmos_groups_container.items["team"]["users"] = []
+            elif mutation == "shared_membership":
+                for row in config.cosmos_collaboration_user_state_container.items.values():
+                    if row.get("user_id") == "owner":
+                        row["membership_status"] = "removed"
+            elif mutation == "shared_question":
+                config.cosmos_collaboration_messages_container.items["shared-question"]["metadata"]["is_deleted"] = True
+            elif mutation == "shared_link":
+                config.cosmos_collaboration_conversations_container.items["visible-chat"]["source_conversation_id"] = "forged"
             persistence = (
                 patch.object(chats, "_persist_screened_assistant", side_effect=OSError("private-password-sentinel"))
                 if scenario.get("persistence_failure") else nullcontext()
             )
-            with persistence:
+            publication = (
+                patch.object(collaboration, "publish_collaboration_event", side_effect=OSError("private-password-sentinel"))
+                if scenario.get("publication_failure") else nullcontext()
+            )
+            with persistence, publication:
                 continued = client.post(path + "/continue", json={"expected_etag": ready["etag"]},
                                        headers={"X-CSRFToken": info.json["csrf_token"]}, buffered=True)
         frames = continued.get_data(as_text=True)
+        if scenario.get("publication_failure"):
+            check('"done": true' not in frames and len(provider_calls) == 1, "Failed publication reported success.")
+            check(state.read("owner", pending["id"])["status"] == "ready", "Saved answer cannot be explicitly retried.")
+            refreshed = client.get(path)
+            check(refreshed.status_code == 200, "Saved delivery request could not be refreshed.")
+            ready = refreshed.json["credential_request"]
+            continued = client.post(path + "/continue", json={"expected_etag": ready["etag"]},
+                                    headers={"X-CSRFToken": info.json["csrf_token"]}, buffered=True)
+            frames = continued.get_data(as_text=True)
+            check(len(provider_calls) == 1 and len(completed_calls) == 1, "Delivery retry replayed external work.")
         if scenario.get("persistence_failure") or scenario.get("provider_status") == 401:
             expected_status = "failed" if scenario.get("persistence_failure") else "superseded"
             check('"done": true' not in frames and len(provider_calls) == 1, "Failure became success or replayed work.")
@@ -349,14 +455,34 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
               "Same-conversation continuation failed: " + frames)
         check(len(provider_calls) == 1, "Blocked provider call did not execute exactly once.")
         check(len(completed_calls) == 1, "An earlier completed tool was replayed.")
-        check(len(models) == 2 and models[0] is not models[1], "Resume did not create a fresh model.")
+        check(len(models) == (3 if scenario.get("publication_failure") else 2) and models[0] is not models[1],
+              "Resume did not create a fresh model.")
         if prior_messages:
             check("Remember this existing conversation." in histories[-1], "Earlier conversation context was lost.")
         check(state.read("owner", pending["id"])["status"] == "completed", "Request did not complete.")
         answer = json.loads(next(line[6:] for line in frames.splitlines() if '"done": true' in line))
-        saved = config.cosmos_messages_container.read_item(answer["message_id"], "credential-chat")
+        saved_id = "credential_answer_" + hashlib.sha256(pending["id"].encode()).hexdigest() if shared_kind else answer["message_id"]
+        saved = config.cosmos_messages_container.read_item(saved_id, "credential-chat")
         check(saved["conversation_id"] == "credential-chat" and saved["content"] == "sim is RUNNING.",
               "Assistant answer was not persisted in the same conversation.")
+        if shared_kind:
+            shared_messages = list(config.cosmos_collaboration_messages_container.items.values())
+            answers = [row for row in shared_messages if row.get("role") == "assistant"]
+            check(len(answers) == 1 and answers[0]["id"] == answer["message_id"],
+                  "Continuation did not publish exactly one shared answer.")
+            check(answers[0]["reply_to_message_id"] == "shared-question", "Shared reply lost its question.")
+            check(answers[0]["agent_display_name"] == "Telemetry", "Shared reply lost agent attribution.")
+            check(answers[0]["metadata"]["source_thought_user_id"] == "owner", "Shared reply lost actor attribution.")
+            check(answer["conversation_id"] == visible_id, "Terminal frame used a hidden conversation.")
+            check("private-password-sentinel" not in json.dumps(shared_messages + shared_events),
+                  "Shared storage/events received private credentials.")
+            check("credential_request" not in json.dumps(shared_messages + shared_events),
+                  "Shared storage/events received a private prompt.")
+            check(pending["id"] not in json.dumps(shared_messages + shared_events),
+                  "Shared storage/events received a private request identifier.")
+            empty = client.get("/api/action-credentials/pending?conversation_id=visible-chat")
+            check(empty.status_code == 200 and empty.json["requests"] == [],
+                  "A completed shared action left a misleading pending banner.")
         check(sum(row.get("role") == "user" for row in config.cosmos_messages_container.items.values())
               == 1 + bool(prior_messages),
               "Continuation reposted the question.")
@@ -400,4 +526,18 @@ def test_fresh_reconstruction_rejects_real_changes(mutation):
 
 @pytest.mark.parametrize("scenario", [{"provider_status": 401}, {"persistence_failure": True}])
 def test_resume_failure_cannot_report_success_or_replay(scenario):
+    run_probe(PROBE, (json.dumps(scenario),), False)
+
+
+@pytest.mark.parametrize("scenario", [
+    {"shared": "personal", "scope": "personal"},
+    {"shared": "personal", "scope": "personal", "participant": True, "streaming": True},
+    {"shared": "group", "scope": "group"},
+    {"shared": "group", "scope": "personal", "participant": True, "legacy_participant_state": True},
+    {"shared": "personal", "scope": "personal", "publication_failure": True},
+    {"shared": "personal", "scope": "personal", "participant": True, "mutation": "shared_membership"},
+    {"shared": "personal", "scope": "personal", "mutation": "shared_question"},
+    {"shared": "group", "scope": "group", "mutation": "shared_link"},
+])
+def test_shared_chat_private_prompt_and_exact_continuation(scenario):
     run_probe(PROBE, (json.dumps(scenario),), False)
