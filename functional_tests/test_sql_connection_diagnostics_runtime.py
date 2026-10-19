@@ -1,7 +1,7 @@
 # test_sql_connection_diagnostics_runtime.py
 """
 Functional tests for SQL connection diagnostics across routes, plugins, and logging.
-Version: 0.261.352
+Version: 0.261.353
 Implemented in: 0.261.351
 
 Run real plugin classes, connection builders, Flask handlers, and log_event against

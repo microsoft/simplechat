@@ -1,7 +1,7 @@
 # test_plugin_routes_cosmos_contract.py
 """Runtime evidence for the plugin route owners' Cosmos response contracts.
 
-Version: 0.261.352
+Version: 0.261.353
 Implemented in: 0.261.352
 
 Execute unchanged route and legacy-validator definitions with the installed SDK's
@@ -84,6 +84,7 @@ def test_personal_legacy_update_consumes_sdk_point_response(plugin_routes, owner
     client, namespace = plugin_routes
     container = CosmosContainer(partition_field="user_id")
     action = {"id": "action-id", "name": "historical", "type": "msgraph", "user_id": "actor"}
+    stored = None
     if owner is not None:
         stored = container.create_item({**action, "user_id": owner})
         assert isinstance(stored, CosmosDict)
@@ -105,6 +106,7 @@ def test_personal_legacy_update_consumes_sdk_point_response(plugin_routes, owner
     if owner == "actor":
         assert response.status_code == 200
         assert response.json == {"success": True}
+        assert isinstance(stored, CosmosDict)
         assert isinstance(existing, CosmosDict)
         assert existing["_etag"] == stored["_etag"]
         assert type(existing["user_id"]) is str
@@ -120,6 +122,7 @@ def test_global_legacy_update_consumes_sdk_point_response(plugin_routes, stored_
     client, namespace = plugin_routes
     container = CosmosContainer(partition_field="id")
     action = {"id": "action-id", "name": "historical", "type": "msgraph"}
+    stored = None
     if stored_name is not None:
         stored = container.create_item({**action, "name": stored_name})
         assert isinstance(stored, CosmosDict)
@@ -146,6 +149,7 @@ def test_global_legacy_update_consumes_sdk_point_response(plugin_routes, stored_
     if stored_name == "historical":
         assert response.status_code == 200
         assert response.json == {"success": True}
+        assert isinstance(stored, CosmosDict)
         assert isinstance(existing, CosmosDict)
         assert existing["_etag"] == stored["_etag"]
         saved.assert_called_once_with({**action, "metadata": {}, "additionalFields": {}}, user_id="actor")

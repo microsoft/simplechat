@@ -1,4 +1,4 @@
-# SQL connection diagnostics fix - v0.261.352
+# SQL connection diagnostics fix - v0.261.353
 
 ## Issue and root cause
 
@@ -55,6 +55,25 @@ the declared application/test pins and without changing shared Python packages:
   proof of assertion coverage.
 - Route policy checks: **15/15**, **10/10**, and **3/3** passed; documentation
   coverage and quality: **7/7** and **6/6** passed.
+
+### CodeQL test-local initialization follow-up - v0.261.353
+
+CodeQL `py/uninitialized-local-variable` flagged `stored` in the personal/global
+SDK response tests (alerts 4846 and 4847). The existing success guards implied
+that a record had been created, but the local bindings were conditional.
+Both tests now initialize `stored` before that condition and assert the SDK
+response type on successful updates before comparing ETags. Missing-record and
+mismatched-owner/name cases retain all refusal assertions.
+
+**Fixed in version: 0.261.353**, recorded in `application/single_app/config.py`.
+No production handler, Cosmos review evidence, test selector, assertion policy,
+or CI configuration changed.
+
+The guarded owner/SQL regression selection passed **114 cases**; its optimized
+owner/classifier selection passed **46 cases**. Cosmos inventory validation
+reported **1,067 owners, 412 doubles, zero review gaps**, and documentation
+coverage/quality checks passed **7/7** and **6/6**. These local results do not
+replace the new commit's CodeQL analysis.
 
 ## Technical details
 
