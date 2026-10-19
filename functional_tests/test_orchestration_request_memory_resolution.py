@@ -1,7 +1,7 @@
 # test_orchestration_request_memory_resolution.py
 """Real-boundary regressions for source-aware, memory-aware request resolution.
 
-Version: 0.261.349
+Version: 0.261.350
 Implemented in: 0.261.349
 
 Refs #1785. Production Flask planning, resolution, memory selection, store and
@@ -76,9 +76,9 @@ def resolver_payload(harness, index=0):
 
 @pytest.mark.parametrize("request_text", [
     REQUEST,
-    "The delivery review is for kit R-502. These are the facts: Morgan owns it, "
+    "The delivery review is for kit R-502. These are the facts: Morgan owns it, " +
     "the budget is $175,000 and readiness is amber. Prepare a review using the details above.",
-    "This supplier review has two open risks and an owner named Morgan. "
+    "This supplier review has two open risks and an owner named Morgan. " +
     "Shorten that into a baseline note for the review team.",
 ])
 def test_first_turn_inline_facts_reach_semantic_resolution(real_http_harness, request_text):

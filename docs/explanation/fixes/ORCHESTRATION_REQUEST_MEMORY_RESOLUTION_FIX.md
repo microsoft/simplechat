@@ -1,6 +1,6 @@
 # Orchestration Request and Saved-Memory Resolution Fix
 
-**Version: 0.261.349**
+**Version: 0.261.350**
 
 Fixed/Implemented in version: **0.261.349**
 
@@ -8,6 +8,12 @@ Tracking: [#1785](https://github.com/microsoft/simplechat/issues/1785).
 The corresponding `application/single_app/config.py` update is
 **0.261.348 -> 0.261.349**. No data migration, new setting, browser asset, or
 deployment-configuration change is required.
+
+The review follow-up in **0.261.350** uses explicit `+` concatenation for the two
+multiline parametrized prompts, addressing CodeQL
+`py/implicit-string-concatenation-in-list` without changing the three complete
+request strings or test cases. `application/single_app/config.py` advances from
+**0.261.349 -> 0.261.350** for this follow-up; application behavior is unchanged.
 
 ## Issue and root cause
 
@@ -42,7 +48,7 @@ not prove correct memory selection or completion of later turns.
 | `route_backend_orchestration.py` | Authorizes and recalls memory before resolution, including clarification resumption; reuses or refreshes recall for planning and preserves publication checks. |
 | `functions_orchestration_memory.py` | Retains audience/scope rules and adds safe memory inclusion/selection diagnostics. |
 | `functions_fact_memory_context.py` | Reports unembedded and incompatible fact counts without changing ranking, caps, or normal-chat backfill. |
-| `config.py` | Advances the application version to `0.261.349`. |
+| `config.py` | Advances the application version to `0.261.350`, including the test-clarity review follow-up. |
 
 ### Source sufficiency
 
@@ -195,6 +201,7 @@ and Werkzeug versions:
 
 | Check | Result |
 | --- | --- |
+| `0.261.350` review follow-up: `python -m pytest -q -p test_support.cosmos_network_guard functional_tests\test_orchestration_request_memory_resolution.py` | 22 passed; a separate AST/evaluation comparison against the preceding commit confirmed all three request strings are unchanged and both multiline prompts use explicit `+`. |
 | Combined request/source, orchestration memory/context/HTTP/model-selection, normal-chat memory, and persistence suites | 320 passed, 83 subtests passed. |
 | Changed orchestration owners, request-memory/source routes, and SDK response contracts with the Cosmos network guard | 98 passed. |
 | Full reviewed Cosmos gate: `python scripts\check_cosmos_response_boundaries.py --run-contracts` | 1,143 passed, 244 subtests passed; 1,067 owners and 412 doubles have zero review gaps. |
