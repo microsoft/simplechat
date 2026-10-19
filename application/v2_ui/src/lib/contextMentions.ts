@@ -73,6 +73,7 @@ export interface ContextCandidate {
 }
 
 export interface ContextSearchOptions {
+    onScopeError?: (scope: string) => void;
     publicWorkspaceSelection?: PublicWorkspaceSelection | null;
     query: string;
     groups?: readonly WorkspaceRef[];
@@ -161,12 +162,11 @@ function scopeForDocument(
 }
 
 /** Run a request that must not be able to empty the whole menu when it fails. */
-async function settled<T>(work: Promise<T>, fallback: T): Promise<T> {
+async function settled<T>(work: Promise<T>, fallback: T, onError?: () => void): Promise<T> {
     try {
         return await work;
     } catch {
-        // Advisory: the other scopes are unaffected, and a partial menu is more useful than
-        // an empty one with no explanation.
+        onError?.();
         return fallback;
     }
 }
@@ -178,7 +178,7 @@ type DocumentPageFetcher = (query: Partial<DocumentQuery>) => Promise<DocumentLi
  *
  * Unfiltered, this is a single short page. Filtered, it pages back until it has enough
  * matches, so a workspace whose latest uploads are all PDFs still offers its older images.
- * A failed page keeps what was already found.
+ * Strict callers report failed reads instead of presenting them as empty matches.
  */
 export async function collectScopeDocuments(
     fetchPage: DocumentPageFetcher,
@@ -200,8 +200,7 @@ export async function collectScopeDocuments(
         const documents = response?.documents ?? [];
         found.push(...documents.filter(filter));
         const total = Number(response?.total_count);
-        // A route that reports no total does not page (the public list ignores `page`), so
-        // asking again would only re-read the same rows.
+        // A legacy route with no total may not support paging; do not repeat its first page.
         if (found.length >= FILTERED_DOCUMENTS_PER_SCOPE
             || documents.length < FILTERED_DOCUMENT_PAGE_SIZE
             || !Number.isFinite(total)
@@ -251,15 +250,18 @@ async function loadTags(options: ContextSearchOptions): Promise<ScopedTag[]> {
         return tagCache.tags;
     }
 
+    let complete = true;
+    const report = (scope: string) => () => {
+        complete = false;
+        options.onScopeError?.(scope);
+    };
     const [personal, group, publicTags] = await Promise.all([
-        options.publicWorkspaceSelection ? Promise.resolve({ tags: [] }) : settled(fetchPersonalDocumentTags(options.signal), { tags: [] }),
+        options.publicWorkspaceSelection ? Promise.resolve({ tags: [] }) : settled(fetchPersonalDocumentTags(options.signal), { tags: [] }, report('Personal tags')),
         options.groupsEnabled && !options.publicWorkspaceSelection
-            ? settled(fetchGroupDocumentTags(options.signal), { tags: [] })
+            ? settled(fetchGroupDocumentTags(options.signal), { tags: [] }, report('Group tags'))
             : Promise.resolve({ tags: [] as WorkspaceTag[] }),
         options.publicEnabled
-            ? options.publicWorkspaceSelection
-                ? fetchPublicWorkspaceDocumentTags(options.signal, options.publicWorkspaceSelection)
-                : settled(fetchPublicWorkspaceDocumentTags(options.signal), { tags: [] })
+            ? settled(fetchPublicWorkspaceDocumentTags(options.signal, options.publicWorkspaceSelection), { tags: [] }, report('Public tags'))
             : Promise.resolve({ tags: [] as WorkspaceTag[] }),
     ]);
 
@@ -280,7 +282,7 @@ async function loadTags(options: ContextSearchOptions): Promise<ScopedTag[]> {
     // A superseded keystroke aborts these requests, and `settled` reports an abort as an
     // empty vocabulary. Caching that would answer every `#` for the next minute with no tags
     // at all -- and typing is exactly what aborts them, so it would be the common case.
-    if (!options.signal?.aborted) {
+    if (!options.signal?.aborted && complete) {
         tagCache = { at: Date.now(), tags };
         tagCacheKey = key;
     }
@@ -321,34 +323,38 @@ export async function searchContextCandidates(
     const filter = options.documentFilter;
     const signal = options.signal;
     const noDocuments = Promise.resolve([] as WorkspaceDocument[]);
+    const readScope = (work: Promise<WorkspaceDocument[]>, name: string) =>
+        settled(work, [], () => options.onScopeError?.(name));
 
     const [personalDocs, groupDocs, publicDocs, tags] = await Promise.all([
-        options.publicWorkspaceSelection ? noDocuments : collectScopeDocuments(
+        options.publicWorkspaceSelection ? noDocuments : readScope(collectScopeDocuments(
             (query) => fetchPersonalDocuments(query, signal),
             needle,
             filter,
             signal,
-        ),
+            true,
+        ), 'Personal documents'),
         options.groupsEnabled && !options.publicWorkspaceSelection && groupIds.length > 0
-            ? collectScopeDocuments(
+            ? readScope(collectScopeDocuments(
                   (query) => fetchGroupDocuments(groupIds, query, signal),
                   needle,
                   filter,
                   signal,
-              )
+                  true,
+              ), 'Group documents')
             : noDocuments,
         options.publicEnabled
-            ? collectScopeDocuments(
+            ? readScope(collectScopeDocuments(
                   (query) => fetchPublicWorkspaceDocuments(query, signal, options.publicWorkspaceSelection),
                   needle,
                   filter,
                   signal,
-                  Boolean(options.publicWorkspaceSelection),
-              )
+                  true,
+              ), options.publicWorkspaceSelection ? 'Public search sources' : 'Public documents')
             : noDocuments,
         options.documentsOnly
             ? Promise.resolve([] as ScopedTag[])
-            : options.publicWorkspaceSelection ? loadTags(options) : settled(loadTags(options), [] as ScopedTag[]),
+            : loadTags(options),
     ]);
 
     const candidates: ContextCandidate[] = [];

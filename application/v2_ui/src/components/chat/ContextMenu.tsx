@@ -20,7 +20,6 @@ import {
 import type { ContextKind } from '../../lib/chatContext';
 import type { WorkspaceRef } from '../../lib/types';
 import type { PublicWorkspaceSelection } from '../../lib/publicChatScope';
-import { toast } from '../../stores/toastStore';
 
 /** How long to wait after a keystroke before asking the server for candidates. */
 const SEARCH_DEBOUNCE_MS = 250;
@@ -61,9 +60,11 @@ export interface ContextSearchScope {
 export function useContextSuggestions(
     query: string | null,
     scope: ContextSearchScope,
-): { candidates: ContextCandidate[]; loading: boolean } {
+): { candidates: ContextCandidate[]; loading: boolean; error: string | null; retry: () => void } {
     const [candidates, setCandidates] = useState<ContextCandidate[]>([]);
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [attempt, setAttempt] = useState(0);
 
     const groupIds = scope.groups.map((group) => group.id).join(',');
     const publicIds = scope.publicWorkspaces.map((workspace) => workspace.id).join(',');
@@ -82,7 +83,9 @@ export function useContextSuggestions(
         }
 
         const controller = new AbortController();
+        const failedScopes = new Set<string>();
         setLoading(true);
+        setError(null);
 
         const timer = window.setTimeout(() => {
             searchContextCandidates({
@@ -95,16 +98,18 @@ export function useContextSuggestions(
                 includeWorkspaces: scopeRef.current.workspacesEnabled !== false,
                 documentsOnly: scopeRef.current.documentsOnly === true,
                 signal: controller.signal,
+                onScopeError: (name) => failedScopes.add(name),
             })
                 .then((found) => {
                     if (!controller.signal.aborted) {
                         setCandidates(found);
+                        if (failedScopes.size) setError(`Could not load ${[...failedScopes].join(', ').toLowerCase()}. ${found.length ? 'Other results are still available.' : 'Please retry.'}`);
                         setLoading(false);
                     }
                 })
                 .catch(() => {
                     if (!controller.signal.aborted) {
-                        if (scopeRef.current.publicWorkspaceSelection) toast.error('Could not load public search sources. Please retry.');
+                        setError('Could not load search sources. Please retry.');
                         // Every individual request is already settled independently, so
                         // reaching here means the fan-out itself failed. Offering nothing is
                         // better than an error banner over the message box.
@@ -118,9 +123,9 @@ export function useContextSuggestions(
             window.clearTimeout(timer);
             controller.abort();
         };
-    }, [query, groupIds, publicIds, scope.documentsOnly, scope.groupsEnabled, scope.publicEnabled, scope.workspacesEnabled, scope.publicWorkspaceSelection]);
+    }, [query, groupIds, publicIds, scope.documentsOnly, scope.groupsEnabled, scope.publicEnabled, scope.workspacesEnabled, scope.publicWorkspaceSelection, attempt]);
 
-    return { candidates, loading };
+    return { candidates, loading, error: query === null ? null : error, retry: () => setAttempt((value) => value + 1) };
 }
 
 export function ContextMenu({
@@ -130,6 +135,8 @@ export function ContextMenu({
     selectedKeys,
     onSelect,
     placement = 'up',
+    error,
+    onRetry,
 }: {
     candidates: ContextCandidate[];
     loading: boolean;
@@ -138,8 +145,10 @@ export function ContextMenu({
     selectedKeys: ReadonlySet<string>;
     onSelect: (candidate: ContextCandidate) => void;
     placement?: 'up' | 'down';
+    error?: string | null;
+    onRetry?: () => void;
 }) {
-    if (!loading && candidates.length === 0) {
+    if (!loading && !error && candidates.length === 0) {
         return null;
     }
 
@@ -154,6 +163,10 @@ export function ContextMenu({
                 placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
             )}
         >
+            {error && <div role="alert" className="px-2.5 py-2 text-xs text-danger">
+                <p>{error}</p>
+                <button type="button" className="mt-1 underline" onClick={onRetry}>Retry sources</button>
+            </div>}
             {loading && candidates.length === 0 && (
                 <div className="flex items-center gap-2 px-2.5 py-2 text-xs text-text-3">
                     <Loader2 size={13} className="animate-spin" />

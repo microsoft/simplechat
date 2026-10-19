@@ -141,6 +141,24 @@ You'll see different status indicators during processing:
 - **❌ Error**: Processing failed (see error message)
 - **⏳ Queued**: Waiting for processing resources
 
+## Metadata analysis is separate from content processing
+
+Fixed/Implemented in version: **0.261.347** (`application/single_app/config.py`).
+In the V2 document details pane, **Metadata analysis** reports whether analysis
+is running, complete, disabled, failed, or returned no usable metadata. It applies
+to personal, group, and public documents.
+
+Metadata analysis fills missing title, author, abstract, keyword, organization,
+and publication-date fields; it retains populated fields and never substitutes
+invented authors for missing ones. A provider or response-format failure keeps
+existing metadata. If indexing succeeded, that failure alone does not prevent
+chat search. No usable indexed text means analysis cannot generate metadata.
+
+When enabled and permitted for that document, **Retry metadata analysis** appears
+after a failed or empty analysis. It queues analysis, not another upload, and
+does not imply success. Details refresh while analysis is running. Screening,
+publication approval, and workspace permissions remain in force.
+
 ## Step 3: Upload to Group Workspaces
 
 Group workspaces require additional setup:

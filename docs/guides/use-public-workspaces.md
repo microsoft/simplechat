@@ -154,6 +154,23 @@ request was being saved. Try again." Nothing else is lost, so try again.
 
 ## Verify it worked
 
+From version **0.261.347**, chat's **Documents** picker searches public documents
+by filename or title across the eligible current revisions before paging the
+results. A document does not need a generated title to match its filename.
+The ordinary picker follows the same saved visibility defaults as **Visible
+public workspaces**; an explicit **All** choice is still required to include
+hidden workspaces.
+
+If a source request fails, **Documents** and `#` suggestions name the unavailable
+source and offer **Retry sources**. Results from successful sources remain usable.
+An empty search is not evidence that access was denied.
+
+Document details show **Metadata analysis** separately from content processing.
+Failed or empty analysis keeps existing metadata and does not make successfully
+indexed content unsearchable. An authorized manager can choose **Retry metadata
+analysis** while metadata extraction is enabled. Content screening and generated
+artifact approval still determine whether the document's content can be used.
+
 The selected public workspace shows owner, description, role, documents, and prompts. A chat started with selected documents uses public workspace files as context.
 
 ## Troubleshooting

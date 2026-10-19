@@ -2,7 +2,7 @@
 """
 Production-SPA coverage for native V2 public workspace document browsing (M3A),
 management (M3B) and generated-artifact approval (M3C).
-Version: 0.261.188
+Version: 0.261.347
 Implemented in: 0.261.132
 A coded failure shows the server's sentence (apiClient), and an archive takes the server's
 name: 0.261.164
@@ -1012,6 +1012,30 @@ def test_extract_and_reprocess_partial_then_retry(public_management_ui):
         expect(explorer(ui).get_by_role("status").filter(has_text="queued: 1 of 1 confirmed")).to_be_visible()
         expect(explorer(ui).get_by_role("alert")).to_have_count(0)
     assert len(ui.operation_requests) == 4
+
+
+@pytest.mark.parametrize("role", ["Owner", "User"])
+def test_metadata_failure_is_separate_from_ready_content_and_retry_is_authorized(public_management_ui, role):
+    ui = public_management_ui
+    ui.set_policy("pub-a", role=role)
+    ui.documents["pub-a"][0]["metadata_extraction_status"] = "failed"
+    open_management(ui)
+    details_button(ui, "same-document").click()
+    expect(ui.page.get_by_text("Metadata analysis failed. Existing metadata was kept.", exact=True)).to_be_visible()
+    expect(row(ui, "Research brief")).to_contain_text("Ready")
+    retry = ui.page.get_by_role("button", name="Retry metadata analysis", exact=True)
+    if role == "User":
+        expect(retry).to_have_count(0)
+    else:
+        operation = ui.queue_operation(
+            "POST", "extract_metadata", body={"document_ids": ["same-document"]},
+            status=202, response=queue_result("same-document"),
+            records=[changed_record(ui, "same-document", metadata_extraction_status="running")],
+        )
+        perform(ui, operation, retry.click)
+        expect(ui.page.get_by_text("Analyzing document metadata...", exact=True)).to_be_visible()
+        for extract in ui.page.get_by_role("button", name="Extract", exact=True).all():
+            expect(extract).to_be_disabled()
 
 
 def test_refused_set_active_leaves_a_public_operation_working(public_management_ui):

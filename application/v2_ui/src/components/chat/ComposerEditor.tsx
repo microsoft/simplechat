@@ -247,7 +247,7 @@ export function ComposerEditor({
         workspacesEnabled: !restricted && !publicWorkspaceSelection,
         documentsOnly: restricted && contextDocumentsOnly,
     }), [bootstrap?.scope, contextDocumentsOnly, features.enable_group_workspaces, features.enable_public_workspaces, restricted, publicWorkspaceSelection, referenceUploadsOnly]);
-    const { candidates, loading } = useContextSuggestions(
+    const { candidates, loading, error: contextError, retry: retryContext } = useContextSuggestions(
         disabled || !contextEnabled ? null : contextQuery?.query ?? null, scope,
     );
     const mentionSuggestions = useMentionSuggestions(
@@ -880,6 +880,7 @@ export function ComposerEditor({
             )}
             {contextQuery && !pickerOpen && !disabled && (
                 <ContextMenu candidates={candidates} loading={loading} activeIndex={contextIndex}
+                    error={contextError} onRetry={retryContext}
                     selectedKeys={contextKeys} onSelect={applyContextCandidate} placement={menuPlacement} />
             )}
             {pickerOpen && !disabled && (
