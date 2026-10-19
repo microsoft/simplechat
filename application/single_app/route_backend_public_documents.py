@@ -523,25 +523,21 @@ def register_route_backend_public_documents(bp):
             return jsonify({'error': 'User not authenticated'}), 401
 
         selection = request.args.get('public_workspace_selection')
-        if selection is not None:
-            try:
-                workspace_ids = resolve_public_chat_workspace_ids(user_id, selection)
-            except PublicChatScopeError as error:
-                return jsonify({'error': error.public_message, 'error_code': error.code}), error.status_code
-            except Exception as error:
-                log_event('[PUBLIC_CHAT_SCOPE] Could not load public document scope.',
-                          extra={'error_type': type(error).__name__}, level=logging.ERROR)
-                return jsonify({'error': 'Could not load public documents. Please retry.'}), 503
-        else:
-            settings = get_user_settings(user_id)
-            public_directory_settings = settings.get('settings', {}).get('publicDirectorySettings', {})
-            workspace_ids = [ws_id for ws_id, is_visible in public_directory_settings.items() if is_visible]
+        try:
+            workspace_ids = resolve_public_chat_workspace_ids(user_id, selection if selection is not None else 'visible')
+        except PublicChatScopeError as error:
+            return jsonify({'error': error.public_message, 'error_code': error.code}), error.status_code
+        except Exception as error:
+            log_event('[PUBLIC_CHAT_SCOPE] Could not load public document scope.',
+                      extra={'error_type': type(error).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Could not load public documents. Please retry.'}), 503
         
         if not workspace_ids:
             if selection is not None:
-                return jsonify({'documents': [], 'workspace_name': 'Public workspaces'}), 200
+                return jsonify({'documents': [], 'total_count': 0, 'workspace_name': 'Public workspaces'}), 200
             return jsonify({
                 'documents': [],
+                'total_count': 0,
                 'workspace_name': 'All Public Workspaces',
                 'error': 'No visible public workspaces found'
             }), 200
@@ -553,6 +549,15 @@ def register_route_backend_public_documents(bp):
             page_size = 1000
         if page_size < 1:
             page_size = 1000
+        try:
+            page = max(1, int(request.args.get('page', 1)))
+        except (TypeError, ValueError):
+            page = 1
+        search = request.args.get('search', '').strip().casefold()
+        sort_by = request.args.get('sort_by', '_ts')
+        if sort_by not in {'_ts', 'file_name', 'title'}:
+            sort_by = '_ts'
+        sort_order = request.args.get('sort_order', 'desc')
 
         # Query documents from all visible public workspaces
         try:
@@ -567,10 +572,22 @@ def register_route_backend_public_documents(bp):
             )
             return jsonify({'error': 'Could not load public documents. Please retry.'}), 500
 
-        docs = docs[:page_size]
+        if search:
+            docs = [
+                document for document in docs
+                if search in str(document.get('file_name') or '').casefold()
+                or search in str(document.get('title') or '').casefold()
+            ]
+        docs = sort_documents(docs, sort_by=sort_by, sort_order=sort_order)
+        total_count = len(docs)
+        start = (page - 1) * page_size
+        docs = docs[start:start + page_size]
 
         return jsonify({
             'documents': docs,
+            'total_count': total_count,
+            'page': page,
+            'page_size': page_size,
             'workspace_name': 'All Public Workspaces'
         }), 200
 
@@ -1353,17 +1370,14 @@ def register_route_backend_public_documents(bp):
 
         ws_ids_param = request.args.get('workspace_ids', '')
         selection = request.args.get('public_workspace_selection')
-        if selection is not None:
-            try:
-                eligible_ids = resolve_public_chat_workspace_ids(user_id, selection)
-            except PublicChatScopeError as error:
-                return jsonify({'error': error.public_message, 'error_code': error.code}), error.status_code
-            except Exception as error:
-                log_event('[PUBLIC_CHAT_SCOPE] Could not load public tag scope.',
-                          extra={'error_type': type(error).__name__}, level=logging.ERROR)
-                return jsonify({'error': 'Could not load public tags. Please retry.'}), 503
-        else:
-            eligible_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+        try:
+            eligible_ids = resolve_public_chat_workspace_ids(user_id, selection if selection is not None else 'visible')
+        except PublicChatScopeError as error:
+            return jsonify({'error': error.public_message, 'error_code': error.code}), error.status_code
+        except Exception as error:
+            log_event('[PUBLIC_CHAT_SCOPE] Could not load public tag scope.',
+                      extra={'error_type': type(error).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Could not load public tags. Please retry.'}), 503
 
         if ws_ids_param:
             workspace_ids = [wid.strip() for wid in ws_ids_param.split(',') if wid.strip()]

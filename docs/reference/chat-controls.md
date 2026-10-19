@@ -183,6 +183,19 @@ arrived during streaming. After granting access, send the message again.
 
 ## Chat tools and composer
 
+### Source lookup failures and retry
+
+Fixed/Implemented in version: **0.261.347** (`application/single_app/config.py`).
+**Documents** and `#` suggestions search filename and title without requiring
+generated metadata. Public results are filtered before paging, so older
+matching files are not hidden behind unrelated recent uploads.
+
+If documents or tags cannot load for one source, the menu names that source.
+Results from the other sources remain selectable. **Retry sources** repeats
+lookup without changing selected references, saved directory visibility, or
+the public search scope. A failed lookup is not shown as an ordinary empty match.
+Cancelling or superseding a query does not replace a newer query's results.
+
 ### React V2 public document search scope
 
 Implemented in version: **0.261.310** (`application/single_app/config.py`).

@@ -514,63 +514,7 @@
     "application/single_app/functions_data_management_search_write_fence.py::_read_target_migration_coordinator": "e2065d4aa4740f90bd3ea0650b11272d691d29245e2356171eb51b12d4973a50",
     "application/single_app/functions_data_management_search_write_fence.py::_replace_target_migration_coordinator": "154acb528002e5ee5088dc92cf5425243cc6adf72595713b483f3501d53861f7",
     "application/single_app/functions_data_management_search_write_fence.py::acquire_data_management_target_migration_coordinator": "887d06d4e8676ee29fc0f0938760a4f81a27ad174e1676901f68076d4248d09f",
-    "application/single_app/functions_document_access_index.py::query_items_with_cosmos_diagnostics": "f0a2e03ac62e5bd7bc6dbceb13732515991a3e96f4cac29f9d518ab6971b3b62",
-    "application/single_app/functions_document_access_index.py::_resolve_document_access_hashes_from_projection": "0321794ba92b72e3ed9262547104cc6a38829fa06cfd40ebf82992f37cc42078",
-    "application/single_app/functions_document_access_index.py::_resolve_document_access_hashes_from_workspace_container": "5a8da9076dd8286632f0477e5bdbee711315c15cb5c410eacf60e1353280564f",
-    "application/single_app/functions_document_access_index.py::_resolve_document_access_hashes_from_user_settings": "707527d1c9495022b3e73a0a738091f0e98627daba6a635962fa918121726321",
-    "application/single_app/functions_document_access_index.py::_query_existing_projection_rows": "914eec59f328a80fe3c48a007fd16f413d2ca9d9a7a9461af188162c131d6c72",
-    "application/single_app/functions_document_access_index.py::_read_shadow_validation_state": "3d90d4ae362059fd20e5f53b08367e1e756a3143d037d7eca5224fb6c8d86d0e",
-    "application/single_app/functions_document_access_index.py::_query_bounded_projection_rows_for_scope": "1b03e6216017bc57ec89cf73aaadc78d6008d5b9e703ff2009d17582e1e8cf67",
-    "application/single_app/functions_document_access_index.py::_query_legacy_projection_rows_for_scope": "eb47ce78bdcc334f8b4450d48fd77e6815ec361bffcb513d5ecbc3c974a234ec",
-    "application/single_app/functions_document_access_index.py::iter_document_access_index_candidates": "5b12fd31be8f0ce70648f8a396a5bc9f2a05de481ca72d92366d971dff31e2e5",
-    "application/single_app/functions_document_access_index.py::_read_repair_backlog_state": "9db7358f270f70efa2f32d03d786acc72f65b3022b961a1aa9c37ec7e1fc616f",
-    "application/single_app/functions_document_access_index.py::_query_repair_backlog_exists": "9d59c725c42b1eca8b999639dfb52d97b9e24bbd439f4ae4bd2a6f34b21986b0",
-    "application/single_app/functions_document_access_index.py::_query_first_page": "458d85488207908caab5231c3e4152a57f69c12d447e5895d0d28c53bf5495cd",
-    "application/single_app/functions_document_access_index.py::_read_backfill_state": "de1b280d3acbe90445b9b5cd8a19aacbde8d128ea8d47d941f90b631bafeac35",
-    "application/single_app/functions_document_access_index.py::_read_source_document_for_repair": "1a8ed5d8848e47db7cc096bf05a52788beb2af52d65bf1aa1dbe3eb84aa3c190",
-    "application/single_app/functions_document_access_index.py::count_document_access_index_repair_documents": "e599cb3f279ec90be2938502368f24ebc7d916577ca18edc0de05c5a8a1c521e",
     "application/single_app/functions_document_provenance.py::_read_conversation": "f7748a80784d0254864dc3ec55fbff8c1ecd357b5ba2568577a141806bf971e0",
-    "application/single_app/functions_documents.py::_upsert_document_and_sync_access_index": "669d006bc89d04f974fa5d352191ad3480462e5e8eee67c92ed109085e19a55b",
-    "application/single_app/functions_documents.py::_get_document_family_items_from_document": "0596e1d131369dad92fe839e00e3d3db1660682fbf32294cab1525f06908d64c",
-    "application/single_app/functions_documents.py::create_document": "6e11070763076f28c4cd13591c5acb8bb65d1f73ab61463042551b267258169c",
-    "application/single_app/functions_documents.py::get_document_metadata": "82994ffe86b9bc22683cb80f538f6642e70c246479fa59a59dad0c61053ce3d6",
-    "application/single_app/functions_documents.py::update_document": "edf2db45b82d8c96e5c250070d94e4d8457b1a6ca7efb2cb5941eb2c58d83382",
-    "application/single_app/functions_documents.py::get_document_metadata_for_citations": "554f1b6a717b67f8625e171f82473f1f5e4edc029de0e0389389fec8ae406f2b",
-    "application/single_app/functions_documents.py::_rebase_document_after_fenced_acl_projection": "3b88a923c818e4b10a4fbee6860ac527a374e28814e7783955dcb547eb66b2c2",
-    "application/single_app/functions_documents.py::_read_document_search_sync_record": "307a5e34bacaf5d637d9c6b1024d5124aca2fd996c9e79d57637e73d9bedb7d0",
-    "application/single_app/functions_documents.py::_replace_document_search_sync_record": "1e0126eaeeb484ddf36896093c480548c681d1a73b902559e7a1eb747d99a49e",
-    "application/single_app/functions_documents.py::request_document_search_metadata_sync": "bdd69e6c4bdefa2ab5679bd4b32b1b583670787cc529f4c63e50add4aa504c22",
-    "application/single_app/functions_documents.py::_read_document_for_search_sync": "b860ead3e324bc8917be1be3199a67d29d110d3d00d9c097f1eb0921b9e0f30d",
-    "application/single_app/functions_documents.py::process_due_document_search_metadata_syncs": "0002037c010cfd66e3e89d78e8b43fc3625fab08d1ace6592cb832a8f2a62ee6",
-    "application/single_app/functions_documents.py::get_document_record": "a1cf4d46071ffe27c390dc429996ff7855c5dde408dd4f2626b558923d11f876",
-    "application/single_app/functions_documents.py::get_latest_version": "68e362e47dd81ca8820c13ee502bc809cabf960ab1ed66dcea19355ea60afec0",
-    "application/single_app/functions_documents.py::get_document_version": "58406c0cf5330598ffd0640fb5db52e4091740f34a5d4ddf2d09afe505f52efb",
-    "application/single_app/functions_documents.py::delete_from_blob_storage": "f41d2e24ec43c5ae8b446f8d3f916295b3af8befe72098df40660a769f01c350",
-    "application/single_app/functions_documents.py::delete_document": "d8775246eed09ce6e072e53bb8ba3e4471777bde87ad149e4af98b0009f8c8c2",
-    "application/single_app/functions_documents.py::delete_document_revision": "ae9b71e625a14586f88257cbac161d19775da85394502eac4320a17ea0ddfc12",
-    "application/single_app/functions_documents.py::get_chat_upload_workspace_documents_for_conversation": "bf54d73a17b5c44e3f42746744d6d87a57f9e8fb34d36e96e41de1d9c4eb800d",
-    "application/single_app/functions_documents.py::get_chat_upload_workspace_documents_for_collaboration": "1283fe96ad66fff2a985f20f6c7f67e0e1ad09b9d58974b4e89f4415f665909f",
-    "application/single_app/functions_documents.py::get_document_versions": "e2104a3828bddfed2a0cd157ab861801a49a8aa9d02888c27ae6c0613f3e2007",
-    "application/single_app/functions_documents.py::detect_doc_type": "131534dab7be522ddd3dbcbc833ec8a96a072732594cce197956bbc1a244df3d",
-    "application/single_app/functions_documents.py::extract_document_metadata": "18539e265237e501abf9f223329cba600e5c9dd9f919108428c41e725600bed9",
-    "application/single_app/functions_documents.py::upload_to_blob": "d561e99c4b411149271742885a104a1821b099c1e6bacd3636901d045f622e00",
-    "application/single_app/functions_documents.py::_query_current_xsd_documents": "2cefcc111e376ea955d5d191491bb264560a533668732f55c8d5b5622787386a",
-    "application/single_app/functions_documents.py::_workspace_file_name_exists": "58bca9dc5c4c311b48ff15b88d369b31138bc24294e0b41132aaae38d5959f72",
-    "application/single_app/functions_documents.py::sync_chat_upload_workspace_attachment_status": "38b39737ad295b5a02ea9a39cc763fabedb8bb56403370c48effba5552c0498e",
-    "application/single_app/functions_documents.py::_process_document_upload_background_impl": "be75c7decb63b27e9b4776f395fb10690ebdb7107a1890f9915d7ede7de9d22e",
-    "application/single_app/functions_documents.py::upgrade_legacy_documents": "5fee4885bf25bf384f5b4178d973801db1a64e2588becb2a5160cf017e1bc4e9",
-    "application/single_app/functions_documents.py::share_document_with_user": "11e21f0da3795a70081cd95e2c52af07fced0df4ffe244e088f5d160c408637e",
-    "application/single_app/functions_documents.py::unshare_document_from_user": "a8f3a55e2fe06ca971c1fc280303a4630835b620cafd04ff2914d377c8c5cc07",
-    "application/single_app/functions_documents.py::get_shared_users_for_document": "5d071686ddff0ac133bea6420d5eb1ee50584ee51f8968c340db8b7db617e97c",
-    "application/single_app/functions_documents.py::is_document_shared_with_user": "d203f7466968d3b6f26e2aa2ff4b226666437f0ab410eedc837e09e941661162",
-    "application/single_app/functions_documents.py::get_documents_shared_with_user": "4c97ecd031a9098d8327e529f97e5b50d8b1af040a2b0b9a4b824f44958346bd",
-    "application/single_app/functions_documents.py::share_document_with_group": "57b852e7cccbac5806ce4dd2ab45a578c20a952333cd89202b92c058693f7af6",
-    "application/single_app/functions_documents.py::unshare_document_from_group": "cd882bd5a80329e11c63010980160a696c11c78f69f12091c9f95fe3d987ccd9",
-    "application/single_app/functions_documents.py::get_shared_groups_for_document": "40b32e5ad6cdfabaab1fddf6ad180281e53363447fcd131d12cd6cac87d423e0",
-    "application/single_app/functions_documents.py::is_document_shared_with_group": "02bbe2c782840dfee4ecc13fee01f9a192d7927578dd3e2af6ea7738ec14b32d",
-    "application/single_app/functions_documents.py::get_documents_shared_with_group": "07760f89132373a4d340ae5e3c6fd598c289b4fbc59686d1ebf926ea77be01b1",
-    "application/single_app/functions_documents.py::get_workspace_tags": "9d3d4ea210083f823edce6427f2a7d9f9a98d54cc76a0c39f650262f2a8695af",
-    "application/single_app/functions_documents.py::propagate_tags_to_blob_metadata": "624067e2c6dd87dd59f7709607ffc2ef11aa4506d1275dcbdfe702cf40feb5d9",
     "application/single_app/functions_embedding_compatibility.py::inspect_empty_embedding_stores": "7401781be74e07ab4fc8043c69c5d8c58e91bf34209a12084e853e3433279eec",
     "application/single_app/functions_embedding_compatibility.py::persist_fact_with_embedding": "c4eec8143936830d06d7316baaac5ef8863c99ce8a26b30a39c021cd4f9ca3a5",
     "application/single_app/functions_file_sync.py::_write_with_etag_guard": "adf47a1cff121465fbe6f4fcc8357548fda928e1a78a9531867466c0cdb4a699",
@@ -876,10 +820,6 @@
     "application/single_app/route_backend_plugins.py::set_user_plugins": "6521a2fc13713578fcabc57c611d5a73467630fe3b4006082b579cb1dc7db82a",
     "application/single_app/route_backend_plugins.py::edit_plugin": "e4294468015daedc797eb287aa58c9066c8efe91a9f593a07936b55da9e3e1b1",
     "application/single_app/route_backend_plugins.py::test_cosmos_connection": "2914add8869a52f46cf5639d26e9dda1a163ab1b980935aa459b85a760b3c9be",
-    "application/single_app/route_backend_public_documents.py::register_route_backend_public_documents.api_list_public_documents": "b0b7cc677cb6d11d97c1f0d775014169a291ec9898422143eec7fd4ada86cea9",
-    "application/single_app/route_backend_public_documents.py::register_route_backend_public_documents.api_bulk_tag_public_documents": "a2968b28e7f8056dd6499b1ca7a36a97b94f36f8b2d81b12122f266de48e1fda",
-    "application/single_app/route_backend_public_documents.py::register_route_backend_public_documents.api_update_public_workspace_tag": "9b3fd3ebf2c212c75b3c01eeee72bb397b575ec95df85841a31b64bac6483aa2",
-    "application/single_app/route_backend_public_documents.py::register_route_backend_public_documents.api_delete_public_workspace_tag": "64de1e558404a1b27191144c3971208ec10ae0ffda24f7a979e9ff1a33cc896b",
     "application/single_app/route_backend_public_workspaces.py::register_route_backend_public_workspaces.discover_public_workspaces": "062c6c6441e6af64ba3ad877183fbe0c6e5b1b7557e4d98888d37ebb255c2300",
     "application/single_app/route_backend_public_workspaces.py::register_route_backend_public_workspaces.api_public_file_count": "81af253b9f8a788afaa40eed182e0a941eab4c63290cf512516a0ccd8ae29ec8",
     "application/single_app/route_backend_public_workspaces.py::register_route_backend_public_workspaces.api_public_workspace_stats": "0c7b1bca8b55d4380e5fede0efcf6f785f8e4657006c7b65e2e2eb02627c294c",
@@ -6358,13 +6298,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "query_items_with_cosmos_diagnostics: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "query_items_with_cosmos_diagnostics: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::_resolve_document_access_hashes_from_projection": {
@@ -6379,13 +6319,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "_resolve_document_access_hashes_from_projection: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_resolve_document_access_hashes_from_projection: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::_resolve_document_access_hashes_from_workspace_container": {
@@ -6400,13 +6340,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "_resolve_document_access_hashes_from_workspace_container: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_resolve_document_access_hashes_from_workspace_container: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::_resolve_document_access_hashes_from_user_settings": {
@@ -6421,13 +6361,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "_resolve_document_access_hashes_from_user_settings: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_resolve_document_access_hashes_from_user_settings: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::_query_existing_projection_rows": {
@@ -6442,13 +6382,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_existing_projection_rows: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_query_existing_projection_rows: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::_read_shadow_validation_state": {
@@ -6463,13 +6403,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_shadow_validation_state: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_read_shadow_validation_state: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::_write_shadow_validation_state": {
@@ -6489,7 +6429,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "response-unused",
       "contract": "_write_shadow_validation_state: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -6508,13 +6448,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_bounded_projection_rows_for_scope: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_query_bounded_projection_rows_for_scope: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::_query_legacy_projection_rows_for_scope": {
@@ -6529,13 +6469,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_legacy_projection_rows_for_scope: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_query_legacy_projection_rows_for_scope: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::iter_document_access_index_candidates": {
@@ -6550,13 +6490,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "iter_document_access_index_candidates: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "iter_document_access_index_candidates: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::_record_projection_repair_required": {
@@ -6571,7 +6511,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "response-unused",
       "contract": "_record_projection_repair_required: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -6590,7 +6530,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "response-unused",
       "contract": "_clear_projection_repair_required: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -6614,7 +6554,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "response-unused",
       "contract": "_sync_document_access_index_projection: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -6633,7 +6573,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "response-unused",
       "contract": "delete_document_access_index_for_document: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -6652,7 +6592,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "response-unused",
       "contract": "_write_repair_backlog_state: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -6671,7 +6611,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "response-unused",
       "contract": "_try_delete_repair_backlog_state: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -6690,13 +6630,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_repair_backlog_state: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_read_repair_backlog_state: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::_query_repair_backlog_exists": {
@@ -6711,13 +6651,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_repair_backlog_exists: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_query_repair_backlog_exists: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::_query_first_page": {
@@ -6732,13 +6672,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_first_page: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_query_first_page: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::_read_backfill_state": {
@@ -6753,13 +6693,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_backfill_state: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_read_backfill_state: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::_write_backfill_state": {
@@ -6774,7 +6714,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "response-unused",
       "contract": "_write_backfill_state: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -6793,13 +6733,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_source_document_for_repair: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_read_source_document_for_repair: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_access_index.py::_mark_repair_document_failed": {
@@ -6814,7 +6754,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "response-unused",
       "contract": "_mark_repair_document_failed: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -6833,13 +6773,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f25b65b06cb2141e85ac4ed7f1cbcc97e3c6570f3d0d57a16dcef939c30759e"
+        "module_sha256": "0c48353e269c649a7e8ff96965afe17c7e72827051489b4abc7d77a76a84ed1f"
       },
       "classification": "sdk-compatible",
-      "contract": "count_document_access_index_repair_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "count_document_access_index_repair_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection"
       ]
     },
     "application/single_app/functions_document_provenance.py::_read_conversation": {
@@ -6890,13 +6830,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "_upsert_document_and_sync_access_index: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_upsert_document_and_sync_access_index: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::_get_document_family_items_from_document": {
@@ -6911,13 +6852,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "_get_document_family_items_from_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_get_document_family_items_from_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::create_document": {
@@ -6932,13 +6874,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "create_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "create_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::get_document_metadata": {
@@ -6953,13 +6896,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "get_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::update_document": {
@@ -6974,13 +6918,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "update_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "update_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::get_document_metadata_for_citations": {
@@ -6995,13 +6940,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "get_document_metadata_for_citations: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_document_metadata_for_citations: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::_rebase_document_after_fenced_acl_projection": {
@@ -7016,13 +6962,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "_rebase_document_after_fenced_acl_projection: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_rebase_document_after_fenced_acl_projection: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::_read_document_search_sync_record": {
@@ -7037,13 +6984,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_document_search_sync_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_read_document_search_sync_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::_replace_document_search_sync_record": {
@@ -7058,13 +7006,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "_replace_document_search_sync_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_replace_document_search_sync_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::request_document_search_metadata_sync": {
@@ -7079,13 +7028,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "request_document_search_metadata_sync: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "request_document_search_metadata_sync: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::_complete_document_search_sync_pass": {
@@ -7100,7 +7050,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "response-unused",
       "contract": "_complete_document_search_sync_pass: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -7119,7 +7069,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "response-unused",
       "contract": "_delete_document_search_sync_record: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -7138,13 +7088,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_document_for_search_sync: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_read_document_for_search_sync: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::process_due_document_search_metadata_syncs": {
@@ -7159,13 +7110,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "process_due_document_search_metadata_syncs: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "process_due_document_search_metadata_syncs: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::get_document_record": {
@@ -7180,13 +7132,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "get_document_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_document_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::get_latest_version": {
@@ -7201,13 +7154,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "get_latest_version: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_latest_version: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::get_document_version": {
@@ -7222,13 +7176,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "get_document_version: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_document_version: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::delete_from_blob_storage": {
@@ -7243,13 +7198,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "delete_from_blob_storage: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "delete_from_blob_storage: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::delete_document": {
@@ -7289,13 +7245,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "delete_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "delete_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::delete_document_revision": {
@@ -7315,13 +7272,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "delete_document_revision: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "delete_document_revision: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::get_chat_upload_workspace_documents_for_conversation": {
@@ -7341,13 +7299,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "get_chat_upload_workspace_documents_for_conversation: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_chat_upload_workspace_documents_for_conversation: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::get_chat_upload_workspace_documents_for_collaboration": {
@@ -7362,13 +7321,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "get_chat_upload_workspace_documents_for_collaboration: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_chat_upload_workspace_documents_for_collaboration: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::get_document_versions": {
@@ -7383,13 +7343,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "get_document_versions: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_document_versions: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::detect_doc_type": {
@@ -7414,18 +7375,19 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "detect_doc_type: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "detect_doc_type: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::extract_document_metadata": {
       "boundary": {
-        "sha256": "ec2dd5ba25b21527f078438b62ce27312315a684b1ad31f8ab07970fc024b90f",
+        "sha256": "e6db7f7a631556ece1c65b1dd5a3d69951e20de35b643cca4220f833f8a46524",
         "points": [],
         "queries": [
           {
@@ -7435,13 +7397,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "extract_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "extract_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::upload_to_blob": {
@@ -7456,13 +7419,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "upload_to_blob: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "upload_to_blob: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::_query_current_xsd_documents": {
@@ -7477,13 +7441,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_current_xsd_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_query_current_xsd_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::_workspace_file_name_exists": {
@@ -7498,13 +7463,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "_workspace_file_name_exists: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_workspace_file_name_exists: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::sync_chat_upload_workspace_attachment_status": {
@@ -7524,13 +7490,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "sync_chat_upload_workspace_attachment_status: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "sync_chat_upload_workspace_attachment_status: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::queue_personal_workspace_upload_from_temp_file": {
@@ -7545,7 +7512,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "response-unused",
       "contract": "queue_personal_workspace_upload_from_temp_file: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -7564,7 +7531,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "response-unused",
       "contract": "queue_group_workspace_upload_from_temp_file: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -7573,7 +7540,7 @@
     },
     "application/single_app/functions_documents.py::_process_document_upload_background_impl": {
       "boundary": {
-        "sha256": "63e6f44098ed1ced02ef4757434a5285830c6b555b534105ae5827f7707e0573",
+        "sha256": "0824152e6cd0843d3f879451f603e7dea5c89baea3421a648e7e62f85b3bd316",
         "points": [
           {
             "method": "read_item",
@@ -7588,13 +7555,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "_process_document_upload_background_impl: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_process_document_upload_background_impl: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::upgrade_legacy_documents": {
@@ -7609,13 +7577,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "upgrade_legacy_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "upgrade_legacy_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::share_document_with_user": {
@@ -7630,13 +7599,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "share_document_with_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "share_document_with_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::unshare_document_from_user": {
@@ -7651,13 +7621,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "unshare_document_from_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "unshare_document_from_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::get_shared_users_for_document": {
@@ -7672,13 +7643,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "get_shared_users_for_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_shared_users_for_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::is_document_shared_with_user": {
@@ -7693,13 +7665,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "is_document_shared_with_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "is_document_shared_with_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::get_documents_shared_with_user": {
@@ -7714,13 +7687,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "get_documents_shared_with_user: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_documents_shared_with_user: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::share_document_with_group": {
@@ -7735,13 +7709,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "share_document_with_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "share_document_with_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::unshare_document_from_group": {
@@ -7756,13 +7731,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "unshare_document_from_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "unshare_document_from_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::get_shared_groups_for_document": {
@@ -7777,13 +7753,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "get_shared_groups_for_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_shared_groups_for_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::is_document_shared_with_group": {
@@ -7798,13 +7775,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "is_document_shared_with_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "is_document_shared_with_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::get_documents_shared_with_group": {
@@ -7819,13 +7797,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "get_documents_shared_with_group: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_documents_shared_with_group: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::get_workspace_tags": {
@@ -7840,13 +7819,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "get_workspace_tags: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_workspace_tags: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_documents.py::propagate_tags_to_blob_metadata": {
@@ -7861,13 +7841,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f04f340b58fc0d660c03a0f218a6024fba70af8e9e5337a4ef6ea5519895f49"
+        "module_sha256": "f3d00ddb30614f061b946ba0854058923903ac6c3e783434bd8ab9a45b9d881a"
       },
       "classification": "sdk-compatible",
-      "contract": "propagate_tags_to_blob_metadata: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "propagate_tags_to_blob_metadata: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
       ]
     },
     "application/single_app/functions_embedding_compatibility.py::inspect_empty_embedding_stores": {
@@ -15722,7 +15703,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e84fc160cad4acaebc296f8b0864dc040f1bb1d704a55785ee4c65e60c81a80e"
+        "module_sha256": "e1e1d5fd22d370d860867adf4561e3d492ee3e9450a6ba9dfa5eb6f1282c4d95"
       },
       "classification": "sdk-compatible",
       "contract": "_authorize_chat_upload_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
@@ -15749,7 +15730,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e84fc160cad4acaebc296f8b0864dc040f1bb1d704a55785ee4c65e60c81a80e"
+        "module_sha256": "e1e1d5fd22d370d860867adf4561e3d492ee3e9450a6ba9dfa5eb6f1282c4d95"
       },
       "classification": "sdk-compatible",
       "contract": "_resolve_chat_upload_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
@@ -23829,13 +23810,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "00271fcce489a87d02f15ea5e37eba46cf28a82b24c0076554d1d6d8a0be2faa"
+        "module_sha256": "a2bf99eb92b95df4c2354418f8a74ed802a9fd6803626620b39c965880b2e230"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_public_documents.api_list_public_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_public_documents.api_list_public_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_public_picker_route_uses_sdk_projection_and_filtered_paging"
       ]
     },
     "application/single_app/route_backend_public_documents.py::register_route_backend_public_documents.api_bulk_tag_public_documents": {
@@ -23850,13 +23831,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "00271fcce489a87d02f15ea5e37eba46cf28a82b24c0076554d1d6d8a0be2faa"
+        "module_sha256": "a2bf99eb92b95df4c2354418f8a74ed802a9fd6803626620b39c965880b2e230"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_public_documents.api_bulk_tag_public_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_public_documents.api_bulk_tag_public_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_public_picker_route_uses_sdk_projection_and_filtered_paging"
       ]
     },
     "application/single_app/route_backend_public_documents.py::register_route_backend_public_documents.api_update_public_workspace_tag": {
@@ -23871,13 +23852,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "00271fcce489a87d02f15ea5e37eba46cf28a82b24c0076554d1d6d8a0be2faa"
+        "module_sha256": "a2bf99eb92b95df4c2354418f8a74ed802a9fd6803626620b39c965880b2e230"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_public_documents.api_update_public_workspace_tag: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_public_documents.api_update_public_workspace_tag: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_public_picker_route_uses_sdk_projection_and_filtered_paging"
       ]
     },
     "application/single_app/route_backend_public_documents.py::register_route_backend_public_documents.api_delete_public_workspace_tag": {
@@ -23892,13 +23873,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "00271fcce489a87d02f15ea5e37eba46cf28a82b24c0076554d1d6d8a0be2faa"
+        "module_sha256": "a2bf99eb92b95df4c2354418f8a74ed802a9fd6803626620b39c965880b2e230"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_public_documents.api_delete_public_workspace_tag: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_public_documents.api_delete_public_workspace_tag: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_metadata_outcomes.py::test_public_picker_route_uses_sdk_projection_and_filtered_paging"
       ]
     },
     "application/single_app/route_backend_public_workspaces.py::register_route_backend_public_workspaces.discover_public_workspaces": {
@@ -32721,6 +32702,27 @@
       "contract": "Scoped replace_item fault injection raises an explicit Cosmos 412 only for a continuation claim; all other operations delegate to the installed-SDK CosmosDict container. The regression proves the injected branch ran once and the real state owner kept the incident pending.",
       "tests": [
         "functional_tests/test_action_runtime_recovery.py::test_same_http_request_can_reuse_its_claim_but_etag_races_cannot"
+      ]
+    },
+    "functional_tests/test_workspace_metadata_outcomes.py::SdkProjectionContainer": {
+      "boundary": {
+        "sha256": "0252d14c62548b61faccd0d3c20468fd563f533ec0284b3f88ebe4b0e95c99bc",
+        "methods": [
+          "read_item",
+          "replace_item",
+          "upsert_item"
+        ],
+        "kind": "class",
+        "inherited_bases": [
+          "FakeCosmosContainer"
+        ],
+        "imports_sha256": "563b8f7d2ce8d5724ae824ab7c1742bce285b8992a29b947dcfd8b691435a6ae"
+      },
+      "classification": "sdk-default",
+      "contract": "Projection test container inherits partition routing, ETag checks, query filtering and injected failures from the existing model; read/upsert/replace responses are installed-SDK CosmosDict and query rows remain plain dictionaries.",
+      "tests": [
+        "functional_tests/test_workspace_metadata_outcomes.py::test_metadata_outcome_round_trips_through_sdk_access_projection",
+        "functional_tests/test_workspace_metadata_outcomes.py::test_public_picker_route_uses_sdk_projection_and_filtered_paging"
       ]
     }
   }

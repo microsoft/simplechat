@@ -71,10 +71,13 @@ export function DocumentPickerPopover({
     const [candidates, setCandidates] = useState<ContextCandidate[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [retry, setRetry] = useState(0);
     const holder = useRef<HTMLDivElement>(null);
     const searchRef = useRef<HTMLInputElement>(null);
     const includeWorkspaces = scope.workspacesEnabled !== false;
     const documentsOnly = imagesOnly || scope.documentsOnly === true;
+    const groupIds = scope.groups.map((group) => group.id).join(',');
+    const publicIds = scope.publicWorkspaces.map((workspace) => workspace.id).join(',');
 
     useEffect(() => {
         searchRef.current?.focus();
@@ -102,6 +105,7 @@ export function DocumentPickerPopover({
 
     useEffect(() => {
         const controller = new AbortController();
+        const failedScopes = new Set<string>();
         setLoading(true);
         setError(null);
         setCandidates([]);
@@ -119,16 +123,20 @@ export function DocumentPickerPopover({
                 includeUnavailable: true,
                 documentFilter: imagesOnly ? isReferenceImageDocument : undefined,
                 documentsOnly,
+                onScopeError: (name) => failedScopes.add(name),
             })
                 .then((found) => {
                     if (!controller.signal.aborted) {
                         setCandidates(found);
+                        if (failedScopes.size) setError(`Could not load ${[...failedScopes].join(', ').toLowerCase()}. ${found.length ? 'Other results are still available.' : 'Please retry.'}`);
                         setLoading(false);
                     }
                 })
                 .catch(() => {
                     if (!controller.signal.aborted) {
-                        if (scope.publicWorkspaceSelection) setError('Could not load public search sources. Close and reopen Documents to retry.');
+                        setError(scope.publicWorkspaceSelection
+                            ? 'Could not load public search sources. Please retry.'
+                            : 'Could not load search sources. Please retry.');
                         setCandidates([]);
                         setLoading(false);
                     }
@@ -141,7 +149,7 @@ export function DocumentPickerPopover({
         };
         // The scope arrays are rebuilt on every bootstrap read, so this keys on the flags and
         // the query rather than on array identity.
-    }, [query, scope.groupsEnabled, scope.publicEnabled, scope.publicWorkspaceSelection, includeWorkspaces, imagesOnly, documentsOnly]);
+    }, [query, scope.groupsEnabled, scope.publicEnabled, scope.publicWorkspaceSelection, groupIds, publicIds, includeWorkspaces, imagesOnly, documentsOnly, retry]);
 
     // Grouped by workspace, which is how the chip row groups them too: a reader scanning for
     // "the contract in Marketing" is looking for the workspace first.
@@ -221,7 +229,10 @@ export function DocumentPickerPopover({
                 />
             </div>
 
-            {error && <p role="alert" className="px-2 py-1.5 text-sm text-danger">{error}</p>}
+            {error && <div role="alert" className="px-2 py-1.5 text-sm text-danger">
+                <p>{error}</p>
+                <button type="button" className="mt-1 underline" onClick={() => setRetry((value) => value + 1)}>Retry sources</button>
+            </div>}
             {!imagesOnly && onToggleSearchAll && <button
                 type="button"
                 onClick={onToggleSearchAll}
@@ -256,7 +267,7 @@ export function DocumentPickerPopover({
                     </div>
                 )}
 
-                {!loading && candidates.length === 0 && (
+                {!loading && !error && candidates.length === 0 && (
                     <p className="px-2 py-3 text-xs text-text-3">
                         {query.trim()
                             ? 'Nothing matches that.'

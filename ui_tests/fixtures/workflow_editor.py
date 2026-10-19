@@ -1,7 +1,7 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.332
+Version: 0.261.347
 Implemented in: 0.261.108
 Group File Sync, alert handoff and personal-scope trap modelling added in: 0.261.141
 Real alert normalizer on both save routes added in: 0.261.144
@@ -921,7 +921,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             docs = self.group_documents.get(GROUP_ID, [])
             self._json(route, {"documents": docs, "total_count": len(docs)})
         elif path == "/api/public_workspace_documents" and method == "GET":
-            self._json(route, chat_list(self.public_documents))
+            self._json(route, chat_list(self.public_documents, entry.query))
         else:
             super()._dispatch(route, entry)
 

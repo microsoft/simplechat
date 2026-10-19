@@ -610,7 +610,8 @@ function ScopedDocumentExplorer({
     const processingIds = useMemo(
         () =>
             operationDocuments
-                .filter((item) => documentStatus(item).state === 'processing' || isScreeningBusy(item))
+                .filter((item) => documentStatus(item).state === 'processing' || isScreeningBusy(item)
+                    || item.metadata_extraction_status === 'running')
                 .map(documentId)
                 .filter(Boolean),
         [documents, inspectedDocument],

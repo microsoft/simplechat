@@ -1,7 +1,7 @@
 # public_documents.py
 """
 Closed M3A public document HTTP fixtures for the real production V2 SPA.
-Version: 0.261.183
+Version: 0.261.347
 Implemented in: 0.261.132
 The served rows, read texts and refusals are the real read routes', held to them by
 functional_tests/test_public_document_fixture_parity.py: 0.261.179
@@ -139,13 +139,48 @@ def awaiting_approval(record):
     return projected
 
 
-def chat_list(rows):
+def chat_list(rows, query=None):
     """GET /api/public_workspace_documents, the list the V2 and classic chat pickers read, as the route
     answers it: every row a chat can use. A generated artifact awaiting publication is left out for
     every caller, since it has no content until its approval queues processing (decision 27)."""
+    query = query or {}
+    def parameter(name, default):
+        value = query.get(name, default)
+        return value[0] if isinstance(value, list) and value else value
+
+    def positive_integer(name, default):
+        try:
+            return max(1, int(parameter(name, default)))
+        except (TypeError, ValueError):
+            return default
+
+    page = positive_integer("page", 1)
+    try:
+        page_size = int(parameter("page_size", 1000))
+    except (TypeError, ValueError):
+        page_size = 1000
+    if page_size <= 0:
+        page_size = 1000
+    search = str(parameter("search", "")).strip().casefold()
+    documents = [
+        copy.deepcopy(row) for row in rows
+        if not awaiting_publication(row) and row.get("is_current_version", True)
+        and (search in str(row.get("file_name") or "").casefold()
+             or search in str(row.get("title") or "").casefold())
+    ]
+    sort_by = parameter("sort_by", "_ts")
+    if sort_by not in ("_ts", "file_name", "title"):
+        sort_by = "_ts"
+    documents.sort(
+        key=lambda row: float(row.get("_ts") or 0) if sort_by == "_ts"
+        else str(row.get(sort_by) or "").lower(),
+        reverse=str(parameter("sort_order", "desc")).lower() == "desc",
+    )
+    start = (page - 1) * page_size
     return {
-        "documents": [copy.deepcopy(row) for row in rows if not awaiting_publication(row)],
+        "documents": documents[start:start + page_size],
         "workspace_name": "All Public Workspaces",
+        "total_count": len(documents), "page": page, "page_size": page_size,
     }
 
 

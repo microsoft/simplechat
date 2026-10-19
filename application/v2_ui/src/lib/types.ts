@@ -239,6 +239,7 @@ export interface WorkspaceDocument {
     publication_date?: string;
     percentage_complete?: number;
     status?: string;
+    metadata_extraction_status?: 'running' | 'succeeded' | 'disabled' | 'empty' | 'failed';
     document_classification?: string;
     tags?: string[] | string;
     version?: number;

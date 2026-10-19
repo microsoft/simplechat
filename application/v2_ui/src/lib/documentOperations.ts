@@ -140,6 +140,7 @@ export function documentOperationAllowed(
     if (operation === 'upload' || operation === 'manage_tags') return true;
     if (!documents.length) return false;
     return documents.every((document) => {
+        if (operation === 'extract_metadata' && document.metadata_extraction_status === 'running') return false;
         if (!documentId(document) || generatedArtifactRestriction(document)) return false;
         if (scope.kind === 'personal') return isScreeningAvailable(document);
         if (!Array.isArray(document.document_actions) || !document.document_actions.includes(operation)) return false;

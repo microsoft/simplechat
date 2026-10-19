@@ -621,6 +621,27 @@ export function DocumentDetailsPane({
                     </Section>
                 ) : null}
 
+                {available && document.metadata_extraction_status ? (
+                    <Section title="Metadata analysis">
+                        <p role="status" className="text-xs text-text-2">
+                            {document.metadata_extraction_status === 'running' ? 'Analyzing document metadata...'
+                                : document.metadata_extraction_status === 'succeeded' ? 'Metadata analysis complete.'
+                                : document.metadata_extraction_status === 'disabled' ? 'Automatic metadata analysis is disabled.'
+                                : document.metadata_extraction_status === 'empty' ? 'Metadata analysis returned no usable metadata. Existing metadata was kept.'
+                                : 'Metadata analysis failed. Existing metadata was kept.'}
+                        </p>
+                        {['failed', 'empty'].includes(document.metadata_extraction_status) ? <>
+                            <p className="mt-1 text-xs text-text-3">This does not change content indexing or search availability.</p>
+                            {availability.extractMetadata && availability.allows('extract_metadata', [document]) ? (
+                                <GlassButton variant="subtle" size="sm" className="mt-2"
+                                    onClick={() => actions.onExtractMetadata([document])}>
+                                    Retry metadata analysis
+                                </GlassButton>
+                            ) : null}
+                        </> : null}
+                    </Section>
+                ) : null}
+
                 <Section title="Tags">
                     {tags.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
