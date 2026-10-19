@@ -1,6 +1,12 @@
 # Gather / Reason / Render orchestration
 
-**Version: 0.261.341**
+**Version: 0.261.347**
+
+Chat-associated workspace source identity fixed in version: **0.261.347**,
+recorded in `application/single_app/config.py`. Analyze and Compare preserve
+the authorized workspace identity when a document also records its upload
+conversation. See the
+[source-identity fix](../fixes/DOCUMENT_SOURCE_SCOPE_IDENTITY_FIX.md).
 
 Search/result integrity fixed in version: **0.261.341**, recorded in
 `application/single_app/config.py`. Search retains authoritative returned
@@ -133,6 +139,15 @@ accepting cached permission fields. These callbacks do not change the existing
 resolver defaults. Headless owners that catch an error must keep the strict
 source-authority scope around the complete source/model decision so a fallback
 cannot consume unverified data.
+
+Document payloads identify personal sources by the document owner, group sources
+by the authorized group access path, public sources by the authorized public
+workspace, and chat-only uploads by the authorized conversation. A workspace
+document's `conversation_id` remains an association, not a replacement for its
+`scope_id`. Approved shared-group access can use a different group from the
+owning group recorded in provenance; neither identity overwrites the other.
+Analysis manifest matching, comparison evidence checks, and retained-result
+consumers continue to enforce current access, screening holds, and revisions.
 
 The same root supplies the server-only `native_bridge_for_step` callable to
 runtime binding and capability discovery. The default factory validates the
