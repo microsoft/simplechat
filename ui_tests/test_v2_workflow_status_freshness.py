@@ -1,7 +1,7 @@
 # test_v2_workflow_status_freshness.py
 """
 UI regressions for authoritative workflow status reconciliation.
-Version: 0.261.362
+Version: 0.261.363
 Implemented in: 0.261.362
 
 Runs the real built SPA with the existing closed API fixture and local/Azure
@@ -35,6 +35,9 @@ from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
     select_workflow,
     workflow_row,
 )
+
+# Re-export shared fixtures for pytest's name-based discovery.
+__all__ = ["connect_options", "workflow_ui"]
 
 pytestmark = pytest.mark.ui
 NAME = "Durable approval workflow"

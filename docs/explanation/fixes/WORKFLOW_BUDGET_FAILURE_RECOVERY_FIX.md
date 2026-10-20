@@ -2,6 +2,10 @@
 
 Fixed in version: **0.261.362**.
 
+Updated in version: **0.261.363**. Review cleanup removes an unused test import
+and explicitly exports the shared Playwright fixtures for pytest discovery;
+workflow behavior and test assertions are unchanged.
+
 Application version: `application/single_app/config.py`.
 
 ## Issue

@@ -1,7 +1,7 @@
 # test_workflow_policy_failures.py
 """
 Functional regressions for deterministic workflow policy failures.
-Version: 0.261.362
+Version: 0.261.363
 Implemented in: 0.261.362
 
 Real request budgets, durable controllers, task sequence bodies and runtime projections
@@ -29,7 +29,7 @@ from test_workflow_context_budget import ToolCallingCompletion
 import functions_workflow_runtime as runtime
 from functions_model_capabilities import ModelTokenBudgetError
 from functions_workflow_context import WorkflowModelClient, wrap_workflow_chat_service, workflow_context_budget_scope
-from functions_workflow_policy_errors import WorkflowContextBudgetError, workflow_policy_failure
+from functions_workflow_policy_errors import workflow_policy_failure
 from functions_workflow_result_store import WorkflowResultStore
 from functions_workflow_results import persist_workflow_task_result, authorize_workflow_task_result_read
 
