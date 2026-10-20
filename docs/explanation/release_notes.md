@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.060)**
+
+#### Bug Fixes
+
+*   **Safety Violation Date and User Metadata**
+    *   Safety violation list and card views now show created dates and target user names, reducing the need to open each violation to identify when it occurred and who it affected.
+    *   CSV exports now include a user name column and populate created, last updated, and archived timestamps using existing safety log metadata when older records are missing explicit date fields.
+    *   (Ref: `route_backend_safety.py`, `admin-safety-violations.js`, [Safety Violation Metadata Display Fix](fixes/SAFETY_VIOLATION_METADATA_DISPLAY_FIX.md))
+
 ### **(v0.261.059)**
 
 #### New Features

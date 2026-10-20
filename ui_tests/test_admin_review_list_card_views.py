@@ -1,12 +1,12 @@
 # test_admin_review_list_card_views.py
 """
 UI tests for admin feedback and safety violation list/card views.
-Version: 0.250.075
+Version: 0.261.060
 Implemented in: 0.241.032; lifecycle controls extended in 0.250.075
 
 These tests ensure the admin review tables stay compact, card views render
-from the same data, safety category tags hide severity 0 entries, and the
-view modals remain usable for saving review notes.
+from the same data, safety category tags hide severity 0 entries, user/date
+metadata appears in safety views, and the view modals remain usable for saving review notes.
 """
 
 import json
@@ -245,7 +245,7 @@ def test_admin_safety_violations_tags_cards_and_view_save(playwright):
                     "triggered_categories": [
                         {"category": "Hate", "severity": 0},
                         {"category": "Violence", "severity": 2},
-                        {"category": "SelfHarm", "severity": 4},
+                        {"category": "SelfHarm", "severity": 6},
                     ],
                     "status": "New",
                     "action": "None",
@@ -315,12 +315,16 @@ def test_admin_safety_violations_tags_cards_and_view_save(playwright):
 
         page.get_by_role("tab", name="All Data").click()
         safety_table = page.locator("#safetyLogsTable")
+        expect(safety_table.locator("thead")).to_contain_text("Created")
+        expect(safety_table.locator("thead")).to_contain_text("User")
         expect(safety_table.locator("thead")).to_contain_text("Message")
         expect(safety_table.locator("thead")).to_contain_text("Triggered Categories")
         expect(safety_table.locator("thead")).to_contain_text("Status")
         expect(safety_table.locator("thead")).to_contain_text("Action")
-        expect(safety_table.locator("thead")).not_to_contain_text("User")
         expect(safety_table.locator("thead")).not_to_contain_text("Notes")
+        expect(safety_table.locator("tbody")).to_contain_text("Review Admin Target")
+        expect(safety_table.locator("tbody")).to_contain_text("target@example.com")
+        expect(safety_table.locator("tbody")).to_contain_text("2026")
         expect(safety_table.locator("tbody")).to_contain_text("Violence")
         expect(safety_table.locator("tbody")).to_contain_text("SelfHarm")
         expect(safety_table.locator("tbody")).not_to_contain_text("Hate")
@@ -329,6 +333,7 @@ def test_admin_safety_violations_tags_cards_and_view_save(playwright):
         assert page.locator("#safety-list-view").evaluate("node => node.classList.contains('d-none')")
         assert not page.locator("#safety-card-view").evaluate("node => node.classList.contains('d-none')")
         expect(page.locator("#safety-card-view")).to_contain_text("Unsafe request sample for review.")
+        expect(page.locator("#safety-card-view")).to_contain_text("2026")
         expect(page.locator("#safety-card-view")).not_to_contain_text("Hate")
 
         page.locator("#safety-card-view").get_by_role("button", name="View").click()

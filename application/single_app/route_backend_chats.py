@@ -18089,6 +18089,7 @@ def register_route_backend_chats(bp):
                         block_reasons.append("Blocklist match")
 
                     if blocked:
+                        safety_timestamp = datetime.utcnow().isoformat()
                         # Upsert to safety container
                         safety_item = {
                             'id': str(uuid.uuid4()),
@@ -18097,7 +18098,9 @@ def register_route_backend_chats(bp):
                             'message': user_message,
                             'triggered_categories': triggered_categories,
                             'blocklist_matches': blocklist_matches,
-                            'timestamp': datetime.utcnow().isoformat(),
+                            'timestamp': safety_timestamp,
+                            'created_at': safety_timestamp,
+                            'last_updated': safety_timestamp,
                             'reason': "; ".join(block_reasons),
                             'metadata': {
                                 'message_id': assistant_message_id,
@@ -22734,6 +22737,7 @@ def register_route_backend_chats(bp):
                             block_reasons.append("Blocklist match")
 
                         if blocked:
+                            safety_timestamp = datetime.utcnow().isoformat()
                             # Upsert to safety container
                             safety_item = {
                                 'id': str(uuid.uuid4()),
@@ -22742,7 +22746,9 @@ def register_route_backend_chats(bp):
                                 'message': user_message,
                                 'triggered_categories': triggered_categories,
                                 'blocklist_matches': blocklist_matches,
-                                'timestamp': datetime.utcnow().isoformat(),
+                                'timestamp': safety_timestamp,
+                                'created_at': safety_timestamp,
+                                'last_updated': safety_timestamp,
                                 'reason': "; ".join(block_reasons),
                                 'metadata': {
                                     'message_id': assistant_message_id,
