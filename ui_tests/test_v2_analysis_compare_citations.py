@@ -1,7 +1,7 @@
 # test_v2_analysis_compare_citations.py
 """V2 uses its ordinary citation viewer for Analyze and Compare source references.
 
-Version: 0.261.358
+Version: 0.261.359
 Implemented in: 0.261.356
 
 Real bundled components render shared-pipeline citation markers, open their source

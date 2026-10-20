@@ -1,7 +1,7 @@
 # test_orchestration_analysis_citation_delivery.py
 """Native Analyze/Compare citations reach Compose, messages and streamed delivery.
 
-Version: 0.261.358
+Version: 0.261.359
 Implemented in: 0.261.356
 
 The actual headless execution, source producers, result store and message finalizer
@@ -19,6 +19,10 @@ from test_orchestration_harness_execution import harness, initialized_applicatio
 from test_orchestration_internal_analysis import findings_from_original_source
 from test_orchestration_reason_render_pipeline import narrative_io
 from test_support.orchestration_harness_execution import compose_step, decoded_frames, input_binding
+
+
+# Re-export shared fixtures for pytest's name-based discovery.
+__all__ = ["harness", "initialized_application", "narrative_io"]
 
 
 @pytest.mark.parametrize('capability,output', [

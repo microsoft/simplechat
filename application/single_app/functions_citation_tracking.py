@@ -11,6 +11,24 @@ from functions_document_citations import resolve_citation_location
 from functions_m365_citations import rebuild_conversation_used_m365_items
 
 
+__all__ = [
+    "CITATION_TRACKING_VERSION",
+    "USED_DOCUMENTS_TRACKING_VERSION",
+    "build_cited_source_subsets",
+    "build_used_documents",
+    "extract_explicit_document_citation_ids",
+    "extract_explicit_web_urls",
+    "get_message_reference_citation_buckets",
+    "get_message_source_citation_buckets",
+    "initialize_conversation_used_document_tracking",
+    "merge_cited_documents_into_conversation",
+    "merge_used_documents",
+    "normalize_http_url",
+    "rebuild_conversation_used_documents",
+    "resolve_citation_location",
+]
+
+
 CITATION_TRACKING_VERSION = 1
 USED_DOCUMENTS_TRACKING_VERSION = 1
 

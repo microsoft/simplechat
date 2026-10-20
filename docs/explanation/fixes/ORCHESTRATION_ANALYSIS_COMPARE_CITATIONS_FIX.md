@@ -4,7 +4,7 @@ Fixed/Implemented in version: **0.261.356**
 
 Application version: `application/single_app/config.py`.
 
-Current version after base-branch integration: **0.261.358**.
+Current application version: **0.261.359**.
 
 ## Issue and root cause
 
@@ -41,6 +41,13 @@ source summaries.
 Source identities remain separate from filenames. Duplicate filenames, personal/group/
 public scope, real zero-valued locations, and source availability checks retain their
 existing meaning. Citation projection does not grant permission to open a source.
+
+### Review follow-up in 0.261.359
+
+Explicit `__all__` declarations retain the citation location helper's compatibility
+export and shared pytest fixtures without unused-import findings. The regression
+checks that citation tracking still exports the original shared helper; fixture
+discovery and the existing Analyze/Compare delivery paths remain unchanged.
 
 ## User-visible behavior
 

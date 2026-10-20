@@ -1,7 +1,7 @@
 # test_document_comparison_source_citations.py
 """Functional tests for shared Compare source citations.
 
-Version: 0.261.358
+Version: 0.261.359
 Implemented in: 0.261.356
 
 Exercise real source loading, windowing, legacy summaries and internal Compare

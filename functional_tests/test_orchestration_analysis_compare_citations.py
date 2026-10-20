@@ -1,7 +1,7 @@
 # test_orchestration_analysis_compare_citations.py
 """Analyze/Compare evidence uses the existing document citation contract.
 
-Version: 0.261.358
+Version: 0.261.359
 Implemented in: 0.261.356
 
 Real native Analyze, retained stores/readers, composition and source tracking are
@@ -15,12 +15,18 @@ from types import SimpleNamespace
 import pytest
 
 from functions_citation_tracking import build_cited_source_subsets
-from functions_document_citations import build_document_citation, build_inline_citation_marker
+from functions_document_citations import (
+    build_document_citation, build_inline_citation_marker, resolve_citation_location,
+)
 from functions_orchestration_analysis_results import persist_comparison_result
 from functions_orchestration_result_contracts import ResultContractError
 from functions_orchestration_result_runtime import read_result_document_citations
 from test_orchestration_internal_analysis import analyze, internal
 from test_support.orchestration_results import ResultFixture, source
+
+
+# Re-export the shared fixture for pytest's name-based discovery.
+__all__ = ["internal"]
 
 
 @pytest.mark.parametrize('output', ['findings', 'records', 'report'])
@@ -145,6 +151,9 @@ def test_filename_cannot_inject_a_second_citation_marker():
     assert '\n' not in citation['citation']
 
 
-def test_search_and_analysis_use_the_same_formatter():
+def test_shared_citation_helpers_preserve_compatibility_exports():
     agent = importlib.import_module('functions_agent_document_citations')
+    tracking = importlib.import_module('functions_citation_tracking')
     assert agent.build_inline_citation_marker is build_inline_citation_marker
+    assert tracking.resolve_citation_location is resolve_citation_location
+    assert 'resolve_citation_location' in tracking.__all__
