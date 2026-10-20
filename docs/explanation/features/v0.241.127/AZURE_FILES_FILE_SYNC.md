@@ -8,6 +8,8 @@ Implemented in version: **0.241.127**
 
 Endpoint validation updated in version: **0.261.314**
 
+Token authentication and safe diagnostics fixed in version: **0.261.358**
+
 ## Dependencies
 
 - `azure-storage-file-share==12.25.0`
@@ -49,18 +51,59 @@ for the security boundary and compatibility details.
 
 Admins can enable Azure Files in Admin Settings under File Sync source type visibility. Workspace managers then choose Azure Files in the Add Source workflow, enter the file service or share URL, share name, and directory path, and select a compatible reusable identity or source-local Azure Files credential.
 
-The managed identity used by the app needs Azure Files data-plane permissions on the target storage account or file share. For SDK-based sync, grant a Storage File Data role that matches the desired read access. For SMB-mounted Azure Files scenarios, use Azure Files SMB managed identity or Kerberos configuration outside SimpleChat and keep using the SMB connector against the mounted/UNC path.
+### Token authentication and permissions
+
+From **0.261.358**, the shared SDK client supplies the required
+`token_intent="backup"` for managed identity and service-principal authentication.
+The SDK propagates this intent to directory listings, file properties, and
+downloads. This applies to saved identities and direct credentials, personal,
+group, and public workspaces, and classic and V2 entry points. Connection-string
+dispatch is unchanged; saved sources do not need to be recreated.
+
+The identity needs Azure Files OAuth-over-REST read permissions, including the
+`readFileBackupSemantics` data action. **Storage File Data Privileged Reader**
+is a built-in read-only role for this purpose; scope access to the required
+share or account. An ordinary SMB reader role alone does not supply the required
+backup-semantics permission.
+
+Backup intent bypasses file and directory ACLs within the RBAC-granted scope.
+It does not bypass Azure RBAC or storage network restrictions. SimpleChat does
+not grant permissions automatically. See
+[Azure Files OAuth over REST](https://learn.microsoft.com/en-us/azure/storage/files/authorize-oauth-rest)
+before choosing the identity's access scope.
+
+For SMB-mounted Azure Files scenarios, configure SMB/Kerberos outside SimpleChat
+and use the SMB connector against the mounted/UNC path instead.
+
+### Failure diagnostics
+
+Connection tests and browsing return stable messages distinguishing
+authentication, authorization, missing resources, transport, SDK availability,
+and client-initialization failures where structured evidence supports them.
+Unknown errors remain generic; a denied request does not prove a particular
+missing role or firewall rule.
+
+The shared connector records safe failure categories under `[FILE_SYNC]`,
+including listing and download failures during sync. No credential, endpoint,
+path, raw provider message, or provider traceback is added to these diagnostics.
+Use the request's existing OperationId with the
+[logging reference](../../../reference/logging-tags.md#azure-files-connector-diagnostics).
+Failed listings remain failed runs, not empty successful inventories.
 
 ## Testing and Validation
 
 - Functional coverage: `functional_tests/test_file_sync_azure_files_identity.py`
+- Real pinned-SDK pagination, properties, download, and token-intent coverage:
+  `functional_tests/test_file_sync_azure_files_runtime.py`
+- Provider classification, safe logging/API responses, partial listing failures,
+  and download cleanup: `functional_tests/test_file_sync_azure_files_diagnostics.py`
 - Endpoint and OneDrive path regression coverage: `functional_tests/test_file_sync_ssrf_validation.py`
 - Existing File Sync capability coverage: `functional_tests/test_file_sync_capability.py`
 - UI coverage updated for source type visibility and Azure Files source modal rendering
 
 Known limitation: PIV/smart-card authentication is not implemented inside the web app. PIV and smart-card flows belong at the client or domain/Kerberos layer for SMB access; SimpleChat can consume the resulting SMB path through the existing SMB connector.
 
-Known limitation: the pinned Azure Files SDK requires `token_intent` for token
-credentials, but the current connector does not supply it. Managed-identity and
-service-principal client construction therefore fails before network access.
-The endpoint validation change does not repair this separate authentication issue.
+The offline SDK tests do not establish deployed RBAC permissions, network
+connectivity, remote fixture availability, ingestion, or chat/citation outcomes.
+See the [token authentication fix](../../fixes/AZURE_FILES_TOKEN_AUTHENTICATION_FIX.md)
+for the original failure and validation boundary.

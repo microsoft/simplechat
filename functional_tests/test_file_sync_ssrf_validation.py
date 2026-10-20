@@ -1,8 +1,9 @@
 # test_file_sync_ssrf_validation.py
 """
 Functional tests for File Sync SSRF endpoint and path boundaries.
-Version: 0.261.314
+Version: 0.261.359
 Implemented in: 0.261.314
+Token client keyword contract updated in: 0.261.358
 
 Azure Files must reject unapproved origins before token-credential/client
 construction. OneDrive browse paths must remain under the configured Graph
@@ -11,6 +12,7 @@ function loader, without importing Azure/Cosmos bootstrap or making network call
 They do not establish live Azure connectivity or repair SDK authentication.
 """
 
+from contextlib import nullcontext
 import sys
 import types
 from unittest.mock import Mock
@@ -64,6 +66,7 @@ def file_functions(additional_globals=None):
     """Reuse the isolated loader; real validators run with mocked external I/O."""
     namespace = {
         "validate_azure_file_endpoint": validate_azure_file_endpoint,
+        "_azure_files_operation": lambda operation: nullcontext(),
     }
     namespace.update(additional_globals or {})
     return load_functions(
@@ -181,6 +184,7 @@ def test_azure_files_sdk_receives_only_canonical_origins(files_client_boundary, 
     client.assert_called_once_with(
         account_url=f"https://account.file.{suffix}",
         credential=credential_factory.return_value,
+        token_intent="backup",
     )
     if auth_type == "managed_identity":
         managed_credential.assert_called_once_with(managed_identity_client_id="test-managed-client")

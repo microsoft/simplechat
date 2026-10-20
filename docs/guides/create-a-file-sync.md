@@ -115,10 +115,19 @@ the URL. Arbitrary domains, IP addresses, and direct private-link hostnames are
 not accepted; private endpoints should resolve the canonical account hostname
 through private DNS.
 
-Endpoint validation does not repair the separate token-authentication
-limitation: the current connector's managed-identity and service-principal
-client construction is rejected by the pinned Azure Files SDK. Connection-string
-dispatch remains unchanged.
+### Azure Files identity permissions
+
+From **0.261.358**, managed identity and service-principal connections use the
+SDK-required backup intent for Azure Files OAuth over REST. For read-only
+imports, the identity needs the corresponding read data actions, including
+`readFileBackupSemantics`; **Storage File Data Privileged Reader** is a built-in
+role for this purpose. Ordinary SMB reader access alone is not sufficient.
+
+Backup intent bypasses file/directory ACLs within the RBAC-granted scope, so
+restrict the identity to the shares it should import. Azure RBAC and storage
+network restrictions still apply. SimpleChat does not assign roles for you.
+Connection-string authentication and existing saved sources remain supported
+without changing their configuration.
 
 ## Troubleshooting
 
@@ -127,6 +136,11 @@ dispatch remains unchanged.
 | No source types are visible | Admins have not made a source type visible | Ask an admin to review File Sync source type visibility. |
 | **Include subfolders** is disabled | Recursive sources are disabled by admin policy | Sync a top-level path or ask whether recursion is allowed. |
 | **Test Connection** fails | The credential, path, container, or share is wrong | Correct the fields and retest. |
+| Azure Files could not authenticate | The identity or credential was rejected | Check the selected authentication method and its credentials. |
+| Azure Files denied access | REST data permissions or storage access restrictions prevent the operation | Check the identity's Azure Files REST read permissions and account network rules; the message alone does not distinguish them. |
+| Azure Files could not find the share, directory, or file | The selected resource is missing or inaccessible | Verify the configured root and browse path with the storage owner. |
+| Azure Files could not be reached reliably | A transport request failed | Check service availability and the app's network access. |
+| Azure Files SDK or client initialization is unavailable | The server cannot initialize the connector | Ask an administrator to check the deployed SDK and authentication configuration. |
 
 ## Related
 
