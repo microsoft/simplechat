@@ -12,6 +12,9 @@ from typing import Any, Dict, Optional, Tuple
 from azure.monitor.opentelemetry import configure_azure_monitor
 import app_settings_cache
 from functions_assist_diagnostics import ASSIST_DIAGNOSTIC_TEXT, safe_assist_diagnostics
+from semantic_kernel_plugins.sql_connection_diagnostics import (
+    SQL_ENGINES, valid_native_error, valid_sqlstate,
+)
 
 # Singleton for the logger and Azure Monitor configuration
 _appinsights_logger = None
@@ -306,6 +309,15 @@ def _build_logger_extra(
             normalized_key = _normalize_extra_key(key)
             if _is_sensitive_log_key(key):
                 logger_extra[f"{normalized_key}_present"] = value is not None
+                continue
+            diagnostic_key = _normalize_log_key(key)
+            if diagnostic_key in {"sqlstate", "sqlengine", "sqlnativeerror"}:
+                if (
+                    (diagnostic_key == "sqlstate" and valid_sqlstate(value))
+                    or (diagnostic_key == "sqlengine" and type(value) is str and value in SQL_ENGINES)
+                    or (diagnostic_key == "sqlnativeerror" and valid_native_error(value))
+                ):
+                    logger_extra[normalized_key] = value
                 continue
             if isinstance(value, dict):
                 logger_extra[f"{normalized_key}_count"] = len(value)
