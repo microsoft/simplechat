@@ -23740,14 +23740,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "bf83fa55150f9f344abc114bbce33c2c4168b1a6a5486d49aeda092895e260e2"
+        "module_sha256": "9791bae218e2f9f39574f902156dc7f75028fe57e5eeb20b6db87aa436eff33e"
       },
       "classification": "sdk-compatible",
-      "contract": "The unchanged classic collection-save branch passes its actor-partitioned point read to the real legacy-update validator. Installed CosmosDict fields and ETag reach that mapping-compatible validator unchanged; a missing exact point ID cannot fall back to a same-name action or invoke a writer. Editor creation remains a separate repository-owned path.",
+      "contract": "The unchanged classic collection-save branch passes its actor-partitioned point read to the real legacy-update validator. Installed CosmosDict fields and ETag reach that mapping-compatible validator unchanged; a missing or foreign exact point ID cannot fall back to a same-name action or invoke a writer. Editor creation remains a separate repository-owned path.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_point_reads_reach_real_legacy_validator_as_sdk_documents",
-        "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_missing_exact_point_read_cannot_fall_back_to_a_name"
+        "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_missing_exact_point_read_cannot_fall_back_to_a_name",
+        "functional_tests/test_plugin_routes_cosmos_contract.py::test_personal_legacy_update_consumes_sdk_point_response"
       ]
     },
     "application/single_app/route_backend_plugins.py::edit_plugin": {
@@ -23762,14 +23763,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "bf83fa55150f9f344abc114bbce33c2c4168b1a6a5486d49aeda092895e260e2"
+        "module_sha256": "9791bae218e2f9f39574f902156dc7f75028fe57e5eeb20b6db87aa436eff33e"
       },
       "classification": "sdk-compatible",
-      "contract": "The unchanged route passes the exact scoped point read to validate_legacy_action_update, which accepts dictionary subclasses and reads fields without strict JSON copying. Runtime coverage uses installed CosmosDict via the shared SDK-default container, preserves ID and ETag, and rejects a missing exact ID before the repository writer.",
+      "contract": "The unchanged route passes the exact scoped point read to validate_legacy_action_update, which accepts dictionary subclasses and reads fields without strict JSON copying. Runtime coverage uses installed CosmosDict via the shared SDK-default container, preserves ID and ETag, and rejects a missing exact ID or mismatched route name before the repository writer.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_point_reads_reach_real_legacy_validator_as_sdk_documents",
-        "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_missing_exact_point_read_cannot_fall_back_to_a_name"
+        "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_missing_exact_point_read_cannot_fall_back_to_a_name",
+        "functional_tests/test_plugin_routes_cosmos_contract.py::test_global_legacy_update_consumes_sdk_point_response"
       ]
     },
     "application/single_app/route_backend_plugins.py::test_cosmos_connection": {
@@ -23784,13 +23786,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "bf83fa55150f9f344abc114bbce33c2c4168b1a6a5486d49aeda092895e260e2"
+        "module_sha256": "9791bae218e2f9f39574f902156dc7f75028fe57e5eeb20b6db87aa436eff33e"
       },
       "classification": "response-unused",
-      "contract": "The unchanged Cosmos connection probe drains SELECT TOP 1 VALUE c.id only to establish query permission; scalar query rows are discarded, never copied into a strict document/domain contract. Database/container metadata reads are likewise ignored. Runtime coverage verifies query draining, exact query shape, and configured client routing.",
+      "contract": "The unchanged Cosmos connection probe drains SELECT TOP 1 VALUE c.id only to establish query permission; empty and scalar query rows are discarded, never copied into a strict document/domain contract. Database/container metadata reads are likewise ignored. Runtime coverage verifies query draining, exact query shape, configured client routing, and lazy request-charge response-hook headers.",
       "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_action_route_cosmos_response_contract.py::test_cosmos_connection_drains_query_rows_without_treating_them_as_documents"
+        "functional_tests/test_action_route_cosmos_response_contract.py::test_cosmos_connection_drains_query_rows_without_treating_them_as_documents",
+        "functional_tests/test_plugin_routes_cosmos_contract.py::test_cosmos_connection_consumes_lazy_query_results"
       ]
     },
     "application/single_app/route_backend_public_documents.py::register_route_backend_public_documents.api_list_public_documents": {

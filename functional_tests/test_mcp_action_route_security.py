@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional tests for MCP discovery and connection-test authorization ordering.
-Version: 0.261.351
+Version: 0.261.354
 Implemented in: 0.261.029
 
 Executes real route/helper bodies with Flask requests and mocked I/O boundaries.

@@ -1,7 +1,7 @@
 // test_v2_workspace_action_connectors_logic.mjs
-// Version: 0.261.351
+// Version: 0.261.354
 // Implemented in: 0.261.096
-// No-auth clear intent fixed in: 0.261.351
+// No-auth clear intent fixed in: 0.261.354
 // Executes the real OpenAPI/MCP connector parsing, draft, credential, and API helpers.
 
 import assert from 'node:assert/strict';

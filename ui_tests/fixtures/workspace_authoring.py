@@ -1,12 +1,12 @@
 # workspace_authoring.py
 """
 Closed API fixtures for the production V2 My Workspace authoring SPA.
-Version: 0.261.351
+Version: 0.261.354
 Implemented in: 0.261.096
 Action type auth lists as the real editor type builder answers them: 0.261.161
 Binary-safe request recorder so logo image uploads never crash the base route: 0.261.163
 The rail's notification count and watched-reply read receipts are answered: 0.261.195
-MCP discovery supplies the required approved-fingerprint response: 0.261.351
+MCP discovery supplies the required approved-fingerprint response: 0.261.354
 
 The browser loads the real built application and CSS. Only HTTP responses and
 synthetic resource persistence are replaced; no components, stores, navigation,

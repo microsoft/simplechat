@@ -46,10 +46,22 @@ Use SQL Database when the answer depends on exact relational data: joins, filter
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Connection test fails | Connection string, server, database, driver, or credentials do not match the target. | Test the same credentials outside SimpleChat, then correct the modal fields. |
+| Connection test fails | The app could not complete the database connection check. The message alone may not identify the cause. | Use the failure categories below and ask an administrator to inspect the correlated SQL connection event. |
 | The agent writes invalid SQL | It does not know the schema. | Pair the agent with SQL Schema or provide table and column names in instructions. |
 | Results are truncated | **Max Rows** is lower than the result size. | Ask for a grouped or filtered result, or raise **Max Rows** within governance limits. |
 
+### Connection failure categories
+
+Since **0.261.351**, connection testing and SQL action runtime share safe error messages. The API and supported plugin result objects include an application-owned `error_code` for connection failures; provider details remain in server telemetry.
+
+| Error code | Meaning and next step |
+| --- | --- |
+| `sql_driver_unavailable` | A driver import or driver-manager lookup failed. Ask the administrator to check the deployed database driver and its dependencies. |
+| `sql_connection_timeout` | A timeout was reported. Check database availability and the app's network path; this does not establish a particular firewall problem. |
+| `sql_authentication_failed` | Structured provider evidence reports authentication rejection. Verify the selected authentication configuration and database access for that identity. |
+| `sql_connection_failed` | The available evidence does not support a more specific category. Inspect the server diagnostic before changing authentication, TLS, or permissions. |
+
+Administrators can find `[SQL_CONNECTION]` warnings with validated SQLSTATE and native error numbers when the provider supplies them. See [SQL connection logging]({{ '/reference/logging-tags/' | relative_url }}#sql-connection-diagnostics). A successful login using an operator's own account does not verify the App Service identity, its network path, or its selected authentication mode.
 
 ## V2 naming and schema discovery
 

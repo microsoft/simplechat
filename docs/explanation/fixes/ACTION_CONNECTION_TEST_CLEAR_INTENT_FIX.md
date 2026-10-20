@@ -1,9 +1,9 @@
 # Action connection-test credential intent fix
 
-**Fixed in version: 0.261.351**
+**Fixed in version: 0.261.354**
 
 Application version: `application/single_app/config.py`, advanced from
-`0.261.350` to `0.261.351`. Dependencies are the existing V2 build, Flask,
+`0.261.353` to `0.261.354`. Dependencies are the existing V2 build, Flask,
 workspace-authoring validation, and connector testers; no new package or setting
 is required.
 
@@ -92,6 +92,15 @@ Post-merge validation passed **219** connector, SDK, memory-resolution,
 bootstrap, and documentation tests with **5** subtests, plus the **37** client
 checks and **26** browser cases. The inventory again had no review gaps.
 The full runtime-gate result above was recorded before this base merge.
+
+The subsequent SQL-diagnostics base integration preserved base version
+0.261.353 and advanced this fix to **0.261.354**. Both branches' owner-runtime
+test selectors were retained for the three unchanged plugin-route storage
+owners, with the combined route module's current fingerprint. Query rows remain
+discarded, and the incoming lazy request-charge-header coverage is preserved.
+Combined connector, SDK, SQL-diagnostics, owner-runtime, and documentation
+validation passed **275** tests with network blocked; the inventory had zero
+review gaps. The **37** client checks and **26** browser cases also passed again.
 
 ### Limits
 
