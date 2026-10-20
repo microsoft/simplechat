@@ -15,6 +15,7 @@ from functions_analysis_access import (
     analysis_source_snapshot,
 )
 from functions_analysis_deliverables import apply_analysis_calculations
+from functions_document_citations import build_document_citation
 from functions_tabular_transformations import normalize_tabular_transformation_spec
 
 
@@ -1102,6 +1103,14 @@ def build_document_analysis_report(result):
                 locations.append(label)
         if locations:
             lines.append(f'  Supporting locations: {"; ".join(locations)}.')
+        markers = []
+        for ref in record.get('evidence_refs', []):
+            passage = evidence.get(ref) or {}
+            citation = build_document_citation(passage.get('source'), passage.get('location'))
+            if citation is not None and citation['citation'] not in markers:
+                markers.append(citation['citation'])
+        if markers:
+            lines.append('  ' + ' '.join(markers))
         caveats = record.get('caveats')
         if isinstance(caveats, list):
             lines.extend(

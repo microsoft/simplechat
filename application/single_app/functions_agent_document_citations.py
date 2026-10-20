@@ -19,7 +19,7 @@ import os
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from functions_appinsights import log_event
-from functions_citation_tracking import resolve_citation_location
+from functions_document_citations import build_inline_citation_marker, resolve_citation_location
 
 try:
     # config.py builds live Azure clients on import, so it is unavailable to the
@@ -96,27 +96,6 @@ def coerce_result_payload(value: Any) -> Optional[Dict[str, Any]]:
         return dict(parsed_value) if isinstance(parsed_value, Mapping) else None
 
     return None
-
-
-def build_inline_citation_marker(
-    file_name: Any,
-    location_label: Any,
-    location_value: Any,
-    citation_id: Any,
-) -> str:
-    """Return the literal inline reference the citation tracker can match."""
-    normalized_citation_id = str(citation_id or '').strip().lstrip('#').strip()
-    if not normalized_citation_id:
-        return ''
-
-    normalized_file_name = str(file_name or 'Document').strip() or 'Document'
-    normalized_label = str(location_label or 'Page').strip() or 'Page'
-    normalized_value = str(location_value or '1').strip() or '1'
-
-    return (
-        f'(Source: {normalized_file_name}, {normalized_label}: {normalized_value}) '
-        f'[#{normalized_citation_id}]'
-    )
 
 
 def _derive_document_id(result: Mapping[str, Any], citation_id: Any) -> str:
