@@ -1,7 +1,7 @@
 {
   "$schema": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "schemaVersion": 4,
-  "lastUpdated": "2026-10-02",
+  "lastUpdated": "2026-10-20",
   "description": "SimpleChat model capability, reasoning-policy, embedding-policy, and token-capacity catalog. Published chat/generation limits retain independently verified evidence and hosting profiles. Embedding input, dimension, and batch policies are separate operation contracts and never supply a chat-token budget.",
   "capabilityFields": {
     "processesText": "Accepts text input.",
@@ -23,7 +23,7 @@
   },
   "coverageNotes": [
     "Schema version 4 adds sourced task-selection profiles reviewed on 2026-09-21. Other models expose capability-derived suitability rather than invented quality scores. This does not re-date or replace the independent token-capacity, image, embedding, or reasoning audits.",
-    "The audited OpenAI token-capacity subset starts at GPT-5.0 model families and includes Azure OpenAI GPT-5.x model IDs that SimpleChat commonly sees through Foundry.",
+    "The original audited OpenAI token-capacity subset starts at GPT-5.0. A separate 2026-10-20 audit adds the nine existing GPT-4o, GPT-4.1 and o-series text records without changing that original inventory.",
     "Claude coverage includes current, legacy, deprecated, and recently retired Claude models that fall within the requested two-year window.",
     "Meta coverage focuses on public Llama model families with clear model cards for text, vision, and coding support.",
     "xAI coverage includes Grok chat/coding models plus documented Imagine and Voice model SKUs.",
@@ -46,7 +46,7 @@
     "Cohere batch count is bounded by its documented 96-text limit. The 49,152-token default batch budget is a conservative application bound derived from 96 inputs of 512 tokens, not a claim about a vendor aggregate-token limit.",
     "The 2026-09-19 token audit covers the original 75 records with tokenLimitEvidence. Additional qualitative and reasoning-only records omit unreviewed token fields and qualitative flags rather than guessing them. Embedding policies preserve their sourced dimensions, hosting/version input limits, and application batch budgets separately from chat context, generation limits, accounting, and verified numeric aliases.",
     "Historical source review dates remain independent: reasoning metadata on 2026-09-07, image-tool metadata on 2026-09-08, and embedding metadata on 2026-09-16. These retained dates do not claim a new source review or a chat-token audit of the additional models.",
-    "The 2026-09-19 token-capacity audit covers the original 75 records with tokenLimitEvidence. Operation-only records retain documented qualitative flags without token limits, accounting, profiles, or numeric aliases; reasoning-only records retain only their policy and identifiers. Missing limits and flags remain unknown, not inferred from an operation or policy.",
+    "The 2026-09-19 token-capacity audit covers the original 75 records. The separately dated 2026-10-20 audit covers gpt-4o, gpt-4o-mini, gpt-4.1, gpt-4.1-mini, gpt-4.1-nano, o1, o3, o3-mini and o4-mini with independent field evidence, exact snapshot aliases, and Azure hosting profiles. Remaining operation-only and reasoning-only records still make no token-capacity claim.",
     "Historical React V2 source review dates are retained independently: reasoning metadata on 2026-09-07, image-tool metadata on 2026-09-08, and provider-qualified image profiles on 2026-09-16. These dates do not claim a new source review or a token-capacity audit of the additional models.",
     "OpenAI model pages describe api.openai.com, not Azure deployment readiness. imageProfiles separates direct OpenAI, Azure OpenAI, and Foundry image operations. The application hosting cloud never establishes endpoint capabilities or availability.",
     "Azure documents Responses image generation with a separate GPT Image deployment. SimpleChat deliberately offers only dedicated image models on Azure/Foundry; the conditional Azure Responses integration is not enabled by publisher imageGenerationTool flags or administrator overrides.",
@@ -1391,6 +1391,111 @@
       "title": "Observed GPT-6 Sol (2026-09-22) Azure Chat Completions on 2026-10-01: function tools rejected with the default effort and accepted with reasoning_effort none",
       "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning?view=foundry-classic",
       "verifiedAt": "2026-10-01"
+    },
+    {
+      "id": "openai-token-gpt-4o",
+      "provider": "openai",
+      "title": "OpenAI gpt-4o token specification and exact snapshots",
+      "url": "https://developers.openai.com/api/docs/models/gpt-4o",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "openai-token-gpt-4o-mini",
+      "provider": "openai",
+      "title": "OpenAI gpt-4o-mini token specification and exact snapshots",
+      "url": "https://developers.openai.com/api/docs/models/gpt-4o-mini",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "openai-token-gpt-4.1",
+      "provider": "openai",
+      "title": "OpenAI gpt-4.1 token specification and exact snapshots",
+      "url": "https://developers.openai.com/api/docs/models/gpt-4.1",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "openai-token-gpt-4.1-mini",
+      "provider": "openai",
+      "title": "OpenAI gpt-4.1-mini token specification and exact snapshots",
+      "url": "https://developers.openai.com/api/docs/models/gpt-4.1-mini",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "openai-token-gpt-4.1-nano",
+      "provider": "openai",
+      "title": "OpenAI gpt-4.1-nano token specification and exact snapshots",
+      "url": "https://developers.openai.com/api/docs/models/gpt-4.1-nano",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "openai-token-o1",
+      "provider": "openai",
+      "title": "OpenAI o1 token specification and exact snapshots",
+      "url": "https://developers.openai.com/api/docs/models/o1",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "openai-token-o3",
+      "provider": "openai",
+      "title": "OpenAI o3 token specification and exact snapshots",
+      "url": "https://developers.openai.com/api/docs/models/o3",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "openai-token-o3-mini",
+      "provider": "openai",
+      "title": "OpenAI o3-mini token specification and exact snapshots",
+      "url": "https://developers.openai.com/api/docs/models/o3-mini",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "openai-token-o4-mini",
+      "provider": "openai",
+      "title": "OpenAI o4-mini token specification and exact snapshots",
+      "url": "https://developers.openai.com/api/docs/models/o4-mini",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "azure-token-gpt-4-and-gpt-4-turbo-models",
+      "provider": "azure",
+      "title": "Azure model token limits: gpt-4-and-gpt-4-turbo-models",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#gpt-4-and-gpt-4-turbo-models",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "azure-token-gpt-41-series",
+      "provider": "azure",
+      "title": "Azure model token limits: gpt-41-series",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#gpt-41-series",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "azure-token-o-series-models",
+      "provider": "azure",
+      "title": "Azure model token limits: o-series-models",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#o-series-models",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "openai-token-accounting",
+      "provider": "openai",
+      "title": "OpenAI Chat Completions and Responses total-generation accounting",
+      "url": "https://developers.openai.com/api/docs/guides/token-counting#understand-output-token-counts",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "azure-token-accounting",
+      "provider": "azure",
+      "title": "Azure reasoning tokens share context and generation caps",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning#control-costs",
+      "verifiedAt": "2026-10-20"
+    },
+    {
+      "id": "azure-token-chat-context",
+      "provider": "azure",
+      "title": "Azure Chat Completions combined prompt and completion context",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/chatgpt#manage-conversations",
+      "verifiedAt": "2026-10-20"
     }
   ],
   "models": [
@@ -10152,7 +10257,180 @@
       ],
       "sourceIds": [
         "openai-gpt4o",
-        "azure-openai-responses"
+        "azure-openai-responses",
+        "openai-token-gpt-4o",
+        "azure-token-gpt-4-and-gpt-4-turbo-models",
+        "openai-token-accounting",
+        "azure-token-accounting",
+        "azure-token-chat-context"
+      ],
+      "contextWindow": 128000,
+      "inputTokenLimit": null,
+      "outputTokenLimit": 4096,
+      "verifiedAliases": [
+        "gpt-4o-2024-05-13",
+        "gpt-4o-2024-08-06",
+        "gpt-4o-2024-11-20"
+      ],
+      "tokenLimitsApplicability": "text",
+      "outputTokenAccounting": "total_generation",
+      "tokenLimitEvidence": {
+        "contextWindow": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-gpt-4o"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents a 128,000-token shared context window for gpt-4o; input and generation share this capacity."
+        },
+        "inputTokenLimit": {
+          "status": "unknown",
+          "sourceIds": [
+            "openai-token-gpt-4o"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "The native model page does not independently publish an input-only ceiling. Do not subtract maximum output from context to fabricate one."
+        },
+        "outputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-gpt-4o",
+            "azure-token-gpt-4-and-gpt-4-turbo-models"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "Conservative catalog allowance of 4,096 tokens: Azure documents this maximum for 2024-05-13, versus 16,384 for 2024-08-06 and 2024-11-20; OpenAI documents the 16,384-token default snapshot. Missing or unrecognized version metadata never silently selects the larger allowance on either provider. This lower bound is not a claim that the newer snapshots have a 4,096-token maximum."
+        },
+        "outputTokenAccounting": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-accounting"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "Chat Completions max_completion_tokens and Responses max_output_tokens cap all generated tokens, including reasoning and non-visible formatting; visible text alone is not the allowance."
+        }
+      },
+      "tokenLimitProfiles": [
+        {
+          "id": "azure",
+          "provider": "azure",
+          "contextWindow": 128000,
+          "inputTokenLimit": 128000,
+          "outputTokenLimit": 4096,
+          "outputTokenAccounting": "total_generation",
+          "tokenLimitEvidence": {
+            "contextWindow": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-4-and-gpt-4-turbo-models",
+                "azure-token-chat-context"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure lists 128,000 tokens for gpt-4o; its Chat Completions guide requires messages plus requested generation to fit within the model limit. The input and output columns must not be added to invent a larger context."
+            },
+            "inputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-4-and-gpt-4-turbo-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure independently lists Input: 128,000 for gpt-4o."
+            },
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-4-and-gpt-4-turbo-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "The common conservative allowance is 4,096 across the documented Azure GPT-4o snapshots. Only verified 2024-08-06 or 2024-11-20 version metadata selects 16,384; an Azure deployment name alone does not identify its snapshot."
+            },
+            "outputTokenAccounting": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-accounting"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure max_completion_tokens and max_output_tokens cover reasoning, visible output and formatting tokens. The request allowance is total generation, not only visible text."
+            }
+          }
+        },
+        {
+          "id": "openai-verified-snapshots",
+          "provider": "openai",
+          "modelVersions": [
+            "2024-08-06",
+            "2024-11-20"
+          ],
+          "outputTokenLimit": 16384,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-token-gpt-4o",
+                "azure-token-gpt-4-and-gpt-4-turbo-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented gpt-4o snapshots only; retain provider-specific context and input constraints. The 2024-08-06 and 2024-11-20 snapshots allow 16,384 output tokens; this profile must not apply to 2024-05-13 or an unknown version."
+            }
+          }
+        },
+        {
+          "id": "azure-verified-snapshots",
+          "provider": "azure",
+          "modelVersions": [
+            "2024-08-06",
+            "2024-11-20"
+          ],
+          "outputTokenLimit": 16384,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-token-gpt-4o",
+                "azure-token-gpt-4-and-gpt-4-turbo-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented gpt-4o snapshots only; retain provider-specific context and input constraints. The 2024-08-06 and 2024-11-20 snapshots allow 16,384 output tokens; this profile must not apply to 2024-05-13 or an unknown version."
+            }
+          }
+        },
+        {
+          "id": "openai-2024-05-13",
+          "provider": "openai",
+          "modelVersions": [
+            "2024-05-13"
+          ],
+          "outputTokenLimit": 4096,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-token-gpt-4o",
+                "azure-token-gpt-4-and-gpt-4-turbo-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Retain the conservative 4,096-token allowance for the exact 2024-05-13 snapshot. Azure documents that version-specific maximum; the native OpenAI default snapshot limit must not be backported."
+            }
+          }
+        },
+        {
+          "id": "azure-2024-05-13",
+          "provider": "azure",
+          "modelVersions": [
+            "2024-05-13"
+          ],
+          "outputTokenLimit": 4096,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-token-gpt-4o",
+                "azure-token-gpt-4-and-gpt-4-turbo-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Retain the conservative 4,096-token allowance for the exact 2024-05-13 snapshot. Azure documents that version-specific maximum; the native OpenAI default snapshot limit must not be backported."
+            }
+          }
+        }
       ]
     },
     {
@@ -10187,7 +10465,135 @@
       ],
       "sourceIds": [
         "openai-gpt4o-mini",
-        "azure-openai-responses"
+        "azure-openai-responses",
+        "openai-token-gpt-4o-mini",
+        "azure-token-gpt-4-and-gpt-4-turbo-models",
+        "openai-token-accounting",
+        "azure-token-accounting",
+        "azure-token-chat-context"
+      ],
+      "contextWindow": 128000,
+      "inputTokenLimit": null,
+      "outputTokenLimit": 16384,
+      "verifiedAliases": [
+        "gpt-4o-mini-2024-07-18"
+      ],
+      "tokenLimitsApplicability": "text",
+      "outputTokenAccounting": "total_generation",
+      "tokenLimitEvidence": {
+        "contextWindow": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-gpt-4o-mini"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents a 128,000-token shared context window for gpt-4o-mini; input and generation share this capacity."
+        },
+        "inputTokenLimit": {
+          "status": "unknown",
+          "sourceIds": [
+            "openai-token-gpt-4o-mini"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "The native model page does not independently publish an input-only ceiling. Do not subtract maximum output from context to fabricate one."
+        },
+        "outputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-gpt-4o-mini"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents 16,384 maximum output tokens for gpt-4o-mini, independently of its shared context."
+        },
+        "outputTokenAccounting": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-accounting"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "Chat Completions max_completion_tokens and Responses max_output_tokens cap all generated tokens, including reasoning and non-visible formatting; visible text alone is not the allowance."
+        }
+      },
+      "tokenLimitProfiles": [
+        {
+          "id": "azure",
+          "provider": "azure",
+          "contextWindow": 128000,
+          "inputTokenLimit": 128000,
+          "outputTokenLimit": 16384,
+          "outputTokenAccounting": "total_generation",
+          "tokenLimitEvidence": {
+            "contextWindow": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-4-and-gpt-4-turbo-models",
+                "azure-token-chat-context"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure lists 128,000 tokens for gpt-4o-mini; its Chat Completions guide requires messages plus requested generation to fit within the model limit. The input and output columns must not be added to invent a larger context."
+            },
+            "inputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-4-and-gpt-4-turbo-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure independently lists Input: 128,000 for gpt-4o-mini."
+            },
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-4-and-gpt-4-turbo-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure documents 16,384 output tokens for gpt-4o-mini (2024-07-18)."
+            },
+            "outputTokenAccounting": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-accounting"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure max_completion_tokens and max_output_tokens cover reasoning, visible output and formatting tokens. The request allowance is total generation, not only visible text."
+            }
+          }
+        },
+        {
+          "id": "openai-verified-snapshots",
+          "provider": "openai",
+          "modelVersions": [
+            "2024-07-18"
+          ],
+          "outputTokenLimit": 16384,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-token-gpt-4o-mini"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented gpt-4o-mini snapshots only; retain provider-specific context and input constraints. Maximum output is 16,384 tokens."
+            }
+          }
+        },
+        {
+          "id": "azure-verified-snapshots",
+          "provider": "azure",
+          "modelVersions": [
+            "2024-07-18"
+          ],
+          "outputTokenLimit": 16384,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-4-and-gpt-4-turbo-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented gpt-4o-mini snapshots only; retain provider-specific context and input constraints. Maximum output is 16,384 tokens."
+            }
+          }
+        }
       ]
     },
     {
@@ -10229,7 +10635,137 @@
       ],
       "sourceIds": [
         "openai-gpt4-1",
-        "azure-openai-responses"
+        "azure-openai-responses",
+        "openai-token-gpt-4.1",
+        "azure-token-gpt-41-series",
+        "openai-token-accounting",
+        "azure-token-accounting",
+        "azure-token-chat-context"
+      ],
+      "contextWindow": 1047576,
+      "inputTokenLimit": null,
+      "outputTokenLimit": 32768,
+      "verifiedAliases": [
+        "gpt-4.1-2025-04-14"
+      ],
+      "tokenLimitsApplicability": "text",
+      "outputTokenAccounting": "total_generation",
+      "tokenLimitEvidence": {
+        "contextWindow": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-gpt-4.1"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents a 1,047,576-token shared context window for gpt-4.1; input and generation share this capacity."
+        },
+        "inputTokenLimit": {
+          "status": "unknown",
+          "sourceIds": [
+            "openai-token-gpt-4.1"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "The native model page does not independently publish an input-only ceiling. Do not subtract maximum output from context to fabricate one."
+        },
+        "outputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-gpt-4.1"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents 32,768 maximum output tokens for gpt-4.1, independently of its shared context."
+        },
+        "outputTokenAccounting": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-accounting"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "Chat Completions max_completion_tokens and Responses max_output_tokens cap all generated tokens, including reasoning and non-visible formatting; visible text alone is not the allowance."
+        }
+      },
+      "tokenLimitProfiles": [
+        {
+          "id": "azure",
+          "provider": "azure",
+          "contextWindow": 127999,
+          "inputTokenLimit": null,
+          "outputTokenLimit": 32768,
+          "outputTokenAccounting": "total_generation",
+          "tokenLimitEvidence": {
+            "contextWindow": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-41-series"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Conservative inclusive hosting allowance of 127,999 tokens: Azure requires provisioned-managed GPT-4.1 requests to be strictly below its listed 128,000-token window. Azure also lists 300,000 for standard and 1,047,576 for other deployments. Missing hosting metadata or the model version alone cannot prove a larger window. This integer bound is not a different published model capacity. An administrator may explicitly override context after verifying deployment constraints; retain the normal token-counting margin."
+            },
+            "inputTokenLimit": {
+              "status": "unknown",
+              "sourceIds": [
+                "azure-token-gpt-41-series"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure lists shared context windows by deployment type, not an independent input-only ceiling."
+            },
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-41-series"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure documents 32,768 output tokens for gpt-4.1 (2025-04-14)."
+            },
+            "outputTokenAccounting": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-accounting"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure max_completion_tokens and max_output_tokens cover reasoning, visible output and formatting tokens. The request allowance is total generation, not only visible text."
+            }
+          },
+          "notes": [
+            "The same hosting constraints apply to all three GPT-4.1 models. Large tool definitions above 300,000 tokens have a separate documented failure mode; the conservative hosting ceiling remains below it."
+          ]
+        },
+        {
+          "id": "openai-verified-snapshots",
+          "provider": "openai",
+          "modelVersions": [
+            "2025-04-14"
+          ],
+          "outputTokenLimit": 32768,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-token-gpt-4.1"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented gpt-4.1 snapshots only; retain provider-specific context and input constraints. Maximum output is 32,768 tokens."
+            }
+          }
+        },
+        {
+          "id": "azure-verified-snapshots",
+          "provider": "azure",
+          "modelVersions": [
+            "2025-04-14"
+          ],
+          "outputTokenLimit": 32768,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-41-series"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented gpt-4.1 snapshots only; retain provider-specific context and input constraints. Maximum output is 32,768 tokens."
+            }
+          }
+        }
       ]
     },
     {
@@ -10260,7 +10796,137 @@
       ],
       "sourceIds": [
         "openai-gpt4-1-mini",
-        "azure-openai-responses"
+        "azure-openai-responses",
+        "openai-token-gpt-4.1-mini",
+        "azure-token-gpt-41-series",
+        "openai-token-accounting",
+        "azure-token-accounting",
+        "azure-token-chat-context"
+      ],
+      "contextWindow": 1047576,
+      "inputTokenLimit": null,
+      "outputTokenLimit": 32768,
+      "verifiedAliases": [
+        "gpt-4.1-mini-2025-04-14"
+      ],
+      "tokenLimitsApplicability": "text",
+      "outputTokenAccounting": "total_generation",
+      "tokenLimitEvidence": {
+        "contextWindow": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-gpt-4.1-mini"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents a 1,047,576-token shared context window for gpt-4.1-mini; input and generation share this capacity."
+        },
+        "inputTokenLimit": {
+          "status": "unknown",
+          "sourceIds": [
+            "openai-token-gpt-4.1-mini"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "The native model page does not independently publish an input-only ceiling. Do not subtract maximum output from context to fabricate one."
+        },
+        "outputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-gpt-4.1-mini"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents 32,768 maximum output tokens for gpt-4.1-mini, independently of its shared context."
+        },
+        "outputTokenAccounting": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-accounting"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "Chat Completions max_completion_tokens and Responses max_output_tokens cap all generated tokens, including reasoning and non-visible formatting; visible text alone is not the allowance."
+        }
+      },
+      "tokenLimitProfiles": [
+        {
+          "id": "azure",
+          "provider": "azure",
+          "contextWindow": 127999,
+          "inputTokenLimit": null,
+          "outputTokenLimit": 32768,
+          "outputTokenAccounting": "total_generation",
+          "tokenLimitEvidence": {
+            "contextWindow": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-41-series"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Conservative inclusive hosting allowance of 127,999 tokens: Azure requires provisioned-managed GPT-4.1 requests to be strictly below its listed 128,000-token window. Azure also lists 300,000 for standard and 1,047,576 for other deployments. Missing hosting metadata or the model version alone cannot prove a larger window. This integer bound is not a different published model capacity. An administrator may explicitly override context after verifying deployment constraints; retain the normal token-counting margin."
+            },
+            "inputTokenLimit": {
+              "status": "unknown",
+              "sourceIds": [
+                "azure-token-gpt-41-series"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure lists shared context windows by deployment type, not an independent input-only ceiling."
+            },
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-41-series"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure documents 32,768 output tokens for gpt-4.1-mini (2025-04-14)."
+            },
+            "outputTokenAccounting": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-accounting"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure max_completion_tokens and max_output_tokens cover reasoning, visible output and formatting tokens. The request allowance is total generation, not only visible text."
+            }
+          },
+          "notes": [
+            "The same hosting constraints apply to all three GPT-4.1 models. Large tool definitions above 300,000 tokens have a separate documented failure mode; the conservative hosting ceiling remains below it."
+          ]
+        },
+        {
+          "id": "openai-verified-snapshots",
+          "provider": "openai",
+          "modelVersions": [
+            "2025-04-14"
+          ],
+          "outputTokenLimit": 32768,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-token-gpt-4.1-mini"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented gpt-4.1-mini snapshots only; retain provider-specific context and input constraints. Maximum output is 32,768 tokens."
+            }
+          }
+        },
+        {
+          "id": "azure-verified-snapshots",
+          "provider": "azure",
+          "modelVersions": [
+            "2025-04-14"
+          ],
+          "outputTokenLimit": 32768,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-41-series"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented gpt-4.1-mini snapshots only; retain provider-specific context and input constraints. Maximum output is 32,768 tokens."
+            }
+          }
+        }
       ]
     },
     {
@@ -10296,7 +10962,137 @@
       "sourceIds": [
         "openai-gpt4-1-nano",
         "azure-openai-responses",
-        "openai-deprecations"
+        "openai-deprecations",
+        "openai-token-gpt-4.1-nano",
+        "azure-token-gpt-41-series",
+        "openai-token-accounting",
+        "azure-token-accounting",
+        "azure-token-chat-context"
+      ],
+      "contextWindow": 1047576,
+      "inputTokenLimit": null,
+      "outputTokenLimit": 32768,
+      "verifiedAliases": [
+        "gpt-4.1-nano-2025-04-14"
+      ],
+      "tokenLimitsApplicability": "text",
+      "outputTokenAccounting": "total_generation",
+      "tokenLimitEvidence": {
+        "contextWindow": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-gpt-4.1-nano"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents a 1,047,576-token shared context window for gpt-4.1-nano; input and generation share this capacity."
+        },
+        "inputTokenLimit": {
+          "status": "unknown",
+          "sourceIds": [
+            "openai-token-gpt-4.1-nano"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "The native model page does not independently publish an input-only ceiling. Do not subtract maximum output from context to fabricate one."
+        },
+        "outputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-gpt-4.1-nano"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents 32,768 maximum output tokens for gpt-4.1-nano, independently of its shared context."
+        },
+        "outputTokenAccounting": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-accounting"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "Chat Completions max_completion_tokens and Responses max_output_tokens cap all generated tokens, including reasoning and non-visible formatting; visible text alone is not the allowance."
+        }
+      },
+      "tokenLimitProfiles": [
+        {
+          "id": "azure",
+          "provider": "azure",
+          "contextWindow": 127999,
+          "inputTokenLimit": null,
+          "outputTokenLimit": 32768,
+          "outputTokenAccounting": "total_generation",
+          "tokenLimitEvidence": {
+            "contextWindow": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-41-series"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Conservative inclusive hosting allowance of 127,999 tokens: Azure requires provisioned-managed GPT-4.1 requests to be strictly below its listed 128,000-token window. Azure also lists 300,000 for standard and 1,047,576 for other deployments. Missing hosting metadata or the model version alone cannot prove a larger window. This integer bound is not a different published model capacity. An administrator may explicitly override context after verifying deployment constraints; retain the normal token-counting margin."
+            },
+            "inputTokenLimit": {
+              "status": "unknown",
+              "sourceIds": [
+                "azure-token-gpt-41-series"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure lists shared context windows by deployment type, not an independent input-only ceiling."
+            },
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-41-series"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure documents 32,768 output tokens for gpt-4.1-nano (2025-04-14)."
+            },
+            "outputTokenAccounting": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-accounting"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure max_completion_tokens and max_output_tokens cover reasoning, visible output and formatting tokens. The request allowance is total generation, not only visible text."
+            }
+          },
+          "notes": [
+            "The same hosting constraints apply to all three GPT-4.1 models. Large tool definitions above 300,000 tokens have a separate documented failure mode; the conservative hosting ceiling remains below it."
+          ]
+        },
+        {
+          "id": "openai-verified-snapshots",
+          "provider": "openai",
+          "modelVersions": [
+            "2025-04-14"
+          ],
+          "outputTokenLimit": 32768,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-token-gpt-4.1-nano"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented gpt-4.1-nano snapshots only; retain provider-specific context and input constraints. Maximum output is 32,768 tokens."
+            }
+          }
+        },
+        {
+          "id": "azure-verified-snapshots",
+          "provider": "azure",
+          "modelVersions": [
+            "2025-04-14"
+          ],
+          "outputTokenLimit": 32768,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-gpt-41-series"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented gpt-4.1-nano snapshots only; retain provider-specific context and input constraints. Maximum output is 32,768 tokens."
+            }
+          }
+        }
       ]
     },
     {
@@ -10329,7 +11125,12 @@
       "sourceIds": [
         "openai-o1",
         "azure-openai-responses",
-        "openai-deprecations"
+        "openai-deprecations",
+        "openai-token-o1",
+        "azure-token-o-series-models",
+        "openai-token-accounting",
+        "azure-token-accounting",
+        "azure-token-chat-context"
       ],
       "reasoningPolicy": {
         "status": "supported",
@@ -10342,7 +11143,130 @@
         "sourceIds": [
           "azure-openai-reasoning"
         ]
-      }
+      },
+      "contextWindow": 200000,
+      "inputTokenLimit": null,
+      "outputTokenLimit": 100000,
+      "verifiedAliases": [
+        "o1-2024-12-17"
+      ],
+      "tokenLimitsApplicability": "text",
+      "outputTokenAccounting": "total_generation",
+      "tokenLimitEvidence": {
+        "contextWindow": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-o1"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents a 200,000-token shared context window for o1; input and generation share this capacity."
+        },
+        "inputTokenLimit": {
+          "status": "unknown",
+          "sourceIds": [
+            "openai-token-o1"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "The native model page does not independently publish an input-only ceiling. Do not subtract maximum output from context to fabricate one."
+        },
+        "outputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-o1"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents 100,000 maximum output tokens for o1, independently of its shared context."
+        },
+        "outputTokenAccounting": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-accounting"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "Chat Completions max_completion_tokens and Responses max_output_tokens cap all generated tokens, including reasoning and non-visible formatting; visible text alone is not the allowance."
+        }
+      },
+      "tokenLimitProfiles": [
+        {
+          "id": "azure",
+          "provider": "azure",
+          "contextWindow": 200000,
+          "inputTokenLimit": 200000,
+          "outputTokenLimit": 100000,
+          "outputTokenAccounting": "total_generation",
+          "tokenLimitEvidence": {
+            "contextWindow": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models",
+                "azure-token-chat-context"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure lists 200,000 tokens for o1; its Chat Completions guide requires messages plus requested generation to fit within the model limit. The input and output columns must not be added to invent a larger context."
+            },
+            "inputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure independently lists Input: 200,000 for o1."
+            },
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure documents 100,000 output tokens for o1 (2024-12-17)."
+            },
+            "outputTokenAccounting": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-accounting"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure max_completion_tokens and max_output_tokens cover reasoning, visible output and formatting tokens. The request allowance is total generation, not only visible text."
+            }
+          }
+        },
+        {
+          "id": "openai-verified-snapshots",
+          "provider": "openai",
+          "modelVersions": [
+            "2024-12-17"
+          ],
+          "outputTokenLimit": 100000,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-token-o1"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented o1 snapshots only; retain provider-specific context and input constraints. Maximum output is 100,000 tokens."
+            }
+          }
+        },
+        {
+          "id": "azure-verified-snapshots",
+          "provider": "azure",
+          "modelVersions": [
+            "2024-12-17"
+          ],
+          "outputTokenLimit": 100000,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented o1 snapshots only; retain provider-specific context and input constraints. Maximum output is 100,000 tokens."
+            }
+          }
+        }
+      ]
     },
     {
       "id": "o3",
@@ -10389,7 +11313,135 @@
       "sourceIds": [
         "openai-o3",
         "azure-openai-responses",
-        "openai-deprecations"
+        "openai-deprecations",
+        "openai-token-o3",
+        "azure-token-o-series-models",
+        "openai-token-accounting",
+        "azure-token-accounting",
+        "azure-token-chat-context"
+      ],
+      "contextWindow": 200000,
+      "inputTokenLimit": null,
+      "outputTokenLimit": 100000,
+      "verifiedAliases": [
+        "o3-2025-04-16"
+      ],
+      "tokenLimitsApplicability": "text",
+      "outputTokenAccounting": "total_generation",
+      "tokenLimitEvidence": {
+        "contextWindow": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-o3"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents a 200,000-token shared context window for o3; input and generation share this capacity."
+        },
+        "inputTokenLimit": {
+          "status": "unknown",
+          "sourceIds": [
+            "openai-token-o3"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "The native model page does not independently publish an input-only ceiling. Do not subtract maximum output from context to fabricate one."
+        },
+        "outputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-o3"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents 100,000 maximum output tokens for o3, independently of its shared context."
+        },
+        "outputTokenAccounting": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-accounting"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "Chat Completions max_completion_tokens and Responses max_output_tokens cap all generated tokens, including reasoning and non-visible formatting; visible text alone is not the allowance."
+        }
+      },
+      "tokenLimitProfiles": [
+        {
+          "id": "azure",
+          "provider": "azure",
+          "contextWindow": 200000,
+          "inputTokenLimit": 200000,
+          "outputTokenLimit": 100000,
+          "outputTokenAccounting": "total_generation",
+          "tokenLimitEvidence": {
+            "contextWindow": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models",
+                "azure-token-chat-context"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure lists 200,000 tokens for o3; its Chat Completions guide requires messages plus requested generation to fit within the model limit. The input and output columns must not be added to invent a larger context."
+            },
+            "inputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure independently lists Input: 200,000 for o3."
+            },
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure documents 100,000 output tokens for o3 (2025-04-16)."
+            },
+            "outputTokenAccounting": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-accounting"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure max_completion_tokens and max_output_tokens cover reasoning, visible output and formatting tokens. The request allowance is total generation, not only visible text."
+            }
+          }
+        },
+        {
+          "id": "openai-verified-snapshots",
+          "provider": "openai",
+          "modelVersions": [
+            "2025-04-16"
+          ],
+          "outputTokenLimit": 100000,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-token-o3"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented o3 snapshots only; retain provider-specific context and input constraints. Maximum output is 100,000 tokens."
+            }
+          }
+        },
+        {
+          "id": "azure-verified-snapshots",
+          "provider": "azure",
+          "modelVersions": [
+            "2025-04-16"
+          ],
+          "outputTokenLimit": 100000,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented o3 snapshots only; retain provider-specific context and input constraints. Maximum output is 100,000 tokens."
+            }
+          }
+        }
       ]
     },
     {
@@ -10422,7 +11474,12 @@
       "sourceIds": [
         "openai-o3-mini",
         "azure-openai-responses",
-        "openai-deprecations"
+        "openai-deprecations",
+        "openai-token-o3-mini",
+        "azure-token-o-series-models",
+        "openai-token-accounting",
+        "azure-token-accounting",
+        "azure-token-chat-context"
       ],
       "reasoningPolicy": {
         "status": "supported",
@@ -10435,7 +11492,130 @@
         "sourceIds": [
           "azure-openai-reasoning"
         ]
-      }
+      },
+      "contextWindow": 200000,
+      "inputTokenLimit": null,
+      "outputTokenLimit": 100000,
+      "verifiedAliases": [
+        "o3-mini-2025-01-31"
+      ],
+      "tokenLimitsApplicability": "text",
+      "outputTokenAccounting": "total_generation",
+      "tokenLimitEvidence": {
+        "contextWindow": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-o3-mini"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents a 200,000-token shared context window for o3-mini; input and generation share this capacity."
+        },
+        "inputTokenLimit": {
+          "status": "unknown",
+          "sourceIds": [
+            "openai-token-o3-mini"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "The native model page does not independently publish an input-only ceiling. Do not subtract maximum output from context to fabricate one."
+        },
+        "outputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-o3-mini"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents 100,000 maximum output tokens for o3-mini, independently of its shared context."
+        },
+        "outputTokenAccounting": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-accounting"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "Chat Completions max_completion_tokens and Responses max_output_tokens cap all generated tokens, including reasoning and non-visible formatting; visible text alone is not the allowance."
+        }
+      },
+      "tokenLimitProfiles": [
+        {
+          "id": "azure",
+          "provider": "azure",
+          "contextWindow": 200000,
+          "inputTokenLimit": 200000,
+          "outputTokenLimit": 100000,
+          "outputTokenAccounting": "total_generation",
+          "tokenLimitEvidence": {
+            "contextWindow": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models",
+                "azure-token-chat-context"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure lists 200,000 tokens for o3-mini; its Chat Completions guide requires messages plus requested generation to fit within the model limit. The input and output columns must not be added to invent a larger context."
+            },
+            "inputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure independently lists Input: 200,000 for o3-mini."
+            },
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure documents 100,000 output tokens for o3-mini (2025-01-31)."
+            },
+            "outputTokenAccounting": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-accounting"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure max_completion_tokens and max_output_tokens cover reasoning, visible output and formatting tokens. The request allowance is total generation, not only visible text."
+            }
+          }
+        },
+        {
+          "id": "openai-verified-snapshots",
+          "provider": "openai",
+          "modelVersions": [
+            "2025-01-31"
+          ],
+          "outputTokenLimit": 100000,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-token-o3-mini"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented o3-mini snapshots only; retain provider-specific context and input constraints. Maximum output is 100,000 tokens."
+            }
+          }
+        },
+        {
+          "id": "azure-verified-snapshots",
+          "provider": "azure",
+          "modelVersions": [
+            "2025-01-31"
+          ],
+          "outputTokenLimit": 100000,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented o3-mini snapshots only; retain provider-specific context and input constraints. Maximum output is 100,000 tokens."
+            }
+          }
+        }
+      ]
     },
     {
       "id": "o4-mini",
@@ -10467,7 +11647,12 @@
       "sourceIds": [
         "openai-o4-mini",
         "azure-openai-responses",
-        "openai-deprecations"
+        "openai-deprecations",
+        "openai-token-o4-mini",
+        "azure-token-o-series-models",
+        "openai-token-accounting",
+        "azure-token-accounting",
+        "azure-token-chat-context"
       ],
       "reasoningPolicy": {
         "status": "supported",
@@ -10480,7 +11665,130 @@
         "sourceIds": [
           "azure-openai-reasoning"
         ]
-      }
+      },
+      "contextWindow": 200000,
+      "inputTokenLimit": null,
+      "outputTokenLimit": 100000,
+      "verifiedAliases": [
+        "o4-mini-2025-04-16"
+      ],
+      "tokenLimitsApplicability": "text",
+      "outputTokenAccounting": "total_generation",
+      "tokenLimitEvidence": {
+        "contextWindow": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-o4-mini"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents a 200,000-token shared context window for o4-mini; input and generation share this capacity."
+        },
+        "inputTokenLimit": {
+          "status": "unknown",
+          "sourceIds": [
+            "openai-token-o4-mini"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "The native model page does not independently publish an input-only ceiling. Do not subtract maximum output from context to fabricate one."
+        },
+        "outputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-o4-mini"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "OpenAI documents 100,000 maximum output tokens for o4-mini, independently of its shared context."
+        },
+        "outputTokenAccounting": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-token-accounting"
+          ],
+          "verifiedAt": "2026-10-20",
+          "note": "Chat Completions max_completion_tokens and Responses max_output_tokens cap all generated tokens, including reasoning and non-visible formatting; visible text alone is not the allowance."
+        }
+      },
+      "tokenLimitProfiles": [
+        {
+          "id": "azure",
+          "provider": "azure",
+          "contextWindow": 200000,
+          "inputTokenLimit": 200000,
+          "outputTokenLimit": 100000,
+          "outputTokenAccounting": "total_generation",
+          "tokenLimitEvidence": {
+            "contextWindow": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models",
+                "azure-token-chat-context"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure lists 200,000 tokens for o4-mini; its Chat Completions guide requires messages plus requested generation to fit within the model limit. The input and output columns must not be added to invent a larger context."
+            },
+            "inputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure independently lists Input: 200,000 for o4-mini."
+            },
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure documents 100,000 output tokens for o4-mini (2025-04-16)."
+            },
+            "outputTokenAccounting": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-accounting"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Azure max_completion_tokens and max_output_tokens cover reasoning, visible output and formatting tokens. The request allowance is total generation, not only visible text."
+            }
+          }
+        },
+        {
+          "id": "openai-verified-snapshots",
+          "provider": "openai",
+          "modelVersions": [
+            "2025-04-16"
+          ],
+          "outputTokenLimit": 100000,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-token-o4-mini"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented o4-mini snapshots only; retain provider-specific context and input constraints. Maximum output is 100,000 tokens."
+            }
+          }
+        },
+        {
+          "id": "azure-verified-snapshots",
+          "provider": "azure",
+          "modelVersions": [
+            "2025-04-16"
+          ],
+          "outputTokenLimit": 100000,
+          "tokenLimitEvidence": {
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-token-o-series-models"
+              ],
+              "verifiedAt": "2026-10-20",
+              "note": "Exact documented o4-mini snapshots only; retain provider-specific context and input constraints. Maximum output is 100,000 tokens."
+            }
+          }
+        }
+      ]
     },
     {
       "id": "gpt-image-2",

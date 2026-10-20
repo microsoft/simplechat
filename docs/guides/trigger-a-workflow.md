@@ -4,7 +4,7 @@ title: "Trigger a workflow"
 description: "Run a workflow now, schedule future runs, and inspect run activity."
 section: "Guides"
 audience: user
-version: "0.261.305"
+version: "0.261.362"
 ---
 
 ## What this does
@@ -214,6 +214,17 @@ keeps the original background result reference and resumes when its supported
 final representation becomes available; a preview does not satisfy that gate.
 **Waiting for recovery** means an action might already have happened. Inspect
 the external destination before confirming a retry.
+
+Since **0.261.362**, a local input-budget or model-token configuration refusal
+instead records a failed task with an explanation. Expand that run's task
+results to inspect the reason and, for oversized input, its context budget.
+Correct the request or the model's verified configuration, then explicitly
+start a separate run. The failed run remains available for comparison. Normal
+task retry settings do not repeat these policy refusals.
+
+The V2 workbench refreshes active workflow status so its row, header, and run
+history stay aligned without reloading the page. A failed status read is shown
+as an error; it is not evidence that execution has finished.
 
 Resume continues the same definition and reuses completed checkpoints. It does
 not silently pick up edited source content. Cancel and start a new run if its

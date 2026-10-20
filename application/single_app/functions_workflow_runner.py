@@ -240,6 +240,7 @@ from functions_workflow_context import (
     wrap_workflow_model_client,
 )
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError, WorkflowResultTooLargeError
+from functions_workflow_policy_errors import WorkflowTaskPolicyError, workflow_policy_failure
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_bindings import (
     WorkflowInputError,
@@ -11354,6 +11355,7 @@ def _save_workflow_task_run_item(
     consumed_inputs=None,
     workflow_validation=None,
     plan_replay=None,
+    error_code=None,
 ):
     task = task if isinstance(task, dict) else {}
     task_id = str(task.get('id') or '').strip()
@@ -11406,6 +11408,7 @@ def _save_workflow_task_run_item(
         'status': status,
         'attempt_count': int(attempt_count or 0),
         'error': str(error or '')[:2000],
+        **({'error_code': error_code} if error_code else {}),
         'output_summary': output_preview,
         'output_preview': output_preview,
         'runner': safe_runner_audit,
@@ -11938,6 +11941,7 @@ def _execute_workflow_task_sequence(
             'consumed_inputs': completed_task.get('consumed_inputs') or [],
         } if completed_task is not None else None
         task_error = ''
+        task_policy_failure = None
         attempt_count = (completed_task.get('attempt_count') or 1) if completed_task is not None else 0
         analysis_checkpoints = None
         document_selection_snapshots = {}
@@ -12226,6 +12230,7 @@ def _execute_workflow_task_sequence(
                 task_result = None
                 blocked_audit = ((attempt_workflow or {}).get('context_budget') or {}).get('blocked_request')
                 safe_error = WorkflowContextBudgetError(blocked_audit) if blocked_audit else exc
+                task_policy_failure = workflow_policy_failure(safe_error)
                 if structured_definition and task_stage == 'input' and isinstance(safe_error, AnalysisResultUnavailable):
                     durable._pause(task_unit_key, durable.unit(task_unit_key).get('input_digest', ''))
                 if flow_runner and flow_runner.has_loops and task_stage == 'input' and isinstance(
@@ -12248,7 +12253,8 @@ def _execute_workflow_task_sequence(
                     ),
                 }.get(getattr(safe_error, 'family', None), 'A required source is no longer available for this workflow run.')
                 task_error = (
-                    str(safe_error) if isinstance(safe_error, (WorkflowContextBudgetError, WorkflowResultNotReadyError))
+                    task_policy_failure['error'] if task_policy_failure
+                    else str(safe_error) if isinstance(safe_error, WorkflowResultNotReadyError)
                     else safe_error.public_message if isinstance(safe_error, WorkflowInputError)
                     else unavailable_error if isinstance(safe_error, AnalysisResultUnavailable)
                     else {
@@ -12261,7 +12267,7 @@ def _execute_workflow_task_sequence(
                         'publication': 'The existing artifact could not be published. Review its saved result, format, destination and approval state.',
                     }[task_stage]
                 )
-                if isinstance(safe_error, (WorkflowContextBudgetError, WorkflowResultNotReadyError, WorkflowInputError, AnalysisResultUnavailable)):
+                if task_policy_failure or isinstance(safe_error, (WorkflowResultNotReadyError, WorkflowInputError, AnalysisResultUnavailable)):
                     break
                 if attempt_index >= retry_count:
                     break
@@ -12543,6 +12549,7 @@ def _execute_workflow_task_sequence(
             'failed',
             attempt_count=attempt_count,
             error=task_error,
+            error_code=(task_policy_failure or {}).get('error_code'),
             created_at=created_at,
             runner_audit=runner_audit,
             context_budget=(attempt_workflow or {}).get('context_budget'),
@@ -12559,6 +12566,7 @@ def _execute_workflow_task_sequence(
                         'token_usage': attempt_workflow['_document_action_choice']['selection_token_usage']}
                        if (attempt_workflow or {}).get('_document_action_choice') else {}),
             'error': task_error,
+            **(task_policy_failure or {}),
             'runner': runner_audit,
             'consumed_inputs': (attempt_workflow or {}).get('consumed_inputs') or [],
             **({
@@ -12584,6 +12592,8 @@ def _execute_workflow_task_sequence(
             if structured_definition:
                 durable.finish_node(state='failed', attempt=max(1, attempt_count), reason_code='task_failed',
                                     consumed_inputs=(attempt_workflow or {}).get('consumed_inputs') or [])
+            if task_policy_failure:
+                raise WorkflowTaskPolicyError(task_policy_failure['error_code'], task_policy_failure['error'])
             raise RuntimeError(
                 f"Workflow task '{task.get('name') or task_id}' failed after {attempt_count} attempt(s): {task_error}"
             )
@@ -13408,6 +13418,7 @@ def _run_authorized_workflow_impl(workflow, trigger_source='manual', user_roles=
             'success': False,
             'completed_at': completed_at,
             'error': str(exc),
+            **(workflow_policy_failure(exc) or {}),
             'file_sync': file_sync_result or {},
             'response_preview': '',
         })

@@ -1,8 +1,8 @@
-# Workflow Ask AI chat-execution contract fix (v0.261.362)
+# Workflow Ask AI chat-execution contract fix (v0.261.364)
 
 ## Issue and root cause
 
-Fixed in version: **0.261.362**, tracked by
+Fixed in version: **0.261.364**, tracked by
 `application/single_app/config.py`.
 
 Two observed requests to `POST /api/user/workflows/assist` returned HTTP 502

@@ -10,6 +10,7 @@ from copy import deepcopy
 
 from functions_workflow_result_store import load_workflow_task_result, save_workflow_task_result
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
+from functions_workflow_policy_errors import workflow_policy_failure
 from functions_m365_approvals import M365ApprovalRequired
 from m365_interaction import M365SignInRequired
 
@@ -207,14 +208,15 @@ class DurableWorkflowExecution:
             units[key]["state"] = "waiting_m365"
             self._update(record, {"units": units})
             raise
-        except Exception:
-            # The exception remains visible to the existing runner. Only a
-            # durable explicit decision can replay a possibly side-effecting unit.
+        except Exception as exc:
             record = self.check()
             units = deepcopy(record.get("units") or {})
-            units[key]["state"] = "failed"
+            failure = workflow_policy_failure(exc)
+            units[key].update(state="failed", **(failure or {}))
             self._update(record, {"units": units})
-            if not replay_safe:
+            # Policy refusals must reach the runner's non-retryable failure path.
+            # This never declares the operation replay-safe after earlier effects.
+            if not replay_safe and failure is None:
                 self._recovery(
                     self.check(), key, digest,
                     "This task failed after it started. Review any external actions before retrying.",

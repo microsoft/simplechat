@@ -10,6 +10,7 @@ from functions_m365_approvals import M365ApprovalRequired
 from m365_interaction import M365SignInRequired
 from functions_workflow_identity import workflow_execution_id
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
+from functions_workflow_policy_errors import workflow_policy_failure
 from functions_workflow_result_store import load_workflow_node_result, save_workflow_node_result
 
 
@@ -257,14 +258,17 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
                 self.record_execution(state="paused", attempt=attempt, reason_code="m365_authorization")
                 self._attempt(attempt, state="paused", reason_code="m365_authorization")
             raise
-        except Exception:
+        except Exception as exc:
             self.check()
             self.authorize_iteration()
-            self.store.journal_commit(self.lease.token, "unit", self._key(key), {**unit, "state": "failed"})
+            failure = workflow_policy_failure(exc)
+            self.store.journal_commit(self.lease.token, "unit", self._key(key), {
+                **unit, "state": "failed", **(failure or {}),
+            })
             if task_operation:
-                self.record_execution(state="failed", attempt=attempt)
-                self._attempt(attempt, state="failed")
-            if not replay_safe:
+                self.record_execution(state="failed", attempt=attempt, **(failure or {}))
+                self._attempt(attempt, state="failed", **(failure or {}))
+            if not replay_safe and failure is None:
                 self._gate(key, digest, attempt, "recovery", "Review any external effects before retrying this failed attempt.", inputs)
             raise
         self.check()

@@ -1,9 +1,9 @@
 # test_workflow_assist_chat_results.py
 """
 Functional tests for capability/results authoring and group Ask AI.
-Version: 0.261.362
+Version: 0.261.364
 Implemented in: 0.261.343
-Chat-execution contract fix: 0.261.362
+Chat-execution contract fix: 0.261.364
 
 Validate closed operations, inherited task execution, actual save projections,
 canonical audiences, scope isolation, stale revisions and group route policy.

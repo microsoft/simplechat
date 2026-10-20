@@ -1,4 +1,4 @@
-# Workflow AI Assistant (v0.261.362)
+# Workflow AI Assistant (v0.261.364)
 
 ## Overview
 
@@ -32,7 +32,7 @@ Group, chat-capability and results-authoring parity implemented in version:
 **0.261.343**, tracked in `application/single_app/config.py`.
 
 Chat-execution schema/correction alignment and complete operation-name diagnostics
-fixed in version: **0.261.362**, tracked in `application/single_app/config.py`.
+fixed in version: **0.261.364**, tracked in `application/single_app/config.py`.
 
 ## Chat capabilities and results
 
@@ -579,7 +579,7 @@ retain only explicitly allowlisted validation codes. At most 12 reasons are reco
 attempt. Private content, raw identity IDs, arbitrary paths and exception messages are excluded.
 Existing summaries and the single correction retry are unchanged.
 
-Since 0.261.362, every supported workflow operation name survives the diagnostic
+Since 0.261.364, every supported workflow operation name survives the diagnostic
 allowlist, including chat execution, results delivery, and document selection.
 Runtime chat failures distinguish `chat_execution_invalid`, `chat_mode_unavailable`,
 `chat_capability_unavailable`, and `chat_output_unavailable`. This does not enable

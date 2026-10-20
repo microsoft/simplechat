@@ -1,8 +1,9 @@
 # workflow_results.py
 """
 Isolated workflow result dependencies for existing sequence unit tests.
-Version: 0.261.122
+Version: 0.261.362
 Implemented in: 0.261.106
+Non-retryable workflow policy dependencies added in: 0.261.362
 """
 
 import hashlib
@@ -65,6 +66,7 @@ from functions_workflow_readiness import (
     reconcile_workflow_publication_output,
 )
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
+from functions_workflow_policy_errors import WorkflowTaskPolicyError, workflow_policy_failure
 
 
 def workflow_result_helpers():
@@ -91,6 +93,8 @@ def workflow_result_helpers():
         "WorkflowResultStorageUnavailableError": WorkflowResultStorageUnavailableError,
         "WorkflowResultTooLargeError": WorkflowResultTooLargeError,
         "WorkflowContextBudgetError": WorkflowContextBudgetError,
+        "WorkflowTaskPolicyError": WorkflowTaskPolicyError,
+        "workflow_policy_failure": workflow_policy_failure,
         "WorkflowResultNotReadyError": WorkflowResultNotReadyError,
         "AnalysisResultUnavailable": AnalysisResultUnavailable,
         "WorkflowInputError": WorkflowInputError,

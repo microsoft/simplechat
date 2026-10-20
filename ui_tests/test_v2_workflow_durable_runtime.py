@@ -1,8 +1,9 @@
 # test_v2_workflow_durable_runtime.py
 """
 UI tests for native V2 durable workflow runtime controls.
-Version: 0.261.271
+Version: 0.261.362
 Implemented in: 0.261.111
+Workflow status freshness and readable run labels: 0.261.362
 The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 These tests use the real V2 SPA bundle with a closed API fixture. They cover
@@ -132,7 +133,7 @@ def test_queued_run_response_expands_live_runtime_without_blocking(workflow_ui):
 
     detail = select_workflow(page, "Durable approval workflow")
     detail.get_by_role("button", name="Run Durable approval workflow", exact=True).click()
-    expect(page.get_by_text("queued", exact=True).first).to_be_visible()
+    expect(detail.locator("header").get_by_text("Queued", exact=True)).to_be_visible()
     page.get_by_role("button", name="Show run task results", exact=True).first.click()
     expect(page.get_by_text("Version 1", exact=True)).to_be_visible()
 

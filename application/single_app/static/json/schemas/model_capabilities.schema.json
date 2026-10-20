@@ -149,7 +149,7 @@
     "tokenCapacity": {
       "type": ["integer", "null"],
       "minimum": 1,
-      "description": "A documented positive token capacity, or null when not independently verified/applicable. Never a request default, rate quota, or inferred sum."
+      "description": "A documented positive token capacity or explicitly evidenced conservative bound across snapshot/hosting variants; null when not independently verified/applicable. Never a request default, rate quota, or inferred sum."
     },
     "outputTokenAccounting": {
       "enum": ["total_generation", "visible_only", "unknown"],
@@ -451,7 +451,7 @@
         },
         "outputTokenLimit": {
           "$ref": "#/$defs/tokenCapacity",
-          "description": "The documented generation maximum, not an adjustable API default or requested response length."
+          "description": "The documented generation maximum or evidenced conservative allowance across snapshots, not an adjustable API default or requested response length."
         },
         "tokenLimitsApplicability": {
           "enum": ["text", "non-text", "unknown"]
@@ -816,7 +816,7 @@
     },
     "capabilityMap": {
       "type": "object",
-      "description": "Every original audited flag is required. Later operation flags are optional and must not be inferred from the original flags.",
+      "description": "Token evidence does not audit qualitative streaming or reasoning flags: those may remain absent on newly token-audited records. The original audited inventory preserves its complete flags through offline regression tests. Later operation flags are optional and must not be inferred.",
       "required": [
         "processesText",
         "generatesText",
@@ -829,9 +829,7 @@
         "processesBinaryFiles",
         "optimizedForCoding",
         "toolCalling",
-        "structuredOutput",
-        "supportsStreaming",
-        "reasoning"
+        "structuredOutput"
       ],
       "properties": {
         "generatesEmbeddings": {"const": false}

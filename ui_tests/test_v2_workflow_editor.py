@@ -1,8 +1,9 @@
 # test_v2_workflow_editor.py
 """
 UI tests for the native V2 LIST workflow editor.
-Version: 0.261.271
+Version: 0.261.362
 Implemented in: 0.261.108
+Readable run-history status labels: 0.261.362
 Personal workflow row delete coverage: 0.261.178
 Personal File Sync is authored, so it is no longer listed as preserved-only: 0.261.207
 The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
@@ -180,10 +181,11 @@ def test_edit_preserves_legacy_fields_and_run_inspection_surfaces_validation(wor
     select_workflow(page, "Quarterly review workflow")
     page.get_by_role("button", name=re.compile(r"Run Quarterly review workflow")).click()
     expect(page.get_by_role("alert").filter(has_text="Workflow run completed with failed tasks.")).to_be_visible()
-    expect(page.get_by_text("completed_partial", exact=True)).to_be_visible()
+    history = page.get_by_role("list", name="Workflow run history", exact=True)
+    expect(history.get_by_text("Completed with task errors", exact=True)).to_be_visible()
 
     page.get_by_role("button", name="Show run task results", exact=True).click()
-    expect(page.get_by_text("completed_partial", exact=True)).to_be_visible()
+    expect(history.get_by_text("Completed with task errors", exact=True)).to_be_visible()
     expect(page.get_by_text("accepted_partial", exact=False)).to_be_visible()
     expect(page.get_by_text("partial_coverage", exact=False)).to_be_visible()
     expect(page.get_by_text("Context budget:", exact=False).first).to_be_visible()

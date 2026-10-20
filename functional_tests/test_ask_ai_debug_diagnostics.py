@@ -1,10 +1,10 @@
 # test_ask_ai_debug_diagnostics.py
 """
 Functional regressions for debug-gated Ask AI diagnostics.
-Version: 0.261.362
+Version: 0.261.364
 Implemented in: 0.261.329
 Operation error container fix: 0.261.331
-Workflow operation coverage and chat-execution rules: 0.261.362
+Workflow operation coverage and chat-execution rules: 0.261.364
 
 Exercises real editor/workflow cores, model adapter, and log_event serialization
 with offline providers. Synthetic replies prove rule visibility and privacy,
@@ -488,7 +488,7 @@ def test_json_mode_fallback_is_debug_visible_without_provider_message(diagnostic
 
 
 def test_implementation_version():
-    assert_app_version_at_least('0.261.362')
+    assert_app_version_at_least('0.261.364')
 
 
 if __name__ == '__main__':

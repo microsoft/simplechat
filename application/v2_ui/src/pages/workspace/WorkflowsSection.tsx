@@ -21,7 +21,8 @@ import { clsx } from 'clsx';
 import { AlertTriangle, CircleCheck, Plus, Workflow } from 'lucide-react';
 import { EmptyState, GlassButton, Skeleton } from '../../components/ui/primitives';
 import { SectionError, SectionIntro, SectionSearch } from '../../components/workspace/primitives';
-import { errorMessage, useSectionResource } from '../../components/workspace/useSectionResource';
+import { errorMessage } from '../../components/workspace/useSectionResource';
+import { useWorkflowResource } from '../../components/workflows/useWorkflowResource';
 import { WorkflowStatusChip } from '../../components/workflows/WorkflowStatusChip';
 import {
     WorkflowWorkbenchDetail,
@@ -44,6 +45,7 @@ import {
     filterWorkflows,
     workflowFiltersApplied,
     workflowNeedsAttention,
+    workflowIsRunning,
     workflowRowMeta,
     workflowStatusTone,
     WORKFLOW_STATUS_FILTER_LABELS,
@@ -117,7 +119,15 @@ export function WorkflowsSection({
     const baseId = useId();
     const loadWorkflows = useCallback((signal?: AbortSignal) => fetchScopedWorkflows(scope, signal), [scopeKey]);
     const { items, loading, error, loadFailed, refresh, setItems, setError } =
-        useSectionResource<WorkflowDefinition>(loadWorkflows, 'Failed to load workflows.');
+        useWorkflowResource<WorkflowDefinition>(scopeKey, loadWorkflows,
+            'Could not refresh workflows. Status and actions are unavailable until you retry.',
+            (workflows) => workflows.some(workflowIsRunning));
+    const currentScope = useRef<string | null>(scopeKey);
+    currentScope.current = scopeKey;
+    useEffect(() => {
+        currentScope.current = scopeKey;
+        return () => { currentScope.current = null; };
+    }, [scopeKey]);
 
     const [filters, setFilters] = useState<WorkflowWorkbenchFilters>(DEFAULT_WORKFLOW_WORKBENCH_FILTERS);
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -126,6 +136,11 @@ export function WorkflowsSection({
     const [busyId, setBusyId] = useState<string | null>(null);
     const [actionError, setActionError] = useState<{ workflowId: string; message: string } | null>(null);
     const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
+    useEffect(() => {
+        setBusyId(null);
+        setActionError(null);
+        setHistoryRefreshToken(0);
+    }, [scopeKey]);
     const [linkedRun, setLinkedRun] = useState<{
         scopeKey: string;
         workflowId: string;
@@ -231,7 +246,7 @@ export function WorkflowsSection({
             setError('This workflow has no stable identifier. Reload before trying again.');
             return;
         }
-        if (interactionDisabled || !canRun) {
+        if (interactionDisabled || loadFailed || !canRun) {
             reportError(workflow.id, 'You cannot run workflows with the current workspace access.');
             return;
         }
@@ -240,23 +255,23 @@ export function WorkflowsSection({
         setTab('runs');
         try {
             const response: WorkflowRunStartResponse = await startScopedWorkflowRun(scope, workflow.id);
+            if (currentScope.current !== scopeKey) return;
             const nextWorkflow = response.workflow
                 ? response.workflow
                 : response.run?.durable_execution === true && response.run.id
-                    ? {
-                        ...workflow,
-                        active_run_id: response.run.id,
-                        status: response.run.status ?? 'queued',
-                    }
+                    ? { ...workflow, active_run_id: response.run.id, status: response.run.status ?? 'queued' }
                     : workflow;
-            setItems(items.map((item) => item.id === workflow.id ? nextWorkflow : item));
+            setItems((current) => current.map((item) => item.id === workflow.id ? nextWorkflow : item));
             await refresh();
         } catch (actionFailure) {
+            if (currentScope.current !== scopeKey) return;
             await refresh();
-            reportError(workflow.id, errorMessage(actionFailure, 'Could not start the workflow.'));
+            if (currentScope.current === scopeKey) reportError(workflow.id, errorMessage(actionFailure, 'Could not start the workflow.'));
         } finally {
-            setHistoryRefreshToken((value) => value + 1);
-            setBusyId(null);
+            if (currentScope.current === scopeKey) {
+                setHistoryRefreshToken((value) => value + 1);
+                setBusyId(null);
+            }
         }
     };
 
@@ -265,7 +280,7 @@ export function WorkflowsSection({
             setError('This workflow has no stable identifier. Reload before trying again.');
             return;
         }
-        if (interactionDisabled || !canCancel) {
+        if (interactionDisabled || loadFailed || !canCancel) {
             reportError(workflow.id, 'You cannot change workflows with the current workspace access.');
             return;
         }
@@ -273,36 +288,35 @@ export function WorkflowsSection({
         setActionError(null);
         try {
             await cancelScopedWorkflow(scope, workflow.id);
+            if (currentScope.current !== scopeKey) return;
             await refresh();
         } catch (actionFailure) {
+            if (currentScope.current !== scopeKey) return;
             await refresh();
-            reportError(workflow.id, errorMessage(actionFailure, 'Could not cancel the workflow.'));
+            if (currentScope.current === scopeKey) reportError(workflow.id, errorMessage(actionFailure, 'Could not cancel the workflow.'));
         } finally {
-            setHistoryRefreshToken((value) => value + 1);
-            setBusyId(null);
+            if (currentScope.current === scopeKey) {
+                setHistoryRefreshToken((value) => value + 1);
+                setBusyId(null);
+            }
         }
     };
 
     const onDelete = async (workflow: WorkflowDefinition) => {
-        if (interactionDisabled || !canDelete) {
+        if (interactionDisabled || loadFailed || !canDelete) {
             if (workflow.id) reportError(workflow.id, 'You cannot delete workflows with the current workspace access.');
             return;
         }
-        const previous = items;
-        if (!workflow.id) {
-            return;
-        }
+        if (!workflow.id) return;
         setBusyId(workflow.id);
         setActionError(null);
-        setItems(items.filter((item) => item.id !== workflow.id));
         try {
             await deleteScopedWorkflow(scope, workflow.id);
+            if (currentScope.current === scopeKey) await refresh();
         } catch (deleteError) {
-            setItems(previous);
-            setSelectedId(workflow.id);
-            setError(errorMessage(deleteError, 'Could not delete the workflow.'));
+            if (currentScope.current === scopeKey) setError(errorMessage(deleteError, 'Could not delete the workflow.'));
         } finally {
-            setBusyId(null);
+            if (currentScope.current === scopeKey) setBusyId(null);
         }
     };
 
@@ -337,7 +351,7 @@ export function WorkflowsSection({
         visible.find((workflow) => workflow.id)?.id;
 
     const clearFilters = () => setFilters(DEFAULT_WORKFLOW_WORKBENCH_FILTERS);
-    const showWorkbench = !loadFailed && (loading || items.length > 0);
+    const showWorkbench = items.length > 0 || (loading && !loadFailed);
 
     return (
         <fieldset disabled={interactionDisabled} className="@container flex min-h-0 min-w-0 flex-1 flex-col gap-3">
@@ -506,6 +520,7 @@ export function WorkflowsSection({
                                     headingRef={detailHeadingRef}
                                     permissions={{ canRun, canCancel, canEdit, canDelete }}
                                     busy={busyId === selected.id}
+                                    statusUnavailable={loadFailed}
                                     actionError={actionError && actionError.workflowId === selected.id ? actionError.message : null}
                                     historyRefreshToken={historyRefreshToken}
                                     linkedRun={linkedRun?.scopeKey === scopeKey && linkedRun.workflowId === selected.id ? linkedRun : null}
@@ -513,7 +528,7 @@ export function WorkflowsSection({
                                     onCancel={() => void onCancel(selected)}
                                     onEdit={() => openEditor(selected)}
                                     onDelete={() => void onDelete(selected)}
-                                    onWorkflowRefresh={() => void refresh()}
+                                    onWorkflowRefresh={refresh}
                                 />
                             ) : (
                                 <div className="flex h-full min-h-[12rem] flex-col items-center justify-center px-6 py-10 text-center">

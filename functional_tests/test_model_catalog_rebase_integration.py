@@ -1,8 +1,9 @@
 # test_model_catalog_rebase_integration.py
 """
 Offline regression tests for audited token and React V2 metadata coexistence.
-Version: 0.261.221
+Version: 0.261.362
 Implemented in: 0.261.122
+GPT-4o, GPT-4.1 and o-series token audit: 0.261.362
 GPT-6 Astra token-evidenced record: 0.261.220
 GPT-6 Sol token-evidenced record: 0.261.221
 
@@ -28,6 +29,7 @@ from test_model_capability_catalog_resolution import (
 )
 from test_model_catalog_token_evidence import (
     AUDITED_NATIVE_LIMITS,
+    LEGACY_TEXT_LIMITS,
     TOKEN_METADATA_FIELDS,
     validate_catalog_integrity,
 )
@@ -35,8 +37,7 @@ from functions_embedding_policy import EmbeddingPolicyError, resolve_embedding_p
 
 
 OPERATION_ONLY_IDS = {
-    "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
-    "o1", "o3", "o3-mini", "o4-mini", "gpt-image-2", "gpt-image-1.5",
+    "gpt-image-2", "gpt-image-1.5",
     "gpt-image-1", "gpt-image-1-mini", "dall-e-3",
     "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
     "MAI-Image-2.5", "MAI-Image-2.5-Flash", "MAI-Image-2.5-Pro",
@@ -183,6 +184,7 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
 
     def test_original_audit_and_v2_inventories_coexist(self):
         self.assertTrue(set(AUDITED_NATIVE_LIMITS).issubset(self.models))
+        self.assertTrue(set(LEGACY_TEXT_LIMITS).issubset(self.models))
         self.assertTrue(OPERATION_ONLY_IDS.issubset(self.models))
         self.assertTrue(REASONING_ONLY_IDS.issubset(self.models))
         self.assertTrue(EMBEDDING_IDS.issubset(self.models))
@@ -233,6 +235,34 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
                 for field, value in record["capabilities"].items():
                     self.assertIs(type(value), bool)
                     self.assertIs(resolved[field], value)
+
+    def test_newly_audited_text_records_keep_existing_operation_metadata(self):
+        for model_id in LEGACY_TEXT_LIMITS:
+            with self.subTest(model=model_id):
+                record = self.models[model_id]
+                self.assertIn("tokenLimitEvidence", record)
+                self.assertNotIn("supportsStreaming", record["capabilities"])
+                self.assertNotIn("reasoning", record["capabilities"])
+                resolved = capabilities.get_model_catalog_capabilities(model_id)
+                for field, value in record["capabilities"].items():
+                    self.assertIs(type(value), bool)
+                    self.assertIs(resolved[field], value)
+                if model_id in RESPONSES_IMAGE_IDS:
+                    self.assertEqual(record["imageProfiles"], {"openai": "openai-responses"})
+
+    def test_token_audit_does_not_require_fabricated_streaming_or_reasoning_flags(self):
+        for model_id in LEGACY_TEXT_LIMITS:
+            record = copy.deepcopy(self.models[model_id])
+            self.validate_model(record)
+            for field in ("supportsStreaming", "reasoning"):
+                malformed = copy.deepcopy(record)
+                malformed["capabilities"][field] = "unknown"
+                with self.assertRaises(ValidationError):
+                    self.validate_model(malformed)
+            missing_core = copy.deepcopy(record)
+            del missing_core["capabilities"]["processesText"]
+            with self.assertRaises(ValidationError):
+                self.validate_model(missing_core)
 
     def test_reasoning_only_records_make_no_qualitative_claim(self):
         for model_id in REASONING_ONLY_IDS:
@@ -398,7 +428,7 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
     def test_metadata_only_variants_reject_token_fields(self):
         audited = self.models["gpt-5.6-sol"]
         for model_id, field in product(
-            ("gpt-4", "gpt-4o", "gpt-4.1-mini", "o3", "gpt-image-2",
+            ("gpt-4", "o1-mini", "o1-preview", "o3-pro", "gpt-image-2",
              "text-embedding-ada-002", "embed-v-4-0"),
             TOKEN_METADATA_FIELDS,
         ):
