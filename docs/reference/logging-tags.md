@@ -42,6 +42,46 @@ and capability codes. A cancelled stream is informational, not an error.
 Orchestration records an outcome only after its saved state is confirmed;
 replaying a cached response does not record another execution.
 
+## SQL connection diagnostics
+
+Since **0.261.351**, `[SQL_CONNECTION]` records connection-check and runtime
+connection failures at WARNING level, independently of debug logging. Application
+Insights must already be configured for these records to reach Azure.
+
+The shared classifier supplies `failure_code`, normalized `sql_engine`, and a
+known `error_type`. Valid provider evidence adds a five-character `sqlstate`
+and/or a bounded integer `sql_native_error`. Missing evidence is omitted, not
+invented. `operation` distinguishes `sql_connection_test`, `sql_query_connect`,
+and `sql_schema_connect`.
+
+The logging boundary preserves these as `sc_failure_code`, `sc_sql_engine`,
+`sc_error_type`, `sc_sqlstate`, `sc_sql_native_error`, and `sc_operation`.
+Use the existing request `OperationId` to correlate the warning; no raw
+identity/workspace identifiers, provider messages, credentials, connection
+strings, server/database names, or SQL are added to this event.
+
+For example, in a workspace-based Log Analytics resource:
+
+```kusto
+AppTraces
+| where TimeGenerated > ago(30m)
+| where OperationId == "PASTE_REQUEST_OPERATION_ID"
+| where tostring(Properties.sc_message) startswith "[SQL_CONNECTION]"
+| project TimeGenerated, OperationId,
+    Operation=tostring(Properties.sc_operation),
+    Code=tostring(Properties.sc_failure_code),
+    Engine=tostring(Properties.sc_sql_engine),
+    ErrorType=tostring(Properties.sc_error_type),
+    SqlState=tostring(Properties.sc_sqlstate),
+    NativeError=toint(Properties.sc_sql_native_error)
+| order by TimeGenerated asc
+| take 100
+```
+
+An `InterfaceError` without structured evidence remains `sql_connection_failed`.
+SQLSTATE class `08` alone does not prove a firewall, TLS, or identity problem.
+See the [SQL action troubleshooting categories]({{ '/reference/actions/sql-query/' | relative_url }}#connection-failure-categories).
+
 ## Request-resolution memory diagnostics
 
 Since **0.261.349**, `[ORCHESTRATION_PLANNER]` records
@@ -304,6 +344,7 @@ for availability states and live-UI validation limits.
 - `[SORT]`
 - `[SOURCE_REVIEW]`
 - `[SPEECH]`
+- `[SQL_CONNECTION]`
 - `[SQL_ODBC]`
 - `[SQL_QUERY_PLUGIN]`
 - `[SQL_SCHEMA_PLUGIN]`

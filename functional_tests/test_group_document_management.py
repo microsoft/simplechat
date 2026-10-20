@@ -1,7 +1,7 @@
 # test_group_document_management.py
 """
 Functional tests for immutable-target group document management.
-Version: 0.261.351
+Version: 0.261.354
 Implemented in: 0.261.129
 A tag vocabulary conflict answers one coded sentence, from the pre-check or a lost patch: 0.261.167
 New tags are defined before any document carries them, so a conflict writes no document: 0.261.168

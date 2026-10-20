@@ -3,7 +3,7 @@
 """
 Functional test for the V2 workspace documents explorer.
 
-Version: 0.261.351
+Version: 0.261.354
 Implemented in: 0.261.048
 Shared workspace shell integration: 0.261.127
 

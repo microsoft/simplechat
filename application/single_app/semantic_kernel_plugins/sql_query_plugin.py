@@ -1,3 +1,4 @@
+# sql_query_plugin.py
 """
 SQL Query Plugin for Semantic Kernel
 - Executes SQL queries against various databases (SQL Server, PostgreSQL, MySQL, SQLite)
@@ -18,6 +19,9 @@ from semantic_kernel_plugins.sql_odbc_utils import (
     DEFAULT_SQL_SERVER_ODBC_DRIVER,
     build_sql_server_odbc_connection_string,
     connect_with_sql_server_odbc_fallback,
+)
+from semantic_kernel_plugins.sql_connection_diagnostics import (
+    SqlConnectionError, classify_sql_connection_error,
 )
 
 # Helper class to wrap results with metadata
@@ -189,16 +193,14 @@ class SQLQueryPlugin(BasePlugin):
                 conn.row_factory = sqlite3.Row
                 return conn
                 
-        except ImportError as e:
-            debug_print(f"[SQL_QUERY_PLUGIN] Database driver import failed database_type={self.database_type} error={e}")
-            raise ImportError(f"Required database driver not installed for {self.database_type}: {e}")
         except Exception as e:
-            debug_print(
-                f"[SQL_QUERY_PLUGIN] Connection failed database_type={self.database_type} server={self.server} "
-                f"database={self.database} exception_type={type(e).__name__} message={e}"
+            diagnostic = classify_sql_connection_error(e, self.database_type)
+            log_event(
+                "[SQL_CONNECTION] SQL connection failed.",
+                level=logging.WARNING,
+                extra={**diagnostic.log_properties(), "operation": "sql_query_connect"},
             )
-            log_event(f"[SQL_QUERY_PLUGIN] Connection failed: {e}", extra={"database_type": self.database_type})
-            raise
+            raise SqlConnectionError(diagnostic) from None
 
     @property
     def display_name(self) -> str:
@@ -356,6 +358,8 @@ class SQLQueryPlugin(BasePlugin):
                 "data": [],
                 "row_count": 0
             }
+            if isinstance(e, SqlConnectionError):
+                error_result["error_code"] = e.diagnostic.code
             return ResultWithMetadata(error_result, self.metadata)
 
     @kernel_function(description="Execute a query that returns a single scalar value (e.g., COUNT, SUM, MAX, MIN). If the database schema is provided in your instructions, use it directly to construct the query. Otherwise, call get_database_schema from the SQL Schema plugin first to discover table and column names.")
@@ -424,6 +428,8 @@ class SQLQueryPlugin(BasePlugin):
                 "query": query,
                 "value": None
             }
+            if isinstance(e, SqlConnectionError):
+                error_result["error_code"] = e.diagnostic.code
             return ResultWithMetadata(error_result, self.metadata)
 
     @kernel_function(description="Validate a SQL query for syntax correctness and safety without executing it. Use this to pre-check complex queries before execution, especially when constructing multi-table JOINs or complex WHERE clauses.")
@@ -530,6 +536,8 @@ class SQLQueryPlugin(BasePlugin):
                 "data": [],
                 "row_count": 0
             }
+            if isinstance(e, SqlConnectionError):
+                error_result["error_code"] = e.diagnostic.code
             return ResultWithMetadata(error_result, self.metadata)
 
     def _clean_query(self, query: str) -> str:

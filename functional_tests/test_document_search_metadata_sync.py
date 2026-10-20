@@ -2,7 +2,7 @@
 # test_document_search_metadata_sync.py
 """
 Functional test for durable, batched document search metadata sync.
-Version: 0.261.351
+Version: 0.261.354
 Implemented in: 0.261.268
 
 This test ensures that document metadata edits no longer do per-chunk Search work inside the

@@ -1,7 +1,7 @@
 # test_workspace_metadata_outcomes.py
 """
 Runtime regressions for shared automatic and manual workspace metadata analysis.
-Version: 0.261.351
+Version: 0.261.354
 Implemented in: 0.261.347
 
 Execute the real extraction, merge, worker, and final-upload functions with only

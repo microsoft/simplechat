@@ -1,7 +1,7 @@
 # test_group_document_filename_xss_rendering.py
 """
 Browser regressions for group document filename rendering.
-Version: 0.261.351
+Version: 0.261.354
 Implemented in: 0.261.029
 
 Run the real template renderers, access/processing checks, fetch/refresh/polling

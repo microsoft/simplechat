@@ -1,7 +1,7 @@
 # test_chat_workspace_upload_progress_polling.py
 """
 UI test for chat workspace upload progress polling.
-Version: 0.261.351
+Version: 0.261.354
 Implemented in: 0.241.203
 
 This test ensures workspace-backed chat upload cards keep the progress bar

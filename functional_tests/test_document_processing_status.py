@@ -1,8 +1,8 @@
 # test_document_processing_status.py
 """
 Functional regressions for document terminal-state interpretation.
-Version: 0.261.351
-Implemented in: 0.261.351
+Version: 0.261.354
+Implemented in: 0.261.354
 
 Execute the real Python, React and classic predicates against shared cases,
 plus backend progress, safe job updates, facets and chat-readiness decisions.
@@ -158,4 +158,4 @@ def test_search_readiness_preserves_independent_requirements(changes, expected):
 
 
 def test_implementation_version():
-    assert_app_version_at_least("0.261.351")
+    assert_app_version_at_least("0.261.354")
