@@ -603,6 +603,9 @@ Use set_workflow_chat_execution to set workflow defaults, set_task_chat_executio
 requested task, and inherit_task_chat_execution to remove an override. Overrides replace, not union,
 workflow selections. Choose only available IDs in choices.chat_execution. Orchestration uses the
 existing planner; selected mode means every checked capability/output is REQUIRED, not optional.
+Only selected mode accepts required_capabilities or visual_requirements, and at least one of those
+lists must be nonempty. Orchestration and off modes require both lists to be empty. These rules
+apply to both workflow defaults and task overrides.
 Current events or fresh facts requested from the web need web_search. Deeper investigation uses
 deep_research; reading provided links uses url_fetch; generated images use generate_image; downloadable
 files use render_file. Charts and diagrams use visual_requirements chart/diagram, NOT invented capability

@@ -1,4 +1,4 @@
-# Workflow AI Assistant (v0.261.343)
+# Workflow AI Assistant (v0.261.362)
 
 ## Overview
 
@@ -31,6 +31,9 @@ Debug-gated operation diagnostics implemented in version: **0.261.329**, tracked
 Group, chat-capability and results-authoring parity implemented in version:
 **0.261.343**, tracked in `application/single_app/config.py`.
 
+Chat-execution schema/correction alignment and complete operation-name diagnostics
+fixed in version: **0.261.362**, tracked in `application/single_app/config.py`.
+
 ## Chat capabilities and results
 
 Ask AI can author `chat_execution` at workflow or task level: automatic
@@ -39,6 +42,13 @@ It can restore task inheritance. A request for current web research should
 select the real web-search capability, not merely add search wording to a
 plain-model prompt. Options come from the existing enabled capability registry;
 workflow-control tools are not offered recursively inside ordinary workflows.
+
+Selected mode requires at least one capability or visual requirement. Automatic
+orchestration and Off require both selection lists to be empty. The model-facing
+schemas and correction feedback enforce these same rules for workflow defaults
+and task overrides; a rejected edit is never silently dropped or changed to a
+different mode. Unavailable choices remain blocked.
+See the [chat-execution contract fix](../fixes/WORKFLOW_ASK_AI_CHAT_EXECUTION_CONTRACT_FIX.md).
 
 The assistant also authors `results_delivery`: run history only, a new results
 conversation, or delivery by an existing task/agent. Personal and group
@@ -547,12 +557,14 @@ ID and timestamps, never request content. **This document is the endpoint's only
 
 ### Telemetry
 
-Each request logs one `[WorkflowAssist] Assist request finished` event through `log_event`, with
-only these fields: `user_id`, `submission_id`, `status`, `outcome`, `code`, `stage`, `error_type`,
+Each request logs one `[WORKFLOW_ASSIST] Assist request finished` event through `log_event`, with
+these fields: `turn_id_hash`, `status`, `outcome`, `code`, `stage`, `error_type`,
 `invalid_stage`, `operation_count`, `correction_count`, `model_calls`, `turns_received`,
 `turns_sent`, `turns_dropped`, `reference_count`, `excerpt_count`, `definition_version`, `is_new`,
-`warning_codes`, `fault_location` (file and line, on a 500 only) and `duration_ms`. A body that
-can't be read logs `[WorkflowAssist] Assist request refused` with its code, status and stage.
+`warning_codes`, `fault_location` (file and line, on a 500 only), `duration_ms`, `output_code`,
+`failure_code`, `execution_code` and `validation_code`. Raw user/submission IDs are not included.
+A body that can't be read logs `[WORKFLOW_ASSIST] Assist request refused` with its failure code,
+status and execution stage.
 
 With **Enable Debug Logging** (`enable_debug_logging`) enabled, the core also emits
 `[WORKFLOW_ASSIST] Ask AI diagnostic` records for model attempts, validation rejection, correction
@@ -566,6 +578,12 @@ identify the schema keyword; apply failures identify the operation and rule; sav
 retain only explicitly allowlisted validation codes. At most 12 reasons are recorded per rejected
 attempt. Private content, raw identity IDs, arbitrary paths and exception messages are excluded.
 Existing summaries and the single correction retry are unchanged.
+
+Since 0.261.362, every supported workflow operation name survives the diagnostic
+allowlist, including chat execution, results delivery, and document selection.
+Runtime chat failures distinguish `chat_execution_invalid`, `chat_mode_unavailable`,
+`chat_capability_unavailable`, and `chat_output_unavailable`. This does not enable
+debug logging, expose operation values, or recover historical model responses.
 
 The [Ask AI operation diagnostics reference](../fixes/ASK_AI_OPERATION_DIAGNOSTICS_FIX.md)
 includes bounded queries and explains remaining diagnostic limitations.
@@ -876,7 +894,8 @@ All tests use a scripted model. None calls a live model.
 | `test_workflow_assist_scenarios.py` | The roadmap's "Done when" cases, placement, the un-normalized candidate, the correction round and 502, warnings, deadlines and content-free telemetry |
 | `test_workflow_assist_dry_run_parity.py` | The Python `workflowForSave` projection against Phase 2's dry run, including a whole `expected_count` given as `"12"` or `12.0`, which is checked and saved as an `int` |
 | `test_workflow_assist_limits_runtime.py` | The limiter (in flight, window, `Retry-After`, refunds, fail closed), the model parameters and provider errors, the runtime adapters, and a whole request against stores that fail on any write other than the caller's rate-limit document |
-| `test_ask_ai_debug_diagnostics.py` | Debug-on/off behavior in both logging sinks, per-attempt schema/apply/save rejection rules, provider failures and fallback, finish reasons, content privacy and observer failure isolation |
+| `test_ask_ai_debug_diagnostics.py` | Debug-on/off behavior in both logging sinks, every supported workflow operation name, per-attempt schema/apply/save and chat-availability rejection rules, provider failures and fallback, finish reasons, content privacy and observer failure isolation |
+| `test_workflow_assist_chat_results.py` | Workflow/task mode-selection schema parity, runtime validation, unavailable choices, atomic correction and repeated rejection, a blank Wednesday email-review draft with missing-time clarification, normal/optimized network-blocked subprocesses, and existing group/results audience restrictions |
 | `test_workflow_assist_field_parity.py` | The Python field lists, violation messages and editor vocabularies against the V2 TypeScript, read as text |
 | `test_workflow_assist_candidate_parity.py` | 24 Python candidates replayed through the real V2 editor code under Node, and the type-strict corpus of numbers, whitespace, JSON literals and File Sync saves. Tables of known JavaScript answers also run without Node. |
 | `route_tests/test_workflow_assist_policy.py` | The decorator order, the gates and their status codes, `is_workflow_assistant_enabled_for_user` and the V2 bootstrap flag built from it, and strict response serialization |

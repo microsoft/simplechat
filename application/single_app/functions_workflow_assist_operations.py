@@ -48,7 +48,8 @@ from functions_workflow_assist_editor import (
 )
 from functions_workflow_definitions import WorkflowAlertValidationError, WorkflowPublicValidationError
 from functions_workflow_configuration import (
-    WORKFLOW_CAPABILITY_IDS, WORKFLOW_VISUAL_REQUIREMENTS, normalize_chat_execution, normalize_results_delivery,
+    WORKFLOW_CAPABILITY_IDS, WORKFLOW_VISUAL_REQUIREMENTS, WorkflowConfigurationError,
+    normalize_chat_execution, normalize_results_delivery,
 )
 from functions_workflow_document_selection import (
     FILE_TYPES, MAX_RECENT_WINDOW_MINUTES, filter_schema, normalize_document_selection,
@@ -920,14 +921,27 @@ _CHAT_EXECUTION_PROPERTIES = {
         'items': {'enum': list(WORKFLOW_VISUAL_REQUIREMENTS)},
     },
 }
+_CHAT_EXECUTION_REQUIRED_SELECTIONS = [
+    {'properties': {'required_capabilities': {'minItems': 1}}},
+    {'properties': {'visual_requirements': {'minItems': 1}}},
+]
+_CHAT_EXECUTION_RULES = [
+    _when('mode', 'selected', {'anyOf': _CHAT_EXECUTION_REQUIRED_SELECTIONS}),
+    {
+        'if': {'required': ['mode'], 'properties': {'mode': {'enum': ['orchestration', 'off']}}},
+        'then': {'properties': {
+            'required_capabilities': {'maxItems': 0}, 'visual_requirements': {'maxItems': 0},
+        }},
+    },
+]
 OPERATION_SCHEMAS = {
     'set_workflow_chat_execution': _operation(
         'set_workflow_chat_execution', _CHAT_EXECUTION_PROPERTIES,
-        ['mode', 'required_capabilities', 'visual_requirements'],
+        ['mode', 'required_capabilities', 'visual_requirements'], _CHAT_EXECUTION_RULES,
     ),
     'set_task_chat_execution': _operation(
         'set_task_chat_execution', {'task': _TASK, **_CHAT_EXECUTION_PROPERTIES},
-        ['task', 'mode', 'required_capabilities', 'visual_requirements'],
+        ['task', 'mode', 'required_capabilities', 'visual_requirements'], _CHAT_EXECUTION_RULES,
     ),
     'inherit_task_chat_execution': _operation('inherit_task_chat_execution', {'task': _TASK}, ['task']),
     'set_results_delivery': _operation('set_results_delivery', {
@@ -1177,6 +1191,8 @@ def _schema_error_message(error):
     if keyword in ('minLength', 'maxLength'):
         return f'{subject} must be {"at least" if keyword == "minLength" else "at most"} {value} characters.'
     if keyword in ('minItems', 'maxItems'):
+        if keyword == 'maxItems' and value == 0 and field in ('required_capabilities', 'visual_requirements'):
+            return 'Orchestration and off modes require empty required_capabilities and visual_requirements lists.'
         return f'{subject} must have {"at least" if keyword == "minItems" else "at most"} {value} items.'
     if keyword == 'uniqueItems':
         return f'{subject} must not repeat an item.'
@@ -1184,6 +1200,8 @@ def _schema_error_message(error):
         return f'{subject} must be {"at least" if keyword == "minimum" else "at most"} {value}.'
     if keyword == 'oneOf':
         return f'{subject} must be "all" or a list of task handles.'
+    if keyword == 'anyOf' and value == _CHAT_EXECUTION_REQUIRED_SELECTIONS:
+        return 'Selected mode requires at least one required capability or visual requirement.'
     return f'{subject} is not valid.'
 
 
@@ -1579,17 +1597,19 @@ class _Applier:
             execution = normalize_chat_execution({
                 'version': 1, **{key: op[key] for key in _CHAT_EXECUTION_PROPERTIES},
             })
-        except ValueError:
-            raise _OperationError('Choose valid chat execution selections for this mode.') from None
+        except WorkflowConfigurationError as exc:
+            raise _OperationError(exc.public_message, 'chat_execution_invalid') from None
         choices = self.handles.options.get('chat_execution') or {}
-        for key, selected in (
-            ('modes', [execution['mode']]),
-            ('capabilities', execution['required_capabilities']),
-            ('visual_requirements', execution['visual_requirements']),
+        for key, selected, rule, label in (
+            ('modes', [execution['mode']], 'chat_mode_unavailable', 'chat execution mode'),
+            ('capabilities', execution['required_capabilities'], 'chat_capability_unavailable', 'chat capability'),
+            ('visual_requirements', execution['visual_requirements'], 'chat_output_unavailable', 'visual output'),
         ):
             available = {item.get('id') for item in _rows(choices.get(key)) if item.get('available') is True}
             if any(identity not in available for identity in selected):
-                raise _OperationError('The requested chat capability or output is unavailable. Choose an available option.')
+                raise _OperationError(
+                    f'The requested {label} is unavailable. Choose an available option or explain the limitation.', rule,
+                )
         return execution
 
     def op_set_workflow_chat_execution(self, op):
