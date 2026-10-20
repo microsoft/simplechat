@@ -12,9 +12,9 @@ response length is not the model's maximum output.
 
 **Combined capability, image, and embedding integration: 0.261.122**
 
-**GPT-4o, GPT-4.1, and o-series token coverage implemented in version: 0.261.356**
+**GPT-4o, GPT-4.1, and o-series token coverage implemented in version: 0.261.360**
 
-- Current documentation version: **0.261.356**, coordinated with the application
+- Current documentation version: **0.261.360**, coordinated with the application
   version update in `application\single_app\config.py`.
 - Application version owner: `application\single_app\config.py`.
 - Catalog data contract: **schemaVersion 4**.
@@ -342,7 +342,7 @@ does not assert an exact all-host capacity.
 
 ### Additional GPT-4o, GPT-4.1, and o-series token audit
 
-Implemented in version: **0.261.356**. Primary sources were checked on
+Implemented in version: **0.261.360**. Primary sources were checked on
 **2026-10-20**, separately from the original 75-record audit and historical
 operation/reasoning reviews. No live Azure deployment is queried or changed.
 

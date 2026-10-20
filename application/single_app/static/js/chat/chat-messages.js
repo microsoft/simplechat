@@ -2830,6 +2830,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const imageProposalExtraction = extractInlineImageProposalBlocks(diagramExtraction.markdown);
     const withInlineCitations = parseCitations(imageProposalExtraction.markdown, {
       m365Citations: options.m365Citations,
+      documentCitations: options.documentCitations,
     });
     const withUnwrappedTables = unwrapTablesFromCodeBlocks(withInlineCitations);
     const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
@@ -5950,6 +5951,7 @@ export function appendMessage(
     const renderedAiContent = renderAiMessageContent(messageContent, {
       blockRevisions: fullMessageObject?.metadata?.block_revisions,
       m365Citations: fullMessageObject?.m365_citations,
+      documentCitations: fullMessageObject?.hybrid_citations || hybridCitations,
     });
     const htmlContent = renderedAiContent.htmlContent;
     const inlineAssistantExportActionsHtml = renderCompletedAssistantActions && !fullMessageObject?.metadata?.saved_analysis

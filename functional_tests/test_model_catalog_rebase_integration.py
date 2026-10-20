@@ -1,9 +1,9 @@
 # test_model_catalog_rebase_integration.py
 """
 Offline regression tests for audited token and React V2 metadata coexistence.
-Version: 0.261.356
+Version: 0.261.360
 Implemented in: 0.261.122
-GPT-4o, GPT-4.1 and o-series token audit: 0.261.356
+GPT-4o, GPT-4.1 and o-series token audit: 0.261.360
 GPT-6 Astra token-evidenced record: 0.261.220
 GPT-6 Sol token-evidenced record: 0.261.221
 

@@ -1,9 +1,9 @@
 # test_model_catalog_token_evidence.py
 """
 Offline functional tests for the complete, evidence-backed model token catalog.
-Version: 0.261.356
+Version: 0.261.360
 Implemented in: 0.261.035
-GPT-4o, GPT-4.1 and o-series token audit: 0.261.356
+GPT-4o, GPT-4.1 and o-series token audit: 0.261.360
 React V2 catalog integration: 0.261.122
 
 Refs #1493 and PR #1497. The 2026-09-19 primary-source audit accounts for every

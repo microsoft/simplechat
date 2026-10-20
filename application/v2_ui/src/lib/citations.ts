@@ -10,6 +10,7 @@
 // middle of an answer.
 
 import { isM365CitationId } from './m365Citations';
+import type { HybridCitation } from './types';
 
 /** How a citation resolves, which determines what clicking it should do. */
 export type CitationKind = 'document' | 'web' | 'agent' | 'm365';
@@ -50,6 +51,26 @@ const ORPHAN_BRACKET_RUN = /(?:[ \t]*\[#[^\]]*\])+/g;
 const ORPHAN_M365_RUN = /(?:[ \t]*\[#\s*m365-[0-9a-f]{16}\s*\])+/g;
 
 const M365_ID = /m365-[0-9a-f]{16}/g;
+
+function documentFileNames(records: readonly HybridCitation[]): Map<string, string | null> {
+    const names = new Map<string, string | null>();
+    if (!Array.isArray(records)) {
+        return names;
+    }
+    for (const record of records) {
+        if (typeof record?.citation_id !== 'string' || typeof record?.file_name !== 'string') {
+            continue;
+        }
+        const id = record.citation_id.trim().replace(/^#/, '');
+        const name = record.file_name.trim();
+        if (!id || !name || isM365CitationId(id)) {
+            continue;
+        }
+        // Conflicting records cannot safely identify the source, even if one repeats later.
+        names.set(id, names.has(id) && names.get(id) !== name ? null : name);
+    }
+    return names;
+}
 
 function splitCitationId(rawId: string): ParsedCitation {
     const citationId = rawId.startsWith('#') ? rawId.slice(1) : rawId;
@@ -100,8 +121,12 @@ export const CITATION_PLACEHOLDER_PATTERN = /\u27E6cite:(\d+)\u27E7/g;
  * Returning placeholders rather than HTML keeps the markdown renderer in charge of the
  * surrounding text and avoids injecting raw HTML into model output.
  */
-export function parseCitations(message: string): ParsedMessage {
+export function parseCitations(
+    message: string,
+    documentCitations: readonly HybridCitation[] = [],
+): ParsedMessage {
     const groups: CitationGroup[] = [];
+    const fileNames = documentFileNames(documentCitations);
 
     let text = message.replace(
         CITATION_MARKER,
@@ -142,11 +167,33 @@ export function parseCitations(message: string): ParsedMessage {
                 citation.locationValue = tokens[index] ?? citation.pageNumber ?? '';
             });
 
+            const kind = classify(fileName, citations);
+            let displayName = fileName.trim();
+            if (kind === 'document' && /^untitled(?:\s+document)?$/i.test(fileName.trim())) {
+                const names = citations.map((citation) => fileNames.get(citation.citationId) || displayName);
+                if (new Set(names).size > 1) {
+                    const replacements: string[] = [];
+                    citations.forEach((citation, index) => {
+                        const groupIndex = groups.length;
+                        groups.push({
+                            id: `cite-${groupIndex}`,
+                            kind,
+                            fileName: names[index],
+                            locationLabel,
+                            citations: [citation],
+                        });
+                        replacements.push(CITATION_PLACEHOLDER(groupIndex));
+                    });
+                    return `${replacements.join(' ')}${trailingWhitespace}`;
+                }
+                displayName = names[0];
+            }
+
             const groupIndex = groups.length;
             groups.push({
                 id: `cite-${groupIndex}`,
-                kind: classify(fileName, citations),
-                fileName: fileName.trim(),
+                kind,
+                fileName: displayName,
                 locationLabel,
                 citations,
             });

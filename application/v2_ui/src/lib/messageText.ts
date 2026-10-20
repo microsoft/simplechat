@@ -128,7 +128,7 @@ function renderChartsAsText(content: string): string {
  * what make a pasted answer readable. Only the machine-facing parts are removed.
  */
 export function messageToPlainText(
-    message: Pick<ChatMessage, 'content' | 'metadata'>,
+    message: Pick<ChatMessage, 'content' | 'metadata' | 'hybrid_citations'>,
     options: PlainTextOptions = {},
 ): string {
     const content = typeof message.content === 'string' ? message.content : '';
@@ -145,7 +145,7 @@ export function messageToPlainText(
 
     // parseCitations already removes the markers and hands back the groups behind them; the
     // placeholders it leaves are what the renderer swaps for chips, so they go here.
-    const { text, groups } = parseCitations(base);
+    const { text, groups } = parseCitations(base, message.hybrid_citations);
 
     let plain = renderChartsAsText(text)
         .replace(CITATION_PLACEHOLDER_WITH_LEADING_SPACE, '')

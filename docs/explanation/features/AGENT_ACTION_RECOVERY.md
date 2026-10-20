@@ -3,6 +3,7 @@
 Fixed/Implemented in version: **0.261.347**.
 
 Updated in version: **0.261.355** for V2 first-message context synchronization.
+Extended in version: **0.261.356** for full context ownership and draft preservation.
 
 Related version update: `application/single_app/config.py`.
 
@@ -85,13 +86,19 @@ Classic uses `static/js/chat/chat-action-recovery.js` and the existing stream
 consumer. V2 uses `src/lib/actionRecovery.ts`, `ActionRecoveryNotice.tsx`, and
 the existing chat store/SSE transport. Both invalidate pending decisions when
 the agent or conversation changes. V2 additionally binds notices to the current
-bootstrap actor. V2 synchronizes conversation identity in the chat store before
-preflight starts; observing that identity again in React does not invalidate the
-same send. Assigning a newly created conversation's ID therefore does not require
-another Send or recheck action. A distinct New chat action still invalidates
-pending recovery, even when no saved conversation ID is active. See
+bootstrap actor. Since **0.261.355**, V2 synchronizes conversation identity in
+the chat store before preflight starts; observing that identity again in React
+does not invalidate the same send. Assigning a newly created conversation's ID
+therefore does not require another Send or recheck action. See
 [V2 first-agent-message context race](../fixes/V2_FIRST_AGENT_MESSAGE_CONTEXT_RACE_FIX.md).
 The UI uses local static assets and safe text rendering.
+
+Since **0.261.356**, the send boundary, conversation-change subscription, and
+mounted observer share one actor/conversation/agent context. Genuine context
+changes, New chat, Stop, and leaving the chat reject stale preflight work,
+including a selected-agent creation that completes after navigation.
+See the [chat context lifecycle fix](../fixes/CHAT_PREFLIGHT_CONTEXT_LIFECYCLE_FIX.md)
+for draft preservation and observer ownership.
 
 ## Validation and limits
 

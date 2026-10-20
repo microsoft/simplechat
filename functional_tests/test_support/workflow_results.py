@@ -1,9 +1,9 @@
 # workflow_results.py
 """
 Isolated workflow result dependencies for existing sequence unit tests.
-Version: 0.261.356
+Version: 0.261.360
 Implemented in: 0.261.106
-Non-retryable workflow policy dependencies added in: 0.261.356
+Non-retryable workflow policy dependencies added in: 0.261.360
 """
 
 import hashlib

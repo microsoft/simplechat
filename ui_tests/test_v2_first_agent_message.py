@@ -1,8 +1,9 @@
 # test_v2_first_agent_message.py
 """
 Real-composer regressions for the first agent message in a new V2 conversation.
-Version: 0.261.355
+Version: 0.261.356
 Implemented in: 0.261.355
+Creation ownership updated in: 0.261.356
 
 Only HTTP responses are synthetic. Production React, conversation creation,
 action preflight, stores, and the SSE reader execute in Chromium. No live model,
@@ -254,21 +255,21 @@ def test_upload_created_conversation_adopted_in_send_event_uses_one_request(firs
     assert sends[0]["body"]["conversation_id"] == CREATED
 
 
-def test_new_chat_during_creation_does_not_adopt_the_previous_draft(first_message_ui):
+def test_new_chat_during_agent_creation_preserves_the_unsent_draft(first_message_ui):
     page, api = first_message_ui
     api.hold_create = True
     mount(page, api)
     submit(page)
+    editor = page.get_by_role("textbox", name="Message")
+    expect(editor).to_have_text("")
     new_chat.wait_until(page, lambda: bool(api.pending), "Conversation creation was never held.")
     page.evaluate("window.OrchHarness.stores.chat.useChatStore.getState().startNewConversation()")
     api.release()
-    new_chat.wait_until(page, lambda: bool(api.contexts), "The original send never reached preflight.")
-    api.release_context()
-    new_chat.wait_until(page, lambda: bool(api.calls("/api/chat/stream")), "The original background send was lost.")
+    expect(editor).to_have_text(QUESTION)
     page.wait_for_function("!window.OrchHarness.stores.chat.useChatStore.getState().streaming")
     state = page.evaluate("""() => {
         const state = window.OrchHarness.stores.chat.useChatStore.getState();
         return {conversation: state.activeConversationId, messages: state.messages};
     }""")
     assert state == {"conversation": None, "messages": []}
-    assert len(api.calls("/api/chat/stream")) == 1
+    assert api.agent_requests == []

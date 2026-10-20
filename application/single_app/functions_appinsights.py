@@ -13,7 +13,7 @@ from azure.monitor.opentelemetry import configure_azure_monitor
 import app_settings_cache
 from functions_assist_diagnostics import ASSIST_DIAGNOSTIC_TEXT, safe_assist_diagnostics
 from semantic_kernel_plugins.sql_connection_diagnostics import (
-    SQL_ENGINES, valid_native_error, valid_sqlstate,
+    SQL_CONTEXT_KEYS, SQL_ENGINES, valid_native_error, valid_sql_context_property, valid_sqlstate,
 )
 
 # Singleton for the logger and Azure Monitor configuration
@@ -267,6 +267,10 @@ def sanitize_log_properties(value: Any, _depth: int = 0) -> Any:
         sanitized = {}
         for key, item in value.items():
             key_text = str(key)
+            if key_text in SQL_CONTEXT_KEYS:
+                if valid_sql_context_property(key_text, item):
+                    sanitized[key_text] = item
+                continue
             if _is_sensitive_log_key(key_text):
                 sanitized[key_text] = REDACTED_LOG_VALUE
             else:
@@ -307,6 +311,10 @@ def _build_logger_extra(
     if isinstance(extra, dict):
         for key, value in extra.items():
             normalized_key = _normalize_extra_key(key)
+            if key in SQL_CONTEXT_KEYS:
+                if valid_sql_context_property(key, value):
+                    logger_extra[normalized_key] = value
+                continue
             if _is_sensitive_log_key(key):
                 logger_extra[f"{normalized_key}_present"] = value is not None
                 continue

@@ -1,9 +1,9 @@
 # test_v2_workflow_durable_runtime.py
 """
 UI tests for native V2 durable workflow runtime controls.
-Version: 0.261.356
+Version: 0.261.360
 Implemented in: 0.261.111
-Workflow status freshness and readable run labels: 0.261.356
+Workflow status freshness and readable run labels: 0.261.360
 The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 These tests use the real V2 SPA bundle with a closed API fixture. They cover

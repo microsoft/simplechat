@@ -344,6 +344,7 @@ def _plan_result_options(record, user_id, settings):
         'export_catalog': services.export_catalog(),
         'composition_profiles': composition_profiles(),
         'document_transform_candidate_reader': services.document_transform_candidate_reader,
+        'selected_source_context_reader': services.selected_source_context_reader,
         **services.capability_request_bindings(),
     }
 
@@ -2672,6 +2673,42 @@ def register_route_backend_orchestration(bp):
                     prepare_public_chat_scope(
                         seeds, user_id, settings, resolve_public_chat_workspace_ids, conversation_document,
                     )
+                services = _orchestration_services(
+                    user_id, resolved_conversation_id, settings=settings,
+                )
+                selected_candidates = None
+                source_scopes = {} if workflow_configured else None
+                if seeds.get('document_ids'):
+                    selected_candidates, _probed = resolve_candidate_documents(
+                        message, user_id, seeds=seeds,
+                        conversation_id=resolved_conversation_id, settings=settings,
+                    )
+                    selected_candidates = enrich_planner_candidates(
+                        selected_candidates, user_id, conversation_id=resolved_conversation_id,
+                        seeds=seeds, source_scopes=source_scopes,
+                        selected_source_context_reader=services.selected_source_context_reader,
+                    )
+                selected_sources = [
+                    item['planning_source'] for item in selected_candidates or []
+                    if item.get('planning_source')
+                ]
+                seeds['planning_source_revisions'] = {
+                    item['document_id']: item['revision'] for item in selected_sources
+                }
+                turn_context['seeds'] = deepcopy(seeds)
+                log_event(
+                    '[ORCHESTRATION_CONTEXT] Prepared selected sources for planning.',
+                    extra={
+                        **workflow_log_context(conversation_id=resolved_conversation_id, turn_id=turn_id),
+                        'stage': 'source_preparation', 'selected_source_count': len(selected_sources),
+                        'inspected_source_count': sum(
+                            item['inspection']['status'] == 'inspected' for item in selected_sources
+                        ),
+                        'limited_source_count': sum(
+                            item['inspection']['status'] == 'limited' for item in selected_sources
+                        ),
+                    },
+                )
                 memory_request = build_elicitation_user_request(message, answered_record)
                 memory_context = load_orchestration_memory(
                     user_id, conversation_document,
@@ -2685,6 +2722,8 @@ def register_route_backend_orchestration(bp):
                 resolution = resolve_conversation_request(
                     message, snapshot, settings=settings, answered_questions=answered_record,
                     planner_model=planner_model, seeds=seeds, memory_context=memory_context,
+                    selected_sources=selected_sources,
+                    conversation_id=resolved_conversation_id, turn_id=turn_id,
                 )
                 log_event(
                     '[ORCHESTRATION_PLANNER] Resolved request with saved memory context.',
@@ -2708,6 +2747,8 @@ def register_route_backend_orchestration(bp):
                 if resolution['relationship'] == 'clarification':
                     if not allow_elicitation:
                         raise PlannerError(
+                            'A required choice is still unresolved. Start a new request with that choice.'
+                            if selected_sources else
                             'Select or paste the text you want to use, then create a new request.',
                             reason='conversation_target_required',
                         )
@@ -2745,18 +2786,20 @@ def register_route_backend_orchestration(bp):
                         yield build_planning_thought(notice)
                 else:
                     _validate_turn_memory_context(turn_context, user_id, resolved_conversation_id)
-                if not conversation_retrieval_allowed(resolution, message, seeds):
+                if selected_candidates is not None:
+                    candidates = selected_candidates
+                elif not conversation_retrieval_allowed(resolution, message, seeds):
                     candidates = []
                 else:
                     candidates, _probed = resolve_candidate_documents(
                         effective_request, user_id, seeds=seeds,
                         conversation_id=resolved_conversation_id, settings=settings,
                     )
-                source_scopes = {} if workflow_configured else None
-                candidates = enrich_planner_candidates(
-                    candidates, user_id, conversation_id=resolved_conversation_id, seeds=seeds,
-                    source_scopes=source_scopes,
-                )
+                if selected_candidates is None:
+                    candidates = enrich_planner_candidates(
+                        candidates, user_id, conversation_id=resolved_conversation_id, seeds=seeds,
+                        source_scopes=source_scopes,
+                    )
                 if seeds.get('image_generation') or seeds.get('image_references'):
                     seeds = resolve_image_reference_candidates(
                         seeds, user_id, resolved_conversation_id, candidates=candidates, settings=settings,
@@ -2828,9 +2871,6 @@ def register_route_backend_orchestration(bp):
 
                 # Every plan uses the one contract; a legacy turn was refused before this point.
                 contract_version = DEPENDENCY_PLAN_CONTRACT_VERSION
-                services = _orchestration_services(
-                    user_id, resolved_conversation_id, settings=settings,
-                )
                 if services.document_transform_candidate_reader is not None:
                     seeds['document_transform_references'] = services.document_transform_candidate_reader(
                         [candidate['document_id'] for candidate in candidates],

@@ -1,6 +1,6 @@
 # Workflow budget failure and recovery fix
 
-Fixed in version: **0.261.356**.
+Fixed in version: **0.261.360**.
 
 Application version: `application/single_app/config.py`.
 
@@ -123,6 +123,7 @@ live acceptance test passes.
 | `python functional_tests\test_docs_app_surface_coverage.py` | 7/7 checks passed. |
 | `python functional_tests\test_docs_site_quality.py` | 6/6 checks passed. |
 | `python scripts\check_cosmos_response_boundaries.py --run-contracts` | 1,174 passed; 144 subtests passed; no inventory review gaps. |
+| Post-base-merge policy, catalog evidence, and workflow SDK boundary suites | 86 passed; 709 subtests passed at version 0.261.360. Merged UI build and storage inventory checks also passed. |
 | Changed-file XSS sink check and UI mechanical detector | Passed. |
 
 See [Durable workflow execution](../features/WORKFLOW_DURABLE_EXECUTION.md) for
