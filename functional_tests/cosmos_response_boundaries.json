@@ -23736,7 +23736,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "9791bae218e2f9f39574f902156dc7f75028fe57e5eeb20b6db87aa436eff33e"
+        "module_sha256": "c8846fb3c7e535713d2390717028110c5a36cc0c2431ecfb3a9517abee3b833d"
       },
       "classification": "sdk-compatible",
       "contract": "The unchanged classic collection-save branch passes its actor-partitioned point read to the real legacy-update validator. Installed CosmosDict fields and ETag reach that mapping-compatible validator unchanged; a missing or foreign exact point ID cannot fall back to a same-name action or invoke a writer. Editor creation remains a separate repository-owned path.",
@@ -23759,7 +23759,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "9791bae218e2f9f39574f902156dc7f75028fe57e5eeb20b6db87aa436eff33e"
+        "module_sha256": "c8846fb3c7e535713d2390717028110c5a36cc0c2431ecfb3a9517abee3b833d"
       },
       "classification": "sdk-compatible",
       "contract": "The unchanged route passes the exact scoped point read to validate_legacy_action_update, which accepts dictionary subclasses and reads fields without strict JSON copying. Runtime coverage uses installed CosmosDict via the shared SDK-default container, preserves ID and ETag, and rejects a missing exact ID or mismatched route name before the repository writer.",
@@ -23782,7 +23782,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "9791bae218e2f9f39574f902156dc7f75028fe57e5eeb20b6db87aa436eff33e"
+        "module_sha256": "c8846fb3c7e535713d2390717028110c5a36cc0c2431ecfb3a9517abee3b833d"
       },
       "classification": "response-unused",
       "contract": "The unchanged Cosmos connection probe drains SELECT TOP 1 VALUE c.id only to establish query permission; empty and scalar query rows are discarded, never copied into a strict document/domain contract. Database/container metadata reads are likewise ignored. Runtime coverage verifies query draining, exact query shape, configured client routing, and lazy request-charge response-hook headers.",

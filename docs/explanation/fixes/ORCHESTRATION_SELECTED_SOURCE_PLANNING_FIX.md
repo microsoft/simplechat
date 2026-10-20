@@ -1,6 +1,6 @@
 # Selected-source orchestration planning fix
 
-Current version: **0.261.356**
+Current version: **0.261.357**
 
 Fixed in version: **0.261.355**
 

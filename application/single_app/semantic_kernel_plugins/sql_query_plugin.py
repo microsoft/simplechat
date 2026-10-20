@@ -8,6 +8,7 @@ SQL Query Plugin for Semantic Kernel
 """
 
 import logging
+import os
 import re
 from typing import Dict, Any, List, Optional, Union
 from semantic_kernel_plugins.base_plugin import BasePlugin
@@ -21,7 +22,7 @@ from semantic_kernel_plugins.sql_odbc_utils import (
     connect_with_sql_server_odbc_fallback,
 )
 from semantic_kernel_plugins.sql_connection_diagnostics import (
-    SqlConnectionError, classify_sql_connection_error,
+    SqlConnectionContext, SqlConnectionError, classify_sql_connection_error,
 )
 
 # Helper class to wrap results with metadata
@@ -126,6 +127,13 @@ class SQLQueryPlugin(BasePlugin):
 
     def _create_connection(self):
         """Create database connection based on database type"""
+        context = SqlConnectionContext("sql_query_connect")
+        context.configure(
+            self.database_type, connection_string_used=bool(self.connection_string),
+            auth_type=self.auth_type, username_password=bool(self.username and self.password),
+            identity_selected=bool(self.manifest.get("identity_id")), environ=os.environ,
+        )
+        context.stage = "driver_import"
         try:
             debug_print(
                 f"[SQL_QUERY_PLUGIN] Creating database connection database_type={self.database_type} "
@@ -141,8 +149,10 @@ class SQLQueryPlugin(BasePlugin):
                         self.connection_string,
                         connect_kwargs={"timeout": self.timeout},
                         log_source="SQLQueryPlugin",
+                        diagnostic_context=context, driver_module=pyodbc,
                     )
                 else:
+                    context.stage = "configuration"
                     conn_str = build_sql_server_odbc_connection_string(
                         server=self.server,
                         database=self.database,
@@ -156,10 +166,13 @@ class SQLQueryPlugin(BasePlugin):
                         conn_str,
                         connect_kwargs={"timeout": self.timeout},
                         log_source="SQLQueryPlugin",
+                        diagnostic_context=context, driver_module=pyodbc,
                     )
                     
             elif self.database_type == 'postgresql':
                 import psycopg2
+                context.stage = "connect"
+                context.attempts = 1
                 if self.connection_string:
                     return psycopg2.connect(self.connection_string)
                 else:
@@ -173,6 +186,8 @@ class SQLQueryPlugin(BasePlugin):
                     
             elif self.database_type == 'mysql':
                 import pymysql
+                context.stage = "connect"
+                context.attempts = 1
                 if self.connection_string:
                     # Parse connection string for MySQL
                     return pymysql.connect(self.connection_string)
@@ -187,6 +202,8 @@ class SQLQueryPlugin(BasePlugin):
                     
             elif self.database_type == 'sqlite':
                 import sqlite3
+                context.stage = "connect"
+                context.attempts = 1
                 database_path = self.connection_string or self.database
                 conn = sqlite3.connect(database_path, timeout=self.timeout)
                 # Enable row factory for better column access
@@ -198,7 +215,7 @@ class SQLQueryPlugin(BasePlugin):
             log_event(
                 "[SQL_CONNECTION] SQL connection failed.",
                 level=logging.WARNING,
-                extra={**diagnostic.log_properties(), "operation": "sql_query_connect"},
+                extra={**diagnostic.log_properties(), **context.log_properties(), "operation": "sql_query_connect"},
             )
             raise SqlConnectionError(diagnostic) from None
 

@@ -1,7 +1,7 @@
 # action_recovery.py
 """Closed browser fixture for the production classic/V2 action recovery paths.
 
-Version: 0.261.347
+Version: 0.261.356
 Implemented in: 0.261.347
 Only synthetic local API traffic is permitted; no model or external write runs.
 """
@@ -49,6 +49,10 @@ class RecoveryFixture(ClassicCredentialFixture):
         self.pending_health = []
         self.defer_stream = False
         self.pending_stream = []
+        self.defer_context = False
+        self.pending_context = []
+        self.defer_creation = False
+        self.pending_creation = []
         if flavour == "v2":
             harness_build.ensure_bundle()
 
@@ -60,7 +64,22 @@ class RecoveryFixture(ClassicCredentialFixture):
                 "body": json.loads(route.request.post_data) if route.request.post_data else None,
             })
             if path == "/api/action-recovery/context":
+                if self.defer_context:
+                    self.pending_context.append(route)
+                    self.page.evaluate("window.__contextHeld = true")
+                    return
                 self._json(route, {"csrf_token": "fixture-csrf"})
+            elif path == "/api/create_conversation":
+                if self.defer_creation:
+                    self.pending_creation.append(route)
+                    return
+                self._json(route, {"conversation_id": "conversation-1"})
+            elif path == "/api/conversations/feed":
+                self._json(route, {"conversations": [], "has_more": False})
+            elif path.endswith("/metadata"):
+                self._json(route, {})
+            elif path.startswith("/api/chat/stream/cancel/"):
+                self._json(route, {"success": True})
             elif path == "/api/chat/action-health":
                 if self.defer_health:
                     self.pending_health.append(route)
@@ -185,6 +204,37 @@ class RecoveryFixture(ClassicCredentialFixture):
             self.page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
         else:
             self.page.get_by_role("combobox", name="Agent").select_option(index=1)
+
+    def open_new_chat(self):
+        """Observe the real store's first-send ID adoption with a mounted notice."""
+        self.open()
+        self.page.evaluate("""() => {
+            const H = window.OrchHarness;
+            H.unmount('mount-a');
+            H.stores.chat.useChatStore.setState({
+                activeConversationId: null, messages: [], streaming: false
+            });
+            H.stores.bootstrap.useBootstrapStore.setState({data: {
+                user: {id: 'actor-1'},
+                catalogs: {agents: [{id: 'agent-1', name: 'Fixture agent'}]}
+            }});
+            const render = () => H.mount('mount-a', 'ActionRecoveryNotice', {
+                conversationId: H.stores.chat.useChatStore.getState().activeConversationId,
+                hasAgent: true, agentSelection: 'agent-1'
+            });
+            window.__unsubscribeRecoveryFixture = H.stores.chat.useChatStore.subscribe(render);
+            render();
+            document.getElementById('fixture-send').onclick = () => {
+                window.__sending = H.stores.chat.useChatStore.getState().sendMessage(
+                    window.__request.message, {
+                        agentSelection: 'agent-1', contextItems: [],
+                        documentSearch: false, webSearch: false, imageGeneration: false,
+                        deepResearch: false, urlAccess: false
+                    });
+                window.__sending.finally(() => { window.__settled = true; });
+            };
+        }""")
+        self.page.get_by_role("status").first.wait_for()
 
     def change_conversation(self):
         if self.flavour == "v2":

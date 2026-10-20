@@ -51,6 +51,13 @@ additional recheck, recovery dialog, or automatic replay is introduced.
 Genuine context changes still prevent stale preflight responses from submitting
 under a different selection.
 
+Since **0.261.356**, leaving a selected-agent send during conversation creation
+also rejects that unsent preflight and preserves the Composer draft. This is
+distinct from an already-admitted background generation, whose navigation
+behavior is unchanged. The conversation setter and full-context owner share
+the same state; see
+[Chat preflight context lifecycle](CHAT_PREFLIGHT_CONTEXT_LIFECYCLE_FIX.md).
+
 The user-message placeholder is reconciled with the saved message ID through
 the existing stream events; no new persistence behavior is introduced.
 

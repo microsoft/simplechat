@@ -7,6 +7,7 @@ SQL Schema Plugin for Semantic Kernel
 """
 
 import logging
+import os
 from typing import Dict, Any, List, Optional, Union
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
@@ -19,7 +20,7 @@ from semantic_kernel_plugins.sql_odbc_utils import (
     connect_with_sql_server_odbc_fallback,
 )
 from semantic_kernel_plugins.sql_connection_diagnostics import (
-    SqlConnectionError, classify_sql_connection_error,
+    SqlConnectionContext, SqlConnectionError, classify_sql_connection_error,
 )
 
 # Helper class to wrap results with metadata
@@ -118,6 +119,13 @@ class SQLSchemaPlugin(BasePlugin):
 
     def _create_connection(self):
         """Create database connection based on database type"""
+        context = SqlConnectionContext("sql_schema_connect")
+        context.configure(
+            self.database_type, connection_string_used=bool(self.connection_string),
+            auth_type=self.auth_type, username_password=bool(self.username and self.password),
+            identity_selected=bool(self.manifest.get("identity_id")), environ=os.environ,
+        )
+        context.stage = "driver_import"
         try:
             debug_print(
                 f"[SQL_SCHEMA_PLUGIN] Creating database connection database_type={self.database_type} "
@@ -132,8 +140,10 @@ class SQLSchemaPlugin(BasePlugin):
                         pyodbc.connect,
                         self.connection_string,
                         log_source="SQLSchemaPlugin",
+                        diagnostic_context=context, driver_module=pyodbc,
                     )
                 else:
+                    context.stage = "configuration"
                     conn_str = build_sql_server_odbc_connection_string(
                         server=self.server,
                         database=self.database,
@@ -146,10 +156,13 @@ class SQLSchemaPlugin(BasePlugin):
                         pyodbc.connect,
                         conn_str,
                         log_source="SQLSchemaPlugin",
+                        diagnostic_context=context, driver_module=pyodbc,
                     )
                     
             elif self.database_type == 'postgresql':
                 import psycopg2
+                context.stage = "connect"
+                context.attempts = 1
                 if self.connection_string:
                     return psycopg2.connect(self.connection_string)
                 else:
@@ -162,6 +175,8 @@ class SQLSchemaPlugin(BasePlugin):
                     
             elif self.database_type == 'mysql':
                 import pymysql
+                context.stage = "connect"
+                context.attempts = 1
                 if self.connection_string:
                     # Parse connection string for MySQL
                     # This is a simplified parser - you might want to use a proper URL parser
@@ -176,6 +191,8 @@ class SQLSchemaPlugin(BasePlugin):
                     
             elif self.database_type == 'sqlite':
                 import sqlite3
+                context.stage = "connect"
+                context.attempts = 1
                 database_path = self.connection_string or self.database
                 return sqlite3.connect(database_path)
                 
@@ -184,7 +201,7 @@ class SQLSchemaPlugin(BasePlugin):
             log_event(
                 "[SQL_CONNECTION] SQL connection failed.",
                 level=logging.WARNING,
-                extra={**diagnostic.log_properties(), "operation": "sql_schema_connect"},
+                extra={**diagnostic.log_properties(), **context.log_properties(), "operation": "sql_schema_connect"},
             )
             raise SqlConnectionError(diagnostic) from None
 
