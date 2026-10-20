@@ -2,7 +2,7 @@
 
 Implemented in version: **0.250.072**
 
-Updated through version: **0.261.321**
+Updated through version: **0.261.358**
 
 GitHub issue: [#1071](https://github.com/microsoft/simplechat/issues/1071)
 
@@ -306,6 +306,23 @@ title). A `box` always has numeric `left`, `top`, `width`, `height` in inches;
 width and height must be positive. Boxes must fit the slide and not overlap.
 Title layout reserves `(0.5, 0.25, slide_width - 1, 1)` for its title.
 Wide slides are 13 1/3 by 7.5 inches; standard slides are 10 by 7.5 inches.
+Body shapes in a title layout can clear the reserved title by starting at
+`top >= 1.25`. The published schema, preparation validator and PPTX renderer
+share these dimensions; blank layouts reserve no title rectangle.
+
+Prepared-profile correction implemented in version: **0.261.356**, recorded in
+`application/single_app/config.py`. A composition reply that breaks the prepared
+schema, mismatches its slide count, or overlaps/exceeds the allowed geometry
+can use the existing single corrective model call. The correction repeats the
+declared profile constraints and must keep every requested item. A second
+invalid reply fails without publishing a file; correction does not increase
+the budget or bypass access and cancellation checks. Resource ceilings,
+unavailable profiles, source failures and renderer I/O are not content-correction
+requests. Physical text fitting and other render-time failures still follow
+the renderer's existing failure handling.
+
+See [generated-output reliability](../fixes/GENERATED_OUTPUT_RELIABILITY_FIX.md)
+for regression coverage and the separate V2 image/recovery-state fixes.
 
 | Shape discriminator | Required fields | Optional fields and defaults |
 | --- | --- | --- |

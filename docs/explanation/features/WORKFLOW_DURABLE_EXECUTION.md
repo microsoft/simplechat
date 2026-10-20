@@ -2,7 +2,7 @@
 
 Implemented in version: **0.261.111**
 
-Updated in version: **0.261.360**.
+Updated in version: **0.261.362**.
 
 Application version tracking: `application/single_app/config.py`.
 
@@ -163,7 +163,7 @@ within a bounded automatic attempt policy. Operations that may have performed
 external actions require an explicit recovery decision. The warning remains
 important even if the original worker disappeared before reporting an error.
 
-Since **0.261.360**, application-owned input-budget and model-token configuration
+Since **0.261.362**, application-owned input-budget and model-token configuration
 refusals finish the task as failed instead of opening a generic recovery gate.
 The task retains its safe reason and error code; an oversized request also keeps
 its context-budget audit. These refusals do not retry automatically, even when

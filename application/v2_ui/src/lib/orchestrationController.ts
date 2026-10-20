@@ -1127,7 +1127,9 @@ function releaseLegacyRun(conversationId: string, runId: string, message: string
 }
 
 export async function loadOrchestrationRecovery(conversationId: string, runId: string): Promise<PersistedRun | null> {
-    const outputRevision = useOrchestrationStore.getState().runRecovery[runId]?.outputRevision ?? 0;
+    const beforeRead = useOrchestrationStore.getState();
+    const readRevision = beforeRead.recoveryRevision;
+    const outputRevision = beforeRead.runRecovery[runId]?.outputRevision ?? 0;
     const record = await fetchOrchestrationRun(runId, { conversationId });
     if (!record || record.run_id !== runId || record.conversation_id !== conversationId) {
         throw new Error('Recovery record unavailable');
@@ -1138,13 +1140,19 @@ export async function loadOrchestrationRecovery(conversationId: string, runId: s
         delete snapshot.outputs;
         delete snapshot.generated_artifacts;
     }
-    useOrchestrationStore.getState().updateRunRecovery(runId, {
+    const admitted = useOrchestrationStore.getState().updateRunRecovery(runId, {
         ...snapshot,
         status: record.status,
         ...(plan ? { plan } : {}),
         detailLoaded: true,
-    });
-    return record;
+    }, readRevision);
+    return admitted ? record : null;
+}
+
+function scheduleReconciliation(conversationId: string, runId: string): void {
+    reconciliationTimers.set(runId, setTimeout(() => {
+        void reconcileOrchestrationRun(conversationId, runId);
+    }, 5000));
 }
 
 /** Read-only polling never approves, retries, or invents a cancellation reason. */
@@ -1159,9 +1167,22 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
     });
     try {
         const record = await loadOrchestrationRecovery(conversationId, runId);
-        if (!record) return;
+        if (!record) {
+            const current = useOrchestrationStore.getState();
+            current.updateRunRecovery(runId, { checking: false });
+            if (isOrchestrationRunPending(current.runRecovery[runId] ?? {})) scheduleReconciliation(conversationId, runId);
+            else if (current.inFlight[runId]) await reconcileOrchestrationRun(conversationId, runId);
+            return;
+        }
+        const attemptRevision = useOrchestrationStore.getState().runRecovery[runId]?.attemptRevision;
         const steps = await fetchRunSteps(runId, { conversationId }).catch(() => []);
         const current = useOrchestrationStore.getState();
+        if (current.runRecovery[runId]?.attemptRevision !== attemptRevision) {
+            current.updateRunRecovery(runId, { checking: false });
+            if (isOrchestrationRunPending(current.runRecovery[runId] ?? {})) scheduleReconciliation(conversationId, runId);
+            else if (current.inFlight[runId]) await reconcileOrchestrationRun(conversationId, runId);
+            return;
+        }
         if (record.turn_id && selectPlan(current, conversationId, record.turn_id)?.run_id === runId) {
             current.adoptPersistedPlan(conversationId, record.turn_id, persistedRunPlan(record), steps);
         }
@@ -1224,9 +1245,7 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
             error: 'The saved run status could not be reached. Execution may still be running. No retry will start until its status is confirmed.',
         });
     }
-    reconciliationTimers.set(runId, setTimeout(() => {
-        void reconcileOrchestrationRun(conversationId, runId);
-    }, 5000));
+    scheduleReconciliation(conversationId, runId);
 }
 
 export function openOrchestrationRecovery(conversationId: string, runId: string): void {

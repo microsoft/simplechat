@@ -1,9 +1,9 @@
 # test_model_token_limit_resolution.py
 """
 Functional tests for the workflow/model-budget integration contract.
-Version: 0.261.360
+Version: 0.261.362
 Implemented in: 0.261.106
-GPT-4o, GPT-4.1 and o-series token coverage: 0.261.360
+GPT-4o, GPT-4.1 and o-series token coverage: 0.261.362
 Shared React V2 catalog integration: 0.261.112
 
 Workflow callers use the audited ModelTokenBudget API without replacing the

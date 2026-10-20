@@ -1,9 +1,9 @@
 # test_v2_workflow_editor.py
 """
 UI tests for the native V2 LIST workflow editor.
-Version: 0.261.360
+Version: 0.261.362
 Implemented in: 0.261.108
-Readable run-history status labels: 0.261.360
+Readable run-history status labels: 0.261.362
 Personal workflow row delete coverage: 0.261.178
 Personal File Sync is authored, so it is no longer listed as preserved-only: 0.261.207
 The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271

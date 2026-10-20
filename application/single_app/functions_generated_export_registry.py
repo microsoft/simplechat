@@ -12,6 +12,10 @@ from functions_generated_export_contracts import (
     GeneratedFileExportError,
     GeneratedFileExportLimits,
     GeneratedFileExportRequest,
+    PREPARED_SLIDE_DIMENSIONS,
+    PREPARED_SLIDE_TITLE_HEIGHT,
+    PREPARED_SLIDE_TITLE_LEFT,
+    PREPARED_SLIDE_TITLE_TOP,
 )
 
 
@@ -68,16 +72,29 @@ _PREPARED_SLIDE_DECK_SCHEMA = {
     'required': ['schema_version', 'slide_count', 'slides'],
     'properties': {
         'schema_version': {'const': PREPARED_SLIDE_DECK_VERSION},
-        'slide_count': {'type': 'integer', 'minimum': 1},
+        'slide_count': {
+            'type': 'integer', 'minimum': 1,
+            'description': 'Must equal the number of entries in slides.',
+        },
         'title': {'type': 'string', 'maxLength': 255, 'default': ''},
-        'size': {'enum': ['wide', 'standard'], 'default': 'wide'},
+        'size': {
+            'enum': list(PREPARED_SLIDE_DIMENSIONS), 'default': 'wide',
+            'description': 'Slide dimensions in inches: ' + '; '.join(
+                f'{name} is {width:g} wide by {height:g} high'
+                for name, (width, height) in PREPARED_SLIDE_DIMENSIONS.items()
+            ) + '.',
+        },
         'slides': {'type': 'array', 'minItems': 1, 'items': {'$ref': '#/$defs/slide'}},
     },
     '$defs': {
         'box': {
             'type': 'object', 'additionalProperties': False,
             'required': ['left', 'top', 'width', 'height'],
-            'description': 'Position and dimensions in inches. Boxes must fit the slide and not overlap.',
+            'description': (
+                'Position and dimensions in inches. left + width must not exceed the slide width; '
+                'top + height must not exceed its height. Boxes must not overlap each other or '
+                'the title rectangle reserved by title_and_content.'
+            ),
             'properties': {
                 'left': {'type': 'number', 'minimum': 0},
                 'top': {'type': 'number', 'minimum': 0},
@@ -142,7 +159,17 @@ _PREPARED_SLIDE_DECK_SCHEMA = {
             'type': 'object', 'additionalProperties': False,
             'required': ['layout', 'title', 'shapes'],
             'properties': {
-                'layout': {'enum': ['title_and_content', 'blank']},
+                'layout': {
+                    'enum': ['title_and_content', 'blank'],
+                    'description': (
+                        f'title_and_content reserves a title rectangle at left={PREPARED_SLIDE_TITLE_LEFT}, '
+                        f'top={PREPARED_SLIDE_TITLE_TOP}, width=slide width minus '
+                        f'{2 * PREPARED_SLIDE_TITLE_LEFT:g}, height={PREPARED_SLIDE_TITLE_HEIGHT}. '
+                        'Do not add a second title shape or place content in that rectangle. '
+                        f'Place body content at top >= {PREPARED_SLIDE_TITLE_TOP + PREPARED_SLIDE_TITLE_HEIGHT:g} '
+                        'to clear it. blank reserves no title rectangle and requires an empty title.'
+                    ),
+                },
                 'title': {'type': 'string'},
                 'notes': {'type': 'string', 'default': ''},
                 'shapes': {

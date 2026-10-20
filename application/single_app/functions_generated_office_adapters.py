@@ -23,6 +23,10 @@ from functions_generated_export_contracts import (
     GeneratedFileExportError,
     GeneratedFileExportLimits,
     GeneratedFileExportStream,
+    PREPARED_SLIDE_DIMENSIONS,
+    PREPARED_SLIDE_TITLE_HEIGHT,
+    PREPARED_SLIDE_TITLE_LEFT,
+    PREPARED_SLIDE_TITLE_TOP,
 )
 from functions_generated_export_registry import (
     ASSEMBLED_DOCUMENT_PROFILE,
@@ -168,14 +172,17 @@ def prepare_generated_slide_deck(
     if len(value['slides']) > renderer_limits.max_slides:
         raise office.OfficeRenderError('limit_exceeded')
     size = value.get('size', 'wide')
-    width, height = (40 / 3, 7.5) if size == 'wide' else (10, 7.5)
+    width, height = PREPARED_SLIDE_DIMENSIONS[size]
     slides = []
     shape_count = 0
     cell_count = 0
     image_count = 0
     for slide in value['slides']:
         checks.run()
-        occupied = [office.SlideBox(0.5, 0.25, width - 1, 1)] if slide['layout'] == 'title_and_content' else []
+        occupied = [office.SlideBox(
+            PREPARED_SLIDE_TITLE_LEFT, PREPARED_SLIDE_TITLE_TOP,
+            width - 2 * PREPARED_SLIDE_TITLE_LEFT, PREPARED_SLIDE_TITLE_HEIGHT,
+        )] if slide['layout'] == 'title_and_content' else []
         shapes = []
         shape_count += len(slide['shapes'])
         if shape_count > renderer_limits.max_shapes:

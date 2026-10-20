@@ -1,8 +1,8 @@
 # test_v2_workflow_status_freshness.py
 """
 UI regressions for authoritative workflow status reconciliation.
-Version: 0.261.360
-Implemented in: 0.261.360
+Version: 0.261.362
+Implemented in: 0.261.362
 
 Runs the real built SPA with the existing closed API fixture and local/Azure
 Playwright connection. No live workflow, credential, or external harness is used.

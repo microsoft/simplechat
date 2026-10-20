@@ -102,6 +102,8 @@ export interface RunRecoveryState extends OrchestrationAttempt {
     transportUnknown?: boolean;
     checking?: boolean;
     detailLoaded?: boolean;
+    /** Local ordering of authoritative attempt updates, independent of output receipts. */
+    attemptRevision?: number;
     outputRevision?: number;
     outputChecking?: boolean;
     outputError?: string | null;
@@ -308,7 +310,8 @@ function newPlanEditorSession(): PlanEditorSession {
 interface OrchestrationState {
     recoveryTarget: { conversationId: string; runId: string } | null;
     runRecovery: Record<string, RunRecoveryState>;
-    updateRunRecovery: (runId: string, patch: RunRecoveryState) => void;
+    recoveryRevision: number;
+    updateRunRecovery: (runId: string, patch: RunRecoveryState, readRevision?: number) => boolean;
     /** The current plan per turn, keyed by `scopeKey`. */
     plans: Record<string, OrchestrationPlan>;
     /** A pending question per turn, when the planner asked instead of planning. */
@@ -458,7 +461,7 @@ interface OrchestrationState {
     /** Record where a conversation's one-time hydration has got to. */
     setHydrationStatus: (conversationId: string, status: HydrationStatus) => void;
     /** Adopt a conversation's stored runs as history, without displacing observed ones. */
-    hydrateConversationRuns: (conversationId: string, runs: PersistedRunSummary[]) => void;
+    hydrateConversationRuns: (conversationId: string, runs: PersistedRunSummary[], readRevision?: number) => void;
     /**
      * Adopt a stored plan for a turn, with its steps' real outcomes.
      *
@@ -502,17 +505,34 @@ interface OrchestrationState {
 export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
     recoveryTarget: null,
     runRecovery: {},
-    updateRunRecovery: (runId, patch) => set((state) => ({
-        runRecovery: {
-            ...state.runRecovery,
-            [runId]: {
-                ...state.runRecovery[runId], ...patch,
-                ...(patch.outputs !== undefined ? {
-                    outputRevision: (state.runRecovery[runId]?.outputRevision ?? 0) + 1,
-                } : {}),
-            },
-        },
-    })),
+    recoveryRevision: 0,
+    updateRunRecovery: (runId, patch, readRevision) => {
+        let admitted = false;
+        set((state) => {
+            const previous = state.runRecovery[runId];
+            if (readRevision !== undefined && (previous?.attemptRevision ?? 0) > readRevision) return state;
+            admitted = true;
+            const attemptChanged = [
+                'status', 'plan', 'outcome', 'failure', 'failures', 'recovery', 'attempt_index',
+                'retry_of_run_id', 'latest_attempt_run_id', 'finalization_status', 'message_saved', 'legacyPlan',
+            ].some((key) => Object.prototype.hasOwnProperty.call(patch, key));
+            const recoveryRevision = state.recoveryRevision + (attemptChanged ? 1 : 0);
+            return {
+                recoveryRevision,
+                runRecovery: {
+                    ...state.runRecovery,
+                    [runId]: {
+                        ...previous, ...patch,
+                        ...(attemptChanged ? { attemptRevision: recoveryRevision } : {}),
+                        ...(patch.outputs !== undefined ? {
+                            outputRevision: (previous?.outputRevision ?? 0) + 1,
+                        } : {}),
+                    },
+                },
+            };
+        });
+        return admitted;
+    },
     plans: {},
     elicitations: {},
     elicitationDrafts: {},
@@ -994,7 +1014,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         set((state) => ({ hydration: { ...state.hydration, [conversationId]: status } }));
     },
 
-    hydrateConversationRuns: (conversationId, runs) => {
+    hydrateConversationRuns: (conversationId, runs, readRevision) => {
         if (!conversationId) {
             return;
         }
@@ -1004,21 +1024,31 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             const seen = new Set<string>();
             const persistedStatus = new Map<string, PlanStatus | null>();
             for (const run of runs ?? []) {
-                const entry = historyEntryFromPersistedRun(run);
+                const previous = runRecovery[run.run_id];
+                const stale = readRevision !== undefined && (previous?.attemptRevision ?? 0) > readRevision;
+                const admittedRun = stale ? {
+                    ...run, ...previous,
+                    run_id: run.run_id, turn_id: previous.turn_id ?? run.turn_id,
+                    status: previous.status ?? run.status,
+                } : run;
+                const entry = historyEntryFromPersistedRun(admittedRun);
                 if (!entry || seen.has(entry.runId)) {
                     continue;
                 }
                 seen.add(entry.runId);
-                runRecovery[entry.runId] = {
-                    ...runRecovery[entry.runId],
-                    ...normalizeOrchestrationAttempt(run),
-                    // List hydration must not overwrite fresher detail, SSE or retry receipts.
-                    ...(runRecovery[entry.runId]?.outputRevision ? {
-                        outputs: runRecovery[entry.runId].outputs,
-                        generated_artifacts: runRecovery[entry.runId].generated_artifacts,
-                    } : {}),
-                    status: run.status,
-                };
+                if (!stale) {
+                    runRecovery[entry.runId] = {
+                        ...runRecovery[entry.runId],
+                        ...normalizeOrchestrationAttempt(run),
+                        // List hydration must not overwrite fresher detail, SSE or retry receipts.
+                        ...(runRecovery[entry.runId]?.outputRevision ? {
+                            outputs: runRecovery[entry.runId].outputs,
+                            generated_artifacts: runRecovery[entry.runId].generated_artifacts,
+                        } : {}),
+                        status: run.status,
+                        attemptRevision: state.recoveryRevision + 1,
+                    };
+                }
                 persistedStatus.set(entry.runId, entry.planStatus ?? null);
                 entries.push(entry);
             }
@@ -1057,6 +1087,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             return {
                 inFlight,
                 runRecovery,
+                recoveryRevision: state.recoveryRevision + 1,
                 hydratedHistory: {
                     ...state.hydratedHistory,
                     [conversationId]: entries.slice(0, MAX_HISTORY_PER_CONVERSATION),
