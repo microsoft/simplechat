@@ -1,7 +1,7 @@
 # test_chat_action_recovery.py
 """
 Explicit action recovery in both production chat transports and UI surfaces.
-Version: 0.261.347
+Version: 0.261.356
 Implemented in: 0.261.347
 
 Uses the shared Azure Playwright/DefaultAzureCredential connection or local
@@ -204,4 +204,126 @@ def test_v2_actor_change_rejects_a_late_recovery_frame(page):
     recovery.release_stream()
     expect(page.get_by_role("region", name="Unavailable actions")).to_have_count(0)
     assert len(recovery.sends) == 1
+    recovery.assert_clean()
+
+
+@pytest.mark.parametrize("hold_context", [False, True])
+def test_v2_first_send_adopts_its_conversation_without_invalidating_preflight(page, hold_context):
+    recovery = RecoveryFixture(page, "v2")
+    recovery.health = "ready"
+    recovery.defer_context = hold_context
+    recovery.open_new_chat()
+    page.get_by_role("button", name="Send fixture", exact=True).click()
+    if hold_context:
+        page.wait_for_function("""() => window.OrchHarness.stores.chat.useChatStore
+            .getState().activeConversationId === 'conversation-1'""")
+        page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+        page.wait_for_function("window.__contextHeld === true")
+        assert len(recovery.pending_context) == 1
+        recovery._json(recovery.pending_context.pop(), {"csrf_token": "fixture-csrf"})
+    page.wait_for_function("window.__settled === true")
+    state = page.evaluate("""() => {
+        const state = window.OrchHarness.stores.chat.useChatStore.getState();
+        return {error: state.streamError, conversation: state.activeConversationId};
+    }""")
+    assert state == {"error": None, "conversation": "conversation-1"}
+    assert len(recovery.sends) == 1
+    health = [item for item in recovery.requests if item["path"] == "/api/chat/action-health"]
+    assert len(health) == 1
+    assert health[0]["body"]["request"]["conversation_id"] == "conversation-1"
+    recovery.assert_clean()
+
+
+def change_v2_context(recovery, change):
+    page = recovery.page
+    if change == "agent":
+        recovery.change_agent()
+    elif change == "actor":
+        page.evaluate("""() => window.OrchHarness.stores.bootstrap.useBootstrapStore.setState({
+            data: {user: {id: 'actor-2'}}
+        })""")
+    elif change == "conversation":
+        page.evaluate("""() => { void window.OrchHarness.stores.chat.useChatStore.getState()
+            .selectConversation('conversation-2', {kind: 'personal'}); }""")
+    elif change == "new_chat":
+        page.evaluate("window.OrchHarness.stores.chat.useChatStore.getState().startNewConversation()")
+    elif change == "stop":
+        page.evaluate("window.OrchHarness.stores.chat.useChatStore.getState().stopStreaming()")
+    else:
+        page.evaluate("""() => {
+            window.__unsubscribeRecoveryFixture();
+            window.OrchHarness.unmount('mount-a');
+        }""")
+    page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+
+
+@pytest.mark.parametrize("change", ["agent", "actor", "conversation", "new_chat", "stop", "unmount"])
+def test_v2_late_creation_cannot_start_preflight_after_leaving_its_context(page, change):
+    recovery = RecoveryFixture(page, "v2")
+    recovery.defer_creation = True
+    recovery.open_new_chat()
+    page.get_by_role("button", name="Send fixture", exact=True).click()
+    page.wait_for_function("window.__sending !== undefined")
+    assert len(recovery.pending_creation) == 1
+    change_v2_context(recovery, change)
+    recovery._json(recovery.pending_creation.pop(), {"conversation_id": "conversation-1"})
+    page.wait_for_function("window.__settled === true")
+    result = page.evaluate("window.__sending")
+    assert result is False
+    active = page.evaluate("window.OrchHarness.stores.chat.useChatStore.getState().activeConversationId")
+    assert active == ("conversation-2" if change == "conversation" else None)
+    assert not any(item["path"] in {"/api/chat/action-health", "/api/chat/stream"} for item in recovery.requests)
+    recovery.assert_clean()
+
+
+@pytest.mark.parametrize("change", ["agent", "actor", "conversation", "new_chat", "stop", "unmount"])
+def test_v2_late_csrf_context_cannot_admit_a_stale_send(page, change):
+    recovery = RecoveryFixture(page, "v2")
+    recovery.health = "ready"
+    recovery.defer_context = True
+    recovery.open_new_chat()
+    page.get_by_role("button", name="Send fixture", exact=True).click()
+    page.wait_for_function("window.__contextHeld === true")
+    change_v2_context(recovery, change)
+    recovery._json(recovery.pending_context.pop(), {"csrf_token": "fixture-csrf"})
+    page.wait_for_function("window.__settled === true")
+    assert not any(item["path"] in {"/api/chat/action-health", "/api/chat/stream"} for item in recovery.requests)
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    recovery.assert_clean()
+
+
+@pytest.mark.parametrize("stage", ["creation", "csrf"])
+@pytest.mark.parametrize("new_draft", [False, True])
+def test_v2_composer_preserves_unsent_text_without_overwriting_a_new_draft(page, stage, new_draft):
+    recovery = RecoveryFixture(page, "v2")
+    recovery.defer_creation = stage == "creation"
+    recovery.defer_context = stage == "csrf"
+    recovery.health = "ready"
+    recovery.open_new_chat()
+    page.evaluate("""() => {
+        window.__unsubscribeRecoveryFixture();
+        const store = window.OrchHarness.stores.chat.useChatStore;
+        const send = store.getState().sendMessage;
+        store.setState({sendMessage: async (...args) => {
+            const result = await send(...args);
+            window.__composerSendSettled = true;
+            return result;
+        }});
+        window.OrchHarness.mount('mount-a', 'Composer', {initialAgentSelection: 'agent-1'});
+    }""")
+    editor = page.get_by_role("textbox", name="Message")
+    editor.fill(REQUEST["message"])
+    page.get_by_role("button", name="Send message", exact=True).click()
+    expect(editor).to_have_text("")
+    if stage == "csrf":
+        page.wait_for_function("window.__contextHeld === true")
+    page.evaluate("window.OrchHarness.stores.chat.useChatStore.getState().startNewConversation()")
+    if new_draft:
+        editor.fill("A newer unsent question")
+    held = recovery.pending_creation if stage == "creation" else recovery.pending_context
+    assert len(held) == 1
+    recovery._json(held.pop(), {"conversation_id": "conversation-1"} if stage == "creation" else {"csrf_token": "fixture-csrf"})
+    page.wait_for_function("window.__composerSendSettled === true")
+    expect(editor).to_have_text("A newer unsent question" if new_draft else REQUEST["message"])
+    assert recovery.sends == []
     recovery.assert_clean()

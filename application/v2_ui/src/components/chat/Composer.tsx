@@ -53,6 +53,7 @@ import {
     addComposerDraftImageReference,
     buildComposerDraftSubmission,
     composerDraftContextItems,
+    composerDraftHasContent,
     composerDraftHasPendingUploads,
     composerDraftImageReferences,
     composerDraftUnfilledVariables,
@@ -1124,11 +1125,13 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
      */
     const clearDraft = () => {
         editorActionsRef.current?.cancelKnowledge();
-        setDraft(createComposerDraft());
+        const emptyDraft = createComposerDraft();
+        setDraft(emptyDraft);
         setPickerOpen(false);
         uploadConversationRef.current = null;
         setShowPromptWarning(false);
         setPromptReview({ instance: 0, request: 0 });
+        return emptyDraft;
     };
 
     const dispatch = (outgoing: { message: string; promptInfo: Json | null }) => {
@@ -1150,14 +1153,29 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         void requestDesktopNotificationPermission();
         // `options` is read before the clear below replaces it, so the request carries the
         // references this message was written with.
-        void sendMessage(outgoing.message, {
+        const sentDraft = draft;
+        const actorId = bootstrap?.user?.id;
+        const sending = sendMessage(outgoing.message, {
             ...options,
             publicWorkspaceSelection,
             contextItems,
             imageReferences: options.imageGeneration && !orchestrating ? draftImageReferences : [],
             promptInfo: outgoing.promptInfo,
         });
-        clearDraft();
+        const emptyDraft = clearDraft();
+        void sending.then((result) => {
+            if (result === false && actorId === useBootstrapStore.getState().data?.user?.id) {
+                setDraft((current) => {
+                    // Navigation can replace an empty draft object without changing its content.
+                    const untouched = current === emptyDraft || (
+                        !composerDraftHasContent(current) && !current.text
+                        && !current.uploads.length && !current.imageReferences?.length
+                        && !current.mentions?.length
+                    );
+                    return untouched ? sentDraft : current;
+                });
+            }
+        });
         // Sent, so the indicator other people can see must stop now rather than when the
         // idle timer happens to fire.
         stopTyping();

@@ -6,6 +6,7 @@ Shared SQL Server ODBC driver utilities.
 from typing import Any, Callable, Dict, Optional
 
 from functions_appinsights import log_event
+from semantic_kernel_plugins.sql_connection_diagnostics import SqlConnectionContext
 
 
 DEFAULT_SQL_SERVER_ODBC_DRIVER = "ODBC Driver 18 for SQL Server"
@@ -70,9 +71,22 @@ def connect_with_sql_server_odbc_fallback(
     connection_string: str,
     connect_kwargs: Optional[Dict[str, Any]] = None,
     log_source: str = "SQLODBC",
+    diagnostic_context: Optional[SqlConnectionContext] = None,
+    driver_module: Any = None,
 ) -> Any:
     """Connect to SQL Server and retry legacy Driver 17 strings with Driver 18 if needed."""
     kwargs = connect_kwargs or {}
+    if diagnostic_context is not None:
+        installed = None
+        drivers = getattr(driver_module, "drivers", None)
+        if callable(drivers):
+            try:
+                installed = drivers()
+            except Exception:
+                diagnostic_context.properties["sql_driver_inventory"] = "unavailable"
+        diagnostic_context.observe_odbc(connection_string, installed)
+        diagnostic_context.stage = "connect"
+        diagnostic_context.attempts = 1
     try:
         return connect_callable(connection_string, **kwargs)
     except Exception as ex:
@@ -80,6 +94,14 @@ def connect_with_sql_server_odbc_fallback(
             raise
 
         fallback_connection_string = replace_legacy_sql_server_odbc_driver(connection_string)
+        if diagnostic_context is not None:
+            diagnostic_context.fallbacks = 1
+            diagnostic_context.attempts = 2
+            diagnostic_context.observe_odbc(fallback_connection_string)
+            log_event(
+                "[SQL_CONNECTION] Retrying an unavailable legacy SQL Server driver.",
+                extra=diagnostic_context.log_properties(),
+            )
         log_event(
             "[SQL_ODBC] Retrying SQL Server ODBC connection with Driver 18 after Driver 17 was unavailable.",
             extra={
