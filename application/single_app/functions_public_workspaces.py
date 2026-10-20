@@ -108,6 +108,7 @@ def create_public_workspace(name: str, description: str) -> dict:
         "id": new_id,
         "name": name,
         "description": description,
+        "status": "active",
         "heroColor": DEFAULT_WORKSPACE_HERO_COLOR,
         "logoBase64": "",
         "logoVersion": 1,

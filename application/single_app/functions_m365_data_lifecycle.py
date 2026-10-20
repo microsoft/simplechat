@@ -32,7 +32,7 @@ def is_live_m365_authorization(document):
         or document.get("type") == "m365_execution_request"
         or (document.get("type") == "msgraph_pending_action" and bool(document.get("m365_execution")))
         or (
-            document.get("kind") in {"connection", "oauth_flow"}
+            document.get("kind") in {"connection", "chat_connection", "oauth_flow"}
             and ("encrypted_cache" in document or str(document.get("id", "")).startswith("m365"))
         )
     )

@@ -8,6 +8,8 @@ and the V2 public workspace picker. It sits beside the classic
 are unchanged.
 
 Implemented in version **0.261.175**.
+Status compatibility fixed in version: **0.261.355**, tracked in
+`application/single_app/config.py`.
 
 ## The route
 
@@ -58,7 +60,13 @@ Any other parameter, a malformed value, or a request body is refused with 400
 - **No owner email or id, and no member lists.** The classic list route
   returns every owner's email to any signed-in user (decision 22). V2 no longer
   reads it.
-- A status the server doesn't recognize is reported as `unknown`.
+- From **0.261.355**, an absent status is reported as `active`, matching
+  existing chat and workspace settings behavior. New public workspaces store
+  `active` explicitly. Explicit null, empty, or unrecognized values still
+  report `unknown`; `inactive` remains unavailable. The same rule applies to
+  directory rows returned after membership requests and cancellations.
+- This compatibility default does not save a status on read, change roles,
+  change a user's visibility choices, or widen a document search.
 - Any other failure is logged with its error type only, under
   `[WORKSPACE_ROUTE]`, and answers 500 `{"error": "The public workspace
   directory request could not be completed. Try again.", "error_code":
@@ -79,8 +87,13 @@ Any other parameter, a malformed value, or a request body is refused with 400
   fixture to the route.
 - The route policy tests list it under the `backend_public_directory`
   blueprint.
+- `functional_tests/test_public_workspace_status_compatibility.py` covers the
+  creator, both row projections, status restrictions, membership response rows,
+  and read-only compatibility behavior. Browser recovery and scope checks are
+  in `ui_tests/test_v2_public_workspace_status_compatibility.py`.
 
 ## Related
 
 - [V2 Public Workspace Directory](V2_PUBLIC_DIRECTORY.md)
 - [Group Directory APIs](GROUP_DIRECTORY_APIS.md)
+- [Missing-status visibility fix](../fixes/PUBLIC_WORKSPACE_MISSING_STATUS_VISIBILITY_FIX.md)

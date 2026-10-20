@@ -39,6 +39,13 @@ every public workspace you can discover.
 - The directory and the workspace pages use the names your administrator
   gave public workspaces.
 
+From version **0.261.355**, public workspaces created without a stored status
+are treated as active in the directory, consistent with chat and workspace
+settings. An otherwise eligible workspace can therefore be made **Visible for
+chat** normally. This does not automatically show a workspace you have hidden:
+choose it yourself when you want it in your chat sources. Explicit inactive or
+invalid statuses still prevent showing an unavailable workspace.
+
 Public workspace documents open in the same document explorer as My Workspace
 and group workspaces, from version **0.261.132**. Open **Public Workspaces** and
 choose a workspace. The address includes the workspace, so a bookmark opens the

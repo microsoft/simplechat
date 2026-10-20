@@ -1,9 +1,30 @@
-# Microsoft 365 actions and conversation evidence (v0.261.325)
+# Microsoft 365 actions and conversation evidence (v0.261.355)
 
 Implemented in version: **0.261.029**
 
 Orchestration operations implemented in version: **0.261.321**, tracked in
 `application/single_app/config.py`.
+
+## Persistent chat connections
+
+Implemented in version: **0.261.355**, tracked in
+`application/single_app/config.py`.
+
+Explicit chat reconnect saves an independent, AES-GCM-encrypted credential when
+Key Vault secret storage is configured. Saved chat access survives browser
+restarts and normal app sign-out/sign-in, with no extra SimpleChat expiration.
+Microsoft refresh-token, consent, user revocation, and organizational sign-in
+policies remain authoritative. Routine access-token expiry no longer clears
+the source-permission list.
+
+Classic Profile and V2 Settings explain saved versus session-only access and
+provide confirmed **Disconnect chat**. Existing session-only users reconnect
+once to opt into durable storage; ordinary login or a workflow connection never
+silently creates a saved chat credential. Without Key Vault, chat remains
+session-only. Workflow credentials and Run as approvals stay independent.
+
+See the [chat connection persistence fix](../fixes/M365_CHAT_CONNECTION_PERSISTENCE_FIX.md)
+for lifecycle, storage, refresh fencing, and regression coverage.
 
 ## Manual review editing and draft delivery
 
@@ -117,7 +138,7 @@ operations also pass through source-sharing checks.
   SharePoint `Sites.Selected` grants.
 - Existing chat Blob storage for retained evidence and resumable processing.
   This dependency is independent of whether enhanced-citation rendering is on.
-- Key Vault for saved workflow connections. Turn on Key Vault secret storage
+- Key Vault for saved workflow and chat connections. Turn on Key Vault secret storage
   in Admin Settings > Security > Secrets > Key Vault. Every user's saved
   workflow sign-in is encrypted with one deployment-wide 256-bit key, bound to
   that user's connection record. Since 0.261.302 SimpleChat creates the key
@@ -136,7 +157,9 @@ operations also pass through source-sharing checks.
   from ordinary interactive sign-in.
 - Interactive chat reuses the registered `/getAToken` callback with a separate
   state/nonce/PKCE-protected flow and the existing server-side login session.
-  It does not require a saved workflow connection or Key Vault.
+  It does not require a saved workflow connection. Saved chat credentials use
+  the deployment key above with a separate chat-record binding; without
+  Key Vault, the connection is session-only.
 - A sign-in started in a popup ends on a small result page that reports the
   outcome to the window that opened it and closes, so V2 never lands on a
   classic page. A full-page sign-in from classic Profile returns to Profile.

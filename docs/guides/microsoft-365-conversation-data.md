@@ -4,7 +4,7 @@ title: "Microsoft 365 data and approvals"
 description: "Choose how Microsoft 365 data is retrieved, analyzed, and shared in conversations and workflows."
 section: "Guides"
 audience: user
-version: "0.261.325"
+version: "0.261.355"
 ---
 
 ## Choose the right action
@@ -177,10 +177,32 @@ The existing sign-in remains untouched until the new account, tenant, consent,
 and authorization-code flow are verified. After success, Profile shows the
 renewed sign-in; return to the conversation and retry your question explicitly.
 Profile reconnect does not run old requests, change sharing approvals, or renew
-workflow Run as authorizations. It does not require Key Vault.
+workflow Run as authorizations.
 
-The local status **available** means a matching sign-in is saved for the current
-session, not that every remote resource is accessible. A rejected Graph bearer
+### Keep chat connected across sign-ins
+
+Implemented in version: **0.261.355** (`application/single_app/config.py`).
+
+With Key Vault secret storage configured, reconnect saves an encrypted,
+chat-only credential in SimpleChat's connection storage. It survives browser
+restarts and normal SimpleChat sign-out/sign-in. Existing users should reconnect
+once to upgrade a session-only chat connection. The card says whether the
+connection is saved or session-only; without Key Vault, chat still works for
+the current app session.
+
+SimpleChat adds no shorter expiration to a saved connection. Access tokens
+refresh silently, and their routine expiry does not clear the source list.
+Microsoft, your organization, or your own revocation can still require sign-in.
+The source list describes verified consent, not a guarantee of current access
+to every remote file or mailbox.
+
+Use **Disconnect chat** and confirm to remove SimpleChat's saved chat credential.
+This is separate from disconnecting workflows: neither control disconnects the
+other. Normal application sign-out does not disconnect saved chat access.
+Disconnecting chat does not revoke consent in Microsoft or remove evidence
+already shared in conversations.
+
+A rejected Graph bearer
 token supplies a reconnect prompt through the existing paused-chat flow.
 An access-denied policy, service outage, throttling, or missing model context
 configuration is a different failure and must not be described as expired login.
@@ -226,8 +248,8 @@ from its checkpoint rather than rerunning completed work.
 ## Connect an account for workflows
 
 Use the Profile Microsoft 365 connection controls for explicit background
-access. Saved workflow connections require configured Key Vault protection;
-normal interactive actions do not.
+access. Saved workflow and saved chat connections require configured Key Vault
+protection. Session-only interactive chat remains available without it.
 
 Choose the sources once; there is no second set of permission checkboxes.
 Calendar includes events, invitations, timezone, and recipient lookup. Email

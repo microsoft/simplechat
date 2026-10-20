@@ -41,6 +41,7 @@ let notice: RecoveryNotice | null = null;
 let decide: ((choice: Decision) => void) | null = null;
 let csrfToken = '';
 let contextRevision = 0;
+let currentConversationId: string | null = null;
 const storageKey = (conversationId: string) => `simplechat.action-recovery.${conversationId}`;
 
 export const subscribeActionRecovery = (listener: () => void) => {
@@ -60,6 +61,12 @@ export function clearActionRecovery(): void {
     decide?.('cancel');
     csrfToken = '';
     publish(null);
+}
+
+export function setActionRecoveryConversation(conversationId: string | null): void {
+    if (conversationId === currentConversationId) return;
+    currentConversationId = conversationId;
+    clearActionRecovery();
 }
 
 function readRecovery(value: unknown): ActionRecovery | null {
