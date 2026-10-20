@@ -1396,7 +1396,10 @@ class CatalogResolutionError(RuntimeError):
         self.code = code
 
 
-def enrich_planner_candidates(candidates, user_id, *, conversation_id, seeds=None, source_scopes=None):
+def enrich_planner_candidates(
+    candidates, user_id, *, conversation_id, seeds=None, source_scopes=None,
+    selected_source_context_reader=None,
+):
     """Use authorized source metadata, never display labels, to describe source kinds.
 
     When ``source_scopes`` is a dict, it also receives each authorized document's owning scope
@@ -1414,6 +1417,7 @@ def enrich_planner_candidates(candidates, user_id, *, conversation_id, seeds=Non
     from content_screening.contracts import ScreeningError, SourceAuthorityUnverifiedError
     from functions_mixed_source_orchestration import SOURCE_KINDS, SOURCE_MANIFEST_MAX_SOURCES
     from functions_orchestration_source_access import resolve_orchestration_source_manifest
+    from functions_orchestration_source_context import SourceContextError
 
     identifiers = list(dict.fromkeys(candidate['document_id'] for candidate in candidates))
     required = [identifier for identifier in identifiers if identifier in selected]
@@ -1511,11 +1515,36 @@ def enrich_planner_candidates(candidates, user_id, *, conversation_id, seeds=Non
                 'scope_id': source.get('scope_id'),
                 'file_name': source.get('file_name'),
             }
+    planning_sources = {}
+    if selected_source_context_reader is not None and selected:
+        try:
+            planning_sources = {
+                source['document_id']: source for source in selected_source_context_reader(
+                    [available[identifier] for identifier in seeds['document_ids']],
+                )
+            }
+            if set(planning_sources) != selected:
+                raise ValueError('Selected source context did not match the selection.')
+        except (AzureError, ScreeningError, SourceContextError, ValueError, TypeError, ConnectionError, TimeoutError) as exc:
+            log_event(
+                '[ORCHESTRATION_CONTEXT] Selected source preparation failed.',
+                level=logging.WARNING, extra={
+                    **workflow_log_context(conversation_id=conversation_id),
+                    'stage': 'source_preparation', 'error_type': type(exc).__name__,
+                    'reason': 'selected_source_preparation_failed',
+                },
+            )
+            raise CatalogResolutionError(
+                'The selected source could not be prepared. Please retry or review the selection.',
+                code='selected_source_preparation_failed',
+            ) from exc
     return [
         {
             **candidate,
             'file_name': _text(available[candidate['document_id']].get('file_name'), 500),
             'source_kind': available[candidate['document_id']].get('source_kind'),
+            **({'planning_source': planning_sources[candidate['document_id']]}
+               if candidate['document_id'] in planning_sources else {}),
         }
         for candidate in candidates if candidate['document_id'] in available
     ]
@@ -2260,6 +2289,7 @@ def build_planner_context(
     request_resolution=None,
     memory_context=None,
     document_transform_candidates=None,
+    selected_sources=None,
 ):
     """Assemble everything the planner is shown, in one place.
 
@@ -2286,9 +2316,13 @@ def build_planner_context(
         'agents': build_agent_planner_projection(agents),
         'actions': build_action_planner_projection(actions),
         'candidate_documents': [
-            {key: value for key, value in candidate.items() if key != 'score'}
+            {key: value for key, value in candidate.items() if key not in ('score', 'planning_source')}
             for candidate in (candidates or ())
         ],
+        'selected_sources': deepcopy(selected_sources or [
+            candidate['planning_source'] for candidate in candidates or []
+            if candidate.get('planning_source')
+        ]),
         'image_reference_documents': deepcopy(seeds.get('image_reference_documents') or []),
         'image_reference_messages': deepcopy(seeds.get('image_reference_messages') or []),
         'document_transform_references': deepcopy(

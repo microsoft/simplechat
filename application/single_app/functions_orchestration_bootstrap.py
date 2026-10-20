@@ -18,6 +18,7 @@ import hmac
 from copy import deepcopy
 from threading import Lock
 
+from azure.core import MatchConditions
 from flask import has_request_context
 
 import config
@@ -48,6 +49,10 @@ from functions_orchestration_source_access import (
     read_orchestration_source_metadata,
     resolve_orchestration_source_manifest,
 )
+from functions_orchestration_source_context import (
+    SourceContextError, build_selected_source_context, source_planning_revision,
+)
+from functions_tabular_merge import TabularMergeError
 from functions_document_transform_sources import DocumentTransformSources
 from functions_settings import get_settings, get_user_settings
 from functions_simplechat_operations import (
@@ -287,6 +292,65 @@ def build_merge_document_reader(user_id):
     return read
 
 
+def build_selected_source_reader(user_id):
+    """Inspect only released bytes, bounded before download and pinned to their ETag."""
+    # Screening services require initialized config and belong at this I/O boundary.
+    from content_screening.access import (
+        get_available_blob_reference, read_available_document_bytes, strict_source_authority,
+    )
+
+    def read(source, *, max_bytes):
+        scope, scope_id = source.get("scope"), source.get("scope_id")
+        group_id = scope_id if scope == "group" else None
+        public_id = scope_id if scope == "public" else None
+        with strict_source_authority():
+            document, container, path = get_available_blob_reference(
+                source, user_id, group_id, public_id, purpose="native",
+            )
+            def check_revision(current):
+                revised = {
+                    **source,
+                    "source_version": current.get("version") or current.get("source_version"),
+                    "source_revision": current.get("_etag") or current.get("updated_at") or current.get("last_updated"),
+                }
+                if source_planning_revision(revised) != source_planning_revision(source):
+                    raise SourceContextError("selected_source_changed")
+
+            check_revision(document)
+            client = config.CLIENTS["storage_account_office_docs_client"].get_blob_client(
+                container=container, blob=path,
+            )
+            properties = client.get_blob_properties(
+                connection_timeout=5, read_timeout=5, retry_total=0,
+            )
+            if type(properties.size) is not int or properties.size < 0:
+                raise ValueError("Invalid selected source size.")
+            if properties.size > max_bytes:
+                raise TabularMergeError("source_too_large", "This source exceeds the planning read limit.")
+            marker = document.get("content_screening") or {}
+            active = marker.get("active_blob") or {}
+            expected_etag = active.get("etag") or properties.etag
+
+            def download(current_container, current_path, current_document):
+                if (current_container, current_path) != (container, path):
+                    raise ValueError("The selected source changed.")
+                return client.download_blob(
+                    etag=expected_etag, match_condition=MatchConditions.IfNotModified,
+                    length=max_bytes + 1, connection_timeout=5, read_timeout=5, retry_total=0,
+                ).readall()
+
+            _document, content = read_available_document_bytes(
+                source, user_id, group_id, public_id, purpose="native", blob_reader=download,
+            )
+            current, _container, _path = get_available_blob_reference(
+                source, user_id, group_id, public_id, purpose="native",
+            )
+            check_revision(current)
+            return content
+
+    return lambda sources: build_selected_source_context(sources, read_bytes=read)
+
+
 def build_image_asset_reader(user_id, conversation_id):
     """Read a retained generated image's bytes from its own conversation image message.
 
@@ -459,6 +523,7 @@ def build_orchestration_services(user_id, conversation_id, *, settings=None):
         document_transform_source_reader=transform_sources.read_reference,
         document_transform_source_resolver=transform_sources.resolve_reference,
         document_transform_candidate_reader=transform_sources.planning_candidates,
+        selected_source_context_reader=build_selected_source_reader(user_id),
     )
     return services
 
