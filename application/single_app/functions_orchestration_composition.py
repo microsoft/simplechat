@@ -133,7 +133,7 @@ _COLUMN_EXAMPLES = {
     'string': '...', 'integer': 1, 'number': 1.5, 'boolean': True, 'object': {}, 'array': [], 'json': '...',
 }
 # A rejected reply is asked for once more only when its rule can be stated from the
-# declarations alone. Plan, profile, size and access failures are never retried.
+# declarations alone. Unavailable profiles, size and access failures are never retried.
 _REPLY_PROBLEMS = {
     'result_duplicate_output': 'it repeated an output name',
     'result_output_missing': 'its keys were not exactly the declared output names',
@@ -143,6 +143,11 @@ _OUTPUT_PROBLEMS = {
     'result_records_invalid': 'was not a JSON array of row objects',
     'result_schema_invalid': 'did not match its declared columns or schema',
     'result_json_invalid': 'contained a value that is not plain JSON',
+    'result_count_mismatch': 'did not match its declared item count',
+    'result_layout_invalid': (
+        'placed content outside the slide or overlapped another shape or the reserved title rectangle. '
+        'Follow the supplied profile dimensions and title bounds; keep every requested item'
+    ),
 }
 
 

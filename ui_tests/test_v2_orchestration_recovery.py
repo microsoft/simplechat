@@ -1,7 +1,7 @@
 # test_v2_orchestration_recovery.py
 """
 Real-component browser coverage for orchestration failure and checkpoint recovery.
-Version: 0.261.341
+Version: 0.261.358
 Implemented in: 0.261.105
 Earlier-version run refusals covered in: 0.261.139
 Settled runs whose stored plan still reads running covered in: 0.261.141
@@ -9,6 +9,7 @@ Configurable step failure, reused by Microsoft 365 recovery coverage, in: 0.261.
 Ended runs show unfinished steps and retry them; files that cannot be retried alone offer
 Retry from failed step, in: 0.261.303
 Empty pending-credential polling fixture updated in: 0.261.341
+Delayed detail, list and reconciliation reads fenced in: 0.261.356
 
 The production controller, SSE reader, stores, message list, and Run drawer execute
 in the existing local/Azure Playwright harness. Only API responses are deterministic.
@@ -510,6 +511,135 @@ def test_transport_terminal_reconciliation_keeps_saved_failure_and_no_stop(recov
     assert main_state(page)["messages"][-1]["id"] == f"assistant-{api.plan['run_id']}"
     assert not any("/cancel/" in request["path"] for request in api.requests)
     assert not api.calls("/retry")
+
+
+@pytest.mark.parametrize("status", ["failed", "completed", "cancelled"])
+@pytest.mark.parametrize("reader", ["detail", "reconcile", "resume", "map", "steps"])
+def test_delayed_recovery_reads_cannot_replace_newer_terminal_events(recovery_ui, status, reader):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    stream_routes = []
+    read_routes = []
+    snapshots = []
+    page.clock.install()
+    mount_recovery(page, api)
+
+    def hold(route):
+        request = route.request
+        path = urlsplit(request.url).path
+        if path == editor_tests.RUN and request.method == "POST":
+            api.requests.append({"path": path, "method": request.method, "body": request.post_data_json})
+            api.begin_finalization(run_id, status)
+            stream_routes.append(route)
+            return
+        expected = editor_tests.RUNS if reader in ("resume", "map") else (
+            f"{editor_tests.RUNS}/{run_id}/steps" if reader == "steps" else f"{editor_tests.RUNS}/{run_id}")
+        if path == expected and request.method == "GET" and not read_routes:
+            read_routes.append(route)
+            snapshots.append(copy.deepcopy(
+                {"runs": list(api.records.values())} if reader in ("resume", "map") else
+                {"steps": api.steps[run_id]} if reader == "steps" else {"run": api.records[run_id]}))
+            page.evaluate("window.recoveryReadHeld = true")
+            return
+        route.fallback()
+
+    page.route("**/*", hold)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    page.wait_for_function("""(id) => Boolean(window.OrchHarness.stores.orchestration
+        .useOrchestrationStore.getState().inFlight[id])""", arg=run_id)
+    assert len(stream_routes) == 1
+    page.evaluate("""({conversation, run, reader}) => {
+        const H = window.OrchHarness;
+        let pending;
+        if (reader === 'resume') pending = H.resume.resumeOrchestrationForConversation(conversation);
+        else if (reader === 'map') {
+            H.mount('mount-b', 'OrchestrationMapView', { conversationId: conversation });
+            return;
+        } else if (reader === 'detail') pending = H.controller.loadOrchestrationRecovery(conversation, run);
+        else pending = H.controller.reconcileOrchestrationRun(conversation, run);
+        pending.then(result => { window.recoveryReadResult = result; window.recoveryReadFinished = true; });
+    }""", {"conversation": CONVERSATION, "run": run_id, "reader": reader})
+    page.wait_for_function("() => window.recoveryReadHeld === true")
+
+    event = api.finish(run_id, status)
+    api.stream(stream_routes[0], [
+        *[{"type": "orchestration_step", **step} for step in api.steps[run_id]], event,
+    ])
+    page.wait_for_function("""(id) => window.OrchHarness.stores.orchestration
+        .useOrchestrationStore.getState().runRecovery[id]?.finalization_status === 'saved'""", arg=run_id)
+    read_routes[0].fulfill(json=snapshots[0])
+    page.wait_for_function("""({conversation, reader}) => reader === 'map'
+        ? window.OrchHarness.stores.orchestration.useOrchestrationStore.getState().hydration[conversation] === 'loaded'
+        : window.recoveryReadFinished === true""", arg={"conversation": CONVERSATION, "reader": reader})
+    recovery = page.evaluate("""(id) => window.OrchHarness.stores.orchestration
+        .useOrchestrationStore.getState().runRecovery[id]""", run_id)
+    assert recovery["status"] == status and recovery["outcome"] == status
+    assert recovery["finalization_status"] == "saved" and recovery["message_saved"] is True
+    assert recovery["recovery"]["reason_code"] != "execution_live"
+    assert not recovery.get("checking")
+    assert not main_state(page)["inFlight"]
+    assert main_state(page)["history"][CONVERSATION][0]["status"] == status
+    expect(page.get_by_text("The server is saving the final response.", exact=False)).to_have_count(0)
+    if status == "failed":
+        expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
+    assert len(api.calls("/run")) == 1 and not api.calls("/retry")
+    assert not any("/cancel/" in request["path"] for request in api.requests)
+
+    # A later request remains authoritative; the fence is not a permanent terminal-state lock.
+    api.records[run_id]["latest_attempt_run_id"] = "newer-attempt"
+    api.records[run_id]["recovery"].update(eligible=False, reason_code="already_retried", current_run_id="newer-attempt")
+    result = page.evaluate("""async ({conversation, run}) => {
+        const H = window.OrchHarness;
+        const result = await H.controller.loadOrchestrationRecovery(conversation, run);
+        return { admitted: Boolean(result), recovery: H.stores.orchestration.useOrchestrationStore.getState().runRecovery[run] };
+    }""", {"conversation": CONVERSATION, "run": run_id})
+    assert result["admitted"] and result["recovery"]["latest_attempt_run_id"] == "newer-attempt"
+    assert result["recovery"]["recovery"]["eligible"] is False
+
+
+def test_recovery_read_ignores_incidental_ui_and_other_run_updates(recovery_ui):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    api.finish(run_id)
+    mount_recovery(page, api, saved=True)
+    pending = []
+
+    def hold(route):
+        pending.append(route)
+        page.evaluate("window.freshRecoveryReadHeld = true")
+
+    page.route(f"**{editor_tests.RUNS}/{run_id}?*", hold, times=1)
+    page.evaluate("""({conversation, run}) => {
+        const H = window.OrchHarness;
+        H.controller.loadOrchestrationRecovery(conversation, run).then(result => {
+            window.freshRecoveryReadAdmitted = Boolean(result);
+        });
+    }""", {"conversation": CONVERSATION, "run": run_id})
+    page.wait_for_function("() => window.freshRecoveryReadHeld === true")
+    page.evaluate("""(id) => {
+        const S = window.OrchHarness.stores.orchestration.useOrchestrationStore.getState();
+        S.updateRunRecovery(id, { outputChecking: true, busy: true });
+        S.updateRunRecovery('another-run', { status: 'running', finalization_status: 'pending' });
+    }""", run_id)
+    pending[0].fulfill(json={"run": api.records[run_id]})
+    page.wait_for_function("() => window.freshRecoveryReadAdmitted === true")
+    assert not api.calls("/run") and not api.calls("/retry")
+
+
+def test_fresh_recovery_authorization_failure_is_not_hidden_by_the_fence(recovery_ui):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    api.finish(run_id)
+    mount_recovery(page, api, saved=True)
+    page.route(f"**{editor_tests.RUNS}/{run_id}?*",
+               lambda route: route.fulfill(status=403, json={"error": "Access denied."}))
+    page.evaluate("""({conversation, run}) => {
+        window.OrchHarness.controller.openOrchestrationRecovery(conversation, run);
+    }""", {"conversation": CONVERSATION, "run": run_id})
+    expect(page.get_by_text(
+        "The saved attempt could not be loaded. Your previous failure and progress have been kept.", exact=True,
+    ).first).to_be_visible()
+    assert not api.calls("/run") and not api.calls("/retry")
 
 
 @pytest.mark.parametrize("pending_contract", ["explicit", "lease-only"])

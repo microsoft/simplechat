@@ -70,7 +70,7 @@ export async function resumeOrchestrationForConversation(
         store.setHydrationStatus(conversationId, 'loading');
         try {
             const runs = await fetchConversationRuns(conversationId, { limit: RUN_FETCH_LIMIT });
-            useOrchestrationStore.getState().hydrateConversationRuns(conversationId, runs);
+            useOrchestrationStore.getState().hydrateConversationRuns(conversationId, runs, store.recoveryRevision);
         } catch {
             useOrchestrationStore.getState().setHydrationStatus(conversationId, 'error');
             // The drawer offers a retry; a conversation whose history could not be read has no

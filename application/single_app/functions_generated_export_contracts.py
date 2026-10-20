@@ -5,6 +5,12 @@ from dataclasses import dataclass, field
 from typing import Any, BinaryIO, Dict, Iterator, Optional, Protocol, Tuple, Union
 
 
+PREPARED_SLIDE_DIMENSIONS = {'wide': (40 / 3, 7.5), 'standard': (10, 7.5)}
+PREPARED_SLIDE_TITLE_LEFT = 0.5
+PREPARED_SLIDE_TITLE_TOP = 0.25
+PREPARED_SLIDE_TITLE_HEIGHT = 1
+
+
 @dataclass(frozen=True)
 class GeneratedFileExportRequest:
     output_format: str

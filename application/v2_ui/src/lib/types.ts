@@ -1331,6 +1331,8 @@ export interface ChatStreamEvent {
         | string;
     content?: string;
     done?: boolean;
+    /** Direct image generation completes with a source URL rather than assistant text. */
+    image_url?: string;
     error?: string;
     auth_required?: boolean;
     /** Same-origin handoff that reauthorizes the target and starts Foundry consent. */
