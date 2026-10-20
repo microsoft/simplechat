@@ -47,6 +47,7 @@ import {
     readPendingKind,
 } from '../../lib/richBlocks';
 import { MATH_PLACEHOLDER_PATTERN, parseMath, type MathSegment } from '../../lib/mathSegments';
+import type { HybridCitation } from '../../lib/types';
 
 /** The `<code>` element a `<pre>` wraps, which is where the fence's language lives. */
 function fenceCodeElement(node: unknown): Element | undefined {
@@ -89,6 +90,7 @@ function PendingRichBlock({ kind }: { kind: string }) {
  * or maths — which is most of them.
  */
 const NO_CITATIONS: CitationGroup[] = [];
+const NO_DOCUMENT_CITATIONS: HybridCitation[] = [];
 const NO_MASKS: MaskedRange[] = [];
 const NO_MATH: MathSegment[] = [];
 
@@ -418,11 +420,13 @@ function Markdown({
 export function AssistantMarkdown({
     content,
     masks,
+    documentCitations = NO_DOCUMENT_CITATIONS,
     streaming = false,
     messageId,
 }: {
     content: string;
     masks?: MaskedRange[];
+    documentCitations?: HybridCitation[];
     streaming?: boolean;
     messageId?: string;
 }) {
@@ -434,7 +438,7 @@ export function AssistantMarkdown({
     const maskKey = JSON.stringify(masks ?? NO_MASKS);
     const { text, groups, ranges, segments } = useMemo(() => {
         const masked = applyMasks(content, JSON.parse(maskKey) as MaskedRange[]);
-        const parsed = parseCitations(masked.text);
+        const parsed = parseCitations(masked.text, documentCitations);
         const guarded = streaming ? markPendingFences(parsed.text) : parsed.text;
         const withMath = parseMath(guarded);
         return {
@@ -443,7 +447,7 @@ export function AssistantMarkdown({
             ranges: masked.ranges,
             segments: withMath.segments,
         };
-    }, [content, maskKey, streaming]);
+    }, [content, maskKey, streaming, documentCitations]);
 
     return (
         <Markdown

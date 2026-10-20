@@ -1162,6 +1162,7 @@ function MessageBubbleInner({
                                                 : message.content}
                                             masks={masks.ranges}
                                             messageId={message.id}
+                                            documentCitations={message.hybrid_citations}
                                         />
                                     </M365CitationProvider>
                                 </ImageProposalScope>
