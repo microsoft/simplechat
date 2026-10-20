@@ -1,9 +1,10 @@
 # test_orchestration_compose_output_retry.py
 """Records guidance, JSON mode and the single corrective call for content preparation.
 
-Version: 0.261.342
+Version: 0.261.356
 Implemented in: 0.261.141
 Explicit chart/diagram omission correction implemented in: 0.261.341
+Prepared slide schema, count and geometry correction implemented in: 0.261.356
 
 A request for a CSV of the U.S. states and capitals planned correctly, then failed while
 preparing content. The compose step was told to write "the finished file", so the model
@@ -24,16 +25,19 @@ store and renderers) with the planning and answering models replaced by offline 
 import hashlib
 import importlib
 import json
+from copy import deepcopy
+from io import BytesIO
 
 import httpx
 import pytest
 from openai import BadRequestError
+from pptx import Presentation
 
 from test_orchestration_deliverables import (
     _csv_plan, _file_bytes, _files, _normalize, _plan_request, _saved_steps, _store,
 )
 from test_orchestration_harness_execution import harness, initialized_application  # noqa: F401
-from test_support.orchestration_harness_execution import compose_step, input_binding
+from test_support.orchestration_harness_execution import compose_step, input_binding, render_step
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -67,6 +71,7 @@ PRIOR_PLAN = {
 def test_version_includes_the_compose_output_retry():
     assert_app_version_at_least("0.261.141")
     assert_app_version_at_least("0.261.341")
+    assert_app_version_at_least("0.261.356")
 
 
 def _provider_error(*, param, code, message):
@@ -326,6 +331,146 @@ def test_a_second_unusable_reply_fails_cleanly_without_a_third_call(harness, mon
     assert failures[0]["run_id_hash"] == _hash("run-1") and failures[0]["step_id_hash"] == _hash("rows")
     assert "run_id" not in failures[0] and "step_id" not in failures[0]
     assert SECRET_REPLY_TEXT not in repr(events)
+
+
+def _prepared_deck(size="wide", count=2, layout="title_and_content"):
+    return {
+        "schema_version": "prepared_slide_deck_v1", "size": size, "slide_count": count,
+        "slides": [{
+            "layout": layout, "title": f"Slide {index + 1}" if layout != "blank" else "",
+            "shapes": [{
+                "type": "text_box", "box": {"left": 0.5, "top": 1.6, "width": 6, "height": 1.5},
+                "paragraphs": [{"text": f"Complete body for slide {index + 1}."}],
+            }],
+        } for index in range(count)],
+    }
+
+
+def _store_deck(harness, replies):
+    profile = "prepared_slide_deck_v1"
+    plan = _normalize(harness, {
+        "deliverables": [{"id": "deck", "kind": "file", "format": "pptx", "requested": "explicit", "status": "planned",
+                          "description": "The complete presentation"}],
+        "steps": [
+            compose_step(outputs=[{"name": "deck", "kind": "structured-v1", "profile": profile}]),
+            {**render_step("save", "pptx", output="deck", profile=profile), "delivers": ["deck"]},
+        ],
+    })
+    _store(harness, plan, replies=[json.dumps({"deck": reply}) for reply in replies])
+
+
+@pytest.mark.parametrize(("size", "count", "layout"), [
+    ("wide", 1, "title_and_content"), ("standard", 3, "title_and_content"), ("wide", 2, "blank"),
+])
+@pytest.mark.parametrize(("problem", "code"), [
+    ("schema", "result_schema_invalid"), ("count", "result_count_mismatch"),
+    ("title", "result_layout_invalid"), ("overlap", "result_layout_invalid"),
+    ("bounds", "result_layout_invalid"),
+])
+def test_prepared_deck_errors_share_the_single_corrective_call(
+    harness, monkeypatch, size, count, layout, problem, code,
+):
+    good = _prepared_deck(size, count, layout)
+    bad = deepcopy(good)
+    if problem == "schema":
+        bad["schema_version"] = "invented"
+    elif problem == "count":
+        bad["slide_count"] += 1
+    elif problem == "title":
+        bad["slides"][0].update(layout="title_and_content", title="Reserved title")
+        bad["slides"][0]["shapes"][0]["box"]["top"] = 0.5
+    elif problem == "overlap":
+        bad["slides"][0]["shapes"].append(deepcopy(bad["slides"][0]["shapes"][0]))
+    else:
+        bad["slides"][0]["shapes"][0]["box"]["left"] = 9
+    events = _capture(monkeypatch, "functions_orchestration_composition")
+    _store_deck(harness, [bad, good])
+
+    harness.prepare().execute()
+
+    assert harness.read()["status"] == "completed"
+    calls = _compose_calls(harness)
+    assert len(calls) == 2 and harness.replies == []
+    assert calls[1]["messages"][:-2] == calls[0]["messages"]
+    assert "Your previous reply could not be used:" in calls[1]["messages"][-1]["content"]
+    policy = json.loads(calls[0]["messages"][-1]["content"])
+    schema = policy["profiles"]["prepared_slide_deck_v1"]
+    assert "title rectangle" in schema["$defs"]["slide"]["properties"]["layout"]["description"]
+    assert "left + width" in schema["$defs"]["box"]["description"]
+    retries = [kwargs["extra"] for _, kwargs in events if kwargs.get("extra", {}).get("reason") == "compose_output_retry"]
+    assert len(retries) == 1 and retries[0]["execution_code"] == code
+    presentation = Presentation(BytesIO(_file_bytes(harness, ".pptx")))
+    assert len(presentation.slides) == count
+    assert presentation.slide_width / 914400 == pytest.approx(40 / 3 if size == "wide" else 10)
+    for index, slide in enumerate(presentation.slides):
+        text = "\n".join(shape.text for shape in slide.shapes if shape.has_text_frame)
+        assert f"Complete body for slide {index + 1}." in text
+        if layout == "title_and_content":
+            assert f"Slide {index + 1}" in text
+
+
+def test_second_invalid_deck_never_renders_or_publishes_a_file(harness):
+    bad = _prepared_deck()
+    bad["slides"][0]["shapes"][0]["box"]["top"] = 0.5
+    _store_deck(harness, [bad, bad])
+
+    harness.prepare().execute()
+
+    assert harness.read()["status"] == "failed"
+    assert len(_compose_calls(harness)) == 2 and harness.replies == []
+    assert _saved_steps(harness)["save"]["status"] == "skipped"
+    assert _files(harness, ".pptx") == []
+
+
+@pytest.mark.parametrize("code", ["limit_exceeded", "unsupported_content", "source_unavailable", "access_denied", "render_io"])
+def test_deck_correction_does_not_retry_resource_access_or_renderer_failures(harness, monkeypatch, code):
+    office = importlib.import_module("functions_generated_office_adapters")
+    renderers = importlib.import_module("functions_office_file_renderers")
+
+    def unavailable(*args, **kwargs):
+        raise renderers.OfficeRenderError(code)
+
+    monkeypatch.setattr(office, "prepare_generated_slide_deck", unavailable)
+    _store_deck(harness, [_prepared_deck()])
+
+    harness.prepare().execute()
+
+    assert harness.read()["status"] == "failed"
+    assert len(_compose_calls(harness)) == 1
+    assert _files(harness, ".pptx") == []
+
+
+@pytest.mark.parametrize("stop", ["budget", "access", "cancellation"])
+def test_deck_correction_respects_budget_access_and_cancellation(harness, monkeypatch, stop):
+    good = _prepared_deck()
+    bad = deepcopy(good)
+    bad["slide_count"] += 1
+    _store_deck(harness, [bad, good])
+    execution = harness.prepare()
+    budget = importlib.import_module("functions_workflow_context")
+    original = budget.calculate_workflow_context_budget
+    audits = []
+    cancelled = []
+
+    def audit(messages, *args, **kwargs):
+        result = original(messages, *args, **kwargs)
+        audits.append(len(messages))
+        if len(audits) == 2:
+            if stop == "budget":
+                return {**result, "decision": "reduced_input"}
+            if stop == "access":
+                harness.conversations.items[("conversation-1", "conversation-1")]["user_id"] = "another-owner"
+            else:
+                cancelled.append(True)
+        return result
+
+    monkeypatch.setattr(budget, "calculate_workflow_context_budget", audit)
+    monkeypatch.setattr(execution.lease, "cancel_requested", lambda: bool(cancelled))
+
+    execution.execute()
+
+    assert len(audits) == 2 and len(_compose_calls(harness)) == 1
+    assert len(harness.replies) == 1 and _files(harness, ".pptx") == []
 
 
 def test_no_corrective_call_is_made_when_it_would_not_fit(harness, monkeypatch):

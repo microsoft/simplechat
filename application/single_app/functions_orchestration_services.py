@@ -15,6 +15,7 @@ from copy import deepcopy
 
 from content_screening.contracts import DocumentHeldError
 from functions_document_analysis_checkpoints import AnalysisWorkUnitCheckpoints
+from functions_generated_export_contracts import GeneratedFileExportError
 from functions_generated_export_registry import (
     PREPARED_SLIDE_DECK_VERSION,
     get_generated_file_export_catalog,
@@ -77,8 +78,20 @@ def validate_composition_profile(profile, value):
         raise ResultContractError("result_profile_unavailable")
     # Office libraries are execution dependencies, not registry/bootstrap dependencies.
     from functions_generated_office_adapters import prepare_generated_slide_deck
+    from functions_office_file_renderers import OfficeRenderError
 
-    prepare_generated_slide_deck(value)
+    try:
+        prepare_generated_slide_deck(value)
+    except GeneratedFileExportError as exc:
+        if exc.code not in {"invalid_data", "count_mismatch"}:
+            raise
+        raise ResultContractError(
+            "result_count_mismatch" if exc.code == "count_mismatch" else "result_schema_invalid",
+        ) from exc
+    except OfficeRenderError as exc:
+        if exc.code != "layout_overflow":
+            raise
+        raise ResultContractError("result_layout_invalid") from exc
     return True
 
 

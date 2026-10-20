@@ -1,6 +1,6 @@
 # Orchestration Checkpoint Recovery
 
-**Version: 0.261.309**
+**Version: 0.261.356**
 
 Implemented in version: **0.261.105**, recorded in
 `application/single_app/config.py`.
@@ -83,6 +83,17 @@ A run can reach a terminal execution status before its final message finishes
 saving. The interface keeps checking during that interval. If the worker stops
 before publication can be confirmed, the interface reports that uncertainty
 rather than claiming that a message was definitely not saved.
+
+Recovery read ordering implemented in version: **0.261.356**, recorded in
+`application/single_app/config.py`. Detail reads, conversation-history reads
+and reconciliation retain the attempt revision observed when their request
+started. A response cannot replace a newer update for that same run with an
+older publication or recovery state. Reconciliation also rechecks freshness
+after reading step records, before changing the plan or settling the chat.
+This prevents an already saved result from appearing to remain in finalization.
+Later reads can still reflect changed recovery eligibility or a newer attempt;
+the client does not permanently freeze terminal state or skip authorization.
+Independent file-output receipt protection remains in place.
 
 **Stop** requests server cancellation. Losing the browser connection is different:
 the server may still be working. The interface reconciles the saved run before

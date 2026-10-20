@@ -79,6 +79,12 @@ from pptx.oxml.xmlchemy import OxmlElement as PptxElement
 from pptx.util import Inches as PptxInches, Pt as PptxPt
 
 from functions_export_cleanup import ClosingExportResource
+from functions_generated_export_contracts import (
+    PREPARED_SLIDE_DIMENSIONS,
+    PREPARED_SLIDE_TITLE_HEIGHT,
+    PREPARED_SLIDE_TITLE_LEFT,
+    PREPARED_SLIDE_TITLE_TOP,
+)
 from functions_export_visuals import (
     EXPORT_VISUAL_ASSET_MAX_BYTES,
     EXPORT_VISUAL_ASSET_MAX_PIXELS,
@@ -1578,7 +1584,7 @@ def render_prepared_pptx(
         _require(type(deck.size) is str and deck.size in {"wide", "standard"}, "unsupported_content")
         context.text(deck.title)
         assets = _ImageAssets(deck.images, image_resolver, context)
-        width, height = (40 / 3, 7.5) if deck.size == "wide" else (10, 7.5)
+        width, height = PREPARED_SLIDE_DIMENSIONS[deck.size]
         presentation = Presentation()
         presentation.slide_width = PptxInches(width)
         presentation.slide_height = PptxInches(height)
@@ -1606,14 +1612,17 @@ def render_prepared_pptx(
             occupied = []
             if spec.layout == "title_and_content":
                 _require(bool(spec.title))
-                title_box = SlideBox(0.5, 0.25, width - 1, 1)
+                title_box = SlideBox(
+                    PREPARED_SLIDE_TITLE_LEFT, PREPARED_SLIDE_TITLE_TOP,
+                    width - 2 * PREPARED_SLIDE_TITLE_LEFT, PREPARED_SLIDE_TITLE_HEIGHT,
+                )
                 title_height = _slide_text_height(spec.title, title_box.width, 30) + 9
-                _require(title_height <= 72, "layout_overflow")
+                _require(title_height <= 72 * title_box.height, "layout_overflow")
                 occupied.append(title_box)
                 slide = presentation.slides.add_slide(presentation.slide_layouts[5])
                 title = slide.shapes.title
-                title.left, title.top = PptxInches(0.5), PptxInches(0.25)
-                title.width, title.height = PptxInches(width - 1), PptxInches(1)
+                title.left, title.top = PptxInches(title_box.left), PptxInches(title_box.top)
+                title.width, title.height = PptxInches(title_box.width), PptxInches(title_box.height)
                 _write_slide_paragraphs(title.text_frame, [SlideParagraph(spec.title, bold=True)], 30)
             else:
                 _require(spec.title == "", "unsupported_content")

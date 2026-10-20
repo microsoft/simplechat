@@ -123,10 +123,11 @@ export function OrchestrationMapView({
             return;
         }
         setHydrationStatus(conversationId, 'loading');
+        const readRevision = useOrchestrationStore.getState().recoveryRevision;
 
         fetchConversationRuns(conversationId, { limit: RUN_FETCH_LIMIT })
             .then((runs) => {
-                hydrateConversationRuns(conversationId, runs);
+                hydrateConversationRuns(conversationId, runs, readRevision);
             })
             .catch(() => {
                 // A conversation with no stored runs is not an error, but a failed fetch is:

@@ -1,13 +1,14 @@
 # test_orchestration_dependency_runtime.py
 """Real Gather / Reason / Render compiler, executor, composition, retained readers and checkpoints.
 
-Version: 0.261.232
+Version: 0.261.356
 Implemented in: 0.261.127
 Pending-Gather regression implemented in: 0.261.129
 Single orchestration contract updated in: 0.261.139
 Partial-input refusal diagnostics implemented in: 0.261.191
 Missing signed-in session failure messages implemented in: 0.261.209
 Container-only retained-result reads covered in: 0.261.232
+Prepared-deck corrective validation covered in: 0.261.356
 External model/search/storage I/O is isolated; no paid or provider calls.
 """
 
@@ -994,10 +995,12 @@ def test_composition_uses_authoritative_prepared_slide_profile_without_rendering
     profiles = composition_profiles()
     case = runtime.make(
         [compose(outputs=[{'name': 'slides', 'kind': 'structured-v1', 'profile': PREPARED_SLIDE_DECK_VERSION}])],
-        [json.dumps({'slides': value})], profiles=profiles, profile_validator=validate_composition_profile,
+        [json.dumps({'slides': value})] * (2 if invalid else 1),
+        profiles=profiles, profile_validator=validate_composition_profile,
     )
     result = execute(runtime, case)
-    assert len(case.model.calls) == 1 and prepared_values == [value]
+    expected_calls = 2 if invalid else 1
+    assert len(case.model.calls) == expected_calls and prepared_values == [value] * expected_calls
     payload = json.loads(case.model.calls[0][0][-1]['content'])
     expected_schema = get_prepared_slide_deck_schema()
     assert payload['profiles'] == {PREPARED_SLIDE_DECK_VERSION: expected_schema}

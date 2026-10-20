@@ -1328,6 +1328,7 @@ function buildStreamHandlers(
     pendingUserMessageId?: string | null,
     /** Which API family the conversation belongs to. A reattached stream is always personal. */
     kind: ConversationKind = 'personal',
+    requestPrompt?: string,
 ): ChatStreamHandlers {
     const analysisRevision = getState().analysisContextRevision;
     const completionMetadata = (event: ChatStreamEvent) =>
@@ -1337,6 +1338,8 @@ function buildStreamHandlers(
     // message is persisted.
     let streamUserMessageId =
         String(pendingUserMessageId ?? '').trim() || latestUserMessageId(getState().messages);
+    const imagePrompt = requestPrompt
+        ?? getState().messages.find((message) => message.id === streamUserMessageId && message.role === 'user')?.content;
     const streamRetry = () => {
         const presentation = getState().retryPresentation;
         return presentation?.conversationId === conversationId && presentation.userMessageId === streamUserMessageId
@@ -1434,11 +1437,16 @@ function buildStreamHandlers(
                 return;
             }
             const m365Citations = readM365Citations(event.m365_citations);
+            const blocked = Boolean(event.blocked) || event.role === 'safety';
+            const imageSource = !blocked && typeof event.image_url === 'string' && event.image_url.trim()
+                ? event.image_url : null;
+            const imageResult = !blocked && (imageSource !== null || event.role === 'image');
             const finalMessage: ChatMessage = {
                 id: String(event.message_id ?? STREAMING_MESSAGE_ID),
                 conversation_id: conversationId,
-                role: event.blocked ? 'safety' : event.role ?? 'assistant',
-                content: resolveStreamContent(event, accumulated),
+                role: blocked ? 'safety' : imageSource ? 'image' : event.role ?? 'assistant',
+                content: imageSource ?? resolveStreamContent(event, accumulated),
+                ...(imageResult ? { prompt: imagePrompt } : {}),
                 timestamp: new Date().toISOString(),
                 model_deployment_name: event.model_deployment_name,
                 agent_display_name: event.agent_display_name,
@@ -1634,6 +1642,7 @@ async function runChatStream(
             getState,
             options.pendingUserMessageId,
             options.kind ?? 'personal',
+            requestBody?.message,
         );
     if (options.transport) {
         await options.transport(handlers, controller.signal);
