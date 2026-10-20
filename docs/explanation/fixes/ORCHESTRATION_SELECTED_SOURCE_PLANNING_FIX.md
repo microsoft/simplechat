@@ -1,5 +1,7 @@
 # Selected-source orchestration planning fix
 
+Current version: **0.261.356**
+
 Fixed in version: **0.261.355**
 
 ## Issue and root cause
@@ -75,7 +77,10 @@ is updated in `application/single_app/config.py`.
 `functional_tests/test_orchestration_selected_source_planning.py` exercises real
 parsers, initialized HTTP planning, continuation, editor revisions, native
 execution and rendering with external storage/model I/O doubled and network
-access blocked. The CSV/XLSX input and CSV/XLSX output matrix compares all 37
+access blocked. Version **0.261.356** explicitly re-exports the three shared
+pytest fixtures so static analysis recognizes their use without suppressing
+unused-import checks or changing fixture discovery.
+The CSV/XLSX input and CSV/XLSX output matrix compares all 37
 records in original order, well beyond the three-row preview. It also covers
 source-free/narrative requests, inspection limits, hostile sample text,
 pre-download size refusal, ETag replacement, scope propagation and revision

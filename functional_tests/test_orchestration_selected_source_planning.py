@@ -1,7 +1,7 @@
 # test_orchestration_selected_source_planning.py
 """Selected attachments remain usable during planning and clarification.
 
-Version: 0.261.355
+Version: 0.261.356
 Implemented in: 0.261.355
 
 Uses real source projection, parsers, resolution and HTTP planning with external
@@ -19,11 +19,15 @@ from unittest.mock import Mock, patch
 import pytest
 from openpyxl import Workbook, load_workbook
 
-from test_orchestration_source_kind_planning import source_runtime, modules, real_http_harness  # noqa: F401
+from test_orchestration_source_kind_planning import modules, real_http_harness, source_runtime
 from test_orchestration_native_results import (
     USER, bridge_runtime, finish_native, use_production_builder,
 )
 from test_support.orchestration_harness_execution import decoded_frames, render_step
+
+
+# Re-export shared fixtures for pytest's name-based discovery.
+__all__ = ["modules", "real_http_harness", "source_runtime"]
 
 
 def source(identifier="tabular-doc", name="spending.csv", kind="tabular"):
