@@ -117,7 +117,7 @@ through private DNS.
 
 ### Azure Files identity permissions
 
-From **0.261.356**, managed identity and service-principal connections use the
+From **0.261.358**, managed identity and service-principal connections use the
 SDK-required backup intent for Azure Files OAuth over REST. For read-only
 imports, the identity needs the corresponding read data actions, including
 `readFileBackupSemantics`; **Storage File Data Privileged Reader** is a built-in

@@ -8,7 +8,7 @@ Implemented in version: **0.241.127**
 
 Endpoint validation updated in version: **0.261.314**
 
-Token authentication and safe diagnostics fixed in version: **0.261.356**
+Token authentication and safe diagnostics fixed in version: **0.261.358**
 
 ## Dependencies
 
@@ -53,7 +53,7 @@ Admins can enable Azure Files in Admin Settings under File Sync source type visi
 
 ### Token authentication and permissions
 
-From **0.261.356**, the shared SDK client supplies the required
+From **0.261.358**, the shared SDK client supplies the required
 `token_intent="backup"` for managed identity and service-principal authentication.
 The SDK propagates this intent to directory listings, file properties, and
 downloads. This applies to saved identities and direct credentials, personal,

@@ -1,9 +1,9 @@
 # test_file_sync_ssrf_validation.py
 """
 Functional tests for File Sync SSRF endpoint and path boundaries.
-Version: 0.261.356
+Version: 0.261.358
 Implemented in: 0.261.314
-Token client keyword contract updated in: 0.261.356
+Token client keyword contract updated in: 0.261.358
 
 Azure Files must reject unapproved origins before token-credential/client
 construction. OneDrive browse paths must remain under the configured Graph

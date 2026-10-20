@@ -1,8 +1,8 @@
 # test_file_sync_azure_files_runtime.py
 """
 Functional tests for the Azure Files token-authenticated SDK boundary.
-Version: 0.261.356
-Implemented in: 0.261.356
+Version: 0.261.358
+Implemented in: 0.261.358
 
 Execute production connector functions with the real pinned SDK and an offline
 HTTP transport. Credentials, workspace storage, and network access are isolated;
@@ -262,7 +262,7 @@ def test_connection_string_does_not_require_token_intent(sdk_boundary):
 
 
 def test_implementation_version():
-    assert_app_version_at_least("0.261.356")
+    assert_app_version_at_least("0.261.358")
 
 
 @pytest.mark.parametrize("optimized", [False, True])

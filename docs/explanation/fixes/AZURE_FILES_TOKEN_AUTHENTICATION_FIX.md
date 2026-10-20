@@ -1,6 +1,6 @@
 # Azure Files Token Authentication Fix
 
-Fixed in version: **0.261.356**
+Fixed in version: **0.261.358**
 
 ## Issue and root cause
 
@@ -65,7 +65,7 @@ temporary file before propagating a safe error.
 ### Files and documentation
 
 - `application/single_app/functions_file_sync.py`: token intent and diagnostics.
-- `application/single_app/config.py`: application patch version `0.261.356`.
+- `application/single_app/config.py`: application patch version `0.261.358`.
 - `functional_tests/test_file_sync_azure_files_runtime.py`: real SDK contracts.
 - `functional_tests/test_file_sync_azure_files_diagnostics.py`: failure contracts.
 - `functional_tests/test_file_sync_ssrf_validation.py`: updated constructor

@@ -90,10 +90,31 @@ export function parseDocIdAndPage(citationId) {
   return { docId, pageNumber };
 }
 
+function buildDocumentFileNameLookup(records) {
+    const names = new Map();
+    if (!Array.isArray(records)) {
+        return names;
+    }
+    for (const record of records) {
+        if (typeof record?.citation_id !== 'string' || typeof record?.file_name !== 'string') {
+            continue;
+        }
+        const id = record.citation_id.trim().replace(/^#/, '');
+        const name = record.file_name.trim();
+        if (!id || !name || isM365CitationId(id)) {
+            continue;
+        }
+        // Conflicting records cannot safely identify the source, even if one repeats later.
+        names.set(id, names.has(id) && names.get(id) !== name ? null : name);
+    }
+    return names;
+}
+
 export function parseCitations(message, options = {}) {
   // ... (keep existing implementation)
   const citationRegex = /\(Source:\s*((?:(?!\(Source:).)+?),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*((?:(?!\(Source:).)+?)\)\s*((?:\[#.*?\]\s*)+)/gi;
   const m365CitationLookup = buildM365CitationLookup(options.m365Citations);
+  const documentFileNames = buildDocumentFileNameLookup(options.documentCitations);
 
   let result = message.replace(citationRegex, (whole, filename, locationLabel, locations, bracketSection) => {
     // The bracket group's trailing \s* consumes whatever whitespace followed the last
@@ -151,6 +172,27 @@ export function parseCitations(message, options = {}) {
     )
       ? [locations.trim()]
       : locations.split(/,/).map(tok => tok.trim());
+
+    if (/^untitled(?:\s+document)?$/i.test(trimmedFilename)) {
+        const names = orderedRefs.map(ref => documentFileNames.get(ref) || trimmedFilename);
+        const resolvedMultipleDocuments = names.some(name => name !== trimmedFilename)
+            && new Set(orderedRefs.map(getDocPrefix)).size > 1;
+        if (new Set(names).size > 1 || resolvedMultipleDocuments) {
+            const sources = orderedRefs.map((ref, index) => {
+                const location = locationTokens[index]
+                    || (normalizedLocationLabel.startsWith('page')
+                        ? parseDocIdAndPage(ref).pageNumber
+                        : locations.trim());
+                const sheetName = normalizedLocationLabel.startsWith('sheet') ? location : null;
+                return `(Source: ${escapeHtml(names[index])}, ${escapeHtml(locationLabel)}: ${buildAnchorIfExists(location, ref, sheetName)})`;
+            });
+            return `${sources.join(', ')}${trailingWhitespace}`;
+        }
+        if (names[0]) {
+            filenameHtml = escapeHtml(names[0]);
+        }
+    }
+
     const linkedTokens = locationTokens.map((token, index) => {
       if (!normalizedLocationLabel.startsWith('page')) {
         const ref = orderedRefs[index] || orderedRefs[0];
