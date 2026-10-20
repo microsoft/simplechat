@@ -1,6 +1,7 @@
 // test_v2_workspace_action_connectors_logic.mjs
-// Version: 0.261.122
+// Version: 0.261.354
 // Implemented in: 0.261.096
+// No-auth clear intent fixed in: 0.261.354
 // Executes the real OpenAPI/MCP connector parsing, draft, credential, and API helpers.
 
 import assert from 'node:assert/strict';
@@ -461,6 +462,33 @@ check('intentional auth clears never fall back to stored credentials for tests',
     assert.ok(payload.clear_secret_paths.includes('/auth/key'));
     assert.ok(!JSON.stringify(payload).includes(STORED_CONNECTOR_SECRET));
 });
+check('no-auth commands clear only owned secrets in every scope without translating inactive masks', () => {
+    for (const kind of ['openapi', 'mcp']) {
+        for (const scope of [undefined, { id: 'named-group' }, { global: true }]) {
+            for (const purpose of ['test', ...(kind === 'mcp' ? ['discover'] : [])]) {
+                const draft = action(kind);
+                draft.auth = { type: kind === 'mcp' ? 'NoAuth' : 'key', key: '', token: EDITOR_SECRET_MASK };
+                const before = structuredClone(draft);
+                const fresh = buildConnectorSupportPayload(draft, null, kind, purpose, scope);
+                assert.deepEqual(fresh.clear_secret_paths, []);
+                assert.equal(fresh.plugin_context, undefined);
+                assert.deepEqual(fresh.auth, kind === 'mcp' ? { type: 'NoAuth' } : { type: 'key', key: '' });
+                assert.deepEqual(draft, before);
+                for (const paths of [[], ['/auth/key'], ['/auth/token', '/auth/password', '/auth/identity']]) {
+                    const saved = resource(draft, paths);
+                    for (const path of paths) saved.record.auth[path.split('/')[2]] = EDITOR_SECRET_MASK;
+                    const payload = buildConnectorSupportPayload(draft, saved, kind, purpose, scope);
+                    assert.deepEqual(new Set(payload.clear_secret_paths), new Set(paths));
+                    assert.deepEqual(payload.auth, fresh.auth);
+                    assert.equal(payload.action_scope, scope?.global ? 'global' : scope?.id ? 'group' : 'personal');
+                    assert.equal(payload.group_id, scope?.id);
+                    assert.equal(payload.plugin_context.id, saved.record.id);
+                    assert.ok(!JSON.stringify(payload).includes(EDITOR_SECRET_MASK));
+                }
+            }
+        }
+    }
+});
 check('cleared and removed custom headers are omitted rather than rehydrated', () => {
     const draft = action('mcp');
     draft.additionalFields.custom_headers = { 'X-Keep': EDITOR_SECRET_MASK, 'X-Clear': EDITOR_SECRET_MASK, 'X-Remove': EDITOR_SECRET_MASK };
@@ -615,6 +643,7 @@ try {
         const original = resource(draft, ['/auth/key', '/auth/identity']);
         responseBody = {
             success: true, tools: [{ original_name: 'known', function_name: 'known' }],
+            fingerprints: { manifest_hash: 'synthetic-manifest', discovered_at: '2026-10-19T00:00:00Z', tools: { known: 'synthetic-tool' }, prompts: {} },
             capabilities: { tools: true, prompts_requested: false }, warnings: ['Review mutating tools', { untrusted: 'not a string' }],
         };
         const result = await discoverMcpAction(draft, original);

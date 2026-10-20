@@ -43,6 +43,18 @@ OpenAPI runtime registration and direct calls both enforce `allowed_operations`,
 
 The V2 editor no longer offers ad hoc custom fields. Use **Advanced → JSON** only to review preserved legacy values.
 
+### Testing an unsaved or edited action
+
+As of **0.261.349**, a no-auth V2 draft can be connection-tested before saving.
+When a saved action is switched to **No Authentication**, the test does not reuse
+its stored auth credentials. The saved action changes only when you save.
+Invalid credential-clear requests return a specific preparation error rather
+than attempting a connection.
+
+An OpenAPI connection test loads the specification and probes the base URL; it
+does not call a selected operation or prove an agent can use it. Qualify the
+intended operation separately and inspect its actual tool result.
+
 ## Example prompts
 
 - "List the available API operation IDs for this action."
@@ -63,4 +75,3 @@ The V2 editor no longer offers ad hoc custom fields. Use **Advanced → JSON** o
 - [MCP](../mcp/)
 - [Smart HTTP](../smart-http/)
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
-

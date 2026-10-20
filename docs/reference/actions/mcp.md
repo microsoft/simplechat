@@ -43,6 +43,19 @@ Use MCP when a provider already exposes an MCP server and agents should use thos
 
 The V2 editor no longer offers ad hoc custom fields. Use **Advanced → JSON** only to review preserved legacy values.
 
+### Testing and discovery without saving
+
+As of **0.261.349**, new no-auth V2 drafts can test a connection or discover tools
+without first being saved. Switching a saved action to no authentication does not
+restore inactive stored auth values. Custom headers are independent: remove a
+header explicitly if it should no longer be sent.
+
+Discovery displays its success or failure next to the control, including safe
+preparation errors. Neither testing nor discovery invokes tools or automatically
+saves the action. Discovery updates the draft's approved tool metadata; saving
+remains a separate decision. A successful probe does not qualify a tool's actual
+output or authorize replaying a failed operation.
+
 ## Tool fingerprint pinning
 
 Saving a new or materially changed MCP action is blocked until discovery has approved the current server manifest. SimpleChat computes a stable SHA-256 fingerprint from each tool's original name, description, input schema, output schema, and annotations, and from each prompt's name, description, and arguments. The approved manifest is stored in `additionalFields.mcp_tool_fingerprints` with the approved tool list.
