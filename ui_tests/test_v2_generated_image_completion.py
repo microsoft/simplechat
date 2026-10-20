@@ -1,7 +1,7 @@
 # test_v2_generated_image_completion.py
 """
 Real-store and real-component coverage for generated image completion messages.
-Version: 0.261.360
+Version: 0.261.361
 Implemented in: 0.261.356
 
 Only HTTP is mocked. Live image_url completions, legacy image frames, saved-message

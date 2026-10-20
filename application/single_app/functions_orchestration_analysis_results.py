@@ -9,6 +9,7 @@ from copy import deepcopy
 
 from functions_analysis_access import analysis_source_snapshot
 from functions_document_analysis_results import ANALYSIS_RESPONSE_SHAPE_CODES
+from functions_document_citations import build_document_citation
 from functions_orchestration_result_contracts import (
     Completeness,
     Coverage,
@@ -109,6 +110,18 @@ def _finding_units(reader):
     reader.recheck()
 
 
+def _saved_analysis_citations(reader):
+    citations = {}
+    reader.recheck()
+    for unit in reader.iter_units():
+        for evidence in unit['evidence']:
+            citation = build_document_citation(evidence.get('source'), evidence.get('location'))
+            if citation is not None:
+                citations.setdefault((citation['document_id'], citation['citation_id']), citation)
+    reader.recheck()
+    return list(citations.values())
+
+
 def persist_saved_analysis_result(
     *, service, producer, reader, guard_token, input_fingerprint=None, upstream=(), selection_limitations=(),
 ):
@@ -164,6 +177,7 @@ def persist_saved_analysis_result(
             "coverage": deepcopy(manifest.get("coverage") or {}),
             "validation": deepcopy(manifest.get("validation") or {}),
             "sources": sources,
+            "citations": _saved_analysis_citations(reader),
             "report_available": report_available,
             "public_records_available": projection is not None,
             **({"source_selection_limitations": list(selection_limitations)} if selection_limitations else {}),
@@ -207,6 +221,7 @@ def persist_comparison_result(*, service, producer, result, sources, guard_token
                 "failures": deepcopy(result.get("failures") or []),
                 "limitations": list(limitations),
                 "sources": snapshots,
+                "citations": deepcopy(result.get("citations") or []),
                 "left_document": deepcopy(result.get("left_document")),
                 "right_documents": deepcopy(result.get("right_documents")),
                 "report_available": result.get("report_status") == "ready",

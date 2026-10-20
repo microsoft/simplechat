@@ -15,6 +15,7 @@ from functions_mixed_source_orchestration import (
 from functions_document_actions import DOCUMENT_ACTION_TYPE_COMPARISON
 from functions_document_analysis import (
     build_document_analysis_progress_snapshot,
+    build_document_source_citation_guidance,
     run_document_analysis,
 )
 
@@ -173,7 +174,9 @@ def _build_document_summary_prompt(comparison_prompt, role_label, document_name)
     )
 
 
-def _build_pairwise_comparison_prompt(comparison_prompt, left_name, right_name, left_summary, right_summary):
+def _build_pairwise_comparison_prompt(
+    comparison_prompt, left_name, right_name, left_summary, right_summary, *, include_source_citations=False,
+):
     return (
         'You are comparing two documents that were summarized from analysis. '
         'Treat the left document as the primary baseline and compare the right document against it.\n\n'
@@ -182,12 +185,15 @@ def _build_pairwise_comparison_prompt(comparison_prompt, left_name, right_name, 
         f'Right document: {right_name}\n\n'
         'Explain what matches, what differs, what the right document changes or impacts relative to the left, '
         'and any conflicts, missing items, risks, or open questions that matter to the user request.\n\n'
+        f'{build_document_source_citation_guidance(comparison_prompt) if include_source_citations else ""}'
         f'<LeftDocumentSummary>\n{left_summary}\n</LeftDocumentSummary>\n\n'
         f'<RightDocumentSummary>\n{right_summary}\n</RightDocumentSummary>'
     )
 
 
-def _build_comparison_reduction_prompt(comparison_prompt, left_name, comparison_items):
+def _build_comparison_reduction_prompt(
+    comparison_prompt, left_name, comparison_items, *, include_source_citations=False,
+):
     combined_sections = []
     for comparison_item in comparison_items:
         combined_sections.append(
@@ -200,6 +206,7 @@ def _build_comparison_reduction_prompt(comparison_prompt, left_name, comparison_
         f'Comparison request:\n{comparison_prompt}\n\n'
         f'Left document: {left_name}\n\n'
         'Preserve material differences, impact analysis, conflicts, and unresolved questions.\n\n'
+        f'{build_document_source_citation_guidance(comparison_prompt) if include_source_citations else ""}'
         f"<PairwiseComparisons>\n{'\n\n'.join(combined_sections)}\n</PairwiseComparisons>"
     )
 
@@ -467,6 +474,7 @@ def _run_internal_document_comparison(
                 active_group_ids=action_config.get('active_group_ids'),
                 active_public_workspace_id=action_config.get('active_public_workspace_id'),
                 conversation_id=conversation_id, max_documents=1, include_coverage_summary=False,
+                include_source_citations=True,
                 activity_callback=activity_callback, cancel_requested=cancel_requested,
                 request_correlation_id=request_correlation_id,
             )
@@ -500,6 +508,7 @@ def _run_internal_document_comparison(
             text = invoke(
                 _build_pairwise_comparison_prompt(
                     comparison_prompt, left['document_name'], right['document_name'], left['text'], right['text'],
+                    include_source_citations=True,
                 ),
                 stage='comparison',
                 metadata={
@@ -529,7 +538,9 @@ def _run_internal_document_comparison(
         check_cancelled()
         try:
             text = invoke(
-                _build_comparison_reduction_prompt(comparison_prompt, left['document_name'], items),
+                _build_comparison_reduction_prompt(
+                    comparison_prompt, left['document_name'], items, include_source_citations=True,
+                ),
                 stage='comparison_reduction',
                 metadata={'comparison_count': len(items), 'left_document_id': left_id},
             )
@@ -557,9 +568,20 @@ def _run_internal_document_comparison(
         limitations.append('Some source summaries have incomplete source-window coverage; their comparisons remain partial.')
     if items and report is None:
         limitations.append('Pairwise findings are retained, but no complete consolidated report was produced.')
+    citations = {}
+    compared_ids = [left_id, *(item['right_document_id'] for item in items)] if items else []
+    for document_id in compared_ids:
+        for citation in source_results[document_id].get('citations', []):
+            if citation.get('document_id') != document_id:
+                continue
+            identity = (
+                citation.get('scope'), citation.get('scope_id'), document_id, citation['citation_id'],
+            )
+            citations[identity] = deepcopy(citation)
     return {
         'comparison_result_version': 'comparison-v1',
         'execution_status': status,
+        'citations': list(citations.values()),
         'comparison': {
             'left_document_id': left_id, 'right_document_ids': right_ids,
             'items': items, 'failed_document_ids': failed_ids,

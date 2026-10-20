@@ -1,6 +1,6 @@
 # Generated-output reliability fix
 
-Current version: **0.261.360**
+Current version: **0.261.361**
 
 Fixed in version: **0.261.356**
 

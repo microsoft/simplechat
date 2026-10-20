@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.341"
+version: "0.261.359"
 ---
 
 ## Decide what should run
@@ -50,6 +50,19 @@ Pinned documents specify the inputs, not the operation. Since **0.261.115**, the
 planner may Analyze or Compare those inputs without adding a Search step merely
 because they were pinned. Explicitly selected Search still constrains the plan,
 and the validator still rejects a plan that omits selected documents.
+
+### Open the evidence behind Analyze and Compare answers
+
+Since **0.261.356**, Analyze and Compare supply source references through the same
+document-citation pipeline as Search. Click an inline citation to inspect the
+original passage; a comparison can reference both the baseline and target
+documents. Saved answers retain their citations when reopened.
+
+Use those passages to check the answer against the source. A reference identifies
+evidence, not an independent verification of every conclusion. Partial coverage
+and uncertainty still matter, and opening a source still requires access to it.
+A missing source location is not replaced with an invented page. Existing answers
+without stored passage references are not rewritten automatically.
 
 ### Work from content already in the conversation
 
