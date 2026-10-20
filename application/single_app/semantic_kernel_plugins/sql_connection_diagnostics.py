@@ -2,10 +2,10 @@
 """Credential-free SQL connection diagnostics, with no application bootstrap or I/O."""
 
 import re
+import uuid
 from dataclasses import dataclass, field
 from time import monotonic
 from typing import Optional
-from uuid import uuid4
 
 
 SQL_ENGINES = frozenset({"sqlserver", "postgresql", "mysql", "sqlite", "unknown"})
@@ -60,7 +60,7 @@ class SqlConnectionContext:
     """One connection attempt chain; never retains inputs, environment values, or provider text."""
 
     operation: str
-    reference: str = field(default_factory=lambda: uuid4().hex, init=False)
+    reference: str = field(default_factory=lambda: uuid.uuid4().hex, init=False)
     stage: str = "configuration"
     properties: dict = field(default_factory=lambda: {
         key: "unknown" for key in (

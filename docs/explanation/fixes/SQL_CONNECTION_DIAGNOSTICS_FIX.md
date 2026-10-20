@@ -1,4 +1,4 @@
-# SQL connection diagnostics fix - v0.261.356
+# SQL connection diagnostics fix - v0.261.357
 
 ## Issue and root cause
 
@@ -140,6 +140,30 @@ and **58 combined chat/SQL browser cases** passed. The backend SQL
 implementation and its reviewed route fingerprints did not change during
 integration; the complete backend result above remains the pre-merge run,
 not a claim that it was rerun afterward.
+
+### CodeQL import follow-up - v0.261.357
+
+**Fixed in version: 0.261.357**, recorded in `application/single_app/config.py`.
+
+SQL diagnostic references now resolve `uuid.uuid4()` through the module when
+each context is created instead of retaining a function imported by value.
+The regression in `functional_tests/test_sql_connection_diagnostics.py`
+replaces the factory after the real diagnostic module is imported, checks
+that creation uses it, and restores the replacement with a scoped monkeypatch.
+Existing tests retain reference-format and per-connection uniqueness checks.
+
+The browser regression explicitly exports `connect_options` and `workspace_ui`
+from their shared fixture module, following the existing UI test pattern.
+The connection fixture remains available to Playwright; it was not removed
+merely to silence the unused-import finding. Desktop/mobile assertions, closed
+HTTP responses, and Azure/local browser selection behavior remain unchanged.
+No application authentication, logging export contract, or CI policy changed.
+
+Validation: the SQL diagnostic selection passed **56 cases** in both normal
+and optimized Python, and the desktop/mobile browser regression passed
+**2 cases**. Cosmos inventory validation retained **1,067 owners, 412 doubles,
+and zero review gaps**. Documentation coverage and quality passed **7/7**
+and **6/6**. These local results do not replace the new commit's CodeQL analysis.
 
 ### Shared connection boundary
 

@@ -1,8 +1,9 @@
 # test_sql_connection_diagnostics.py
 """
 Functional tests for credential-safe SQL connection diagnostics.
-Version: 0.261.356
+Version: 0.261.357
 Implemented in: 0.261.351
+UUID factory import regression added in: 0.261.357
 
 Validate structured evidence, conservative classification, privacy, and cold import
 behavior without SQL drivers, application bootstrap, Azure access, or network I/O.
@@ -14,6 +15,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import uuid
 
 import pytest
 
@@ -171,6 +173,24 @@ def test_driver_observation_is_conservative_and_references_are_per_connection(di
     properties = context.log_properties()
     assert properties["sql_driver_major"] == "unknown"
     assert SECRET not in repr(context)
+
+
+def test_context_uses_the_current_uuid_factory(diagnostics, monkeypatch):
+    reference = uuid.UUID("01234567-89ab-4cde-8fab-0123456789ab")
+    generated = []
+
+    def generate_reference():
+        generated.append(reference)
+        return reference
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(uuid, "uuid4", generate_reference)
+        context = diagnostics.SqlConnectionContext("sql_query_connect")
+
+    properties = context.log_properties()
+    assert generated == [reference]
+    assert context.reference == reference.hex
+    assert properties["sql_diagnostic_reference"] == reference.hex
 
 
 def test_diagnostic_helper_is_not_a_user_facing_action(monkeypatch):
