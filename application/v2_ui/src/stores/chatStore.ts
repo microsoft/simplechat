@@ -1443,6 +1443,7 @@ function buildStreamHandlers(
                 model_deployment_name: event.model_deployment_name,
                 agent_display_name: event.agent_display_name,
                 augmented: event.augmented,
+                hybrid_citations: event.blocked ? undefined : event.hybrid_citations,
                 metadata: retryReplyMetadata(completionMetadata(event) ?? {}, streamRetry()),
                 // Carried onto the finished message so its Microsoft 365 citation chips resolve
                 // without reading the thread again.
