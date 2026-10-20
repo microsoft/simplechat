@@ -1,8 +1,9 @@
 # test_workflow_assist_chat_results.py
 """
 Functional tests for capability/results authoring and group Ask AI.
-Version: 0.261.343
+Version: 0.261.364
 Implemented in: 0.261.343
+Chat-execution contract fix: 0.261.364
 
 Validate closed operations, inherited task execution, actual save projections,
 canonical audiences, scope isolation, stale revisions and group route policy.
@@ -13,6 +14,7 @@ import ast
 import copy
 import json
 import logging
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,7 +32,9 @@ import functions_workflow_assist as core  # noqa: E402
 from functions_workflow_assist_operations import (  # noqa: E402
     AssistApplyContext, AssistApplyError, AssistHandles, apply_assist_operations, validate_assist_output,
 )
-from functions_workflow_configuration import normalize_results_delivery  # noqa: E402
+from functions_workflow_configuration import (  # noqa: E402
+    WorkflowConfigurationError, normalize_chat_execution, normalize_results_delivery,
+)
 from test_support import workflow_assist as wa  # noqa: E402
 
 
@@ -117,6 +121,191 @@ def test_task_override_replaces_then_returns_to_inheritance():
     inherited = apply([{"op": "inherit_task_chat_execution", "task": "task_1"}], draft=changed)
     assert "chat_execution" not in inherited["tasks"][0]
     assert inherited["chat_execution"] == draft["chat_execution"]
+
+
+@pytest.mark.parametrize("scope", ["workflow", "task"])
+@pytest.mark.parametrize("mode", ["orchestration", "selected", "off"])
+@pytest.mark.parametrize("capabilities,visuals", [
+    ([], []), (["web_search"], []), ([], ["diagram"]), (["web_search"], ["diagram"]),
+])
+def test_chat_operation_schemas_match_runtime_mode_constraints(scope, mode, capabilities, visuals):
+    value = execution(mode, capabilities, visuals)
+    operation = {"op": f"set_{scope}_chat_execution", **{key: item for key, item in value.items() if key != "version"}}
+    if scope == "task":
+        operation["task"] = "task_1"
+    try:
+        normalize_chat_execution(value)
+    except WorkflowConfigurationError:
+        runtime_valid = False
+    else:
+        runtime_valid = True
+    errors = validate_assist_output(json.loads(wa.reply(operations=[operation])))
+    assert bool(errors) is not runtime_valid
+    if errors:
+        guidance = "at least one" if mode == "selected" else "empty"
+        assert any(guidance in message for message in errors), errors
+
+
+@pytest.mark.parametrize("scope", ["workflow", "task"])
+@pytest.mark.parametrize("mode,capabilities,visuals", [
+    ("selected", [], []), ("orchestration", ["web_search"], []), ("off", [], ["diagram"]),
+])
+def test_runtime_still_rejects_invalid_chat_combinations_with_specific_safe_feedback(scope, mode, capabilities, visuals):
+    draft = wa.new_draft()
+    before = copy.deepcopy(draft)
+    operation = {"op": f"set_{scope}_chat_execution", "mode": mode,
+                 "required_capabilities": capabilities, "visual_requirements": visuals}
+    if scope == "task":
+        operation["task"] = "task_1"
+    handles = AssistHandles(draft, user_id=wa.USER_ID, options=options())
+    with pytest.raises(AssistApplyError) as caught:
+        apply_assist_operations(draft, {"operations": [operation]}, handles, AssistApplyContext())
+    assert caught.value.diagnostics == [{
+        "assist_rule": "chat_execution_invalid", "operation_index": 1, "assist_operation": operation["op"],
+    }]
+    guidance = "at least one" if mode == "selected" else "Only selected mode"
+    assert guidance in caught.value.messages[0]
+    assert draft == before
+
+
+@pytest.mark.parametrize("scope", ["workflow", "task"])
+@pytest.mark.parametrize("kind,mode,capabilities,visuals,rule", [
+    ("modes", "orchestration", [], [], "chat_mode_unavailable"),
+    ("capabilities", "selected", ["web_search"], [], "chat_capability_unavailable"),
+    ("visual_requirements", "selected", [], ["diagram"], "chat_output_unavailable"),
+])
+def test_unavailable_chat_choices_remain_rejected_with_distinct_rules(scope, kind, mode, capabilities, visuals, rule):
+    choices = options()
+    for choice in choices["chat_execution"][kind]:
+        choice["available"] = False
+    draft = wa.new_draft()
+    before = copy.deepcopy(draft)
+    operation = {"op": f"set_{scope}_chat_execution", "mode": mode,
+                 "required_capabilities": capabilities, "visual_requirements": visuals}
+    if scope == "task":
+        operation["task"] = "task_1"
+    handles = AssistHandles(draft, user_id=wa.USER_ID, options=choices)
+    with pytest.raises(AssistApplyError) as caught:
+        apply_assist_operations(draft, {"operations": [operation]}, handles, AssistApplyContext())
+    assert caught.value.diagnostics == [{
+        "assist_rule": rule, "operation_index": 1, "assist_operation": operation["op"],
+    }]
+    assert "unavailable" in caught.value.messages[0]
+    assert draft == before
+
+
+@pytest.mark.parametrize("scope", ["workflow", "task"])
+@pytest.mark.parametrize("mode", ["selected", "orchestration", "off"])
+@pytest.mark.parametrize("corrected", [False, True], ids=["persistent rejection", "successful correction"])
+def test_blank_wednesday_email_draft_corrects_atomically_without_inventing_run_time(scope, mode, corrected):
+    draft = wa.new_draft(name="", description="")
+    draft["tasks"] = [draft["tasks"][0]]
+    draft["tasks"][0].update(name="Task 1", instructions="")
+    invalid = {"op": f"set_{scope}_chat_execution", "mode": mode,
+               "required_capabilities": [] if mode == "selected" else ["agent_invoke"],
+               "visual_requirements": []}
+    if scope == "task":
+        invalid["task"] = "task_1"
+    valid = {**invalid, "required_capabilities": ["agent_invoke"] if mode == "selected" else []}
+    operations = [
+        {"op": "set_name", "name": "Wednesday email review"},
+        {"op": "set_description", "description": "Review emails received on Monday and Tuesday each Wednesday."},
+        {"op": "set_task_name", "task": "task_1", "name": "Review Monday and Tuesday emails"},
+        {"op": "set_task_instructions", "task": "task_1",
+         "instructions": "Use an authorized Microsoft 365 agent to summarize emails received on Monday and Tuesday. "
+                         "Report missing access instead of claiming to have read emails."},
+        invalid,
+        {"op": "set_schedule_calendar", "frequency": "weekly", "days_of_week": ["wednesday"], "time_of_day": ""},
+    ]
+    clarification = {"question": "What time on Wednesday should this run?", "fields": ["schedule_time"]}
+    first = wa.reply(operations=operations, clarification=clarification)
+    second = wa.reply(operations=[*operations[:4], valid, operations[-1]], clarification=clarification) if corrected else first
+    model = wa.ScriptedModel(first, second)
+    choices = options()
+    choices["chat_execution"]["capabilities"].append({"id": "agent_invoke", "available": True})
+    bundle = wa.services(model, options=choices)
+    body = wa.request_body(draft, instruction="Review my Monday and Tuesday emails every Wednesday.")
+    before = copy.deepcopy(body)
+    if corrected:
+        result = wa.run(body, bundle)
+        assert result["outcome"] == "changed"
+        candidate = result["candidate"]
+        assert candidate["name"] == "Wednesday email review"
+        assert len(candidate["tasks"]) == 1
+        assert candidate["tasks"][0]["instructions"] == operations[3]["instructions"]
+        assert candidate["schedule"] == {
+            "kind": "calendar", "frequency": "weekly", "days_of_week": ["wednesday"], "day_of_month": None,
+            "time_of_day": "", "timezone": wa.TIME_ZONE,
+        }
+        assert result["clarification"] == clarification
+        owner = candidate if scope == "workflow" else candidate["tasks"][0]
+        assert owner["chat_execution"] == execution(mode, valid["required_capabilities"])
+        assert candidate.get("m365_run_as_user_id") == draft.get("m365_run_as_user_id")
+        assert candidate.get("results_delivery") == draft.get("results_delivery")
+    else:
+        failure = wa.refusal(body, bundle)
+        assert (failure.status, failure.code) == (502, "assistant_output_invalid")
+        assert not bundle.recorder.named("dry_run")
+    assert len(model.calls) == 2
+    messages = model.envelope(1)["previous_attempt_errors"]
+    guidance = "at least one" if mode == "selected" else "empty"
+    assert any(guidance in message for message in messages), messages
+    assert body == before
+    assert bundle.limiter.events[-1] == ("release", "lease-1", False)
+
+
+@pytest.mark.parametrize("flags", [[], ["-O"]], ids=["normal Python", "optimized Python"])
+def test_chat_contract_and_correction_execute_in_fresh_network_blocked_processes(flags):
+    probe = """
+import copy
+import json
+import socket
+import sys
+sys.path[:0] = sys.argv[1:]
+def blocked(*args, **kwargs):
+    raise AssertionError("Network access is forbidden")
+socket.socket.connect = blocked
+socket.create_connection = blocked
+socket.getaddrinfo = blocked
+from functions_assist_diagnostics import AssistDiagnostics, safe_assist_diagnostics
+from functions_workflow_assist_operations import OPERATION_SCHEMAS, validate_assist_output
+from test_support import workflow_assist as wa
+for name in OPERATION_SCHEMAS:
+    safe = safe_assist_diagnostics({"assist_operation": name})
+    if safe.get("assist_operation") != name:
+        raise AssertionError("A supported operation is missing from diagnostics")
+invalid = {"op": "set_workflow_chat_execution", "mode": "selected",
+           "required_capabilities": [], "visual_requirements": []}
+errors = validate_assist_output(json.loads(wa.reply(operations=[invalid])))
+if not errors or not any("at least one" in message for message in errors):
+    raise AssertionError("The schema did not explain the invalid selection")
+valid = {**invalid, "mode": "off"}
+model = wa.ScriptedModel(wa.reply(operations=[invalid]), wa.reply(operations=[valid]))
+bundle = wa.services(model, options={
+    "chat_execution": {"modes": [{"id": "off", "available": True}]},
+})
+events = []
+bundle.diagnostics = AssistDiagnostics(events.append)
+body = wa.request_body()
+before = copy.deepcopy(body)
+result = wa.run(body, bundle)
+if result["outcome"] != "changed" or result["candidate"]["chat_execution"]["mode"] != "off":
+    raise AssertionError("The corrected response did not produce a candidate")
+if body != before or len(model.calls) != 2:
+    raise AssertionError("Correction changed the input or did not make both calls")
+rejected = [event for event in events if event["assist_event"] == "validation_rejected"]
+if not rejected or rejected[0].get("assist_operation") != invalid["op"]:
+    raise AssertionError("The operation name was lost")
+if bundle.limiter.events[-1] != ("release", "lease-1", False):
+    raise AssertionError("The limiter was not released")
+sys.stdout.write(json.dumps({"outcome": result["outcome"], "calls": len(model.calls)}))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-B", *flags, "-c", probe, str(APP), str(ROOT / "functional_tests")],
+        cwd=ROOT, capture_output=True, text=True, timeout=60, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {"outcome": "changed", "calls": 2}
 
 
 @pytest.mark.parametrize("identity", ["invented_tool", "deep_research"])

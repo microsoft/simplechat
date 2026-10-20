@@ -54,6 +54,7 @@ ASSIST_DIAGNOSTIC_TEXT = {
         'protected_workflow', 'projection_invalid', 'save_validation', 'candidate_invalid',
         'task_limit', 'task_required', 'task_self_reference', 'new_task_key_repeated',
         'document_scope_unknown', 'reference_not_bound', 'alert_scope_invalid',
+        'chat_execution_invalid', 'chat_mode_unavailable', 'chat_capability_unavailable', 'chat_output_unavailable',
         'schema_required', 'schema_additional_properties', 'schema_not', 'schema_enum',
         'schema_const', 'schema_type', 'schema_pattern', 'schema_min_length', 'schema_max_length',
         'schema_min_items', 'schema_max_items', 'schema_unique_items', 'schema_minimum',
@@ -66,6 +67,10 @@ ASSIST_DIAGNOSTIC_TEXT = {
         'add_task', 'remove_task', 'move_task', 'set_task_name', 'set_task_instructions',
         'set_task_inputs', 'bind_reference', 'set_task_references', 'unbind_reference',
         'set_task_document_target', 'clear_task_document_target',
+        'set_workflow_chat_execution', 'set_task_chat_execution', 'inherit_task_chat_execution',
+        'set_results_delivery', 'set_results_recipients', 'set_results_all_group_members',
+        'set_task_document_scope', 'set_task_document_selection', 'set_task_merge_options',
+        'update_task_document_window', 'replace_task_document_filter',
     }),
     'assist_field': frozenset({
         '/display_name', '/displayName', '/description', '/instructions', '/actions', '/model',

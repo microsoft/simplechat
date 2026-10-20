@@ -1,9 +1,10 @@
 # test_ask_ai_debug_diagnostics.py
 """
 Functional regressions for debug-gated Ask AI diagnostics.
-Version: 0.261.331
+Version: 0.261.364
 Implemented in: 0.261.329
 Operation error container fix: 0.261.331
+Workflow operation coverage and chat-execution rules: 0.261.364
 
 Exercises real editor/workflow cores, model adapter, and log_event serialization
 with offline providers. Synthetic replies prove rule visibility and privacy,
@@ -34,6 +35,7 @@ import functions_workflow_assist_runtime as runtime  # noqa: E402
 from functions_assist_diagnostics import (  # noqa: E402
     ASSIST_DIAGNOSTIC_LIMIT, AssistDiagnostics, safe_assist_diagnostics,
 )
+from functions_workflow_assist_operations import OPERATION_SCHEMAS  # noqa: E402
 from test_editor_assist_core import FakeLimiter, ScriptedModel, agent_body, SUBMISSION_ID  # noqa: E402
 from test_support import workflow_assist as wa  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
@@ -309,6 +311,59 @@ def test_workflow_rejections_are_typed_and_correlated(diagnostic_logger, caplog,
     assert PRIVATE not in emitted_text(caplog, capsys)
 
 
+@pytest.mark.parametrize('operation', sorted(OPERATION_SCHEMAS))
+def test_all_workflow_operation_names_survive_both_diagnostic_sinks(diagnostic_logger, caplog, capsys, operation):
+    _settings, logger = diagnostic_logger
+    reply = wa.reply(operations=[{'op': operation, 'private_field': PRIVATE}])
+    bundle = wa.services(wa.ScriptedModel(reply, reply))
+    bundle.diagnostics = AssistDiagnostics(telemetry.log_assist_debug)
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        with pytest.raises(workflow.WorkflowAssistError) as caught:
+            wa.run(wa.request_body(instruction=PRIVATE), bundle)
+    assert caught.value.code == 'assistant_output_invalid'
+    rejected = [record for record in records(caplog) if record.sc_assist_event == 'validation_rejected']
+    assert {record.sc_attempt for record in rejected} == {1, 2}
+    assert all(record.sc_assist_operation == operation and record.sc_operation_index == 1 for record in rejected)
+    assert all(record.sc_assist_stage == 'schema' for record in rejected)
+    assert all(record.sc_turn_id_hash == hashlib.sha256(b'submission-0001').hexdigest() for record in rejected)
+    output = emitted_text(caplog, capsys)
+    assert f"'assist_operation': '{operation}'" in output
+    assert PRIVATE not in output and 'private_field' not in output and 'submission-0001' not in output
+
+
+@pytest.mark.parametrize('kind,mode,capabilities,visuals,rule', [
+    ('modes', 'orchestration', [], [], 'chat_mode_unavailable'),
+    ('capabilities', 'selected', ['web_search'], [], 'chat_capability_unavailable'),
+    ('visual_requirements', 'selected', [], ['diagram'], 'chat_output_unavailable'),
+])
+def test_chat_availability_rejections_retain_specific_safe_rules(
+    diagnostic_logger, caplog, capsys, kind, mode, capabilities, visuals, rule,
+):
+    _settings, logger = diagnostic_logger
+    reply = wa.reply(operations=[{
+        'op': 'set_workflow_chat_execution', 'mode': mode,
+        'required_capabilities': capabilities, 'visual_requirements': visuals,
+    }])
+    choices = {'chat_execution': {
+        'modes': [{'id': mode, 'available': kind != 'modes'}],
+        'capabilities': [{'id': identity, 'available': kind != 'capabilities'} for identity in capabilities],
+        'visual_requirements': [{'id': identity, 'available': kind != 'visual_requirements'} for identity in visuals],
+    }}
+    bundle = wa.services(wa.ScriptedModel(reply, reply), options=choices)
+    bundle.diagnostics = AssistDiagnostics(telemetry.log_assist_debug)
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        with pytest.raises(workflow.WorkflowAssistError) as caught:
+            wa.run(wa.request_body(instruction=PRIVATE), bundle)
+    assert caught.value.code == 'assistant_output_invalid'
+    rejected = [record for record in records(caplog) if record.sc_assist_event == 'validation_rejected']
+    assert len(rejected) == 2
+    assert all(record.sc_assist_rule == rule and record.sc_assist_stage == 'apply' for record in rejected)
+    assert all(record.sc_assist_operation == 'set_workflow_chat_execution' for record in rejected)
+    output = emitted_text(caplog, capsys)
+    assert f"'assist_rule': '{rule}'" in output
+    assert PRIVATE not in output
+
+
 @pytest.mark.parametrize('validation_code', ['invalid_workflow', PRIVATE])
 def test_workflow_save_validation_drops_private_codes_and_messages(diagnostic_logger, caplog, capsys, validation_code):
     _settings, logger = diagnostic_logger
@@ -342,6 +397,7 @@ def test_diagnostic_logger_failures_do_not_change_results_or_cleanup():
 def test_allowlist_rejects_unknown_fields_categories_and_non_finite_measurements():
     safe = safe_assist_diagnostics({
         'assist_rule': 'private_prompt', 'assist_field': UNKNOWN_PATH,
+        'assist_operation': PRIVATE,
         'assist_finish_reason': PRIVATE, 'prompt': PRIVATE, 'password': PRIVATE,
         'elapsed_ms': float('nan'), 'provider_status': float('inf'), 'attempt': True,
         'output_length': 10 ** 1000, 'turn_id_hash': PRIVATE, 'assist_stage': 'operations',
@@ -432,7 +488,7 @@ def test_json_mode_fallback_is_debug_visible_without_provider_message(diagnostic
 
 
 def test_implementation_version():
-    assert_app_version_at_least('0.261.329')
+    assert_app_version_at_least('0.261.364')
 
 
 if __name__ == '__main__':
