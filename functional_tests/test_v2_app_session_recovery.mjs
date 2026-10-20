@@ -1,6 +1,7 @@
 // test_v2_app_session_recovery.mjs
-// Version: 0.261.340
+// Version: 0.261.354
 // Implemented in: 0.261.338
+// Multipart response negotiation fixed in: 0.261.354
 // Executes real request, bootstrap, replay and pending-action modules with only HTTP replaced.
 
 import assert from 'node:assert/strict';
@@ -281,6 +282,53 @@ test('upload session failures use the same app notice without retrying multipart
     await assert.rejects(uploadFile('/upload', new FormData()), isAppSessionError);
     assert.equal(useAppSessionStore.getState().status, 'required');
     assert.equal(requests.length, 1);
+});
+
+for (const path of ['/upload', '/api/documents/upload']) {
+    test(`multipart requests negotiate JSON without changing the upload: ${path}`, async () => {
+        const controller = new AbortController();
+        const formData = new FormData();
+        formData.append('file', new File(['program,amount\nA,10\n'], 'ledger.csv', { type: 'text/csv' }));
+        formData.append('conversation_id', 'chat');
+        handler = (_path, init) => {
+            const headers = new Headers(init.headers);
+            assert.equal(headers.get('Accept'), 'application/json');
+            assert.equal(headers.has('Content-Type'), false, 'the browser owns the multipart boundary');
+            assert.equal(init.body, formData);
+            assert.equal(init.signal, controller.signal);
+            assert.equal(init.credentials, 'same-origin');
+            assert.equal(init.method, 'POST');
+            return json({ success: true });
+        };
+        const result = await uploadFile(path, formData, controller.signal);
+        assert.deepEqual(result, { success: true });
+        assert.equal(requests.length, 1);
+        assert.equal(useAppSessionStore.getState().status, 'ready');
+    });
+
+    test(`negotiated upload auth errors never redirect or replay: ${path}`, async () => {
+        handler = (_path, init) => {
+            assert.equal(new Headers(init.headers).get('Accept'), 'application/json');
+            return json({ error: 'Unauthorized', message: 'Authentication required' }, 401);
+        };
+        await assert.rejects(uploadFile(path, new FormData()), isAppSessionError);
+        assert.equal(requests.length, 1);
+        assert.equal(useAppSessionStore.getState().status, 'required');
+    });
+}
+
+test('upload permission failures and cancellations do not expire the app session', async () => {
+    handler = () => json({ error: 'Forbidden', message: 'You cannot upload to this conversation.' }, 403);
+    await assert.rejects(uploadFile('/upload', new FormData()),
+        (error) => error.status === 403 && !isAppSessionError(error));
+    assert.equal(useAppSessionStore.getState().status, 'ready');
+    const controller = new AbortController();
+    controller.abort();
+    handler = () => Promise.reject(new DOMException('Cancelled', 'AbortError'));
+    await assert.rejects(uploadFile('/upload', new FormData(), controller.signal),
+        (error) => error.name === 'AbortError');
+    assert.equal(requests.length, 2, 'neither denial nor cancellation starts a probe or replay');
+    assert.equal(useAppSessionStore.getState().status, 'ready');
 });
 
 test('known expiry or an account switch blocks new writes until explicit recovery', async () => {

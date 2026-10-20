@@ -371,6 +371,7 @@ export async function uploadFileWithStatus<T>(
     const response = await fetchWithSessionCheck(path, {
         method: 'POST',
         credentials: CREDENTIALS_MODE,
+        headers: { Accept: 'application/json' },
         body: formData,
         signal,
     });

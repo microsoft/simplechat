@@ -1114,7 +1114,10 @@ def enforce_idle_session_timeout():
                     level=logging.INFO
                 )
 
-                if request.path.startswith('/api/'):
+                if (
+                    request.accept_mimetypes.accept_json
+                    and not request.accept_mimetypes.accept_html
+                ) or request.path.startswith('/api/'):
                     return jsonify({
                         'error': 'Session expired',
                         'message': 'Your session expired due to inactivity. Please sign in again.',
