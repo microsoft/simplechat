@@ -807,7 +807,6 @@
     "application/single_app/route_backend_group_documents.py::register_route_backend_group_documents.api_delete_group_tag": "9e2049c3d8ad45fd190080c5a8d955395e5b2e1caae3237e473624e1be4665f2",
     "application/single_app/route_backend_groups.py::register_route_backend_groups.api_group_activity": "b68cf13c1361c5df6a62e49dd97426deeacf9389b2889dcb7efc02697d528696",
     "application/single_app/route_backend_groups.py::register_route_backend_groups.api_group_stats": "99baefcd65410b84b8eef2e3c7a2113dc43b3a16444f930e077e4c9311f98cf7",
-    "application/single_app/route_backend_m365.py::register_route_backend_m365.list_m365_waiting_requests": "a08dfc34823a0019c09d30bf38f7e25ac1dfd6e81944665f3912f2e4daa7a73f",
     "application/single_app/route_backend_public_workspaces.py::register_route_backend_public_workspaces.discover_public_workspaces": "062c6c6441e6af64ba3ad877183fbe0c6e5b1b7557e4d98888d37ebb255c2300",
     "application/single_app/route_backend_public_workspaces.py::register_route_backend_public_workspaces.api_public_file_count": "81af253b9f8a788afaa40eed182e0a941eab4c63290cf512516a0ccd8ae29ec8",
     "application/single_app/route_backend_public_workspaces.py::register_route_backend_public_workspaces.api_public_workspace_stats": "0c7b1bca8b55d4380e5fede0efcf6f785f8e4657006c7b65e2e2eb02627c294c",
@@ -10208,13 +10207,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8034d50df9e8443b886517094846d07aea5e807e73346d9158252d91d2df1a48"
+        "module_sha256": "b7e44c027116916d873943b657a51487f726dda36f1732a2799eca3d13886629"
       },
       "classification": "sdk-compatible",
-      "contract": "Connection point records are mapping-compatible; owner, tenant, ETag and partition checks remain unchanged.",
+      "contract": "Chat and workflow owners consume SDK point mappings through field reads, copy dict projections, and ETag-conditional writes; encrypted cache binding includes record kind and generation.",
       "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_connections.py"
+        "functional_tests/test_m365_chat_connection_persistence.py::test_real_sdk_chat_owner_preserves_encrypted_refresh_and_conditional_disconnect"
       ]
     },
     "application/single_app/functions_m365_connections.py::M365ConnectionService._replace": {
@@ -10229,18 +10228,18 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8034d50df9e8443b886517094846d07aea5e807e73346d9158252d91d2df1a48"
+        "module_sha256": "b7e44c027116916d873943b657a51487f726dda36f1732a2799eca3d13886629"
       },
       "classification": "sdk-compatible",
-      "contract": "Connection point records are mapping-compatible; owner, tenant, ETag and partition checks remain unchanged.",
+      "contract": "Conditional replacements route by the authorized user_id in the body, preserve ETag ownership, and return field-read SDK mappings for chat and workflow credentials.",
       "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_connections.py"
+        "functional_tests/test_m365_chat_connection_persistence.py::test_real_sdk_chat_owner_preserves_encrypted_refresh_and_conditional_disconnect"
       ]
     },
     "application/single_app/functions_m365_connections.py::M365ConnectionService._ensure_connection": {
       "boundary": {
-        "sha256": "185c6764d7621688b751295e06307e7c926116a1ddac1593d9e4aff963b7456f",
+        "sha256": "06571ba9c0632569d03f745fcfe489f929832b186115cf715eea0f84ab6b30b6",
         "points": [
           {
             "method": "create_item",
@@ -10250,13 +10249,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8034d50df9e8443b886517094846d07aea5e807e73346d9158252d91d2df1a48"
+        "module_sha256": "b7e44c027116916d873943b657a51487f726dda36f1732a2799eca3d13886629"
       },
       "classification": "sdk-compatible",
-      "contract": "Connection point records are mapping-compatible; owner, tenant, ETag and partition checks remain unchanged.",
+      "contract": "New chat and workflow records have separate identifiers and kinds. Created SDK mappings enter only binding field reads and conditional cache persistence, never exact-dict domain validation.",
       "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_connections.py"
+        "functional_tests/test_m365_chat_connection_persistence.py::test_real_sdk_chat_owner_preserves_encrypted_refresh_and_conditional_disconnect"
       ]
     },
     "application/single_app/functions_m365_connections.py::M365ConnectionService.start_connection": {
@@ -10271,11 +10270,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8034d50df9e8443b886517094846d07aea5e807e73346d9158252d91d2df1a48"
+        "module_sha256": "b7e44c027116916d873943b657a51487f726dda36f1732a2799eca3d13886629"
       },
       "classification": "response-unused",
-      "contract": "M365ConnectionService.start_connection: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
+      "contract": "The OAuth flow create response is discarded; the protected local flow fields are used for the authorization URL. Workflow create failures remain visible.",
       "tests": []
     },
     "application/single_app/functions_m365_continuations.py::resume_pending_workflows": {
@@ -23331,13 +23329,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "ca3b45abe33f3ef83e6190af256368949379bbdca738b21d7cc3906ab0644215"
+        "module_sha256": "ffc2adf0045b1eab887ea5d679b270606c9f81eeccfe30bc8643ca156a93a12d"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_m365.list_m365_waiting_requests: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Partition-bound query rows are plain SDK JSON and are returned through jsonify with the existing continuation and CSRF fields; no point-response domain validation is entered.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_m365_chat_connection_persistence.py::test_waiting_request_route_consumes_plain_query_rows"
       ]
     },
     "application/single_app/route_backend_orchestration.py::_load_ledger": {

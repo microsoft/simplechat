@@ -132,8 +132,20 @@ Use the separate **Microsoft 365 chat connection** card to reconnect even when
 no chat is waiting or a saved sign-in is already present. Select sources, choose
 **Reconnect Microsoft 365 for chat**, and verify your same-account sign-in with
 Microsoft. Then retry the original question. This renews the current interactive
-session without changing saved workflow connections, permissions at the source,
-or sharing approvals.
+connection without changing saved workflow connections, permissions at the
+source, or sharing approvals.
+
+Since **0.261.355**, the card distinguishes **saved** chat connections from
+**session-only** connections. With Key Vault secret storage configured, reconnect
+once to save a separate encrypted chat credential that survives browser restarts
+and app sign-out/sign-in. Routine access-token expiry no longer erases the
+connected-source list. Microsoft or your organization can still require a new
+sign-in. Without Key Vault, the card explains that chat lasts only for the
+current app session.
+
+**Disconnect chat** asks for confirmation and removes that chat credential
+without disconnecting workflows. Signing out of SimpleChat leaves saved chat
+connections intact; disconnect explicitly when you no longer want one saved.
 
 See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }})
 for approval duration, retained-evidence sharing, and Run as behavior

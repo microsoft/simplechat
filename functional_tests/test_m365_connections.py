@@ -1,7 +1,7 @@
 # test_m365_connections.py
 """
 Functional tests for encrypted Microsoft 365 workflow connections.
-Version: 0.261.302
+Version: 0.261.355
 Implemented in: 0.261.029
 
 Uses real MSAL authorization-code/cache logic with a scoped HTTP fake, real
@@ -132,6 +132,7 @@ class M365ConnectionTests(unittest.TestCase):
             key_provider=self.key_provider, config_provider=lambda: self.config,
             msal_factory=self.msal_factory, clock=self.clock,
             workflow_authorizer=execution.validate_m365_workflow_context,
+            chat_readiness_provider=lambda: {"available": False, "message": "Session-only test deployment."},
         )
         self.approvals = approvals.M365ApprovalService(
             container_factory=lambda: self.approval_container,
@@ -573,7 +574,7 @@ class M365ConnectionTests(unittest.TestCase):
             completed = self.service.complete_chat_connection(
                 "user-a", "tenant-a", {"state": query["state"][0], "code": "chat-code"},
             )
-            cached = session["token_cache"]
+            cached = session[connections.CHAT_CACHE_SESSION_KEY]
             current_user = copy.deepcopy(session["user"])
             flow_present = connections.CHAT_AUTH_SESSION_KEY in session
             token = connections.get_m365_access_token(["Files.Read.All"], include_auth_url=False)
@@ -646,10 +647,10 @@ class M365ConnectionTests(unittest.TestCase):
             self.service.complete_chat_connection("user-a", "tenant-a", {"state": query["state"][0], "code": "chat"})
             session.pop(connections.CHAT_CONNECTION_SESSION_KEY)
             status = self.service.read_chat_connection("user-a", "tenant-a")
-            cache = connections.deserialize_m365_cache(session["token_cache"])
+            cache = connections.deserialize_m365_cache(session[connections.CHAT_CACHE_SESSION_KEY])
             for token in list(cache.search(msal.TokenCache.CredentialType.REFRESH_TOKEN)):
                 cache.remove_rt(token)
-            session["token_cache"] = cache.serialize()
+            session[connections.CHAT_CACHE_SESSION_KEY] = cache.serialize()
             without_refresh = self.service.read_chat_connection("user-a", "tenant-a")
         self.assertEqual(status["status"], "available")
         self.assertEqual(status["sources"], ["email", "onedrive", "spo"])
@@ -684,7 +685,7 @@ class M365ConnectionTests(unittest.TestCase):
         with app.test_request_context():
             _begin, query = self.begin_chat()
             self.service.complete_chat_connection("user-a", "tenant-a", {"state": query["state"][0], "code": "first"})
-            previous_cache = session["token_cache"]
+            previous_cache = session[connections.CHAT_CACHE_SESSION_KEY]
             connections.mark_m365_chat_reconnect_required(context)
             blocked = connections.get_m365_access_token(["Files.Read.All"], context=context)
             clients_before = len(self.clients)
@@ -700,7 +701,7 @@ class M365ConnectionTests(unittest.TestCase):
                 self.service.complete_chat_connection(
                     "user-a", "tenant-a", {"state": query["state"][0], "code": "wrong-user"},
                 )
-            cached = session["token_cache"]
+            cached = session[connections.CHAT_CACHE_SESSION_KEY]
             failed_status = self.service.read_chat_connection("user-a", "tenant-a")
             self.http.claim_overrides = {}
             reconnect = self.service.start_profile_chat_connection(
@@ -792,7 +793,7 @@ class M365ConnectionTests(unittest.TestCase):
                                 token = connections.get_m365_access_token(
                                     ["User.Read", "Files.Read.All", "Sites.Read.All"], include_auth_url=False,
                                 )
-                                cached = session.get("token_cache")
+                                cached = session.get(connections.CHAT_CACHE_SESSION_KEY)
                                 current_user = dict(session["user"])
                             self.assertEqual(completed["request_id"], "chat-request")
                             self.assertIsInstance(cached, str)

@@ -26,7 +26,6 @@ from functions_m365_connections import (
     CHAT_AUTH_SESSION_KEY,
     CHAT_AUTH_STATE_PREFIX,
     CHAT_CALLBACK_PATH,
-    CHAT_RECONNECT_SESSION_KEY,
     COMPLETION_MODES,
     CONNECTION_CALLBACK_PATH,
     get_m365_connection_service,
@@ -302,11 +301,6 @@ def _complete_chat_connection(user_id, tenant_id, auth_response):
     return redirect(f"/chats?{query}")
 
 
-def _publish_verified_workflow_cache_to_session(serialized):
-    session["token_cache"] = serialized
-    session.pop(CHAT_RECONNECT_SESSION_KEY, None)
-
-
 def _complete_workflow_connection(user_id, tenant_id, auth_response, completion):
     session_binding = session.pop("m365_workflow_oauth_binding", None)
     if not session_binding:
@@ -316,7 +310,6 @@ def _complete_workflow_connection(user_id, tenant_id, auth_response, completion)
         )
     get_m365_connection_service().complete_connection(
         user_id, tenant_id, auth_response, session_binding,
-        cache_writer=_publish_verified_workflow_cache_to_session,
     )
     if completion == "popup":
         return _connection_result_page(
@@ -462,6 +455,18 @@ def register_route_backend_m365(bp):
             completion=_completion_mode(data),
         )
         return jsonify({"success": True, **result})
+
+    @bp.route("/api/m365/chat/connection/disconnect", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def disconnect_m365_chat_connection():
+        user_id, tenant_id = _subject()
+        validate_m365_csrf()
+        if _body():
+            raise ValueError("The signed-in user supplies the chat connection.")
+        connection = get_m365_connection_service().disconnect_chat(user_id, tenant_id)
+        return jsonify({"success": True, "connection": connection})
 
     @bp.route("/api/m365/preferences", methods=["GET"])
     @swagger_route(security=get_auth_security())
