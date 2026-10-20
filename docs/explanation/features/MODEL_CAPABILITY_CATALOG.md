@@ -12,16 +12,22 @@ response length is not the model's maximum output.
 
 **Combined capability, image, and embedding integration: 0.261.122**
 
+**GPT-4o, GPT-4.1, and o-series token coverage implemented in version: 0.261.356**
+
+- Current documentation version: **0.261.356**, coordinated with the application
+  version update in `application\single_app\config.py`.
 - Application version owner: `application\single_app\config.py`.
-- Catalog data contract: **schemaVersion 3**.
+- Catalog data contract: **schemaVersion 4**.
 - Token-capacity audit date: **2026-09-19**. Operation and reasoning source reviews
   retain their separate September 7, 8, and 16 dates.
 - Related work: issue **#1493**, PR **#1497**.
 - The original qualitative capability resolver shipped in **0.261.014**.
 - Provider-qualified image operations were implemented in **0.261.107**.
 
-All **75 audited model IDs** retain an explicit token-limit disposition. Additional
-image, embedding, and reasoning records do not inherit those audits or their capacities. An
+All **75 originally audited model IDs** retain an explicit token-limit disposition.
+A separate **2026-10-20** audit adds token evidence to nine existing GPT-4o,
+GPT-4.1, and o-series text records. Remaining image, embedding, and reasoning-only
+records do not inherit those audits or their capacities. An
 unknown limit is a researched result, not zero, unlimited capacity, or permission
 to borrow a sibling model's limit. Existing IDs, qualitative flags, display
 metadata, and legacy aliases are retained.
@@ -142,8 +148,10 @@ consumer's cached metadata.
 
 ### Separate quantities and applicability
 
-Root capacity fields describe the **publisher-native specification**, or a
-publisher checkpoint for open-weight models. They are not blanket claims about
+Root capacity fields describe the **publisher-native specification**, a publisher
+checkpoint for open-weight models, or an explicitly documented conservative
+allowance across known snapshots. A conservative allowance is not a claim that
+every snapshot has that exact maximum. These fields are not blanket claims about
 Azure, Vertex, custom gateways, or sovereign-cloud deployments.
 
 | Field | Meaning |
@@ -270,7 +278,13 @@ Profile interpretation is deterministic:
    offline integrity test rejects ambiguity, duplicate IDs, and dangling evidence.
 
 `modelVersions` contains exact versions, never prefix rules or an assumption
-that every future release has the newest documented limits.
+that every future release has the newest documented limits. When explicit version
+metadata is absent, the resolver can recover a version only if the selected
+numeric identity is both a `verifiedAliases` entry and exactly the model ID plus
+one of those audited version strings. A deployment suffix, display name, or
+plausible date alone cannot activate a profile. Conflicting explicit version
+metadata and an exact verified snapshot ID produce a configuration error instead
+of granting the older snapshot a newer version's allowance.
 
 Profiles can additionally declare `effectiveContextWindow`: a host/protocol
 combined ceiling distinct from advertised context. Azure GPT-5.5 Responses has
@@ -325,6 +339,64 @@ does not assert an exact all-host capacity.
   with an omitted, null, or empty `modelVersion` still resolve `["none"]` for
   these exact model IDs. This does not relax latest-chat's separate requirement
   for an audited Azure version before supplying its differing capacities.
+
+### Additional GPT-4o, GPT-4.1, and o-series token audit
+
+Implemented in version: **0.261.356**. Primary sources were checked on
+**2026-10-20**, separately from the original 75-record audit and historical
+operation/reasoning reviews. No live Azure deployment is queried or changed.
+
+| Exact model IDs | Native shared context | Default catalog output allowance | Azure shared-context allowance | Azure independent input |
+|---|---:|---:|---:|---:|
+| `gpt-4o` | 128,000 | 4,096 without a verified newer snapshot | 128,000 | 128,000 |
+| `gpt-4o-mini` | 128,000 | 16,384 | 128,000 | 128,000 |
+| `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano` | 1,047,576 | 32,768 | 127,999 while hosting type is unspecified | Unknown |
+| `o1`, `o3`, `o3-mini`, `o4-mini` | 200,000 | 100,000 | 200,000 | 200,000 |
+
+Native input-only maxima remain `null`; none of the nine OpenAI model pages
+independently establishes one. Azure's input/output columns are not added to
+create a larger shared window. Accounting has separate primary-source evidence:
+OpenAI and Azure describe generation caps as including reasoning and non-visible
+formatting, not merely visible response text.
+
+GPT-4o version `2024-05-13` retains 4,096 output tokens. Exact versions
+`2024-08-06` and `2024-11-20` permit 16,384. Both explicit version metadata and
+verified snapshot IDs select those profiles. A record containing only
+`modelName: gpt-4o` and `deploymentName: gpt-4o` receives the conservative 4,096
+output allowance, rather than assuming the newest Azure snapshot. Its shared
+context is nevertheless verified at 128,000, so a 10,249-token input need not
+fall back to an unknown-model budget. A guessed snapshot or arbitrary custom
+model name still cannot borrow catalog capacities.
+
+Azure documents GPT-4.1 windows of 1,047,576, 300,000 for standard deployments,
+and 128,000 for provisioned-managed/batch deployments, with provisioned requests
+required to be **strictly below 128,000**. The conservative inclusive integer
+bound is therefore 127,999, not a different claimed model capacity. A model
+version alone cannot identify hosting type. Verified administrator context
+limits retain their existing override precedence; before increasing them, check
+the deployment type and Azure's separate large-tool-definition restrictions.
+
+The catalog schema allows streaming/reasoning flags to remain absent when they
+have not received a qualitative audit. Numeric evidence does not fabricate these
+flags. Tests continue to require the original 75 records' complete flags, and the
+nine newly audited records keep all their pre-existing capabilities unchanged.
+
+Primary references:
+
+- The model-specific [GPT-4o](https://developers.openai.com/api/docs/models/gpt-4o),
+  [GPT-4.1](https://developers.openai.com/api/docs/models/gpt-4.1), and
+  [o3](https://developers.openai.com/api/docs/models/o3) pages; the catalog retains
+  a separate model-page reference for each of the nine exact IDs.
+- [Azure model specifications](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure).
+- [OpenAI output-token accounting](https://developers.openai.com/api/docs/guides/token-counting#understand-output-token-counts)
+  and [Azure generation caps](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning#control-costs).
+
+Offline regressions exercise the real resolver, provider aliases, exact snapshots,
+unknown/custom identities, independent ceilings, output accounting, explicit
+smaller and verified larger overrides, and schema/source integrity:
+`test_model_catalog_token_evidence.py`, `test_model_token_limit_resolution.py`,
+and `test_model_catalog_rebase_integration.py`. This audit does not promise live
+model availability, entitlement, retirement timing, or provider request success.
 
 ### Anthropic
 

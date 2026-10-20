@@ -18029,12 +18029,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "response-unused",
-      "contract": "_persist_agent_citation_artifacts: returned upsert documents are discarded; authored message/conversation bodies are retained locally and write errors keep their existing path.",
+      "contract": "Artifact upsert responses are discarded; compact citation dictionaries returned by the artifact builder are retained. Failed writes use the existing citation fallback without consuming an SDK response.",
       "tests": [
-        "functional_tests/test_workflow_results_delivery.py"
+        "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_assistant_and_citation_owners_discard_sdk_write_responses"
       ],
       "evidence_scope": "owner-runtime"
     },
@@ -18055,10 +18055,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "sdk-compatible",
-      "contract": "_hide_run_posts_superseded_by_reply: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
+      "contract": "SDK point messages are read through Mapping access, checked for posted_via=agent_action, and assigned plain nested supersession metadata. Upsert responses are discarded; missing or failed messages retain the existing best-effort path.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_delivery_owners_mutate_sdk_points_and_mirror_a_reply"
       ],
@@ -18081,10 +18081,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "sdk-compatible",
-      "contract": "_hide_workflow_conversation_after_delivery: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
+      "contract": "The SDK conversation is inspected and mutated through Mapping access for workflow/hidden state. Its upsert response is discarded, and the cache update uses the user_id field; read/write failures retain the existing False result.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_delivery_owners_mutate_sdk_points_and_mirror_a_reply"
       ],
@@ -18112,10 +18112,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "sdk-compatible",
-      "contract": "_mirror_assistant_message_to_personal_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
+      "contract": "SDK conversations use Mapping ownership/group checks and unread/citation updates. Existing SDK messages feed the same Mapping-compatible summary update and are normalized before returning; new authored message upsert responses are discarded.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_delivery_owners_mutate_sdk_points_and_mirror_a_reply"
       ],
@@ -18153,7 +18153,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "normalized-strict",
       "contract": "Existing/collision audit point documents are owner-checked and normalized before returning to the workflow runner. New create/upsert responses are unused; run-bound IDs preserve retries and manual titles.",
@@ -18175,7 +18175,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "sdk-compatible",
       "contract": "_get_latest_thread_id: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -18201,10 +18201,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "sdk-compatible",
-      "contract": "_create_user_message: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
+      "contract": "A replayed SDK message is checked through nested metadata/run_id field reads and returned unchanged. Assistant tracking consumes its id and thread metadata through Mapping access; new-message upsert responses are discarded.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_conversation_and_replayed_user_message_accept_sdk_points"
       ],
@@ -18227,12 +18227,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "response-unused",
-      "contract": "_create_assistant_message: returned upsert documents are discarded; authored message/conversation bodies are retained locally and write errors keep their existing path.",
+      "contract": "Assistant, citation and conversation upsert responses are discarded. The authored assistant dictionary is returned without SDK metadata; unread state is persisted on the Mapping-compatible conversation input.",
       "tests": [
-        "functional_tests/test_workflow_results_delivery.py"
+        "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_assistant_and_citation_owners_discard_sdk_write_responses"
       ],
       "evidence_scope": "owner-runtime"
     },
@@ -18248,7 +18248,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "sdk-compatible",
       "contract": "_query_recent_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -18269,7 +18269,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "sdk-compatible",
       "contract": "_query_merge_candidate_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -18280,7 +18280,7 @@
     },
     "application/single_app/functions_workflow_runner.py::_run_authorized_workflow_impl": {
       "boundary": {
-        "sha256": "ce3378e116c1667813b5b46443739319e9e4f9f38559a3ec281e78d3b09fc588",
+        "sha256": "51d5c26698d143b7a5bca6e96f22577a1e978728ccd2d0baf7e66f2589823054",
         "points": [
           {
             "method": "read_item",
@@ -18290,12 +18290,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "sdk-compatible",
-      "contract": "_run_authorized_workflow_impl: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
+      "contract": "A resumed SDK user-message point response supplies id and nested thread metadata through Mapping access to assistant tracking. Policy failures add application-owned error/error_code strings to the locally authored run record; no point wrapper enters a new strict sink.",
       "tests": [
-        "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_run_owner_consumes_sdk_replayed_message_before_model_processing"
+        "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_run_owner_consumes_sdk_replayed_message_before_model_processing",
+        "functional_tests/test_workflow_policy_failures.py::test_refused_first_request_is_a_terminal_diagnosable_failure"
       ],
       "evidence_scope": "owner-runtime"
     },
@@ -25886,7 +25887,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "normalized-strict",
       "contract": "Audit ownership and existing target checks use Mapping fields. Retained file/image/chunk point documents are normalized before strict source authorization and reference remapping; returned writes are unused.",
@@ -25907,7 +25908,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "normalized-strict",
       "contract": "A copied-image SDK point response is normalized before collaboration mirroring. Other backing and destination messages go through their existing authorized delivery owners.",
@@ -25928,7 +25929,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "cc0bff51bc9f76e600247790a49ca4b66f0070300bd4710f7dd9bd2d32152029"
+        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
       },
       "classification": "response-unused",
       "contract": "The unread/citation summary mutates its Mapping-compatible conversation input; the returned upsert response is discarded.",

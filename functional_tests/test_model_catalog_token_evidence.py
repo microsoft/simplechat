@@ -1,15 +1,17 @@
 # test_model_catalog_token_evidence.py
 """
 Offline functional tests for the complete, evidence-backed model token catalog.
-Version: 0.261.122
+Version: 0.261.356
 Implemented in: 0.261.035
+GPT-4o, GPT-4.1 and o-series token audit: 0.261.356
 React V2 catalog integration: 0.261.122
 
 Refs #1493 and PR #1497. The 2026-09-19 primary-source audit accounts for every
 one of the 75 original IDs. Expected limits are explicit per ID, not inferred
 from a family or calculated by adding/subtracting other limits. Additional
-operation/reasoning records have separate, strict metadata-only contracts; their
-historical source reviews are not new token audits. No test fetches provider
+operation/reasoning records retain metadata-only contracts unless independently
+audited. The nine existing GPT-4o, GPT-4.1 and o-series text records were separately
+audited on 2026-10-20; their historical operation reviews remain unchanged. No test fetches provider
 documentation, initializes application services, or calls a model.
 """
 
@@ -169,6 +171,21 @@ AUDITED_NATIVE_LIMITS = {
     "gemini-2.5-flash": ("google", None, 1048576, 65536),
     "gemini-2.5-flash-lite": ("google", None, 1048576, 65536),
     "gemini-2.0-flash": ("google", None, 1048576, 8192),
+}
+
+# Separately audited existing text records; never expand the original 75-ID audit.
+# Native context, conservative output, exact snapshots, Azure context, Azure input.
+LEGACY_TEXT_VERIFIED_AT = "2026-10-20"
+LEGACY_TEXT_LIMITS = {
+    "gpt-4o": (128000, 4096, ("2024-05-13", "2024-08-06", "2024-11-20"), 128000, 128000),
+    "gpt-4o-mini": (128000, 16384, ("2024-07-18",), 128000, 128000),
+    "gpt-4.1": (1047576, 32768, ("2025-04-14",), 127999, None),
+    "gpt-4.1-mini": (1047576, 32768, ("2025-04-14",), 127999, None),
+    "gpt-4.1-nano": (1047576, 32768, ("2025-04-14",), 127999, None),
+    "o1": (200000, 100000, ("2024-12-17",), 200000, 200000),
+    "o3": (200000, 100000, ("2025-04-16",), 200000, 200000),
+    "o3-mini": (200000, 100000, ("2025-01-31",), 200000, 200000),
+    "o4-mini": (200000, 100000, ("2025-04-16",), 200000, 200000),
 }
 
 AUDITED_AZURE_LIMITS = {
@@ -733,6 +750,9 @@ class TestModelCatalogTokenEvidence(unittest.TestCase):
                 actual = (model["provider"], *(model[field] for field in CAPACITY_FIELDS))
                 self.assertEqual(actual, expected)
                 self.assertEqual(model["verifiedAliases"], VERIFIED_ALIASES.get(model_id, []))
+                for field in ("supportsStreaming", "reasoning"):
+                    self.assertIn(field, model["capabilities"])
+                    self.assertIs(type(model["capabilities"][field]), bool)
                 expected_applicability = (
                     "non-text" if model_id in NON_TEXT_IDS
                     else "unknown" if model_id == "grok-voice-latest"
@@ -757,6 +777,64 @@ class TestModelCatalogTokenEvidence(unittest.TestCase):
         for source_id in AUDITED_SOURCE_IDS:
             with self.subTest(source=source_id):
                 self.assertEqual(self.sources[source_id]["verifiedAt"], VERIFIED_AT)
+
+    def test_nine_legacy_text_records_have_independent_token_evidence(self):
+        self.assertEqual(len(LEGACY_TEXT_LIMITS), 9)
+        self.assertFalse(set(LEGACY_TEXT_LIMITS).intersection(AUDITED_NATIVE_LIMITS))
+        for model_id, expected in LEGACY_TEXT_LIMITS.items():
+            context, output, versions, azure_context, azure_input = expected
+            with self.subTest(model=model_id):
+                model = self.models[model_id]
+                self.assertEqual(tuple(model[field] for field in CAPACITY_FIELDS), (context, None, output))
+                self.assertEqual(model["tokenLimitsApplicability"], "text")
+                self.assertEqual(model["verifiedAliases"], [f"{model_id}-{version}" for version in versions])
+                native_source = f"openai-token-{model_id}"
+                self.assertEqual(
+                    self.sources[native_source]["url"],
+                    f"https://developers.openai.com/api/docs/models/{model_id}",
+                )
+                self.assertEqual(model["tokenLimitEvidence"]["inputTokenLimit"]["status"], "unknown")
+                for field in ("contextWindow", "inputTokenLimit", "outputTokenLimit"):
+                    self.assertIn(native_source, model["tokenLimitEvidence"][field]["sourceIds"])
+                self.assertEqual(
+                    model["tokenLimitEvidence"]["outputTokenAccounting"]["sourceIds"],
+                    ["openai-token-accounting"],
+                )
+                azure = next(profile for profile in model["tokenLimitProfiles"] if profile["id"] == "azure")
+                self.assertEqual(
+                    tuple(azure[field] for field in CAPACITY_FIELDS),
+                    (azure_context, azure_input, output),
+                )
+                self.assertEqual(
+                    azure["tokenLimitEvidence"]["outputTokenAccounting"]["sourceIds"],
+                    ["azure-token-accounting"],
+                )
+                self.assertEqual(model["outputTokenAccounting"], "total_generation")
+                self.assertEqual(azure["outputTokenAccounting"], "total_generation")
+                for scope in (model, *model["tokenLimitProfiles"]):
+                    for field, evidence in scope["tokenLimitEvidence"].items():
+                        self.assertEqual(evidence["verifiedAt"], LEGACY_TEXT_VERIFIED_AT)
+                        self.assertEqual(evidence["status"], "unknown" if scope[field] is None else "verified")
+                        for source_id in evidence["sourceIds"]:
+                            self.assertEqual(self.sources[source_id]["verifiedAt"], LEGACY_TEXT_VERIFIED_AT)
+
+    def test_legacy_text_snapshot_and_host_qualifications_are_explicit(self):
+        gpt4o = self.models["gpt-4o"]
+        for provider in ("openai", "azure"):
+            profiles = [profile for profile in gpt4o["tokenLimitProfiles"] if profile["provider"] == provider]
+            dated = next(profile for profile in profiles if profile["id"] == f"{provider}-verified-snapshots")
+            self.assertEqual(dated["modelVersions"], ["2024-08-06", "2024-11-20"])
+            self.assertEqual(dated["outputTokenLimit"], 16384)
+            earlier = next(profile for profile in profiles if profile["id"] == f"{provider}-2024-05-13")
+            self.assertEqual(earlier["modelVersions"], ["2024-05-13"])
+            self.assertEqual(earlier["outputTokenLimit"], 4096)
+        for model_id in ("gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"):
+            azure = self.models[model_id]["tokenLimitProfiles"][0]
+            note = azure["tokenLimitEvidence"]["contextWindow"]["note"]
+            for qualification in ("127,999", "128,000", "300,000", "1,047,576", "strictly below", "override"):
+                self.assertIn(qualification, note)
+        self.assertTrue(self.sources["openai-token-accounting"]["url"].endswith("#understand-output-token-counts"))
+        self.assertTrue(self.sources["azure-token-accounting"]["url"].endswith("#control-costs"))
 
     def test_public_source_registry_matches_the_audited_urls(self):
         for source_id, (provider, _title, url) in SOURCE_ADDITIONS.items():

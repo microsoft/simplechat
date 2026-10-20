@@ -1,9 +1,10 @@
 # test_workflow_authoring_sdk_boundaries.py
 """
 SDK-shaped runtime coverage for storage owners in the workflow authoring modules.
-Version: 0.261.343
+Version: 0.261.356
 Implemented in: 0.261.332
 Personal workflow owner-runtime coverage added in: 0.261.335
+Workflow assistant/citation write coverage added in: 0.261.356
 
 The inventory fingerprints whole modules. These unchanged storage functions
 therefore need renewed owner-runtime evidence when selectors/telemetry change
@@ -188,6 +189,35 @@ def test_runner_delivery_owners_mutate_sdk_points_and_mirror_a_reply(owners):
     )
     stored = owners.messages.read_item(mirrored['id'], 'conversation')
     assert isinstance(stored, CosmosDict) and stored['content'] == 'The summary.'
+
+
+def test_runner_assistant_and_citation_owners_discard_sdk_write_responses(owners):
+    conversation = seed_conversation(owners)
+    citation = {
+        'tool_name': 'TabularProcessingPlugin.filter_rows',
+        'function_name': 'filter_rows',
+        'plugin_name': 'TabularProcessingPlugin',
+        'function_arguments': {'column': 'status', 'value': 'active'},
+        'function_result': {'data': [{'id': index, 'status': 'active'} for index in range(6)]},
+        'success': True,
+    }
+    assistant = owners.runner._create_assistant_message(
+        conversation, wa.stored_workflow(),
+        {'reply': 'There are six active records.', 'agent_citations': [citation]},
+        'manual', 'run-one', {'metadata': {'thread_info': {'thread_id': 'thread-one'}}},
+        assistant_message_id='assistant-one',
+    )
+    stored = owners.messages.read_item('assistant-one', 'conversation')
+    artifact = owners.messages.read_item(assistant['agent_citations'][0]['artifact_id'], 'conversation')
+    updated_conversation = owners.conversations.read_item('conversation', 'conversation')
+    assert type(assistant) is dict and '_etag' not in assistant
+    assert all(isinstance(document, CosmosDict) and document['_etag']
+               for document in (stored, artifact, updated_conversation))
+    assert stored['content'] == assistant['content'] == 'There are six active records.'
+    assert assistant['agent_citations'][0]['raw_payload_externalized'] is True
+    assert artifact['conversation_id'] == 'conversation'
+    assert updated_conversation['last_unread_assistant_message_id'] == assistant['id']
+    assert updated_conversation['_etag'] != conversation['_etag']
 
 
 def test_runner_query_owners_consume_plain_query_rows(owners):
