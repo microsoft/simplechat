@@ -82,6 +82,41 @@ An `InterfaceError` without structured evidence remains `sql_connection_failed`.
 SQLSTATE class `08` alone does not prove a firewall, TLS, or identity problem.
 See the [SQL action troubleshooting categories]({{ '/reference/actions/sql-query/' | relative_url }}#connection-failure-categories).
 
+## Azure Files connector diagnostics
+
+Since **0.261.356**, `[FILE_SYNC] Azure Files operation failed.` records
+credential-free failures independently of debug logging. `sc_operation`
+distinguishes `azure_files_client`, `azure_files_test_connection`,
+`azure_files_browse`, `azure_files_list`, and `azure_files_download`.
+
+`sc_failure_code` is one of `azure_files_authentication_failed`,
+`azure_files_authorization_failed`, `azure_files_resource_not_found`,
+`azure_files_transport_failed`, `azure_files_sdk_unavailable`,
+`azure_files_configuration_failed`, or `azure_files_operation_failed`.
+`sc_error_type` is a bounded, known exception class or `Exception`; a valid
+HTTP status is retained as numeric `sc_status_code`.
+
+Classification uses structured status/error codes and exception types, never
+provider message matching. Unknown evidence stays unknown. In particular, an
+authorization category does not prove a specific missing role or network rule.
+No source/identity identifiers, endpoints, paths, credentials, signed URLs, raw
+provider messages, or provider tracebacks are added to this event. Existing
+request OperationId correlation requires no new identifier logging.
+
+```kusto
+AppTraces
+| where TimeGenerated > ago(30m)
+| where OperationId == "PASTE_REQUEST_OPERATION_ID"
+| where tostring(Properties.sc_message) == "[FILE_SYNC] Azure Files operation failed."
+| project TimeGenerated, OperationId,
+    Operation=tostring(Properties.sc_operation),
+    Failure=tostring(Properties.sc_failure_code),
+    ErrorType=tostring(Properties.sc_error_type),
+    Status=toint(Properties.sc_status_code)
+| order by TimeGenerated asc
+| take 100
+```
+
 ## Request-resolution memory diagnostics
 
 Since **0.261.349**, `[ORCHESTRATION_PLANNER]` records

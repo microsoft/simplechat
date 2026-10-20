@@ -9,11 +9,12 @@ import re
 import requests
 import tempfile
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qsl, quote, unquote, urlparse
 
-from azure.core import MatchConditions
+from azure.core import MatchConditions, exceptions as azure_exceptions
 from azure.core.exceptions import ResourceNotFoundError as AzureResourceNotFoundError
 from azure.identity import ClientSecretCredential, DefaultAzureCredential
 from azure.cosmos.exceptions import (
@@ -2260,8 +2261,8 @@ def browse_file_sync_source_path(
 
 
 def _test_azure_files_connection(source: Dict[str, Any]) -> Dict[str, Any]:
-    try:
-        share_client = _get_azure_files_share_client(source)
+    share_client = _get_azure_files_share_client(source)
+    with _azure_files_operation("azure_files_test_connection"):
         directory_path = source.get("connection", {}).get("directory_path") or None
         entries_checked = 0
         files_seen = 0
@@ -2282,12 +2283,6 @@ def _test_azure_files_connection(source: Dict[str, Any]) -> Dict[str, Any]:
             "files_seen": files_seen,
             "folders_seen": folders_seen,
         }
-    except RuntimeError as error:
-        if "azure-storage-file-share" in str(error):
-            raise
-        raise ValueError("Azure Files connection test failed. Verify the file endpoint, share, and identity permissions.") from error
-    except Exception as error:
-        raise ValueError("Azure Files connection test failed. Verify the file endpoint, share, and identity permissions.") from error
 
 
 def _test_azure_blob_connection(source: Dict[str, Any]) -> Dict[str, Any]:
@@ -3237,11 +3232,83 @@ def _stage_onedrive_file(source: Dict[str, Any], remote_file: Dict[str, Any]) ->
         return temp_file.name, sha256_hash.hexdigest()
 
 
-def _get_azure_files_service_client(source: Dict[str, Any]):
+def _azure_files_error_details(error: Exception, operation: str) -> Tuple[Dict[str, Any], str]:
+    """Classify structured provider evidence without retaining provider text."""
+    response = getattr(error, "response", None)
+    status = getattr(error, "status_code", None)
+    if type(status) is not int:
+        status = getattr(response, "status_code", None)
+    status = status if type(status) is int and 100 <= status <= 599 else None
+    error_code = _normalize_azure_storage_error_code(getattr(error, "error_code", ""))
+    code = "azure_files_operation_failed"
+    message = "Azure Files could not complete the operation. Verify the source configuration and try again."
+    if isinstance(error, ImportError):
+        code = "azure_files_sdk_unavailable"
+        message = "The Azure Files SDK is unavailable on the server. Contact your administrator."
+    elif isinstance(error, azure_exceptions.ClientAuthenticationError) or status == 401 or error_code in {
+        "authenticationfailed", "invalidauthenticationinfo", "noauthenticationinformation",
+    }:
+        code = "azure_files_authentication_failed"
+        message = "Azure Files could not authenticate the selected identity or credential. Verify its authentication settings."
+    elif status == 403 or error_code in {
+        "authorizationfailure", "authorizationpermissionmismatch", "authorizationipmismatch",
+        "ipsourcenotallowed", "ipauthorizationfailure",
+    }:
+        code = "azure_files_authorization_failed"
+        message = (
+            "Azure Files denied access. Verify Azure Files REST read permissions "
+            "(such as Storage File Data Privileged Reader for token authentication) "
+            "and the storage account's access restrictions."
+        )
+    elif isinstance(error, AzureResourceNotFoundError) or status == 404 or error_code in {
+        "resourcenotfound", "sharenotfound", "parentnotfound",
+    }:
+        code = "azure_files_resource_not_found"
+        message = "Azure Files could not find the selected share, directory, or file. Verify the source path and access."
+    elif isinstance(error, (azure_exceptions.ServiceRequestError, azure_exceptions.ServiceResponseError, TimeoutError)):
+        code = "azure_files_transport_failed"
+        message = "Azure Files could not be reached reliably. Check service availability and the app's network access."
+    elif isinstance(error, ValueError) and operation == "azure_files_client":
+        code = "azure_files_configuration_failed"
+        message = "The server could not initialize the Azure Files client. Verify the authentication configuration or contact your administrator."
+
+    error_type = type(error).__name__
+    properties = {
+        "failure_code": code,
+        "operation": operation,
+        "error_type": error_type if error_type in {
+            "ImportError", "ModuleNotFoundError", "ValueError", "ClientAuthenticationError",
+            "CredentialUnavailableError", "HttpResponseError", "ResourceNotFoundError",
+            "ServiceRequestError", "ServiceResponseError", "TimeoutError",
+        } else "Exception",
+    }
+    if status is not None:
+        properties["status_code"] = status
+    return properties, message
+
+
+@contextmanager
+def _azure_files_operation(operation: str):
+    """Keep lazy SDK failures explicit, queryable, and safe for every caller."""
     try:
+        yield
+    except FileSyncPublicValidationError:
+        raise
+    except Exception as error:
+        properties, message = _azure_files_error_details(error, operation)
+        log_event(
+            "[FILE_SYNC] Azure Files operation failed.",
+            level=logging.WARNING,
+            extra=properties,
+        )
+        # Sync callers may log the translated exception; omit the provider chain.
+        raise FileSyncPublicValidationError(message) from None
+
+
+def _get_azure_files_service_client(source: Dict[str, Any]):
+    # Defer this optional connector SDK so other source types can still start.
+    with _azure_files_operation("azure_files_client"):
         from azure.storage.fileshare import ShareServiceClient
-    except ImportError as import_error:
-        raise RuntimeError("Azure Files sync requires the azure-storage-file-share package to be installed") from import_error
 
     connection = source.get("connection") or {}
     auth = _get_identity_auth_for_source(source) or source.get("auth") or {}
@@ -3250,7 +3317,8 @@ def _get_azure_files_service_client(source: Dict[str, Any]):
         connection_string = _resolved_auth_secret(auth)
         if not connection_string:
             raise ValueError("Azure Files connection string authentication requires a connection string")
-        return ShareServiceClient.from_connection_string(connection_string)
+        with _azure_files_operation("azure_files_client"):
+            return ShareServiceClient.from_connection_string(connection_string)
 
     account_url, account_path_parts = _normalize_azure_file_url(connection.get("account_url"))
     if not account_url:
@@ -3263,16 +3331,19 @@ def _get_azure_files_service_client(source: Dict[str, Any]):
         tenant_id = auth.get("tenant_id") or TENANT_ID
         if not tenant_id or not client_id or not client_secret:
             raise ValueError("Azure Files service principal authentication requires tenant ID, client ID, and client secret")
-        credential = ClientSecretCredential(
-            tenant_id=tenant_id,
-            client_id=client_id,
-            client_secret=client_secret,
-        )
+        with _azure_files_operation("azure_files_client"):
+            credential = ClientSecretCredential(
+                tenant_id=tenant_id,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
     elif auth_type == "managed_identity":
-        credential = DefaultAzureCredential(managed_identity_client_id=auth.get("managed_identity_client_id") or None)
+        with _azure_files_operation("azure_files_client"):
+            credential = DefaultAzureCredential(managed_identity_client_id=auth.get("managed_identity_client_id") or None)
     else:
         raise ValueError("Azure Files sources require managed identity, service principal, or connection string authentication")
-    return ShareServiceClient(account_url=account_url, credential=credential)
+    with _azure_files_operation("azure_files_client"):
+        return ShareServiceClient(account_url=account_url, credential=credential, token_intent="backup")
 
 
 def _get_azure_files_share_client(source: Dict[str, Any]):
@@ -3280,7 +3351,9 @@ def _get_azure_files_share_client(source: Dict[str, Any]):
     share_name = connection.get("share_name") or ""
     if not share_name:
         raise ValueError("Azure Files source is missing a share name")
-    return _get_azure_files_service_client(source).get_share_client(share_name)
+    service_client = _get_azure_files_service_client(source)
+    with _azure_files_operation("azure_files_client"):
+        return service_client.get_share_client(share_name)
 
 
 def _get_azure_blob_service_client(source: Dict[str, Any]):
@@ -3578,27 +3651,28 @@ def _browse_azure_files_path(source: Dict[str, Any], browse_path: str) -> List[D
     root_directory_path = connection.get("directory_path", "")
     directory_path = _join_selected_azure_file_path(root_directory_path, browse_path)
     entries = []
-    for entry in share_client.list_directories_and_files(directory_name=directory_path or None):
-        entry_name = _azure_files_item_name(entry)
-        if not entry_name:
-            continue
-        entry_path = _join_azure_file_path(directory_path, entry_name)
-        is_directory = _azure_files_item_is_directory(entry)
-        browse_entry = {
-            "name": entry_name,
-            "path": _relative_azure_file_path(root_directory_path, entry_path),
-            "type": "folder" if is_directory else "file",
-            "size": _azure_files_item_size(entry),
-            "modified_at": _azure_files_item_modified_at(entry),
-        }
-        if not is_directory:
-            # Built as _list_azure_files builds it, from the file's full share path.
-            browse_entry["remote_path"] = _build_azure_files_url(
-                connection.get("account_url", ""), connection.get("share_name", ""), entry_path,
-            )
-        entries.append(browse_entry)
-        if len(entries) >= 100:
-            break
+    with _azure_files_operation("azure_files_browse"):
+        for entry in share_client.list_directories_and_files(directory_name=directory_path or None):
+            entry_name = _azure_files_item_name(entry)
+            if not entry_name:
+                continue
+            entry_path = _join_azure_file_path(directory_path, entry_name)
+            is_directory = _azure_files_item_is_directory(entry)
+            browse_entry = {
+                "name": entry_name,
+                "path": _relative_azure_file_path(root_directory_path, entry_path),
+                "type": "folder" if is_directory else "file",
+                "size": _azure_files_item_size(entry),
+                "modified_at": _azure_files_item_modified_at(entry),
+            }
+            if not is_directory:
+                # Built as _list_azure_files builds it, from the file's full share path.
+                browse_entry["remote_path"] = _build_azure_files_url(
+                    connection.get("account_url", ""), connection.get("share_name", ""), entry_path,
+                )
+            entries.append(browse_entry)
+            if len(entries) >= 100:
+                break
     return entries
 
 
@@ -3642,16 +3716,17 @@ def _list_azure_files(source: Dict[str, Any], config: Dict[str, Any]) -> List[Di
             file_properties = share_client.get_file_client(entry_path).get_file_properties()
             add_file(entry_path, file_properties or entry)
 
-    for selected_path in selected_paths:
-        selected_file_path = _join_selected_azure_file_path(root_directory_path, selected_path)
-        if selected_path:
-            try:
-                file_properties = share_client.get_file_client(selected_file_path).get_file_properties()
-                add_file(selected_file_path, file_properties)
-                continue
-            except AzureResourceNotFoundError:
-                pass
-        walk_directory(selected_file_path)
+    with _azure_files_operation("azure_files_list"):
+        for selected_path in selected_paths:
+            selected_file_path = _join_selected_azure_file_path(root_directory_path, selected_path)
+            if selected_path:
+                try:
+                    file_properties = share_client.get_file_client(selected_file_path).get_file_properties()
+                    add_file(selected_file_path, file_properties)
+                    continue
+                except AzureResourceNotFoundError:
+                    pass
+            walk_directory(selected_file_path)
     return remote_files
 
 
@@ -3804,17 +3879,23 @@ def _stage_smb_file(source: Dict[str, Any], remote_path: str, file_name: str) ->
 def _stage_azure_files_file(source: Dict[str, Any], remote_file: Dict[str, Any]) -> Tuple[str, str]:
     share_client = _get_azure_files_share_client(source)
     file_path = remote_file.get("azure_file_path") or remote_file.get("relative_path") or remote_file.get("file_name")
-    file_client = share_client.get_file_client(file_path)
     suffix = os.path.splitext(remote_file.get("file_name") or "")[1] or ".bin"
     temp_dir = "/sc-temp-files" if os.path.exists("/sc-temp-files") else None
     sha256_hash = hashlib.sha256()
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=temp_dir) as temp_file:
-        downloader = file_client.download_file()
-        for chunk in downloader.chunks():
-            if not chunk:
-                continue
-            temp_file.write(chunk)
-            sha256_hash.update(chunk)
+        try:
+            with _azure_files_operation("azure_files_download"):
+                file_client = share_client.get_file_client(file_path)
+                downloader = file_client.download_file()
+                for chunk in downloader.chunks():
+                    if not chunk:
+                        continue
+                    temp_file.write(chunk)
+                    sha256_hash.update(chunk)
+        except Exception:
+            temp_file.close()
+            os.remove(temp_file.name)
+            raise
         return temp_file.name, sha256_hash.hexdigest()
 
 

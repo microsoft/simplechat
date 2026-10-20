@@ -21,6 +21,11 @@ that call. This incidental SDK failure is not a durable endpoint security
 boundary: fixing authentication separately must not enable arbitrary destinations.
 This change does not repair that authentication failure.
 
+Follow-up in **0.261.356**:
+[Azure Files token authentication](AZURE_FILES_TOKEN_AUTHENTICATION_FIX.md)
+supplies the required backup intent. The canonical-origin validation described
+here remains in place before token credential and SDK construction.
+
 The OneDrive flow reported by alert 1090 already normalizes selected paths,
 rejects traversal segments, and percent-encodes each segment beneath a user's
 Graph drive path. The reported browse-path input cannot change the Graph origin.
