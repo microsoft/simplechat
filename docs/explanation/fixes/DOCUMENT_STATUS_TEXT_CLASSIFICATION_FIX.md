@@ -1,10 +1,13 @@
 # Document Status Text Classification Fix
 
-Version: **0.261.349**
+Version: **0.261.351**
 
-Fixed/Implemented in version: **0.261.349**
+Fixed/Implemented in version: **0.261.351**
 
-Related configuration update: `application/single_app/config.py`, `VERSION = "0.261.349"`.
+Related configuration update: `application/single_app/config.py`, `VERSION = "0.261.351"`.
+
+The base branch advanced to **0.261.350** during review. Merging it advances
+the combined application to **0.261.351** without changing either fix's behavior.
 
 ## Issue and root cause
 
@@ -95,6 +98,11 @@ production build, JavaScript syntax checks, route-policy checks and documentatio
 checks passed. With the application's pinned Cosmos SDK **4.9.0**, the full
 network-blocked Cosmos compatibility gate passed **1,163 tests** and **244
 subtests**, with no inventory review gaps.
+
+After merging the **0.261.350** base, combined status, SDK-write, explorer and
+incoming saved-memory regressions passed **194 tests** and **5 subtests**.
+The focused upload/classic browser suites passed **27 tests**, and documentation
+checks and the combined Cosmos inventory remained clean.
 
 A broader backend run encountered a pre-existing extracted-function fixture
 failure in `test_content_screening_read_boundaries.py`: its `hybrid_search`

@@ -1,7 +1,7 @@
 // test_v2_chat_context_request.ts
 //
 // Runtime test for how the V2 composer's context chips become a chat request.
-// Version: 0.261.349
+// Version: 0.261.351
 // Implemented in: 0.261.089
 // Independent context selection implemented in: 0.261.094
 // Shared editor implemented in: 0.261.096

@@ -1,8 +1,8 @@
 # test_document_status_classification.py
 """
 Browser coverage for shared classic document status interpretation.
-Version: 0.261.349
-Implemented in: 0.261.349
+Version: 0.261.351
+Implemented in: 0.261.351
 
 Exercise real group views and personal/public/card status predicates with local
 assets and intercepted APIs, including in-progress, failed and completed states.

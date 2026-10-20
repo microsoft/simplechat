@@ -1,8 +1,8 @@
 # test_v2_chat_upload_status.py
 """
 Browser regressions for filename-independent chat upload status.
-Version: 0.261.349
-Implemented in: 0.261.349
+Version: 0.261.351
+Implemented in: 0.261.351
 
 Run the real Composer and polling with intercepted upload/document APIs, using
 the existing local/Azure Playwright connection. No live uploads are performed.
