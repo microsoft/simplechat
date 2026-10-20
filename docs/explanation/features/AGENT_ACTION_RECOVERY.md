@@ -2,6 +2,8 @@
 
 Fixed/Implemented in version: **0.261.347**.
 
+Updated in version: **0.261.355** for V2 first-message context synchronization.
+
 Related version update: `application/single_app/config.py`.
 
 Issue: [#1781](https://github.com/microsoft/simplechat/issues/1781).
@@ -83,7 +85,13 @@ Classic uses `static/js/chat/chat-action-recovery.js` and the existing stream
 consumer. V2 uses `src/lib/actionRecovery.ts`, `ActionRecoveryNotice.tsx`, and
 the existing chat store/SSE transport. Both invalidate pending decisions when
 the agent or conversation changes. V2 additionally binds notices to the current
-bootstrap actor. The UI uses local static assets and safe text rendering.
+bootstrap actor. V2 synchronizes conversation identity in the chat store before
+preflight starts; observing that identity again in React does not invalidate the
+same send. Assigning a newly created conversation's ID therefore does not require
+another Send or recheck action. A distinct New chat action still invalidates
+pending recovery, even when no saved conversation ID is active. See
+[V2 first-agent-message context race](../fixes/V2_FIRST_AGENT_MESSAGE_CONTEXT_RACE_FIX.md).
+The UI uses local static assets and safe text rendering.
 
 ## Validation and limits
 
