@@ -3664,9 +3664,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const pctString = String(doc?.percentage_complete ?? "");
     const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
     const docStatus = doc?.status || "";
-    const normalizedStatus = docStatus.toLowerCase();
-    const hasError = normalizedStatus.includes("error");
-    const isComplete = pct >= 100 || normalizedStatus.includes("complete") || hasError;
+    const hasError = window.DocumentStatus.isFailure(docStatus);
+    const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
     return { pct, docStatus, hasError, isComplete };
   }
 
@@ -6132,11 +6131,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const pctString = String(doc.percentage_complete);
     const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
     const docStatus = doc.status || "";
-    const isComplete =
-      pct >= 100 ||
-      docStatus.toLowerCase().includes("complete") ||
-      docStatus.toLowerCase().includes("error");
-    const hasError = docStatus.toLowerCase().includes("error");
+    const hasError = window.DocumentStatus.isFailure(docStatus);
+    const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
     const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRole); // Check role for actions
     const access = getGroupDocumentAccess(doc);
     const isPendingGeneratedArtifact = isPendingGeneratedArtifactDocument(doc);
@@ -6566,11 +6562,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
             ? parseFloat(pctString)
             : 0;
           const docStatus = doc.status || "";
-          const isComplete =
-            pct >= 100 ||
-            docStatus.toLowerCase().includes("complete") ||
-            docStatus.toLowerCase().includes("error");
-          const hasError = docStatus.toLowerCase().includes("error");
+          const hasError = window.DocumentStatus.isFailure(docStatus);
+          const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
 
           if (!isComplete && statusRow) {
             // Update progress
@@ -8144,10 +8137,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
       const pctStr = String(doc.percentage_complete);
       const pct = /^\d+(\.\d+)?$/.test(pctStr) ? parseFloat(pctStr) : 0;
       const docStatus = doc.status || '';
-      const isComplete = pct >= 100
-          || docStatus.toLowerCase().includes('complete')
-          || docStatus.toLowerCase().includes('error');
-      const hasError = docStatus.toLowerCase().includes('error');
+      const hasError = window.DocumentStatus.isFailure(docStatus);
+      const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
       const isSelected = groupSelectedDocuments.has(docId);
       const access = getGroupDocumentAccess(doc);
       const canModify = access.isOwnerGroup && groupCanModify;

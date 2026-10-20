@@ -1,7 +1,7 @@
 # test_group_document_management.py
 """
 Functional tests for immutable-target group document management.
-Version: 0.261.347
+Version: 0.261.354
 Implemented in: 0.261.129
 A tag vocabulary conflict answers one coded sentence, from the pre-check or a lost patch: 0.261.167
 New tags are defined before any document carries them, so a conflict writes no document: 0.261.168
@@ -263,7 +263,10 @@ def management(environment):
     )
 
     namespace = env.document_helpers
+    status_helpers = importlib.import_module("functions_document_status")
     namespace.update({
+        "is_document_processing_complete": status_helpers.is_document_processing_complete,
+        "is_document_processing_failure": status_helpers.is_document_processing_failure,
         "os": os, "json": json, "datetime": datetime, "timezone": timezone,
         "tempfile": tempfile, "uuid": uuid, "traceback": traceback, "logging": logging,
         "partial": partial, "mimetypes": mimetypes, "BytesIO": BytesIO, "zipfile": zipfile,
@@ -282,7 +285,6 @@ def management(environment):
         "read_available_document_bytes": env.access.read_available_document_bytes,
         "current_extraction": lambda _document_id: None, "is_publication": lambda *_args: False,
         "add_file_task_to_file_processing_log": Mock(),
-        "calculate_processing_percentage": lambda item: item.get("percentage_complete", 0),
         "get_all_chunks": lambda document_id, user_id, group_id=None, public_workspace_id=None: [{"id": f"{document_id}-chunk"}],
         "sync_document_access_index_for_document_fail_open": env.index_updates,
         "delete_document_access_index_for_document_fail_open": env.index_deletes,
@@ -313,7 +315,7 @@ def management(environment):
         "get_document_blob_delete_targets", "delete_from_blob_storage",
         "_sanitize_download_file_name", "_get_download_content_type", "_get_document_download_entry",
         "build_document_download_response", "build_documents_zip_download_response",
-        "allowed_file", "ensure_list", "_update_document_for_job",
+        "allowed_file", "ensure_list", "_update_document_for_job", "calculate_processing_percentage",
     }, namespace)
     # Metadata edits record a durable search sync request; the sync worker merges the latest values
     # into an in-memory index with one chunk per document. Tests run queued syncs explicitly.

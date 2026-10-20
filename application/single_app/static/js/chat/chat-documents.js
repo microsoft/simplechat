@@ -182,10 +182,10 @@ function isConversationTaskDocumentReady(taskDocument = {}) {
   if (window.ContentScreening?.isHeld(taskDocument)) return false;
   const statusText = String(taskDocument.status || '').trim().toLowerCase();
   const percentageComplete = Number(taskDocument.percentage_complete || taskDocument.percentageComplete || 0);
-  if (statusText.includes('error') || statusText.includes('failed')) {
+  if (window.DocumentStatus.isFailure(statusText)) {
     return false;
   }
-  return percentageComplete >= 100 || statusText.includes('processing complete') || statusText.includes('complete');
+  return percentageComplete >= 100 || window.DocumentStatus.isComplete(statusText);
 }
 
 function normalizeConversationTaskDocument(documentInfo = {}, fallbackConversationId = null) {

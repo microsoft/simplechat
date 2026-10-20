@@ -1,7 +1,7 @@
 # test_workspace_metadata_outcomes.py
 """
 Runtime regressions for shared automatic and manual workspace metadata analysis.
-Version: 0.261.347
+Version: 0.261.354
 Implemented in: 0.261.347
 
 Execute the real extraction, merge, worker, and final-upload functions with only
@@ -25,6 +25,7 @@ from test_m365_cosmos_sdk_contract import cosmos_factory  # noqa: F401
 from test_cosmos_wave5a_document_access_read_switch import (
     FakeCosmosContainer, _load_document_access_index_module, _succeeded_backfill_state,
 )
+from functions_document_status import is_document_processing_failure
 
 
 class SdkProjectionContainer(FakeCosmosContainer):
@@ -85,6 +86,7 @@ def metadata_env(request):
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=complete)))
     namespace = {
+        "is_document_processing_failure": is_document_processing_failure,
         "json": json, "logging": logging, "re": re, "partial": partial,
         "get_settings": lambda: settings, "get_document_metadata": lambda *args, **kwargs: copy.deepcopy(document),
         "update_document": update_document, "hybrid_search": search,

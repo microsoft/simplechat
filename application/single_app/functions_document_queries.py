@@ -3,6 +3,8 @@
 
 from datetime import datetime, timedelta, timezone
 
+from functions_document_status import is_document_processing_failure
+
 
 DOCUMENT_PLACE_FILTERS = frozenset({
     "all", "recent", "shared", "processing", "errors", "untagged",
@@ -11,8 +13,7 @@ DOCUMENT_RECENT_DAYS = 30
 
 
 def _document_processing_state(document_item):
-    status_text = str(document_item.get("status") or "").lower()
-    if "error" in status_text or "failed" in status_text:
+    if is_document_processing_failure(document_item.get("status")):
         return "error"
 
     percentage = document_item.get("percentage_complete")

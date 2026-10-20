@@ -2,7 +2,7 @@
 # test_document_search_metadata_sync.py
 """
 Functional test for durable, batched document search metadata sync.
-Version: 0.261.268
+Version: 0.261.354
 Implemented in: 0.261.268
 
 This test ensures that document metadata edits no longer do per-chunk Search work inside the
@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 from azure.core import MatchConditions
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
+from azure.cosmos._cosmos_responses import CosmosDict
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "application" / "single_app"
@@ -43,6 +44,7 @@ from content_screening.contracts import (  # noqa: E402
     document_is_available,
 )
 import functions_group_document_projection_fence as fence  # noqa: E402
+from functions_document_status import is_document_processing_complete, is_document_processing_failure  # noqa: E402
 from test_support.document_search_sync import (  # noqa: E402
     FakeSearchClient,
     FakeSettingsContainer,
@@ -75,7 +77,7 @@ class FakeOriginError(Exception):
 
 
 class FakeDocumentsContainer:
-    """Cosmos documents container with etag preconditions, scoped queries and Cosmos error types."""
+    """SDK-shaped points, plain query rows, ETags, scoped queries and Cosmos errors."""
 
     def __init__(self, scope_field):
         self.scope_field = scope_field
@@ -87,7 +89,7 @@ class FakeDocumentsContainer:
         item["_etag"] = uuid.uuid4().hex
         self.documents[item["id"]] = item
         self.writes.append(item["id"])
-        return copy.deepcopy(item)
+        return CosmosDict(copy.deepcopy(item), response_headers={})
 
     def query_items(self, query, parameters, enable_cross_partition_query=True):
         values = {parameter["name"]: parameter["value"] for parameter in parameters}
@@ -100,7 +102,7 @@ class FakeDocumentsContainer:
         assert item == partition_key
         if item not in self.documents:
             raise CosmosResourceNotFoundError(status_code=404, message="Not found")
-        return copy.deepcopy(self.documents[item])
+        return CosmosDict(copy.deepcopy(self.documents[item]), response_headers={})
 
     def replace_item(self, item, body, etag=None, match_condition=None):
         if item not in self.documents:
@@ -164,6 +166,8 @@ class Harness:
             return {"success": harness.index_success}
 
         namespace = {
+            "is_document_processing_complete": is_document_processing_complete,
+            "is_document_processing_failure": is_document_processing_failure,
             "json": json,
             "logging": logging,
             "re": re,
@@ -203,7 +207,6 @@ class Harness:
                 else harness.user_search
             ),
             "add_file_task_to_file_processing_log": lambda **_kwargs: None,
-            "calculate_processing_percentage": lambda document_item: document_item.get("percentage_complete", 0),
             "propagate_tags_to_blob_metadata": lambda *args: harness.blob_tag_calls.append(args),
             "invalidate_personal_search_cache": lambda user_id: harness.cache_invalidations.append(("personal", user_id)),
             "invalidate_group_search_cache": lambda group_id, **_kwargs: harness.cache_invalidations.append(("group", group_id)),
@@ -212,6 +215,10 @@ class Harness:
             ),
             "log_event": lambda message, extra=None, **kwargs: harness.logs.append((message, extra, kwargs)),
         }
+        nodes.extend(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "calculate_processing_percentage"
+        )
         module = ast.Module(body=nodes, type_ignores=[])
         ast.fix_missing_locations(module)
         exec(compile(module, str(DOCUMENTS_PATH), "exec"), namespace)
@@ -296,6 +303,102 @@ def released_marker():
 
 
 # --- Engine -------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("scope", ["personal", "group", "public"])
+def test_status_updates_preserve_sdk_points_etags_and_query_rows(scope):
+    harness = Harness()
+    if scope == "group":
+        document = harness.add_group_document()
+        container = harness.group_documents
+        identity = {"group_id": "group-1", "user_id": "editor-1"}
+    elif scope == "public":
+        document = {
+            "id": "public-doc-1", "public_workspace_id": "public-1", "user_id": "editor-1",
+            "file_name": "policy.md", "status": "Queued for processing", "percentage_complete": 0,
+            "_etag": "public-revision-1",
+        }
+        container = harness.public_documents
+        container.documents[document["id"]] = document
+        identity = {"public_workspace_id": "public-1", "user_id": "editor-1"}
+    else:
+        document = harness.add_personal_document()
+        container = harness.user_documents
+        identity = {"user_id": "owner-1"}
+    point = container.read_item(document["id"], document["id"])
+    assert type(point) is CosmosDict
+    rows = container.query_items("", [
+        {"name": "@document_id", "value": document["id"]},
+        {"name": f"@{container.scope_field}", "value": document[container.scope_field]},
+    ])
+    assert type(rows[0]) is dict
+    # Start from a new upload, not the fixture's completed document.
+    container.documents[document["id"]].update(status="Queued for processing", percentage_complete=0)
+    saved = harness["update_document"](
+        document_id=document["id"], **identity, strict=True, expected_etag=point["_etag"],
+        status="Processing file processing complete-error-failed.md, type: .md",
+    )
+    assert type(saved) is CosmosDict
+    assert saved["_etag"] != point["_etag"]
+    assert saved["percentage_complete"] == 0
+    with pytest.raises(ScreeningConflictError):
+        harness["update_document"](
+            document_id=document["id"], **identity, strict=True, expected_etag=point["_etag"],
+            status="Processing complete",
+        )
+    completed = harness["update_document"](
+        document_id=document["id"], **identity, strict=True, expected_etag=saved["_etag"],
+        status="Processing complete",
+    )
+    assert type(completed) is CosmosDict
+    assert completed["percentage_complete"] == 100
+
+
+@pytest.mark.parametrize("review_required", [False, True])
+def test_held_status_updates_distinguish_processing_details_from_final_completion(review_required):
+    harness = Harness()
+    document = harness.add_personal_document(
+        percentage_complete=42,
+        content_screening={"state": "scanning", "review_required": review_required},
+    )
+    status = "Processing file processing complete-error-failed.md, type: .md"
+    saved = harness["update_document"](
+        document_id=document["id"], user_id="owner-1", strict=True,
+        expected_etag=document["_etag"], status=status,
+    )
+    assert type(saved) is CosmosDict
+    assert saved["status"] == status
+    assert saved["percentage_complete"] == 42
+    pending = harness["update_document"](
+        document_id=document["id"], user_id="owner-1", strict=True,
+        expected_etag=saved["_etag"], status="Processing complete", percentage_complete=100,
+    )
+    assert pending["status"] == ("Content review required" if review_required else "Content screening pending")
+    assert pending["percentage_complete"] == 99
+    available = document_is_available(pending)
+    assert available is False
+
+
+@pytest.mark.parametrize("blocked_call", [1, 2])
+def test_status_update_cannot_write_after_its_operation_guard_expires(blocked_call):
+    harness = Harness()
+    document = harness.add_personal_document(percentage_complete=0)
+    calls = []
+
+    def guard():
+        calls.append("check")
+        if len(calls) == blocked_call:
+            raise ScreeningConflictError()
+
+    with pytest.raises(ScreeningConflictError):
+        harness["update_document"](
+            document_id=document["id"], user_id="owner-1", strict=True,
+            expected_etag=document["_etag"], operation_guard=guard,
+            status="Processing file failed-complete.md, type: .md",
+        )
+    assert len(calls) == blocked_call
+    assert harness.user_documents.documents[document["id"]] == document
+    assert harness.user_documents.writes == []
+
 
 def test_chunk_key_paging_is_key_ordered_scoped_and_id_only():
     """Chunk listing pages by key within the document's active scope and never selects content."""

@@ -1,7 +1,7 @@
 # test_content_screening_read_boundaries.py
 """
 Behavioral tests for search, native caches, and resumed source consumption.
-Version: 0.261.232
+Version: 0.261.354
 Implemented in: 0.261.106
 Upload-only export checks covered in: 0.261.232
 
@@ -28,6 +28,7 @@ from flask import jsonify, request
 from test_content_screening_access import APP_ROOT, FakeContainer, ScreeningAccessFixture
 from content_screening import access
 from content_screening.contracts import DocumentHeldError, ScreeningConflictError, ScreeningError, document_is_available, hash_payload
+from functions_document_status import is_document_processing_complete, is_document_processing_failure
 
 
 def load_functions(file_name, names, namespace, *, constants=False):
@@ -180,7 +181,11 @@ class SearchBoundaryTests(ScreeningAccessFixture):
     def test_chat_readiness_cannot_infer_clearance_from_progress(self):
         namespace = load_functions(
             "route_backend_chats.py", {"_is_search_ready_chat_upload_workspace_document"},
-            {"document_is_available": document_is_available},
+            {
+                "document_is_available": document_is_available,
+                "is_document_processing_complete": is_document_processing_complete,
+                "is_document_processing_failure": is_document_processing_failure,
+            },
         )
         self.document.update({"percentage_complete": 100, "status": "Processing complete", "num_chunks": 5})
         self.hold()

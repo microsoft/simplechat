@@ -318,9 +318,8 @@ function getDocumentProcessingState(doc) {
     const pctString = String(doc?.percentage_complete ?? "");
     const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
     const docStatus = doc?.status || "";
-    const normalizedStatus = docStatus.toLowerCase();
-    const hasError = normalizedStatus.includes("error");
-    const isComplete = pct >= 100 || normalizedStatus.includes("complete") || hasError;
+    const hasError = window.DocumentStatus.isFailure(docStatus);
+    const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
 
     return { pct, docStatus, hasError, isComplete };
 }
@@ -1789,8 +1788,8 @@ function renderDocumentRow(doc) {
     const pctString = String(doc.percentage_complete);
     const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
     const docStatus = doc.status || "";
-    const isComplete = pct >= 100 || docStatus.toLowerCase().includes("complete") || docStatus.toLowerCase().includes("error");
-    const hasError = docStatus.toLowerCase().includes("error");
+    const hasError = window.DocumentStatus.isFailure(docStatus);
+    const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
 
     const docRow = document.createElement("tr");
     docRow.id = `doc-row-${docId}`;
@@ -2239,8 +2238,8 @@ function pollDocumentStatus(documentId) {
                  const pctString = String(doc.percentage_complete);
                  const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
                  const docStatus = doc.status || "";
-                 const isComplete = pct >= 100 || docStatus.toLowerCase().includes("complete") || docStatus.toLowerCase().includes("error");
-                 const hasError = docStatus.toLowerCase().includes("error");
+                 const hasError = window.DocumentStatus.isFailure(docStatus);
+                 const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
 
                 if (!isComplete && statusRow) {
                      // Update progress bar and status text if still processing

@@ -8,6 +8,7 @@ import {
     type ChatUploadTarget,
 } from './endpoints';
 import { documentStatus } from './documentExplorer';
+import { isDocumentProcessingComplete } from './documentProcessingStatus';
 import type { ComposerDraft, ComposerReference, ComposerUpload } from './composerDraft';
 import type { ChatMessage, WorkspaceDocument } from './types';
 import type { Dispatch, SetStateAction } from 'react';
@@ -203,7 +204,6 @@ export function chatUploadDocumentStatus(document: WorkspaceDocument): UploadSta
     if (status.state === 'pending_approval') {
         return { state: 'failed', error: 'This file is waiting for access approval.' };
     }
-    const text = String(document.status ?? '').trim().toLowerCase();
     const rawProgress = document.percentage_complete;
     const progress = rawProgress === undefined || rawProgress === null
         ? NaN
@@ -211,7 +211,7 @@ export function chatUploadDocumentStatus(document: WorkspaceDocument): UploadSta
     // The explorer treats old records with no progress as ready. A new upload cannot make
     // that assumption: a queued response without a percentage is still not usable.
     if ((Number.isFinite(progress) && progress >= 100)
-        || /^(ready|completed?|processed|finished|processing complete[.!]?)$/.test(text)) {
+        || isDocumentProcessingComplete(document.status)) {
         return { state: 'ready', progress: 100 };
     }
     return {
