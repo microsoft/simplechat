@@ -1,7 +1,7 @@
 # test_v2_settings_m365_connections.py
 """
 Real-component browser tests for the Microsoft 365 connection cards in V2 Settings.
-Version: 0.261.302
+Version: 0.261.355
 Implemented in: 0.261.302
 
 The production M365Cards, Toaster and connect flow run in Chromium with the production CSS;
@@ -72,6 +72,7 @@ class SettingsApi:
         self.readiness = {"available": True, "reason": None, "message": ""}
         self.sign_in_fails = False
         self.connects = []
+        self.chat_disconnects = []
         self.unexpected = []
 
     def handle(self, route):
@@ -92,6 +93,10 @@ class SettingsApi:
             route.fulfill(json={"success": True, "preferences": PREFERENCES, "csrf_token": CSRF_TOKEN})
         elif request.method == "GET" and path == "/api/m365/chat/connection":
             route.fulfill(json={"success": True, "connection": self.chat_connection, "csrf_token": CSRF_TOKEN})
+        elif request.method == "POST" and path == "/api/m365/chat/connection/disconnect":
+            self.chat_disconnects.append({"body": request.post_data_json, "csrf": request.headers.get("x-m365-csrf-token")})
+            self.chat_connection = {"status": "not_connected", "sources": [], "persistence": "session"}
+            route.fulfill(json={"success": True, "connection": self.chat_connection})
         elif request.method == "GET" and path == "/api/m365/connections":
             route.fulfill(json={
                 "success": True, "connection": copy.deepcopy(self.workflow_connection),
@@ -175,6 +180,57 @@ def test_chat_card_names_the_sources_this_session_can_use(settings_ui):
         else:
             expect(checkbox).not_to_be_checked()
     expect(chat.get_by_role("button", name="Reconnect Microsoft 365 for chat")).to_be_enabled()
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_saved_chat_keeps_sources_across_page_reloads_and_confirms_disconnect(settings_ui, width):
+    page, api = settings_ui
+    page.set_viewport_size({"width": width, "height": 900})
+    api.chat_connection = {
+        "status": "available", "sources": ["calendar", "email", "onedrive", "spo"], "persistence": "saved",
+        "persistence_message": "Saved for chat across sign-ins. Microsoft and your organization's policies still determine when you must reconnect.",
+    }
+    api.workflow_connection = copy.deepcopy(CONNECTED)
+    for _ in range(2):
+        chat, workflow = mount(page, api)
+        expect(chat.get_by_role("status")).to_contain_text("Microsoft 365 is connected for chat")
+        expect(chat).to_contain_text("Saved for chat across sign-ins")
+        for source in ("calendar", "email", "onedrive", "spo"):
+            expect(chat.locator(f"#m365-chat-source-{source}")).to_be_checked()
+    chat.get_by_role("button", name="Disconnect chat", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog).to_contain_text("workflow connection and workflow authorizations stay unchanged")
+    expect(dialog).to_contain_text("already published")
+    assert not api.chat_disconnects
+    dialog.get_by_role("button", name="Cancel", exact=True).click()
+    assert not api.chat_disconnects
+    chat.get_by_role("button", name="Disconnect chat", exact=True).click()
+    page.get_by_role("dialog").get_by_role("button", name="Disconnect chat", exact=True).click()
+    expect(chat.get_by_role("button", name="Disconnect chat", exact=True)).to_be_disabled()
+    expect(workflow).to_contain_text("Workflow connection: connected.")
+    assert api.chat_disconnects == [{"body": {}, "csrf": CSRF_TOKEN}]
+
+
+def test_session_only_chat_clearly_explains_persistence_requirement(settings_ui):
+    page, api = settings_ui
+    api.chat_connection = {
+        "status": "available", "sources": ["email"], "persistence": "session",
+        "persistence_message": "Chat is session-only on this deployment. An administrator must configure Key Vault secret storage to keep chat connected across sign-ins.",
+    }
+    chat, _ = mount(page, api)
+    expect(chat).to_contain_text("Chat is session-only on this deployment")
+    expect(chat).to_contain_text("Key Vault secret storage")
+    expect(chat.locator("#m365-chat-source-email")).to_be_checked()
+
+
+def test_saved_chat_reconnect_required_preserves_selected_sources(settings_ui):
+    page, api = settings_ui
+    api.chat_connection = {"status": "reconnect_required", "sources": ["email", "spo"], "persistence": "saved"}
+    chat, _ = mount(page, api)
+    expect(chat.get_by_role("status")).to_contain_text("Microsoft 365 needs you to sign in again")
+    expect(chat.locator("#m365-chat-source-email")).to_be_checked()
+    expect(chat.locator("#m365-chat-source-spo")).to_be_checked()
+    expect(chat.get_by_role("button", name="Disconnect chat", exact=True)).to_be_enabled()
 
 
 def test_unready_deployment_is_explained_instead_of_failing_on_connect(settings_ui):

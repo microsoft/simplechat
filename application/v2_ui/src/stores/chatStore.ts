@@ -77,7 +77,8 @@ import {
 } from '../lib/mentions';
 import { buildSelectionFields } from '../lib/chatRequestSelection';
 import {
-    clearActionRecovery, getActionRecoveryRevision, synchronizeActionRecoveryContext,
+    clearActionRecovery, getActionRecoveryRevision, setActionRecoveryConversation,
+    synchronizeActionRecoveryContext,
 } from '../lib/actionRecovery';
 import {
     normalizeReasoningAdjustments,
@@ -4839,6 +4840,9 @@ useChatStore.subscribe((state, previous) => {
     const pendingActions = chatPendingActionsStore.getState();
     const conversationChanged = state.activeConversationId !== previous.activeConversationId;
     if (conversationChanged) {
+        // Run before a send can start preflight. React observes the same identity
+        // idempotently instead of invalidating it later during effect cleanup.
+        setActionRecoveryConversation(state.activeConversationId);
         pendingActions.setConversation(state.activeConversationId ?? '');
     }
     if (conversationChanged || state.messages !== previous.messages) {

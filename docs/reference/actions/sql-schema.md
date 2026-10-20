@@ -59,7 +59,7 @@ The V2 editor no longer offers ad hoc custom fields; preserved legacy values rem
 
 Since **0.261.351**, SQL Schema uses the same credential-safe connection diagnostics as SQL Database. A connection failure in `get_database_schema` includes an application-owned `error_code`; the table-list, table-detail, and relationship methods raise the same safe connection exception. This does not change metadata permissions or the handling of errors after a connection succeeds.
 
-Since **0.261.355**, connection-check failures also show a diagnostic reference
+Since **0.261.356**, connection-check failures also show a diagnostic reference
 in V2. An administrator can correlate it with the server's effective connection
 context and failure stage using the
 [SQL logging runbook]({{ '/reference/logging-tags/' | relative_url }}#connection-context-and-diagnostic-references).

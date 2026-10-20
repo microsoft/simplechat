@@ -63,7 +63,7 @@ Since **0.261.351**, connection testing and SQL action runtime share safe error 
 
 Administrators can find `[SQL_CONNECTION]` warnings with validated SQLSTATE and native error numbers when the provider supplies them. See [SQL connection logging]({{ '/reference/logging-tags/' | relative_url }}#sql-connection-diagnostics). A successful login using an operator's own account does not verify the App Service identity, its network path, or its selected authentication mode.
 
-Since **0.261.355**, the connection-check failure includes a **diagnostic
+Since **0.261.356**, the connection-check failure includes a **diagnostic
 reference**, shown in V2 beneath the safe error. Give that reference to an
 administrator rather than copying a connection string or credential into a
 support message. The matching server event distinguishes identity/configuration

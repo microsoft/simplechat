@@ -1,7 +1,7 @@
 # test_chat_action_recovery.py
 """
 Explicit action recovery in both production chat transports and UI surfaces.
-Version: 0.261.355
+Version: 0.261.356
 Implemented in: 0.261.347
 
 Uses the shared Azure Playwright/DefaultAzureCredential connection or local

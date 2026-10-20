@@ -1,4 +1,4 @@
-# SQL connection diagnostics fix - v0.261.355
+# SQL connection diagnostics fix - v0.261.356
 
 ## Issue and root cause
 
@@ -77,9 +77,9 @@ replace the new commit's CodeQL analysis.
 
 ## Technical details
 
-### Runtime context and safe UI correlation - v0.261.355
+### Runtime context and safe UI correlation - v0.261.356
 
-**Implemented in version: 0.261.355**, recorded in
+**Implemented in version: 0.261.356**, recorded in
 `application/single_app/config.py`.
 
 Further read-only investigation confirmed SQLSTATE `28000` and native error
@@ -127,13 +127,19 @@ context in normal and optimized Python with network access blocked.
 connection error panel at desktop/mobile widths with no editor save or live SQL.
 See the [logging runbook](../../reference/logging-tags.md#sql-connection-diagnostics).
 
-Validation for **0.261.355**: **259 focused backend cases** and **43 combined
+Pre-merge validation at branch version **0.261.355**: **259 focused backend cases** and **43 combined
 chat-recovery/SQL-feedback browser cases** passed. The complete network-blocked
 Cosmos gate passed **1,198 cases and 244 subtests**, with **1,067 owners,
 412 doubles, and zero review gaps**, using Cosmos SDK **4.9.0**. The existing
 seven logging checks also passed in their own clean interpreter. Shared Python
 dependency conflicts were isolated in a temporary worktree-local environment;
 no shared packages, test assertions, or review classifications were changed.
+
+After base integration at **0.261.356**, **55 SQL diagnostic classifier cases**
+and **58 combined chat/SQL browser cases** passed. The backend SQL
+implementation and its reviewed route fingerprints did not change during
+integration; the complete backend result above remains the pre-merge run,
+not a claim that it was rerun afterward.
 
 ### Shared connection boundary
 

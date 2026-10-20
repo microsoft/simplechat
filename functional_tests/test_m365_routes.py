@@ -1,7 +1,7 @@
 # test_m365_routes.py
 """
 Functional tests for Microsoft 365 Profile, approval, and audit routes.
-Version: 0.261.302
+Version: 0.261.355
 Implemented in: 0.261.029
 
 Imports the real route module with scoped authentication/logging I/O seams.
@@ -84,6 +84,7 @@ class M365RouteTests(unittest.TestCase):
         self.connection_service = connections.M365ConnectionService(
             container_factory=lambda: self.connection_container,
             config_provider=lambda: self.connection_config,
+            chat_readiness_provider=lambda: {"available": False, "message": "Session-only test deployment."},
         )
         for target, name, value in (
             (approvals, "_service", self.service),
@@ -731,22 +732,47 @@ class M365RouteTests(unittest.TestCase):
         })
         response = self.client.get("/api/m365/chat/connection")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["connection"], {"status": "reconnect_required", "sources": []})
+        status = response.get_json()["connection"]
+        self.assertEqual(status["status"], "reconnect_required")
+        self.assertEqual(status["sources"], [])
+        self.assertEqual(status["persistence"], "session")
         self.assertNotIn("private-corrupted", response.get_data(as_text=True))
         self.assertEqual(response.headers["Cache-Control"], "private, no-store")
         self.set_session({})
         anonymous = self.client.get("/api/m365/chat/connection")
         self.assertEqual(anonymous.status_code, 401)
 
-    def test_verified_workflow_reconnect_clears_an_interactive_rejection_marker(self):
+    def test_workflow_reconnect_never_replaces_chat_credentials_or_reconnect_marker(self):
         with self.app.test_request_context():
-            session["token_cache"] = "old-cache"
+            session["user"] = {"oid": "user-a", "tid": "tenant-a"}
+            session[connections.CHAT_CACHE_SESSION_KEY] = "chat-only-cache"
             session[connections.CHAT_RECONNECT_SESSION_KEY] = {"user_id": "user-a", "tenant_id": "tenant-a"}
-            self.routes._publish_verified_workflow_cache_to_session("verified-cache")
-            cached = session["token_cache"]
+            session["m365_workflow_oauth_binding"] = "workflow-test-binding"
+            with patch.object(self.connection_service, "complete_connection") as complete:
+                self.routes._complete_workflow_connection("user-a", "tenant-a", {"state": "workflow"}, "page")
+            cached = session[connections.CHAT_CACHE_SESSION_KEY]
             marker = session.get(connections.CHAT_RECONNECT_SESSION_KEY)
-        self.assertEqual(cached, "verified-cache")
-        self.assertIsNone(marker)
+        self.assertEqual(cached, "chat-only-cache")
+        self.assertEqual(marker, {"user_id": "user-a", "tenant_id": "tenant-a"})
+        self.assertNotIn("cache_writer", complete.call_args.kwargs)
+
+    def test_chat_disconnect_requires_csrf_and_uses_only_signed_in_subject(self):
+        for payload, headers, expected in (
+            ({}, {}, 403),
+            ({"user_id": "user-b"}, {"X-M365-CSRF-Token": self.csrf}, 400),
+            ({}, {"X-M365-CSRF-Token": self.csrf, "Sec-Fetch-Site": "cross-site"}, 403),
+        ):
+            response = self.client.post("/api/m365/chat/connection/disconnect", json=payload, headers=headers)
+            self.assertEqual(response.status_code, expected)
+        with patch.object(self.connection_service, "disconnect_chat", return_value={
+            "status": "not_connected", "sources": [], "persistence": "session",
+        }) as disconnect:
+            response = self.client.post(
+                "/api/m365/chat/connection/disconnect", json={},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+        self.assertEqual(response.status_code, 200)
+        disconnect.assert_called_once_with("user-a", "tenant-a")
 
     def test_real_notification_helper_only_targets_subject_and_deduplicates(self):
         notification_container = CosmosContainer("user_id")

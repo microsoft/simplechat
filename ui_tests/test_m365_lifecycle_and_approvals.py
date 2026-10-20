@@ -1,7 +1,7 @@
 # test_m365_lifecycle_and_approvals.py
 """
 Azure Playwright-ready UI tests for typed actions, Profile, and saved approvals.
-Version: 0.261.038
+Version: 0.261.355
 Implemented in: 0.261.029
 In-chat onboarding regression coverage implemented in: 0.261.032
 Independent Profile chat reconnect coverage implemented in: 0.261.034
@@ -188,6 +188,10 @@ class ApiFixture:
         elif path == "/api/m365/chat/connection/connect":
             self.profile_chat_connect_requests.append(body)
             self.respond(route, {"success": True, "authorization_url": self.authorization_url})
+        elif path == "/api/m365/chat/connection/disconnect":
+            self.revocations.append((path, body))
+            self.chat_connection = {"status": "not_connected", "sources": [], "persistence": "session"}
+            self.respond(route, {"success": True, "connection": self.chat_connection})
         elif path == "/api/m365/connections":
             self.respond(route, {"success": True, "connection": self.connection, "csrf_token": self.csrf_token})
         elif path == "/api/m365/connections/connect":
@@ -1005,7 +1009,7 @@ def test_profile_chat_reconnect_is_available_without_a_pending_request(ui, viewp
     expect(region.get_by_role("button", name="Reconnect Microsoft 365 for chat", exact=True)).to_be_enabled()
     expect(region.locator("#m365-chat-connection-status")).to_contain_text(message)
     expect(region).to_contain_text("Microsoft still checks your access each time a source runs")
-    expect(region).to_contain_text("does not require Key Vault")
+    expect(region).to_contain_text("With Key Vault configured")
     expect(region).to_contain_text("sharing approvals")
     expect(region).to_contain_text("saved workflow credentials")
     expect(region).to_contain_text("workflow Run as")
@@ -1032,6 +1036,36 @@ def test_profile_chat_reconnect_is_available_without_a_pending_request(ui, viewp
     assert "/api/m365/requests" not in api.api_paths
     assert not api.m365_posts
     assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("width", [1440, 390])
+def test_profile_saved_chat_persists_sources_and_disconnect_requires_confirmation(ui, width):
+    page, api = ui
+    page.set_viewport_size({"width": width, "height": 900})
+    api.chat_connection = {
+        "status": "available", "sources": list(SOURCES), "persistence": "saved",
+        "persistence_message": "Saved for chat across sign-ins. Microsoft still checks access.",
+    }
+    for _ in range(2):
+        page.goto(f"{ORIGIN}/profile?tab=settings")
+        expect(page.locator("#m365-chat-connection-status")).to_contain_text("Microsoft 365 is connected for chat")
+        expect(page.locator("#m365-chat-connection-details")).to_contain_text("Saved for chat across sign-ins")
+        for source in SOURCES:
+            expect(page.locator(f"#m365-chat-connect-{source}")).to_be_checked()
+    page.get_by_role("button", name="Disconnect chat", exact=True).click()
+    dialog = page.locator("#m365RevokeModal")
+    expect(dialog).to_be_visible()
+    expect(dialog).to_contain_text("workflow connection and authorizations stay unchanged")
+    assert not api.revocations
+    dialog.get_by_role("button", name="Cancel", exact=True).click()
+    expect(dialog).to_be_hidden()
+    assert not api.revocations
+    page.get_by_role("button", name="Disconnect chat", exact=True).click()
+    page.locator("#m365-revoke-confirm").click()
+    expect(page.locator("#m365-chat-disconnect-btn")).to_be_disabled()
+    expect(page.locator("#m365-chat-connection-status")).to_contain_text("Not signed in")
+    assert api.revocations == [("/api/m365/chat/connection/disconnect", {})]
 
 
 @pytest.mark.ui

@@ -1,8 +1,8 @@
-# Chat preflight context lifecycle fix - v0.261.355
+# Chat preflight context lifecycle fix - v0.261.356
 
 ## Issue and root cause
 
-**Fixed in version: 0.261.355**, recorded in
+**Fixed in version: 0.261.356**, recorded in
 `application/single_app/config.py`.
 
 The first message to an agent in V2 could fail with "The selected chat context
@@ -22,6 +22,12 @@ actor/conversation/agent context. Synchronizing the same context is idempotent.
 The chat store binds that context before asynchronous work and adopts the ID
 returned by its own still-current creation operation before starting preflight.
 The mounted notice observes that adoption instead of clearing it.
+
+This extends the first-message conversation synchronization introduced in
+**0.261.355**. Its synchronous store subscription remains in place:
+`setActionRecoveryConversation()` delegates to the same full-context owner
+instead of keeping a second conversation identity or invalidating the send
+again. Direct store changes and the send's own adoption therefore stay aligned.
 
 Each mounted observer has its own ownership token. Prop changes synchronize
 context; unmount releases only the current observer. Cleanup of an older
@@ -58,11 +64,19 @@ CSRF rejection after genuine changes, and unmount after an explicit reset.
 Backend recovery contracts remain covered by
 `functional_tests/test_action_runtime_recovery.py`.
 
-For **0.261.355**, the combined chat-recovery/SQL-feedback browser selection
+Before base integration, at branch version **0.261.355**, the combined
+chat-recovery/SQL-feedback browser selection
 passed **43 cases**, and the focused backend selection passed **259 cases**.
 The network-blocked Cosmos contract gate passed **1,198 cases and 244 subtests**
 using the application's pinned Cosmos SDK. The context-ownership Node contract,
 V2 typecheck/build, route policies, and documentation checks also passed.
+
+After integrating the concurrent **0.261.355** base fix, version **0.261.356**
+passed **58 combined browser cases**, including the incoming real-Composer
+and StrictMode regressions. The existing conversation-setter contract passed
+in normal and optimized Python, and the Node contract verifies that its
+same-ID observation preserves the full context and observer ownership.
+The merged Cosmos inventory still reports zero review gaps.
 
 Before the fix, both mounted first-send variants failed with the reported
 context-change error and never reached action health. After the fix, both admit

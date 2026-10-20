@@ -1,7 +1,7 @@
 # action_recovery.py
 """Closed browser fixture for the production classic/V2 action recovery paths.
 
-Version: 0.261.355
+Version: 0.261.356
 Implemented in: 0.261.347
 Only synthetic local API traffic is permitted; no model or external write runs.
 """

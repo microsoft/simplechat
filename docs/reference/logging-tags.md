@@ -84,7 +84,7 @@ See the [SQL action troubleshooting categories]({{ '/reference/actions/sql-query
 
 ### Connection context and diagnostic references
 
-Since **0.261.355**, connection-check failures return
+Since **0.261.356**, connection-check failures return
 `details.diagnostic_reference`, an opaque 32-character hexadecimal reference.
 The V2 connection feedback shows it beside the safe error. Runtime Query/Schema
 connection failures and the existing driver fallback also carry a server-side

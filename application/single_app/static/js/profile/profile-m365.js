@@ -105,11 +105,14 @@
             }
         }
 
-        function describeChatConnection(status, labels) {
+        function describeChatConnection(status, labels, persistence) {
             if (status === 'available') {
+                const connected = persistence === 'saved'
+                    ? 'Microsoft 365 is connected for chat'
+                    : 'Signed in to Microsoft 365 for this session';
                 return labels
-                    ? `Signed in to Microsoft 365 for this session. Chat can use: ${labels}.`
-                    : 'Signed in to Microsoft 365 for this session, but no source\'s permissions are granted yet. Connect the sources chat should use.';
+                    ? `${connected}. Chat can use: ${labels}.`
+                    : `${connected}. No chat sources are connected yet. Connect the sources chat should use.`;
             }
             if (status === 'reconnect_required') {
                 return `Microsoft 365 needs you to sign in again before chat can use ${labels || 'your sources'}.`;
@@ -122,6 +125,8 @@
                 return;
             }
             const fields = document.getElementById('m365-chat-connection-fields');
+            const disconnectButton = document.getElementById('m365-chat-disconnect-btn');
+            disconnectButton.disabled = true;
             fields.disabled = true;
             try {
                 const response = await api.requestJson('/api/m365/chat/connection');
@@ -138,11 +143,12 @@
                     checkbox.checked = selected.includes(checkbox.dataset.m365ChatConnectSource);
                 });
                 const labels = chatConnection.sources.map(source => api.sourceLabels[source]).join(', ');
-                document.getElementById('m365-chat-connection-details').textContent = chatConnection.status === 'available'
-                    ? 'Reconnect to renew this sign-in or to add sources.'
-                    : '';
+                document.getElementById('m365-chat-connection-details').textContent = chatConnection.persistence_message
+                    || 'Reconnect once to save this chat connection across sign-ins when Key Vault is configured.';
                 fields.disabled = false;
-                showStatus('m365-chat-connection-status', describeChatConnection(chatConnection.status, labels),
+                disconnectButton.disabled = chatConnection.status === 'not_connected';
+                showStatus('m365-chat-connection-status', describeChatConnection(
+                    chatConnection.status, labels, chatConnection.persistence),
                     chatConnection.status === 'reconnect_required' ? 'warning'
                         : chatConnection.status === 'available' ? 'success' : 'info');
             } catch (error) {
@@ -377,6 +383,10 @@
         });
         document.getElementById('m365-preferences-form').addEventListener('submit', savePreferences);
         document.getElementById('m365-chat-connect-btn').addEventListener('click', connectChat);
+        document.getElementById('m365-chat-disconnect-btn').addEventListener('click', () => confirmRevocation(
+            'Remove your saved chat sign-in and stop future chat access in all browsers? Your workflow connection and authorizations stay unchanged. Already published answers and evidence are not removed.',
+            () => api.requestJson('/api/m365/chat/connection/disconnect', { method: 'POST', body: {} })
+        ));
         document.getElementById('m365-connect-btn').addEventListener('click', connect);
         document.getElementById('m365-revoke-confirm').addEventListener('click', revoke);
         document.getElementById('m365-profile-refresh').addEventListener('click', refresh);

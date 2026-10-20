@@ -94,12 +94,13 @@ const CHAT_STATUS_TEXT: Record<string, string> = {
  * permissions it already holds, including consent given at sign-in or by an administrator, so
  * this matches what chat actually does rather than only what was reconnected here.
  */
-export function describeChatConnection(status: string, sources: M365Source[]): string {
+export function describeChatConnection(status: string, sources: M365Source[], persistence = 'session'): string {
     const labels = sources.map((source) => M365_SOURCE_LABELS[source]).join(', ');
     if (status === 'available') {
+        const connected = persistence === 'saved' ? 'Microsoft 365 is connected for chat' : CHAT_STATUS_TEXT.available;
         return labels
-            ? `${CHAT_STATUS_TEXT.available}. Chat can use: ${labels}. Microsoft still checks your access each time a source runs.`
-            : `${CHAT_STATUS_TEXT.available}, but no source's permissions are granted yet. Connect the sources chat should use.`;
+            ? `${connected}. Chat can use: ${labels}. Microsoft still checks your access each time a source runs.`
+            : `${connected}. No chat sources are connected yet. Connect the sources chat should use.`;
     }
     if (status === 'reconnect_required') {
         return labels
@@ -461,10 +462,17 @@ function SharingCard({
 interface ChatConnection {
     status?: string;
     sources?: unknown;
+    persistence?: string;
+    persistence_message?: string;
 }
 
-function ChatConnectionCard({ refreshKey }: { refreshKey: number }) {
-    const [connection, setConnection] = useState<{ status: string; sources: M365Source[] } | null>(null);
+function ChatConnectionCard({ refreshKey, onRevoke }: {
+    refreshKey: number;
+    onRevoke: (pending: PendingRevocation) => void;
+}) {
+    const [connection, setConnection] = useState<{
+        status: string; sources: M365Source[]; persistence: string; persistenceMessage: string;
+    } | null>(null);
     const [selected, setSelected] = useState<M365Source[]>([]);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [connecting, setConnecting] = useState(false);
@@ -485,7 +493,14 @@ function ChatConnectionCard({ refreshKey }: { refreshKey: number }) {
                 ) {
                     throw new Error('The chat sign-in status could not be verified. Refresh before trying again.');
                 }
-                setConnection({ status, sources });
+                const persistence = response.connection?.persistence ?? 'session';
+                if (!['saved', 'session'].includes(persistence)) {
+                    throw new Error('The chat connection storage could not be verified. Refresh before trying again.');
+                }
+                setConnection({
+                    status, sources, persistence,
+                    persistenceMessage: response.connection?.persistence_message ?? '',
+                });
                 setSelected(sources);
                 setLoadError(null);
             })
@@ -517,7 +532,7 @@ function ChatConnectionCard({ refreshKey }: { refreshKey: number }) {
             title="Chat connection"
             sectionId="m365-chat-connection"
             Icon={MessageSquare}
-            description="Your Microsoft 365 sign-in for chat in this browser session. Chat uses it to read the sources you allow, and asks you to connect when one needs more permission. It needs neither Key Vault nor a saved workflow connection, and reconnecting leaves sharing approvals, workflow credentials and workflow authorizations unchanged."
+            description="Your own Microsoft 365 connection for chat, separate from workflows. Saved chat connections survive SimpleChat sign-out and browser restarts; Microsoft and your organization's policies still determine when sign-in is required. Reconnecting leaves sharing approvals and workflow authorizations unchanged."
         >
             <div className="space-y-4">
                 {loadError ? (
@@ -526,25 +541,45 @@ function ChatConnectionCard({ refreshKey }: { refreshKey: number }) {
                     <StatusNote>Loading chat sign-in status…</StatusNote>
                 ) : (
                     <StatusNote tone={connection.status === 'reconnect_required' ? 'warn' : connection.status === 'available' ? 'ok' : 'info'}>
-                        {describeChatConnection(connection.status, connection.sources)}
+                        {describeChatConnection(connection.status, connection.sources, connection.persistence)}
                     </StatusNote>
+                )}
+                {connection?.persistenceMessage && (
+                    <p className="text-xs text-text-2">{connection.persistenceMessage}</p>
                 )}
                 <SourceCheckboxes
                     legend="Sources to connect for chat"
                     value={selected}
                     onChange={setSelected}
-                    disabled={!connection || connecting}
+                    disabled={!connection || Boolean(loadError) || connecting}
                     idPrefix="m365-chat-source"
                 />
-                <button
-                    type="button"
-                    onClick={() => void connect()}
-                    disabled={!connection || connecting}
-                    className={PRIMARY_BUTTON}
-                >
-                    {connecting ? <Loader2 size={14} className="animate-spin" /> : <Cable size={14} />}
-                    Reconnect Microsoft 365 for chat
-                </button>
+                <div className="flex flex-wrap gap-2">
+                    <button
+                        type="button"
+                        onClick={() => void connect()}
+                        disabled={!connection || Boolean(loadError) || connecting}
+                        className={PRIMARY_BUTTON}
+                    >
+                        {connecting ? <Loader2 size={14} className="animate-spin" /> : <Cable size={14} />}
+                        Reconnect Microsoft 365 for chat
+                    </button>
+                    <button
+                        type="button"
+                        disabled={!connection || Boolean(loadError) || connection.status === 'not_connected' || connecting}
+                        className={DANGER_BUTTON}
+                        onClick={() => onRevoke({
+                            title: 'Disconnect chat?',
+                            description: 'Remove your saved chat sign-in and stop future chat access in all browsers. Your workflow connection and workflow authorizations stay unchanged. Reconnect explicitly to use Microsoft 365 in chat again.',
+                            confirmLabel: 'Disconnect chat',
+                            task: () => m365Request('/api/m365/chat/connection/disconnect', { method: 'POST', body: {} }),
+                            done: 'Microsoft 365 disconnected for chat.',
+                        })}
+                    >
+                        <Unplug size={14} />
+                        Disconnect chat
+                    </button>
+                </div>
             </div>
         </SettingsCard>
     );
@@ -888,7 +923,7 @@ export function M365Cards() {
                 </button>
             </div>
             <SharingCard refreshKey={refreshKey} onRevoke={openRevocation} />
-            <ChatConnectionCard refreshKey={refreshKey} />
+            <ChatConnectionCard refreshKey={refreshKey} onRevoke={openRevocation} />
             <WorkflowConnectionCard
                 refreshKey={refreshKey}
                 onRevoke={openRevocation}

@@ -1266,11 +1266,11 @@
         <hr />
         <div id="m365-chat-connection" role="region" aria-labelledby="m365-chat-connection-heading">
             <h6 id="m365-chat-connection-heading">Microsoft 365 chat connection</h6>
-            <p class="small">Renew your interactive Microsoft 365 sign-in here, even without a pending chat request. This uses your current sign-in session and does not require Key Vault or a saved workflow connection.</p>
+            <p class="small">Connect your own Microsoft 365 account for chat, independently of workflows. With Key Vault configured, your chat sign-in is saved across SimpleChat sign-out and browser restarts. Microsoft and your organization's policies still determine when you must sign in again.</p>
             <p class="small">Reconnecting does not change sharing approvals or preferences, saved workflow credentials, or workflow Run as authorizations. It does not enable disabled action capabilities or fix unrelated model or storage configuration errors.</p>
             <div id="m365-chat-connection-notice" class="alert alert-success d-none" role="status" aria-live="polite"></div>
             <div id="m365-chat-connection-status" class="alert alert-info" role="status" aria-live="polite" tabindex="-1">Loading chat sign-in status...</div>
-            <p class="small text-muted">Sources listed are those this session's sign-in already has permission for, including consent given at sign-in or by an administrator. Microsoft still checks your access each time a source runs.</p>
+            <p class="small text-muted">Listed sources retain their verified permissions when short-lived access tokens expire. Microsoft still checks your access each time a source runs.</p>
             <p id="m365-chat-connection-details" class="small"></p>
             <fieldset id="m365-chat-connection-fields" aria-describedby="m365-chat-source-permissions-help" disabled>
                 <legend class="fs-6">Sources to connect for chat</legend>
@@ -1283,7 +1283,10 @@
                     {% endfor %}
                 </div>
                 <p class="form-text" id="m365-chat-source-permissions-help">Each source includes the permissions for all of its supported operations. Calendar includes reading events, creating invitations, mailbox timezone, and recipient lookup. Email includes reading messages, managing drafts and read state, sending mail, and recipient lookup. OneDrive and SPO include file discovery and reading. Microsoft shows the permissions before you consent. Action capabilities, delivery confirmations, and sharing approvals still control what can actually run.</p>
-                <button type="button" class="btn btn-primary" id="m365-chat-connect-btn">Reconnect Microsoft 365 for chat</button>
+                <div class="d-flex flex-wrap gap-2">
+                    <button type="button" class="btn btn-primary" id="m365-chat-connect-btn">Reconnect Microsoft 365 for chat</button>
+                    <button type="button" class="btn btn-outline-danger" id="m365-chat-disconnect-btn" disabled>Disconnect chat</button>
+                </div>
             </fieldset>
         </div>
         <hr />

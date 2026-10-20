@@ -80,6 +80,14 @@ export function synchronizeActionRecoveryContext(context: ActionRecoveryContext)
     return activeContext;
 }
 
+export function setActionRecoveryConversation(conversationId: string | null): void {
+    synchronizeActionRecoveryContext({
+        actorId: activeContext?.actorId ?? useBootstrapStore.getState().data?.user?.id,
+        conversationId,
+        agentSelection: activeContext?.agentSelection,
+    });
+}
+
 export function observeActionRecoveryContext(observer: symbol, context: ActionRecoveryContext): void {
     activeObserver = observer;
     synchronizeActionRecoveryContext(context);

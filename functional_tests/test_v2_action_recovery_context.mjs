@@ -1,6 +1,6 @@
 // test_v2_action_recovery_context.mjs
-// Version: 0.261.355
-// Implemented in: 0.261.355
+// Version: 0.261.356
+// Implemented in: 0.261.356
 // Exercises the real recovery owner without React scheduling or external I/O.
 
 import assert from 'node:assert/strict';
@@ -19,6 +19,7 @@ try {
     const revision = recovery.getActionRecoveryRevision();
     recovery.releaseActionRecoveryContext(oldObserver);
     assert.equal(recovery.getActionRecoveryRevision(), revision);
+    recovery.setActionRecoveryConversation('created');
     const observed = recovery.synchronizeActionRecoveryContext({ ...initial, conversationId: 'created' });
     assert.equal(observed, adopted);
     assert.equal(recovery.getActionRecoveryRevision(), revision);

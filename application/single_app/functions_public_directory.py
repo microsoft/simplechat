@@ -242,7 +242,8 @@ def _row_membership(role, record):
 
 def _directory_row(record, user_id):
     role = _caller_role(record, user_id)
-    stored_status = record.get("status")
+    # Older creators omitted status; only absence inherits the existing active policy.
+    stored_status = record.get("status", "active")
     status = stored_status if stored_status in PUBLIC_DIRECTORY_STATUSES else "unknown"
     return {
         "id": _text(record.get("id")),
@@ -267,7 +268,7 @@ def build_public_directory_row(workspace, user_id):
         "ownerId": (workspace.get("owner") or {}).get("userId"),
         "heroColor": workspace.get("heroColor"),
         "logoVersion": workspace.get("logoVersion"),
-        "status": workspace.get("status"),
+        "status": workspace.get("status", "active"),
         "logoPresent": isinstance(logo, str) and bool(logo.strip()),
         "callerAdmins": _caller_members(workspace.get("admins"), user_id),
         "callerDocumentManagers": _caller_members(workspace.get("documentManagers"), user_id),

@@ -1,8 +1,8 @@
 # test_v2_sql_connection_diagnostic_reference.py
 """
 SQL connection failures show only the safe correlation reference in the real V2 SPA.
-Version: 0.261.355
-Implemented in: 0.261.355
+Version: 0.261.356
+Implemented in: 0.261.356
 
 Uses the existing Azure Playwright connection/local fallback and closed HTTP fixture.
 No database, model, or external action is invoked.
