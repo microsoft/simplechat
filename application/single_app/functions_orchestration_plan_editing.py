@@ -31,6 +31,7 @@ from functions_orchestration_context import (
     resolve_candidate_documents,
     resolve_elicitation_references,
     resolve_scope_references,
+    enrich_planner_candidates,
     validate_clarification_answers,
 )
 from functions_model_catalog import ModelCatalogError
@@ -356,6 +357,7 @@ def validate_edited_plan(
     capture_external_source_configuration=None,
     document_transform_source_reader=None, document_transform_source_resolver=None,
     document_transform_candidate_reader=None,
+    selected_source_context_reader=None,
 ):
     """Recheck a restored/generated plan using its saved contract and current access.
 
@@ -465,6 +467,7 @@ def build_plan_edit_outcome(
     capture_external_source_configuration=None,
     document_transform_source_reader=None, document_transform_source_resolver=None,
     document_transform_candidate_reader=None,
+    selected_source_context_reader=None,
 ):
     """Prepare a revision without changing its admitted contract or executing work.
 
@@ -602,6 +605,14 @@ def build_plan_edit_outcome(
         user_id, seeds=seeds, conversation_id=context['conversation_id'], settings=settings,
     )
     candidates = _available_sources(context, current_plan, user_id, settings, candidates)
+    candidates = enrich_planner_candidates(
+        candidates, user_id, conversation_id=context['conversation_id'], seeds=seeds,
+        selected_source_context_reader=selected_source_context_reader,
+    )
+    seeds['planning_source_revisions'] = {
+        item['document_id']: item['planning_source']['revision']
+        for item in candidates if item.get('planning_source')
+    }
     if document_transform_candidate_reader is not None:
         seeds['document_transform_references'] = document_transform_candidate_reader(
             [item['document_id'] for item in candidates],

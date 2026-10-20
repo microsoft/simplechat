@@ -1,7 +1,7 @@
 # test_orchestration_analysis_citation_delivery.py
 """Native Analyze/Compare citations reach Compose, messages and streamed delivery.
 
-Version: 0.261.356
+Version: 0.261.358
 Implemented in: 0.261.356
 
 The actual headless execution, source producers, result store and message finalizer

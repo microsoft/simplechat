@@ -2,7 +2,7 @@
 
 **Feature**: Citation Improvements
 **Version**: v0.238.024
-**Updated**: v0.250.215
+**Updated**: v0.261.355
 **Dependencies**: Enhanced Citations System, chat-citations.js
 
 ## Overview and Purpose
@@ -17,6 +17,7 @@ This release includes several improvements to the citation system in the chat in
 - **Robust Citation Links**: Support for both inline citation links and hybrid citation buttons
 - **Metadata Citations**: New metadata citation type for viewing extracted metadata (OCR text, vision analysis, detected objects)
 - **Source and Reference Separation**: Complete returned sources remain inspectable while exact document and web citations are persisted separately for Used documents, details badges, and exports
+- **Placeholder Filename Fallback**: Inline document references use the matching recorded filename when the answer says "Untitled Document," while preserving meaningful titles
 
 ## Technical Specifications
 
@@ -50,6 +51,25 @@ Starting in version `0.250.215`, SimpleChat distinguishes retrieval disclosure f
 - Conversation details list all source documents and mark exact use with **Cited**.
 - Used documents and reference-producing exports consume exact cited subsets for new responses.
 - Historical records without versioned tracking use the previous broad fallback and require no migration.
+
+### Placeholder labels and recorded filenames
+
+Implemented in version: **0.261.355**, tracked in
+`application/single_app/config.py`.
+
+React and classic chat use the current message's recorded filename when an inline
+document citation says exactly `Untitled Document` or `Untitled`, ignoring case
+and surrounding whitespace. The filename must match the cited reference ID;
+retrieved documents that are not that reference cannot supply its name.
+
+This makes sources recognizable even when title extraction produced only a
+placeholder. Meaningful titles are preserved. Missing or ambiguous records keep
+the existing label. Streaming answers gain the fallback when final citation
+metadata arrives, without additional metadata requests or changes to saved text.
+The source popup still opens the original passage.
+
+See [Inline Citation Filename Fallback Fix](../../fixes/INLINE_CITATION_FILENAME_FALLBACK_FIX.md)
+for compatibility rules and regression coverage.
 
 ### Enhanced Citation Modal
 

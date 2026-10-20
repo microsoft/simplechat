@@ -117,6 +117,8 @@ export interface ChatStreamResult {
     reconnected: boolean;
     credentialWaiting?: boolean;
     actionRecoveryWaiting?: boolean;
+    /** Preflight ended before the stream POST; safe to retain the unsent draft, never replay it. */
+    preflightRejected?: boolean;
 }
 
 /**
@@ -532,10 +534,12 @@ export async function streamChat(
         const prepared = await prepareActionRequest(body, signal);
         if (!prepared || signal?.aborted) {
             result.cancelled = true;
+            result.preflightRejected = true;
             return result;
         }
         body = prepared;
     } catch (error) {
+        result.preflightRejected = true;
         if (signal?.aborted) {
             result.cancelled = true;
         } else {

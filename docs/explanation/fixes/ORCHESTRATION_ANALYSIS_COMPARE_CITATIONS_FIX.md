@@ -4,6 +4,8 @@ Fixed/Implemented in version: **0.261.356**
 
 Application version: `application/single_app/config.py`.
 
+Current version after base-branch integration: **0.261.358**.
+
 ## Issue and root cause
 
 An orchestrated document answer could contain the correct extracted facts and source

@@ -1,7 +1,7 @@
 # test_orchestration_analysis_compare_citations.py
 """Analyze/Compare evidence uses the existing document citation contract.
 
-Version: 0.261.356
+Version: 0.261.358
 Implemented in: 0.261.356
 
 Real native Analyze, retained stores/readers, composition and source tracking are
