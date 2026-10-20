@@ -1,4 +1,4 @@
-# SQL connection diagnostics fix - v0.261.353
+# SQL connection diagnostics fix - v0.261.355
 
 ## Issue and root cause
 
@@ -76,6 +76,64 @@ coverage/quality checks passed **7/7** and **6/6**. These local results do not
 replace the new commit's CodeQL analysis.
 
 ## Technical details
+
+### Runtime context and safe UI correlation - v0.261.355
+
+**Implemented in version: 0.261.355**, recorded in
+`application/single_app/config.py`.
+
+Further read-only investigation confirmed SQLSTATE `28000` and native error
+`18456` for the live failure. The App Service principal already exists in the
+target database with CONNECT and SELECT grants. That does not establish which
+authentication path the failing process actually used or prove token acquisition.
+The live SQL root cause remains unresolved; this change does not repair it by
+guessing at permissions, credentials, or driver options.
+
+The existing bootstrap-free diagnostic module now supplies a per-connection
+context and a random 32-character hexadecimal reference. Connection tests and
+runtime Query/Schema connections log the effective parameter-versus-string
+source, closed authentication/source enums, failure stage, driver family/major,
+bounded attempt/fallback counts, driver availability when observable, and
+elapsed milliseconds. Managed-identity parameter connections record only the
+presence of the App Service identity endpoint and header environment variables.
+These booleans are not evidence of a successful token request. Complete
+connection strings report authentication as unknown rather than trusting
+inactive form fields or parsing credentials.
+
+The connection test adds only `details.diagnostic_reference` to failure JSON.
+The existing V2 feedback panel renders it as text, allowing an administrator to
+find the matching server warning. Classic/editor configuration and identity
+refusals also receive a reference without returning exception text. Provider
+codes, runtime context, and credentials stay server-side. Existing failure
+codes and statuses are preserved; successful response shapes are unchanged.
+
+Stages distinguish configuration, identity resolution, driver import,
+connection, and the test's `SELECT 1` probe. The existing missing-Driver-17
+fallback emits a linked event with the same reference. It still makes at most
+one Driver-18 attempt and never retries login rejection. Successful runtime
+connections do not add per-query success events.
+
+`functions_appinsights.py` enforces the context's exact enum, boolean, integer,
+and reference formats for both console sanitization and Monitor export. Invalid
+values are omitted, including with debug logging enabled. Driver enumeration
+failure is explicitly recorded as unavailable and does not block the connection.
+
+The extended diagnostic functional suites cover effective auth, complete strings,
+environment presence, unavailable context, fallback success/failure, import/
+connect/probe failures, classic/editor identity refusals, malformed/oversized
+values, and real logging privacy. The cold-import subprocess also executes the
+context in normal and optimized Python with network access blocked.
+`ui_tests/test_v2_sql_connection_diagnostic_reference.py` covers the real V2
+connection error panel at desktop/mobile widths with no editor save or live SQL.
+See the [logging runbook](../../reference/logging-tags.md#sql-connection-diagnostics).
+
+Validation for **0.261.355**: **259 focused backend cases** and **43 combined
+chat-recovery/SQL-feedback browser cases** passed. The complete network-blocked
+Cosmos gate passed **1,198 cases and 244 subtests**, with **1,067 owners,
+412 doubles, and zero review gaps**, using Cosmos SDK **4.9.0**. The existing
+seven logging checks also passed in their own clean interpreter. Shared Python
+dependency conflicts were isolated in a temporary worktree-local environment;
+no shared packages, test assertions, or review classifications were changed.
 
 ### Shared connection boundary
 

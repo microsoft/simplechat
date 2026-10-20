@@ -82,6 +82,60 @@ An `InterfaceError` without structured evidence remains `sql_connection_failed`.
 SQLSTATE class `08` alone does not prove a firewall, TLS, or identity problem.
 See the [SQL action troubleshooting categories]({{ '/reference/actions/sql-query/' | relative_url }}#connection-failure-categories).
 
+### Connection context and diagnostic references
+
+Since **0.261.355**, connection-check failures return
+`details.diagnostic_reference`, an opaque 32-character hexadecimal reference.
+The V2 connection feedback shows it beside the safe error. Runtime Query/Schema
+connection failures and the existing driver fallback also carry a server-side
+reference. No user, workspace, host, database, query, or credential is encoded
+in it.
+
+| Additional property (exported with `sc_`) | Meaning |
+| --- | --- |
+| `sql_diagnostic_reference` | Correlates one connection attempt chain, including fallback. |
+| `sql_operation` | Closed enum for connection test, query connection, or schema connection; existing `operation` is retained. |
+| `sql_connection_source` | `parameters`, `connection_string`, or `unknown`. |
+| `sql_auth_mode` | Effective `username_password`, `managed_identity`, `integrated`, `none`, or `unknown`. Complete strings stay unknown. |
+| `sql_auth_source` | `reusable_identity`, `inline`, or `unknown`; no identity identifier. |
+| `sql_stage` | `configuration`, `identity_resolution`, `driver_import`, `connect`, or the test's `probe`. |
+| `sql_driver_family`, `sql_driver_major` | Closed family enum; recognized SQL Server ODBC major `17`/`18`, otherwise unknown. |
+| `sql_driver_inventory` | `observed`, `unavailable` after enumeration failure, or `unknown`. |
+| `sql_driver_17_available`, `sql_driver_18_available` | Booleans only when a bounded driver inventory was observed. |
+| `sql_mi_endpoint_present`, `sql_mi_header_present` | App Service environment-variable presence for a managed-identity parameter connection, never the values. |
+| `sql_attempt_count`, `sql_fallback_count` | Bounded actual connection attempts (0-2) and existing fallback count (0-1). |
+| `sql_duration_ms` | Elapsed time through the recorded stage, capped at 24 hours. |
+
+Unknown or omitted context is not evidence of success or absence. An identity
+endpoint/header being present does not prove token acquisition. Driver
+enumeration does not test driver loading. A complete string's major is
+recognized only from an exact leading standard driver attribute; custom strings
+can legitimately remain unknown. Configuration/identity refusals occur before
+effective provider context has been resolved.
+
+To find the event from the UI reference, use the actual structured tag property
+rather than filtering the generic `Message` field:
+
+```kusto
+AppTraces
+| where TimeGenerated > ago(1h)
+| where tostring(Properties.sc_message) startswith "[SQL_CONNECTION]"
+| where tostring(Properties.sc_sql_diagnostic_reference) == "PASTE_DIAGNOSTIC_REFERENCE"
+| project TimeGenerated, OperationId, Properties
+| order by TimeGenerated asc
+| take 20
+```
+
+First distinguish a setup/identity refusal from a driver import, connect, or
+probe failure. For managed identity, verify the effective mode/source, runtime
+environment presence, driver inventory, and any structured provider code.
+Compare the configured App Service principal with the database principal and
+grants through an authorized administrator; do not change permissions just
+because native code `18456` reports login rejection. Operator-account SQL
+access is not an application-runtime connection check. If the deployed build
+does not yet emit this context, a separately approved deployment and application
+connection test are needed before drawing a new root-cause conclusion.
+
 ## Request-resolution memory diagnostics
 
 Since **0.261.349**, `[ORCHESTRATION_PLANNER]` records

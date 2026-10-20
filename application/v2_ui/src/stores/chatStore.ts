@@ -77,6 +77,9 @@ import {
 } from '../lib/mentions';
 import { buildSelectionFields } from '../lib/chatRequestSelection';
 import {
+    clearActionRecovery, getActionRecoveryRevision, synchronizeActionRecoveryContext,
+} from '../lib/actionRecovery';
+import {
     normalizeReasoningAdjustments,
     reasoningMetadataForEvent,
     type ReasoningResolution,
@@ -476,7 +479,7 @@ interface ChatState {
     /** Hide every selected conversation, dropping them out of the feed. */
     bulkHideSelectedConversations: () => Promise<void>;
 
-    sendMessage: (text: string, options: ComposerOptions) => Promise<void>;
+    sendMessage: (text: string, options: ComposerOptions) => Promise<void | false>;
     generateImageFromReference: (request: GenerateImageFromReferenceRequest) => Promise<string | null>;
     addComposerImageReference: (reference: ImageReferenceRequest) => void;
     consumeComposerImageReferences: () => ImageReferenceRequest[];
@@ -1588,7 +1591,7 @@ async function runChatStream(
         pendingUserMessageId?: string | null;
         transport?: (handlers: ChatStreamHandlers, signal: AbortSignal) => Promise<unknown>;
     } = {},
-): Promise<void> {
+): Promise<void | false> {
     const { set, getState } = {
         set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) =>
             useChatStore.setState(partial as never),
@@ -1634,12 +1637,14 @@ async function runChatStream(
             options.pendingUserMessageId,
             options.kind ?? 'personal',
         );
+    let preflightRejected = false;
     if (options.transport) {
         await options.transport(handlers, controller.signal);
     } else if (requestBody) {
-        await streamChat({
+        const result = await streamChat({
             ...requestBody, action_recovery_client_message_id: options.pendingUserMessageId ?? null,
         }, handlers, controller.signal, options.stream);
+        preflightRejected = result.preflightRejected === true;
     }
 
     // Only tear down if this stream is still the active one; a newer send may already have
@@ -1669,6 +1674,7 @@ async function runChatStream(
         await watchedReplyReads.get(conversationId);
         await getState().loadConversations({ reset: true });
     }
+    if (preflightRejected) return false;
 }
 
 /**
@@ -2421,6 +2427,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     selectConversation: async (conversationId, options = {}) => {
+        clearActionRecovery();
         // Any stream still running belongs to the thread being left, so its reader is
         // dropped: left attached, its handlers would append the finished response into the
         // newly selected conversation's message list.
@@ -2649,6 +2656,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     startNewConversation: () => {
+        clearActionRecovery();
         // Detach first: the running stream belongs to the previous thread and must not
         // deliver its response into the empty new one. Detached rather than cancelled, so
         // starting a new chat leaves the previous answer to finish and be saved rather than
@@ -3098,6 +3106,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
 
         let conversationId = get().activeConversationId;
+        const actorId = useBootstrapStore.getState().data?.user?.id;
+        synchronizeActionRecoveryContext({ actorId, conversationId, agentSelection: options.agentSelection });
+        const recoveryRevision = getActionRecoveryRevision();
         const selectedAnalysis = get().analysisResultContext;
         const savedContext = selectedAnalysis?.conversation_id === conversationId ? selectedAnalysis : null;
         const isNewConversation = !conversationId;
@@ -3128,6 +3139,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             try {
                 const created = await createConversation(trimmed);
                 conversationId = created.conversation_id;
+                if (options.agentSelection && (recoveryRevision !== getActionRecoveryRevision()
+                    || conversationEpoch !== epoch
+                    || actorId !== useBootstrapStore.getState().data?.user?.id)) {
+                    toast.info('Chat context changed before sending. Your message has not been sent.');
+                    return false;
+                }
                 adoptConversationModeDraft(draftMode, conversationId);
                 // The reader can open a conversation during that round trip, and if they do
                 // their click wins. The message is still sent and its answer still generated
@@ -3138,6 +3155,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 // new one, because the list is keyed on whatever is active. Starting another
                 // new chat is the same case, which the epoch is what tells apart.
                 if (get().activeConversationId === null && conversationEpoch === epoch) {
+                    synchronizeActionRecoveryContext({ actorId, conversationId, agentSelection: options.agentSelection });
                     set({ activeConversationId: conversationId, activeConversationKind: 'personal' });
                     // Mirrored like every other write to this field. Today the conversation just
                     // created can only be personal — this branch is reached only when nothing was
@@ -3431,7 +3449,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             useCollaborationStore.getState().setReplyTo(null);
         }
 
-        await runChatStream(requestBody, conversationId, {
+        return runChatStream(requestBody, conversationId, {
             isNewConversation,
             kind: collaborative ? 'collaborative' : 'personal',
             pendingUserMessageId,
@@ -3541,6 +3559,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     stopStreaming: () => {
         if (!activeStreamController) {
+            clearActionRecovery();
             if (get().retryPresentation && !get().retryPresentation?.admitted) {
                 set({ streaming: false, retryPresentation: null, streamingContent: '', thoughts: [] });
             }

@@ -63,6 +63,15 @@ Since **0.261.351**, connection testing and SQL action runtime share safe error 
 
 Administrators can find `[SQL_CONNECTION]` warnings with validated SQLSTATE and native error numbers when the provider supplies them. See [SQL connection logging]({{ '/reference/logging-tags/' | relative_url }}#sql-connection-diagnostics). A successful login using an operator's own account does not verify the App Service identity, its network path, or its selected authentication mode.
 
+Since **0.261.355**, the connection-check failure includes a **diagnostic
+reference**, shown in V2 beneath the safe error. Give that reference to an
+administrator rather than copying a connection string or credential into a
+support message. The matching server event distinguishes identity/configuration
+resolution, driver loading, connection, and the test query. It also records
+safe driver/authentication categories and environment-presence booleans, not
+provider messages or secrets. These diagnostics do not change authentication,
+permissions, or the existing bounded missing-driver fallback.
+
 ## V2 naming and schema discovery
 
 The V2 action picker labels this action **SQL Database** so owners can distinguish it from warehouse-specific actions. The stored type remains `sql_query` for compatibility. Schema discovery is included automatically for agents that need table context, so the separate `sql_schema` creation card is hidden while existing `sql_schema` actions remain editable.

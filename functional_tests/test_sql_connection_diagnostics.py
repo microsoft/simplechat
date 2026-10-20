@@ -1,7 +1,7 @@
 # test_sql_connection_diagnostics.py
 """
 Functional tests for credential-safe SQL connection diagnostics.
-Version: 0.261.353
+Version: 0.261.355
 Implemented in: 0.261.351
 
 Validate structured evidence, conservative classification, privacy, and cold import
@@ -116,6 +116,63 @@ def test_unknown_engine_cannot_supply_provider_evidence(diagnostics):
     assert result.sqlstate is None
 
 
+@pytest.mark.parametrize("mode,uses_string,credentials,engine,expected", [
+    ("managed_identity", False, False, "sqlserver", "managed_identity"),
+    ("integrated", False, False, "sqlserver", "integrated"),
+    ("managed_identity", False, True, "sqlserver", "username_password"),
+    ("username_password", False, True, "postgresql", "username_password"),
+    ("managed_identity", True, False, "sqlserver", "unknown"),
+    ("username_password", True, True, "sqlserver", "unknown"),
+    (SECRET, False, False, "sqlserver", "unknown"),
+    (None, False, False, "sqlite", "none"),
+])
+def test_context_describes_effective_inputs_without_retaining_them(
+    diagnostics, mode, uses_string, credentials, engine, expected,
+):
+    context = diagnostics.SqlConnectionContext("sql_connection_test")
+    context.configure(
+        engine, connection_string_used=uses_string, auth_type=mode,
+        username_password=credentials, identity_selected=True,
+        environ={"IDENTITY_ENDPOINT": SECRET, "IDENTITY_HEADER": SECRET},
+    )
+    properties = context.log_properties()
+    assert properties["sql_auth_mode"] == expected
+    assert properties["sql_auth_source"] == "reusable_identity"
+    assert properties["sql_connection_source"] == ("connection_string" if uses_string else "parameters")
+    assert ("sql_mi_endpoint_present" in properties) == (expected == "managed_identity")
+    assert SECRET not in repr(context)
+    assert diagnostics.valid_sql_context_property("sql_diagnostic_reference", context.reference)
+    assert 0 <= properties["sql_duration_ms"] <= 86_400_000
+
+
+@pytest.mark.parametrize("value", [SECRET, SECRET * 1000, {}, [], None, True, 2**50, -1],
+                         ids=["secret", "oversized", "object", "array", "null", "bool", "huge", "negative"])
+def test_every_context_field_rejects_untrusted_values(diagnostics, value):
+    for key in diagnostics.SQL_CONTEXT_KEYS:
+        if type(value) is bool and key in diagnostics.SQL_CONTEXT_BOOLEANS:
+            continue
+        valid = diagnostics.valid_sql_context_property(key, value)
+        assert valid is False, key
+
+
+def test_driver_observation_is_conservative_and_references_are_per_connection(diagnostics):
+    context = diagnostics.SqlConnectionContext("sql_query_connect")
+    other = diagnostics.SqlConnectionContext("sql_query_connect")
+    assert context.reference != other.reference
+    context.observe_odbc("DRIVER={ODBC Driver 17 for SQL Server};SERVER=" + SECRET, [
+        "ODBC Driver 18 for SQL Server", SECRET,
+    ])
+    properties = context.log_properties()
+    assert properties["sql_driver_major"] == "17"
+    assert properties["sql_driver_inventory"] == "observed"
+    assert properties["sql_driver_17_available"] is False
+    assert properties["sql_driver_18_available"] is True
+    context.observe_odbc(SECRET + ";DRIVER={ODBC Driver 18 for SQL Server};")
+    properties = context.log_properties()
+    assert properties["sql_driver_major"] == "unknown"
+    assert SECRET not in repr(context)
+
+
 def test_diagnostic_helper_is_not_a_user_facing_action(monkeypatch):
     monkeypatch.syspath_prepend(str(APP_ROOT.parents[1] / "scripts"))
     inventory = importlib.import_module("build_docs_inventory")
@@ -142,7 +199,11 @@ def no_network(*args, **kwargs):
     raise RuntimeError("Network access forbidden")
 socket.socket = no_network
 socket.getaddrinfo = no_network
-from semantic_kernel_plugins.sql_connection_diagnostics import classify_sql_connection_error
+from semantic_kernel_plugins.sql_connection_diagnostics import classify_sql_connection_error, SqlConnectionContext
+context = SqlConnectionContext("sql_connection_test")
+context.configure("sqlserver", auth_type="managed_identity", environ={})
+if context.log_properties()["sql_mi_endpoint_present"] is not False:
+    raise AssertionError("Managed identity observation failed")
 result = classify_sql_connection_error(Exception("HYT00", "private data"), "azure_sql")
 if result.code != "sql_connection_timeout" or result.engine != "sqlserver":
     raise AssertionError("Required diagnostic operation failed")

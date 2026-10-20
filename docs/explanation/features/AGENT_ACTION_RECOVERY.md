@@ -2,6 +2,8 @@
 
 Fixed/Implemented in version: **0.261.347**.
 
+V2 preflight lifecycle fixed in version: **0.261.355**.
+
 Related version update: `application/single_app/config.py`.
 
 Issue: [#1781](https://github.com/microsoft/simplechat/issues/1781).
@@ -84,6 +86,14 @@ consumer. V2 uses `src/lib/actionRecovery.ts`, `ActionRecoveryNotice.tsx`, and
 the existing chat store/SSE transport. Both invalidate pending decisions when
 the agent or conversation changes. V2 additionally binds notices to the current
 bootstrap actor. The UI uses local static assets and safe text rendering.
+
+Since **0.261.355**, V2 synchronizes recovery context at the send boundary,
+before awaiting action preflight. The conversation created by that same send
+is adopted before checking actions; observing its ID in React no longer
+invalidates the pending check. Genuine agent/account/conversation changes,
+New chat, Stop, and leaving the chat still reject stale preflight work.
+See the [chat context lifecycle fix](../fixes/CHAT_PREFLIGHT_CONTEXT_LIFECYCLE_FIX.md)
+for draft preservation and observer ownership.
 
 ## Validation and limits
 
