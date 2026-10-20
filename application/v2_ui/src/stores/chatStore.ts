@@ -76,6 +76,7 @@ import {
     sharedConversationTarget,
 } from '../lib/mentions';
 import { buildSelectionFields } from '../lib/chatRequestSelection';
+import { clearActionRecovery, setActionRecoveryConversation } from '../lib/actionRecovery';
 import {
     normalizeReasoningAdjustments,
     reasoningMetadataForEvent,
@@ -2649,6 +2650,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     startNewConversation: () => {
+        clearActionRecovery();
         // Detach first: the running stream belongs to the previous thread and must not
         // deliver its response into the empty new one. Detached rather than cancelled, so
         // starting a new chat leaves the previous answer to finish and be saved rather than
@@ -4820,6 +4822,9 @@ useChatStore.subscribe((state, previous) => {
     const pendingActions = chatPendingActionsStore.getState();
     const conversationChanged = state.activeConversationId !== previous.activeConversationId;
     if (conversationChanged) {
+        // Run before a send can start preflight. React observes the same identity
+        // idempotently instead of invalidating it later during effect cleanup.
+        setActionRecoveryConversation(state.activeConversationId);
         pendingActions.setConversation(state.activeConversationId ?? '');
     }
     if (conversationChanged || state.messages !== previous.messages) {

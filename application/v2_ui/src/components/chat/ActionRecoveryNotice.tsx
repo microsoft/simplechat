@@ -1,9 +1,9 @@
 // ActionRecoveryNotice.tsx
 
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import {
     chooseActionRecovery, clearActionRecovery, getActionRecovery, reportUnavailableAction,
-    restoreActionRecovery, safeRecoveryEditUrl, subscribeActionRecovery,
+    restoreActionRecovery, safeRecoveryEditUrl, setActionRecoveryConversation, subscribeActionRecovery,
 } from '../../lib/actionRecovery';
 import { resumeActionRecoveryChat, useChatStore } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
@@ -18,7 +18,10 @@ export function ActionRecoveryNotice({ conversationId, hasAgent, agentSelection 
     const streaming = useChatStore((state) => state.streaming);
     const [reports, setReports] = useState<Record<string, string>>({});
     const [error, setError] = useState<string | null>(null);
-    useEffect(() => () => clearActionRecovery(), [conversationId, agentSelection, actorId]);
+    useLayoutEffect(() => () => clearActionRecovery(), [agentSelection, actorId]);
+    useLayoutEffect(() => {
+        setActionRecoveryConversation(conversationId);
+    }, [conversationId]);
     useEffect(() => {
         if (!conversationId) return;
         const controller = new AbortController();
