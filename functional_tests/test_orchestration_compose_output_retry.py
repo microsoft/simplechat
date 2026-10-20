@@ -1,7 +1,7 @@
 # test_orchestration_compose_output_retry.py
 """Records guidance, JSON mode and the single corrective call for content preparation.
 
-Version: 0.261.356
+Version: 0.261.358
 Implemented in: 0.261.141
 Explicit chart/diagram omission correction implemented in: 0.261.341
 Prepared slide schema, count and geometry correction implemented in: 0.261.356

@@ -17,7 +17,7 @@ from semantic_kernel_plugins.sql_odbc_utils import (
     build_sql_server_odbc_connection_string,
     connect_with_sql_server_odbc_fallback,
 )
-from semantic_kernel_plugins.sql_connection_diagnostics import classify_sql_connection_error
+from semantic_kernel_plugins.sql_connection_diagnostics import SqlConnectionContext, classify_sql_connection_error
 from semantic_kernel_plugins.rocksdb_plugin import (
     AUTH_SCHEME_API_KEY,
     AUTH_SCHEME_BEARER,
@@ -3228,32 +3228,43 @@ def _merge_group_and_global_actions(group_actions, global_actions):
 @user_required
 def test_sql_connection():
     """Test a SQL database connection using provided configuration."""
+    context = SqlConnectionContext("sql_connection_test")
+
+    def reject_configuration(message, status=400):
+        log_event(
+            '[SQL_CONNECTION] SQL connection check configuration was rejected.',
+            level=logging.WARNING,
+            extra={**context.log_properties(), 'failure_code': 'sql_configuration_rejected'},
+        )
+        return jsonify({
+            'success': False, 'error': message,
+            'details': {'diagnostic_reference': context.reference},
+        }), status
+
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
-        return jsonify({'success': False, 'error': 'SQL test configuration must be an object.'}), 400
+        return reject_configuration('SQL test configuration must be an object.')
     editor_call = _is_personal_editor_test_request(data) and ('auth' in data or 'additionalFields' in data)
     user_id = get_current_user_id()
 
     try:
+        context.stage = "identity_resolution"
         existing_plugin = _load_existing_plugin_for_sql_test(data.get('existing_plugin'), user_id, requested_group_id=data.get('group_id'))
         if data.get('clear_secret_paths'):
             existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
         if editor_call:
             data = _prepare_editor_sql_test_data(data, existing_plugin, user_id)
-    except PermissionError as exc:
-        if editor_call:
-            return jsonify({'success': False, 'error': 'You cannot use the selected SQL action or identity.'}), 403
-        return jsonify({'success': False, 'error': str(exc)}), 403
-    except LookupError as exc:
-        if editor_call:
-            return jsonify({'success': False, 'error': 'The selected SQL action or identity is unavailable.'}), 404
-        return jsonify({'success': False, 'error': str(exc)}), 404
+    except PermissionError:
+        return reject_configuration('You cannot use the selected SQL action or identity.', 403)
+    except LookupError:
+        return reject_configuration('The selected SQL action or identity is unavailable.', 404)
     except ValueError as exc:
         if editor_call:
             message = exc.public_message if isinstance(exc, WorkspaceAuthoringValidation) else 'Invalid SQL connection configuration or identity.'
-            return jsonify({'success': False, 'error': message}), 400
-        return jsonify({'success': False, 'error': str(exc)}), 400
+            return reject_configuration(message)
+        return reject_configuration('Invalid SQL connection configuration or identity.')
 
+    context.stage = "configuration"
     database_type = (data.get('database_type') or 'sqlserver').lower()
     connection_method = data.get('connection_method', 'parameters')
     connection_string = data.get('connection_string', '')
@@ -3267,7 +3278,7 @@ def test_sql_connection():
     try:
         timeout = min(int(data.get('timeout', 10)), 15)  # Cap at 15 seconds for test
     except (TypeError, ValueError):
-        return jsonify({'success': False, 'error': 'SQL timeout must be an integer.'}), 400
+        return reject_configuration('SQL timeout must be an integer.')
 
     existing_additional_fields = {}
     if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('additionalFields'), dict):
@@ -3279,16 +3290,16 @@ def test_sql_connection():
         password = existing_additional_fields.get('password', '')
 
     try:
+        context.stage = "identity_resolution"
         identity_manifest = None if editor_call else _hydrate_sql_test_identity(data, existing_plugin, user_id)
-    except PermissionError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 403
-    except LookupError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 404
-    except ValueError as exc:
-        if editor_call:
-            return jsonify({'success': False, 'error': 'A stored SQL credential could not be resolved.'}), 400
-        return jsonify({'success': False, 'error': str(exc)}), 400
+    except PermissionError:
+        return reject_configuration('You cannot use the selected SQL action or identity.', 403)
+    except LookupError:
+        return reject_configuration('The selected SQL action or identity is unavailable.', 404)
+    except ValueError:
+        return reject_configuration('A stored SQL credential could not be resolved.')
 
+    context.stage = "configuration"
     if identity_manifest:
         identity_additional_fields = identity_manifest.get('additionalFields') or {}
         identity_auth = identity_manifest.get('auth') or {}
@@ -3311,7 +3322,7 @@ def test_sql_connection():
         unresolved_fields.append('password')
     if unresolved_fields:
         field_list = ', '.join(unresolved_fields)
-        return jsonify({'success': False, 'error': f"Stored SQL secret could not be resolved for testing. Re-enter the {field_list}."}), 400
+        return reject_configuration(f"Stored SQL secret could not be resolved for testing. Re-enter the {field_list}.")
 
     plugin_scope_value, plugin_scope = _resolve_plugin_secret_context(existing_plugin, user_id)
 
@@ -3328,22 +3339,29 @@ def test_sql_connection():
             scope_value=plugin_scope_value,
             scope=plugin_scope,
         )
-    except ValueError as exc:
-        if editor_call:
-            return jsonify({'success': False, 'error': 'A stored SQL credential could not be resolved.'}), 400
-        return jsonify({'success': False, 'error': str(exc)}), 400
+    except ValueError:
+        return reject_configuration('A stored SQL credential could not be resolved.')
 
     if (
         editor_call and auth_type == 'username_password' and database_type != 'sqlite'
         and not (connection_method == 'connection_string' and connection_string)
         and (not username or not password)
     ):
-        return jsonify({'success': False, 'error': 'SQL username and password are required for this authentication mode.'}), 400
+        return reject_configuration('SQL username and password are required for this authentication mode.')
 
     # Map azure_sql to sqlserver
     if database_type in ('azure_sql', 'azuresql'):
         database_type = 'sqlserver'
 
+    context.configure(
+        database_type,
+        connection_string_used=bool(connection_method == 'connection_string' and connection_string),
+        auth_type=auth_type,
+        username_password=bool(username and password) if database_type != 'sqlserver'
+        else bool(auth_type == 'username_password' and username and password),
+        identity_selected=bool(data.get('identity_id')), environ=os.environ,
+    )
+    context.stage = "driver_import"
     try:
         if database_type == 'sqlserver':
             import pyodbc
@@ -3353,10 +3371,13 @@ def test_sql_connection():
                     connection_string,
                     connect_kwargs={"timeout": timeout},
                     log_source="PluginSqlConnectionTest",
+                    diagnostic_context=context, driver_module=pyodbc,
                 )
             else:
+                context.stage = "configuration"
                 if not server or not database:
-                    return jsonify({'success': False, 'error': 'Server and database are required for individual parameters connection.'}), 400
+                    context.stage = "configuration"
+                    return reject_configuration('Server and database are required for individual parameters connection.')
                 conn_str = build_sql_server_odbc_connection_string(
                     server=server,
                     database=database,
@@ -3371,7 +3392,9 @@ def test_sql_connection():
                     conn_str,
                     connect_kwargs={"timeout": timeout},
                     log_source="PluginSqlConnectionTest",
+                    diagnostic_context=context, driver_module=pyodbc,
                 )
+            context.stage = "probe"
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             cursor.close()
@@ -3380,11 +3403,15 @@ def test_sql_connection():
 
         elif database_type == 'postgresql':
             import psycopg2
+            context.stage = "configuration"
             if connection_method == 'connection_string' and connection_string:
+                context.stage = "connect"
+                context.attempts = 1
                 conn = psycopg2.connect(connection_string, connect_timeout=timeout)
             else:
                 if not server or not database:
-                    return jsonify({'success': False, 'error': 'Server and database are required.'}), 400
+                    context.stage = "configuration"
+                    return reject_configuration('Server and database are required.')
                 conn_params = {'host': server, 'database': database, 'connect_timeout': timeout}
                 if port:
                     conn_params['port'] = int(port)
@@ -3392,7 +3419,10 @@ def test_sql_connection():
                     conn_params['user'] = username
                 if password:
                     conn_params['password'] = password
+                context.stage = "connect"
+                context.attempts = 1
                 conn = psycopg2.connect(**conn_params)
+            context.stage = "probe"
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             cursor.close()
@@ -3401,11 +3431,14 @@ def test_sql_connection():
 
         elif database_type == 'mysql':
             import pymysql
+            context.stage = "configuration"
             if connection_method == 'connection_string' and connection_string:
                 # pymysql doesn't natively parse connection strings, so use params
-                return jsonify({'success': False, 'error': 'MySQL test connection requires individual parameters, not a connection string.'}), 400
+                context.stage = "configuration"
+                return reject_configuration('MySQL test connection requires individual parameters, not a connection string.')
             if not server or not database:
-                return jsonify({'success': False, 'error': 'Server and database are required.'}), 400
+                context.stage = "configuration"
+                return reject_configuration('Server and database are required.')
             conn_params = {'host': server, 'database': database, 'connect_timeout': timeout}
             if port:
                 conn_params['port'] = int(port)
@@ -3413,7 +3446,10 @@ def test_sql_connection():
                 conn_params['user'] = username
             if password:
                 conn_params['password'] = password
+            context.stage = "connect"
+            context.attempts = 1
             conn = pymysql.connect(**conn_params)
+            context.stage = "probe"
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             cursor.close()
@@ -3422,10 +3458,15 @@ def test_sql_connection():
 
         elif database_type == 'sqlite':
             import sqlite3
+            context.stage = "configuration"
             db_path = connection_string or database
             if not db_path:
-                return jsonify({'success': False, 'error': 'Database path is required for SQLite.'}), 400
+                context.stage = "configuration"
+                return reject_configuration('Database path is required for SQLite.')
+            context.stage = "connect"
+            context.attempts = 1
             conn = sqlite3.connect(db_path, timeout=timeout)
+            context.stage = "probe"
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             cursor.close()
@@ -3433,17 +3474,19 @@ def test_sql_connection():
             return jsonify({'success': True, 'message': f'Successfully connected to SQLite database.'})
 
         else:
-            return jsonify({'success': False, 'error': f'Unsupported database type: {database_type}'}), 400
+            context.stage = "configuration"
+            return reject_configuration('Unsupported SQL database type.')
 
     except Exception as e:
         diagnostic = classify_sql_connection_error(e, database_type)
         log_event(
             '[SQL_CONNECTION] SQL connection check failed.',
             level=logging.WARNING,
-            extra={**diagnostic.log_properties(), 'operation': 'sql_connection_test'},
+            extra={**diagnostic.log_properties(), **context.log_properties(), 'operation': 'sql_connection_test'},
         )
         return jsonify({
             'success': False, 'error': diagnostic.message, 'error_code': diagnostic.code,
+            'details': {'diagnostic_reference': context.reference},
         }), 400
 
 

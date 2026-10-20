@@ -172,6 +172,8 @@ export interface ChatMessage {
     thoughts?: ThoughtEntry[];
     /** Microsoft 365 items the answer drew on, which its citation chips resolve against. */
     m365_citations?: M365Citation[];
+    /** Retrieved document records used to resolve this message's inline citation labels. */
+    hybrid_citations?: HybridCitation[];
     [key: string]: unknown;
 }
 
@@ -1348,6 +1350,7 @@ export interface ChatStreamEvent {
     model_deployment_name?: string;
     agent_display_name?: string;
     augmented?: boolean;
+    hybrid_citations?: HybridCitation[];
     metadata?: Json;
     /** The outgoing Microsoft 365 action a `type: "m365_pending_action"` frame announces. */
     pending_action?: Json;

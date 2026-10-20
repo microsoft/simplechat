@@ -1,5 +1,7 @@
 # Generated-output reliability fix
 
+Current version: **0.261.358**
+
 Fixed in version: **0.261.356**
 
 Related version update: `application/single_app/config.py`.

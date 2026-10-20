@@ -182,6 +182,7 @@ class OrchestrationServices:
         capture_external_source_configuration=None, image_asset_reader=None, document_bytes_reader=None,
         document_transform_source_reader=None, document_transform_source_resolver=None,
         document_transform_candidate_reader=None,
+        selected_source_context_reader=None,
     ):
         if external_source_preflight is not None and not callable(external_source_preflight):
             raise ResultContractError("result_external_reader_required")
@@ -212,6 +213,9 @@ class OrchestrationServices:
         self.document_transform_source_reader = document_transform_source_reader
         self.document_transform_source_resolver = document_transform_source_resolver
         self.document_transform_candidate_reader = document_transform_candidate_reader
+        if selected_source_context_reader is not None and not callable(selected_source_context_reader):
+            raise ResultContractError("result_native_reader_required")
+        self.selected_source_context_reader = selected_source_context_reader
         external = {}
         if external_source_catalog is not None or external_source_authorizer is not None:
             external = {
@@ -326,6 +330,9 @@ class OrchestrationServices:
         context.composition_profiles = composition_profiles()
         context.composition_profile_validator = validate_composition_profile
         context.execution_deadline_at = record.get("execution_deadline_at")
+        context.planning_source_revisions = deepcopy(
+            (record.get("seeds") or {}).get("planning_source_revisions") or {},
+        )
         context.credential_wait_seconds = record.get("credential_wait_seconds", 0)
         context.rendering_service = self.rendering
         # Each attempt is approved separately and owns its files, so a retry renders a new

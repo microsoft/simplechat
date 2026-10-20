@@ -1,7 +1,7 @@
 # test_sql_connection_diagnostics_runtime.py
 """
 Functional tests for SQL connection diagnostics across routes, plugins, and logging.
-Version: 0.261.353
+Version: 0.261.356
 Implemented in: 0.261.351
 
 Run real plugin classes, connection builders, Flask handlers, and log_event against
@@ -13,6 +13,7 @@ from copy import deepcopy
 import importlib.util
 import json
 import logging
+import re
 from pathlib import Path
 import socket
 import sys
@@ -460,3 +461,151 @@ def test_foreign_personal_identity_is_denied_before_connect(environment, monkeyp
     assert SECRET not in json.dumps(response.get_json())
     connect.assert_not_called()
     assert env.services.writes == []
+
+
+@pytest.mark.parametrize("kind", ["query", "schema"])
+@pytest.mark.parametrize("uses_string", [False, True])
+@pytest.mark.parametrize("inventory", ["observed", "unavailable", "unknown"])
+def test_runtime_connection_context_captures_only_observable_facts(runtime, monkeypatch, kind, uses_string, inventory):
+    monkeypatch.setenv("IDENTITY_ENDPOINT", SECRET)
+    monkeypatch.setenv("IDENTITY_HEADER", SECRET)
+    connect = Mock(side_effect=Exception("28000", SECRET))
+    provider = module_stub("pyodbc", connect=connect)
+    if inventory != "unknown":
+        provider.drivers = Mock(
+            return_value=["ODBC Driver 18 for SQL Server", SECRET],
+            side_effect=OSError(SECRET) if inventory == "unavailable" else None,
+        )
+    monkeypatch.setitem(sys.modules, "pyodbc", provider)
+    saved_string = f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER=private;PWD={SECRET}" if uses_string else None
+    manifest = {**plugin_manifest(connection_string=saved_string), "identity_id": SECRET}
+    plugin = getattr(runtime, kind)(manifest)
+    runtime.records.clear()
+    with pytest.raises(runtime.diagnostics.SqlConnectionError):
+        plugin._get_connection()
+    event = runtime.records[-1]
+    assert event.sc_sql_auth_source == "reusable_identity"
+    assert event.sc_sql_auth_mode == ("unknown" if uses_string else "managed_identity")
+    assert event.sc_sql_stage == "connect"
+    assert event.sc_sql_attempt_count == 1
+    assert event.sc_sql_fallback_count == 0
+    assert event.sc_sql_driver_family == "odbc" and event.sc_sql_driver_major == "18"
+    assert event.sc_sql_driver_inventory == inventory
+    if inventory == "observed":
+        assert event.sc_sql_driver_17_available is False
+        assert event.sc_sql_driver_18_available is True
+    if not uses_string:
+        assert event.sc_sql_mi_endpoint_present is True
+        assert event.sc_sql_mi_header_present is True
+    else:
+        assert not hasattr(event, "sc_sql_mi_endpoint_present")
+    assert re.fullmatch(r"[0-9a-f]{32}", event.sc_sql_diagnostic_reference)
+    assert SECRET not in json.dumps(event.__dict__, default=str)
+    connect.assert_called_once()
+
+
+@pytest.mark.parametrize("kind", ["query", "schema"])
+@pytest.mark.parametrize("succeeds", [False, True])
+def test_fallback_and_terminal_failure_share_one_reference(runtime, monkeypatch, kind, succeeds):
+    connection = Mock()
+    connect = Mock(side_effect=[
+        Exception("01000", "ODBC Driver 17 for SQL Server can't open lib"),
+        connection if succeeds else Exception("28000", SECRET),
+    ])
+    monkeypatch.setitem(sys.modules, "pyodbc", module_stub("pyodbc", connect=connect))
+    plugin = getattr(runtime, kind)(plugin_manifest(
+        connection_string="DRIVER={ODBC Driver 17 for SQL Server};SERVER=private",
+    ))
+    runtime.records.clear()
+    if succeeds:
+        actual = plugin._get_connection()
+        assert actual is connection
+    else:
+        with pytest.raises(runtime.diagnostics.SqlConnectionError):
+            plugin._get_connection()
+    events = [item for item in runtime.records if item.sc_message.startswith("[SQL_CONNECTION]")]
+    assert len(events) == (1 if succeeds else 2)
+    assert len({item.sc_sql_diagnostic_reference for item in events}) == 1
+    assert events[-1].sc_sql_attempt_count == 2
+    assert events[-1].sc_sql_fallback_count == 1
+    assert events[-1].sc_sql_driver_major == "18"
+    assert connect.call_count == 2
+
+
+@pytest.mark.parametrize("debug", [False, True])
+def test_sql_context_export_contract_applies_to_console_and_monitor(runtime, capsys, debug):
+    runtime.settings["enable_debug_logging"] = debug
+    for bad in [SECRET, SECRET * 1000, {}, [], None, 2**50, -1]:
+        properties = {key: bad for key in runtime.diagnostics.SQL_CONTEXT_KEYS}
+        runtime.logging.log_event("[SQL_CONNECTION] Fixture.", extra=properties, level=logging.WARNING)
+    assert SECRET not in json.dumps([item.__dict__ for item in runtime.records], default=str)
+    assert SECRET not in capsys.readouterr().out
+    context = runtime.diagnostics.SqlConnectionContext("sql_connection_test")
+    context.configure("sqlserver", auth_type="managed_identity", environ={})
+    runtime.logging.log_event("[SQL_CONNECTION] Fixture.", extra=context.log_properties(), level=logging.WARNING)
+    event = runtime.records[-1]
+    assert event.sc_sql_auth_mode == "managed_identity"
+    assert event.sc_sql_mi_endpoint_present is False
+    assert event.sc_sql_mi_header_present is False
+    assert event.sc_sql_diagnostic_reference == context.reference
+
+
+@pytest.mark.parametrize("stage", ["driver_import", "connect", "probe"])
+def test_sql_endpoint_reference_links_safe_ui_error_to_actual_failure_stage(environment, runtime, monkeypatch, stage):
+    env = environment
+    monkeypatch.setitem(env.namespace, "log_event", runtime.logging.log_event)
+    connection = Mock()
+    connect = Mock(return_value=connection, side_effect=Exception("28000", SECRET) if stage == "connect" else None)
+    if stage == "probe":
+        connection.cursor.return_value.execute.side_effect = Exception("42000", SECRET)
+    monkeypatch.setitem(sys.modules, "pyodbc", module_stub("pyodbc", connect=connect))
+    original_import = builtins.__import__
+
+    def import_driver(name, *args, **kwargs):
+        if name == "pyodbc" and stage == "driver_import":
+            raise ImportError(SECRET)
+        return original_import(name, *args, **kwargs)
+
+    with monkeypatch.context() as scope:
+        scope.setattr(builtins, "__import__", import_driver)
+        response = env.client.post("/api/plugins/test-sql-connection", json={
+            "database_type": "sqlserver", "server": "private-host", "database": "private-db",
+            "auth_type": "managed_identity",
+        })
+    assert response.status_code == 400
+    body = response.get_json()
+    reference = body["details"]["diagnostic_reference"]
+    assert re.fullmatch(r"[0-9a-f]{32}", reference)
+    assert set(body) == {"success", "error", "error_code", "details"}
+    assert set(body["details"]) == {"diagnostic_reference"}
+    event = runtime.records[-1]
+    assert event.sc_sql_diagnostic_reference == reference
+    assert event.sc_sql_stage == stage
+    assert event.sc_sql_attempt_count == (0 if stage == "driver_import" else 1)
+    for sensitive in [SECRET, "private-host", "private-db", "managed_identity"]:
+        assert sensitive not in json.dumps(body)
+    assert SECRET not in json.dumps(event.__dict__, default=str)
+
+
+@pytest.mark.parametrize("editor", [False, True])
+@pytest.mark.parametrize("error,status", [(PermissionError(SECRET), 403), (LookupError(SECRET), 404), (ValueError(SECRET), 400)])
+def test_identity_resolution_failure_is_correlated_without_provider_or_identity_text(
+    environment, runtime, monkeypatch, editor, error, status,
+):
+    env = environment
+    monkeypatch.setitem(env.namespace, "log_event", runtime.logging.log_event)
+    env.identities.hydrate_action_identity_reference.side_effect = error
+    connect = Mock()
+    monkeypatch.setitem(sys.modules, "pyodbc", module_stub("pyodbc", connect=connect))
+    payload = {"identity_id": SECRET, "database_type": "azure_sql", "server": "private", "database": "private"}
+    if editor:
+        payload.update({"auth": {"type": "identity", "identity": SECRET}, "additionalFields": {}})
+    response = env.client.post("/api/plugins/test-sql-connection", json=payload)
+    assert response.status_code == status
+    body = response.get_json()
+    assert set(body["details"]) == {"diagnostic_reference"}
+    assert SECRET not in json.dumps(body)
+    assert runtime.records[-1].sc_sql_stage == "identity_resolution"
+    assert runtime.records[-1].sc_sql_diagnostic_reference == body["details"]["diagnostic_reference"]
+    assert SECRET not in json.dumps(runtime.records[-1].__dict__, default=str)
+    connect.assert_not_called()

@@ -1,7 +1,7 @@
 # test_orchestration_dependency_runtime.py
 """Real Gather / Reason / Render compiler, executor, composition, retained readers and checkpoints.
 
-Version: 0.261.356
+Version: 0.261.358
 Implemented in: 0.261.127
 Pending-Gather regression implemented in: 0.261.129
 Single orchestration contract updated in: 0.261.139

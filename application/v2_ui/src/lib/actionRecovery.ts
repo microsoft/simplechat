@@ -41,7 +41,13 @@ let notice: RecoveryNotice | null = null;
 let decide: ((choice: Decision) => void) | null = null;
 let csrfToken = '';
 let contextRevision = 0;
-let currentConversationId: string | null = null;
+interface ActionRecoveryContext {
+    actorId?: string;
+    conversationId: string | null;
+    agentSelection?: string;
+}
+let activeContext: ActionRecoveryContext | null = null;
+let activeObserver: symbol | null = null;
 const storageKey = (conversationId: string) => `simplechat.action-recovery.${conversationId}`;
 
 export const subscribeActionRecovery = (listener: () => void) => {
@@ -58,14 +64,38 @@ function publish(value: RecoveryNotice | null) {
 
 export function clearActionRecovery(): void {
     contextRevision += 1;
+    activeContext = null;
     decide?.('cancel');
     csrfToken = '';
     publish(null);
 }
 
+/** Both the send boundary and its mounted observer synchronize the same owner. */
+export function synchronizeActionRecoveryContext(context: ActionRecoveryContext): ActionRecoveryContext {
+    if (activeContext?.actorId === context.actorId
+        && activeContext?.conversationId === context.conversationId
+        && activeContext?.agentSelection === context.agentSelection) return activeContext;
+    clearActionRecovery();
+    activeContext = { ...context };
+    return activeContext;
+}
+
 export function setActionRecoveryConversation(conversationId: string | null): void {
-    if (conversationId === currentConversationId) return;
-    currentConversationId = conversationId;
+    synchronizeActionRecoveryContext({
+        actorId: activeContext?.actorId ?? useBootstrapStore.getState().data?.user?.id,
+        conversationId,
+        agentSelection: activeContext?.agentSelection,
+    });
+}
+
+export function observeActionRecoveryContext(observer: symbol, context: ActionRecoveryContext): void {
+    activeObserver = observer;
+    synchronizeActionRecoveryContext(context);
+}
+
+export function releaseActionRecoveryContext(observer: symbol): void {
+    if (activeObserver !== observer) return;
+    activeObserver = null;
     clearActionRecovery();
 }
 
