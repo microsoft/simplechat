@@ -1,6 +1,6 @@
 # Generated-output reliability fix
 
-Current version: **0.261.358**
+Current version: **0.261.359**
 
 Fixed in version: **0.261.356**
 
@@ -115,6 +115,13 @@ Focused validation results:
 
 Broader pre-existing test-fixture failures were recorded separately and are
 not included in these pass counts.
+
+### Review follow-up (0.261.359)
+
+The image-completion test explicitly re-exports its shared Playwright fixtures
+through `__all__`. This preserves pytest's name-based fixture discovery,
+including the local/Azure connection options, while making the imports visible
+to CodeQL's unused-import analysis without suppressing the rule.
 
 Validation uses the existing offline application harness and local Chromium
 through the local/Azure-capable Playwright fixtures. No production deployment,

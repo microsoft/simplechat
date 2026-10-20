@@ -1,7 +1,7 @@
 # test_v2_generated_image_completion.py
 """
 Real-store and real-component coverage for generated image completion messages.
-Version: 0.261.358
+Version: 0.261.359
 Implemented in: 0.261.356
 
 Only HTTP is mocked. Live image_url completions, legacy image frames, saved-message
@@ -19,9 +19,13 @@ from playwright.sync_api import expect
 from test_v2_image_reference_generation import (
     CONVERSATION, PNG, ImageReferenceApi, mount_prompt_experience,
 )
-from test_v2_orchestration_plan_editor import (  # noqa: F401
+from test_v2_orchestration_plan_editor import (
     ORIGIN, connect_options, editor_assets, editor_browser,
 )
+
+
+# Re-export shared fixtures for pytest's name-based discovery.
+__all__ = ["connect_options", "editor_assets", "editor_browser"]
 
 
 pytestmark = pytest.mark.ui
