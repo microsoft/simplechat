@@ -298,6 +298,24 @@ version came from a workflow. The classic workspace doesn't show origins yet.
 ## Troubleshooting Common Issues
 
 ### Upload Failures
+
+**Sign-in required** (upload response handling fixed in version **0.261.351**):
+
+In React V2, an upload rejected because your SimpleChat session is missing or has
+expired shows the existing sign-in notice while keeping your current page and
+unsent draft. Use **Sign in again** and then **Check sign-in**. Confirming sign-in
+does not upload the file again; select the failed attachment's **Retry** control
+when you are ready.
+
+Classic chat reports the authentication error through its upload notification.
+Sign in again before choosing the file again.
+
+A generic **Failed to fetch** message is not proof that sign-in expired or that
+the server saved nothing. Check the destination before repeating an uncertain
+upload, to avoid duplicates. See the
+[upload authentication-response fix](../explanation/fixes/UPLOAD_AUTH_RESPONSE_NEGOTIATION_FIX.md)
+for the response contract and its limits.
+
 **Large file size**:
 - Check admin settings for file size limits
 - Compress large files or split into smaller pieces

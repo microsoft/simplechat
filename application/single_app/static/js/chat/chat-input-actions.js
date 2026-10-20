@@ -708,6 +708,7 @@ export async function uploadFileToConversation(file) {
 
     const response = await fetch("/upload", {
       method: "POST",
+      headers: { Accept: "application/json" },
       body: formData,
     });
 

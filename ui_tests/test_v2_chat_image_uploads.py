@@ -1,7 +1,7 @@
 # test_v2_chat_image_uploads.py
 """
 UI coverage for v2 inline chat upload image previews.
-Version: 0.261.210
+Version: 0.261.351
 Implemented in: 0.261.192; 0.261.210
 
 This test ensures workspace-backed uploaded image messages render as inline image cards,
@@ -142,6 +142,9 @@ class ChatImageApi:
             return
         if is_pending_actions_list(request.method, path):
             route.fulfill(json=pending_actions_payload())
+            return
+        if request.method == "GET" and path == "/api/action-credentials/pending":
+            route.fulfill(json={"requests": []})
             return
         self.requests.append({"path": path, "query": parsed.query, "method": request.method})
         if request.method == "POST" and path == "/api/get_file_content":
