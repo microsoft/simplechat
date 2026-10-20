@@ -1,7 +1,7 @@
 // test_v2_app_session_recovery.mjs
-// Version: 0.261.351
+// Version: 0.261.354
 // Implemented in: 0.261.338
-// Multipart response negotiation fixed in: 0.261.351
+// Multipart response negotiation fixed in: 0.261.354
 // Executes real request, bootstrap, replay and pending-action modules with only HTTP replaced.
 
 import assert from 'node:assert/strict';

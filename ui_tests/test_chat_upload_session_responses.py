@@ -1,8 +1,8 @@
 # test_chat_upload_session_responses.py
 """
 Local browser regressions for shared upload authentication responses.
-Version: 0.261.351
-Implemented in: 0.261.351
+Version: 0.261.354
+Implemented in: 0.261.354
 
 Real V2 components/stores and classic upload JavaScript run in Chromium. Only HTTP
 and classic peripheral modules are controlled; no live account or upload is used.
@@ -32,7 +32,7 @@ CONVERSATION = "upload-auth-chat"
 FILE = {"name": "ledger.csv", "mimeType": "text/csv", "buffer": b"program,amount\nA,10\n"}
 DRAFT = "Please summarize this ledger after I finish reviewing it."
 BOOTSTRAP = {
-    "version": "0.261.351",
+    "version": "0.261.354",
     "settings": {"max_file_size_mb": 25},
     "branding": {"app_title": "SimpleChat"},
     "features": {"enable_user_workspace": True, "enable_chat_file_uploads": True},

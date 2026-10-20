@@ -1,9 +1,9 @@
-# Upload Authentication Response Negotiation Fix (v0.261.351)
+# Upload Authentication Response Negotiation Fix (v0.261.354)
 
-Fixed in version: **0.261.351**
+Fixed in version: **0.261.354**
 
 Related application version update: `application/single_app/config.py`,
-`0.261.350` to `0.261.351`.
+`0.261.353` to `0.261.354` after integrating the current V2 base.
 
 ## Issue and root cause
 

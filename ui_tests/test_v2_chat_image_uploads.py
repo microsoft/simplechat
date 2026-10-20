@@ -1,7 +1,7 @@
 # test_v2_chat_image_uploads.py
 """
 UI coverage for v2 inline chat upload image previews.
-Version: 0.261.351
+Version: 0.261.354
 Implemented in: 0.261.192; 0.261.210
 
 This test ensures workspace-backed uploaded image messages render as inline image cards,

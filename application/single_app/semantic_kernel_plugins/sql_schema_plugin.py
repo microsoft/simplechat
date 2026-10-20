@@ -1,3 +1,4 @@
+# sql_schema_plugin.py
 """
 SQL Schema Plugin for Semantic Kernel
 - Connects to various SQL databases (SQL Server, PostgreSQL, MySQL, SQLite)
@@ -16,6 +17,9 @@ from semantic_kernel_plugins.sql_odbc_utils import (
     DEFAULT_SQL_SERVER_ODBC_DRIVER,
     build_sql_server_odbc_connection_string,
     connect_with_sql_server_odbc_fallback,
+)
+from semantic_kernel_plugins.sql_connection_diagnostics import (
+    SqlConnectionError, classify_sql_connection_error,
 )
 
 # Helper class to wrap results with metadata
@@ -175,16 +179,14 @@ class SQLSchemaPlugin(BasePlugin):
                 database_path = self.connection_string or self.database
                 return sqlite3.connect(database_path)
                 
-        except ImportError as e:
-            debug_print(f"[SQL_SCHEMA_PLUGIN] Database driver import failed database_type={self.database_type} error={e}")
-            raise ImportError(f"Required database driver not installed for {self.database_type}: {e}")
         except Exception as e:
-            debug_print(
-                f"[SQL_SCHEMA_PLUGIN] Connection failed database_type={self.database_type} server={self.server} "
-                f"database={self.database} exception_type={type(e).__name__} message={e}"
+            diagnostic = classify_sql_connection_error(e, self.database_type)
+            log_event(
+                "[SQL_CONNECTION] SQL connection failed.",
+                level=logging.WARNING,
+                extra={**diagnostic.log_properties(), "operation": "sql_schema_connect"},
             )
-            log_event(f"[SQL_SCHEMA_PLUGIN] Connection failed: {e}", extra={"database_type": self.database_type})
-            raise
+            raise SqlConnectionError(diagnostic) from None
 
     @property
     def display_name(self) -> str:
@@ -338,8 +340,11 @@ class SQLSchemaPlugin(BasePlugin):
                 "database_type": self.database_type,
                 "database": self.database
             })
+            error_result = {"error": error_msg}
+            if isinstance(e, SqlConnectionError):
+                error_result["error_code"] = e.diagnostic.code
             return ResultWithMetadata(
-                {"error": error_msg},
+                error_result,
                 {"source": "sql_schema_plugin", "success": False}
             )
 

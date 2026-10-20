@@ -299,7 +299,7 @@ version came from a workflow. The classic workspace doesn't show origins yet.
 
 ### Upload Failures
 
-**Sign-in required** (upload response handling fixed in version **0.261.351**):
+**Sign-in required** (upload response handling fixed in version **0.261.354**):
 
 In React V2, an upload rejected because your SimpleChat session is missing or has
 expired shows the existing sign-in notice while keeping your current page and
