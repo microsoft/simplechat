@@ -1,9 +1,9 @@
 # Action connection-test credential intent fix
 
-**Fixed in version: 0.261.349**
+**Fixed in version: 0.261.351**
 
 Application version: `application/single_app/config.py`, advanced from
-`0.261.348` to `0.261.349`. Dependencies are the existing V2 build, Flask,
+`0.261.350` to `0.261.351`. Dependencies are the existing V2 build, Flask,
 workspace-authoring validation, and connector testers; no new package or setting
 is required.
 
@@ -85,6 +85,13 @@ Other existing workspace-backend and MCP route-security suites still have
 baseline failures: their exact failed-case sets matched untouched `HEAD` route
 source in fresh processes. This is not a claim that every repository suite
 passes.
+
+Base integration advanced this fix from the initial branch version 0.261.349
+to 0.261.351, preserving the base's 0.261.350 memory-resolution changes.
+Post-merge validation passed **219** connector, SDK, memory-resolution,
+bootstrap, and documentation tests with **5** subtests, plus the **37** client
+checks and **26** browser cases. The inventory again had no review gaps.
+The full runtime-gate result above was recorded before this base merge.
 
 ### Limits
 

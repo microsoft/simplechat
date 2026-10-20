@@ -42,6 +42,22 @@ and capability codes. A cancelled stream is informational, not an error.
 Orchestration records an outcome only after its saved state is confirmed;
 replaying a cached response does not record another execution.
 
+## Request-resolution memory diagnostics
+
+Since **0.261.349**, `[ORCHESTRATION_PLANNER]` records
+`stage=request_resolution`, the relationship in `outcome`, memory `status`,
+`memory_context_included`, and `clarification_answer_count`. Hashed conversation
+and turn IDs correlate this decision without logging the request or answers.
+
+`[ORCHESTRATION] Loaded saved memory context.` records instruction/fact available
+and selected counts, unembedded/incompatible fact counts, recall mode in `reason`,
+and the hashed conversation ID. These counts expose selection pressure without
+logging memory values. A selected count below the available count does not alone
+prove a cap omission: relevance, empty values, and embedding compatibility also
+affect selection. Inclusion proves context delivery, not that the model used it.
+See the [request-memory resolution fix](../explanation/fixes/ORCHESTRATION_REQUEST_MEMORY_RESOLUTION_FIX.md)
+for availability states and live-UI validation limits.
+
 ## Current tag inventory
 
 - `[EDITOR_ASSIST]`

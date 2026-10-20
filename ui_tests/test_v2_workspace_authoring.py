@@ -1,7 +1,7 @@
 # test_v2_workspace_authoring.py
 """
 Real-SPA browser workflows for native V2 My Workspace Agents and Actions.
-Version: 0.261.349
+Version: 0.261.351
 Implemented in: 0.261.096
 Contextual action return labels extended in: 0.261.333
 

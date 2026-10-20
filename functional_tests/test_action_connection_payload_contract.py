@@ -1,8 +1,8 @@
 # test_action_connection_payload_contract.py
 """Real V2 payload producer to Flask action-test/discovery contracts.
 
-Version: 0.261.349
-Implemented in: 0.261.349
+Version: 0.261.351
+Implemented in: 0.261.351
 
 Execute the shipping TypeScript builder with Node and the actual route bodies,
 manifest validator and credential-clear helper with scoped repository seams.

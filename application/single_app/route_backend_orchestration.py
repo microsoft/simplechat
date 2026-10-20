@@ -2667,9 +2667,34 @@ def register_route_backend_orchestration(bp):
                         resolved_conversation_id,
                     )
                     return
+                conversation_document = _authorize_context_conversation(resolved_conversation_id, user_id)
+                if seeds.get('public_workspace_selection'):
+                    prepare_public_chat_scope(
+                        seeds, user_id, settings, resolve_public_chat_workspace_ids, conversation_document,
+                    )
+                memory_request = build_elicitation_user_request(message, answered_record)
+                memory_context = load_orchestration_memory(
+                    user_id, conversation_document,
+                    memory_request, settings=settings, seeds=seeds,
+                    expected_audience=turn_context.get('memory_audience'),
+                )
+                turn_context['memory_audience'] = memory_context['audience']
+                turn_context['memory_scope'] = memory_context['scope']
+                for notice in memory_context['notices']:
+                    yield build_planning_thought(notice)
                 resolution = resolve_conversation_request(
                     message, snapshot, settings=settings, answered_questions=answered_record,
-                    planner_model=planner_model, seeds=seeds,
+                    planner_model=planner_model, seeds=seeds, memory_context=memory_context,
+                )
+                log_event(
+                    '[ORCHESTRATION_PLANNER] Resolved request with saved memory context.',
+                    extra={
+                        **workflow_log_context(conversation_id=resolved_conversation_id, turn_id=turn_id),
+                        'stage': 'request_resolution', 'status': memory_context['status'],
+                        'outcome': resolution['relationship'],
+                        'memory_context_included': bool(memory_context['context_messages']),
+                        'clarification_answer_count': len(answered_record),
+                    },
                 )
                 reasoning_adjustments = build_model_reasoning_metadata(
                     planner_model, 'planner',
@@ -2709,20 +2734,17 @@ def register_route_backend_orchestration(bp):
                 turn_context['request_resolution'] = resolution
                 turn_context['resolved_message'] = effective_message
                 effective_request = build_elicitation_user_request(effective_message, answered_record)
-                conversation_document = _authorize_context_conversation(resolved_conversation_id, user_id)
-                if seeds.get('public_workspace_selection'):
-                    prepare_public_chat_scope(
-                        seeds, user_id, settings, resolve_public_chat_workspace_ids, conversation_document,
+                if effective_request != memory_request:
+                    memory_context = load_orchestration_memory(
+                        user_id, _authorize_context_conversation(resolved_conversation_id, user_id),
+                        effective_request, settings=settings, seeds=seeds,
+                        expected_audience=turn_context['memory_audience'],
                     )
-                memory_context = load_orchestration_memory(
-                    user_id, conversation_document,
-                    effective_request, settings=settings, seeds=seeds,
-                    expected_audience=turn_context.get('memory_audience'),
-                )
-                turn_context['memory_audience'] = memory_context['audience']
-                turn_context['memory_scope'] = memory_context['scope']
-                for notice in memory_context['notices']:
-                    yield build_planning_thought(notice)
+                    turn_context['memory_scope'] = memory_context['scope']
+                    for notice in memory_context['notices']:
+                        yield build_planning_thought(notice)
+                else:
+                    _validate_turn_memory_context(turn_context, user_id, resolved_conversation_id)
                 if not conversation_retrieval_allowed(resolution, message, seeds):
                     candidates = []
                 else:

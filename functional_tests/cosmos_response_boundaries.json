@@ -23350,7 +23350,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "Ledger source revalidation consumes plain projected query rows to check source visibility; failed reads omit the ledger rather than authorizing point documents or widening scope.",
@@ -23371,7 +23371,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation point mapping proves owner/nondeleted state through field access and now rechecks shared-source membership before dependent reads; missing or unauthorized records retain ConversationContextError.",
@@ -23393,7 +23393,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "Historical context discovery consumes plain partitioned query rows, applies retry-prefix/screening rules and builds a bounded plain conversation snapshot.",
@@ -23414,7 +23414,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "Point answer mappings supply conversation/visibility and nested thread fields; metadata patching retains its existing owner and stale or missing answers are not silently restored.",
@@ -23441,7 +23441,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "A cutoff point mapping supplies authorized conversation/role/timestamp; plain bounded query rows pass through screening and saved-analysis sanitization before plain snapshot construction.",
@@ -23462,7 +23462,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "Source revalidation consumes plain bounded query rows through screening and strict saved-snapshot checks; no point wrapper is repaired into a domain context.",
@@ -23483,7 +23483,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "The saved turn point mapping is normalized by normalize_history_message before role/conversation/fingerprint validation; history-disabled snapshots fail before reuse and source authorization is rechecked.",
@@ -23515,7 +23515,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "Requested conversation point mappings supply owner/scope/deletion fields; constructed create/upsert bodies are plain and write responses are discarded. Shared ownership is established separately, not inferred from wrapper type.",
@@ -23536,7 +23536,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "response-unused",
       "contract": "The message upsert response is discarded; screening and source-availability checks occur before publication, and persistence errors retain the existing failure path.",
@@ -23560,7 +23560,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "Conversation/message point mappings feed shared-backing ownership checks and Mapping-compatible collaboration mirroring; no strict task/result descriptor consumes the wrappers.",
@@ -23581,7 +23581,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "The saved question point mapping updates nested orchestration metadata through the existing metadata-patch owner; durable returned planning identity is a separate plain scoped DTO.",
@@ -23607,7 +23607,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "Saved turn point mappings are converted through normalize_history_message before identity/fingerprint reuse; nested metadata patches retain conditional ownership, and the returned identity/fingerprint are scalar projections.",
@@ -23633,7 +23633,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation point mapping supplies owner/deletion and mutable index fields; replace response is discarded and the Mapping-compatible cache invalidator consumes the authorized input.",
@@ -23654,7 +23654,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "The assistant point mapping supplies role/deletion/mask metadata to reply_is_retracted; absence is treated as removed, never as an empty valid response.",
@@ -23675,7 +23675,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "Artifact point mappings are checked by field access for conversation/user/visibility and nested content metadata; no top-level exact-dictionary result contract consumes them.",
@@ -23696,7 +23696,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
       "contract": "Artifact point mappings are JSON-encoded by the existing checkpoint fingerprint helper; SDK dictionary subclasses are supported and nested artifact validation is unchanged.",
@@ -23707,7 +23707,7 @@
     },
     "application/single_app/route_backend_orchestration.py::register_route_backend_orchestration.orchestration_plan": {
       "boundary": {
-        "sha256": "8af4094a26711c20c92115037e439856a01a0a917809a999a622df6ec7c46853",
+        "sha256": "b5108e6f32428f2436d2242bebe003208a581cf5fbb28d3f872b410c73ecc2fe",
         "points": [
           {
             "method": "read_item",
@@ -23717,13 +23717,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0c0799be3a3016ac21fe42976e25b98be279ff08154313e0b27b146dff3f4403"
+        "module_sha256": "0709660f670be6743e59b64ddaf70dacf715af002593252c90727b8427c7bc3b"
       },
       "classification": "sdk-compatible",
-      "contract": "Clarification admission reads its backing conversation through owner fields; saved planning context is separately authorized/projected. Conversation-only resolution and retrieval gating do not pass SDK wrappers into planner or strict result contracts.",
+      "contract": "Clarification admission consumes conversation owner fields from the SDK mapping. Early read-only memory authorizes the conversation and selected scope before resolution; only bounded plain memory/source projections enter model payloads, and only audience/scope markers persist. Reused context rechecks access; SDK point wrappers never enter strict planner contracts.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
-        "functional_tests/test_orchestration_conversation_sources.py"
+        "functional_tests/test_orchestration_conversation_sources.py",
+        "functional_tests/test_orchestration_request_memory_resolution.py"
       ],
       "evidence_scope": "owner-runtime"
     },

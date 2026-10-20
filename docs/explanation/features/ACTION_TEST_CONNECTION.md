@@ -1,6 +1,6 @@
 # Action Test Connection
 
-Current documentation version: **0.261.349**
+Current documentation version: **0.261.351**
 
 ## Overview
 
@@ -15,7 +15,7 @@ MCP transport removal and authorization update implemented in version: **0.261.0
 Related configuration update: `application\single_app\config.py` advances `VERSION` from `0.261.028` to `0.261.029`.
 
 V2 no-auth credential intent and preparation diagnostics fixed in version:
-**0.261.349**, tracked in the same `config.py`.
+**0.261.351**, tracked in the same `config.py`.
 
 **Related issue:** [microsoft/simplechat#1267](https://github.com/microsoft/simplechat/issues/1267)
 
