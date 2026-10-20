@@ -120,6 +120,19 @@ Assign **Key Vault Secrets Officer at the vault scope** to the application's sel
 
 **Microsoft 365 workflow key (0.261.302).** Saved Microsoft 365 workflow connections, the sign-ins that workflows run as, are encrypted with one key for the whole deployment, not one per user. SimpleChat keeps it in this vault as the secret `simplechat-m365-workflow-token-key` and creates it itself: the first time anyone connects for workflows, and on any settings save while Key Vault storage is on. There is nothing to generate by hand. Creating it needs the same Secrets Officer access as other secrets; if that is missing, the save reports it beside the Key Vault settings and users see that workflow connections are not ready. Do not delete the secret or its older versions: each saved connection can only be read with the version that encrypted it, so deleting it forces every user to reconnect. The optional `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME` app setting chooses a different secret name.
 
+Since **0.261.355**, saved **chat** connections use this same deployment key
+in separate encrypted records; they never reuse workflow credentials or Run as
+authorizations. A user's explicit chat reconnect saves the credential when
+Key Vault is configured. Without it, chat remains session-only and the user's
+connection card explains the limitation. Keep the key's historical versions
+for both connection types. Disabling Key Vault or a temporary key-access failure
+does not downgrade or overwrite an already saved chat connection.
+
+Saved chat connections have no application-imposed expiry and survive ordinary
+app sign-out. Microsoft/user revocation and organizational sign-in policies
+still govern refresh. Users can remove the saved credential with **Disconnect
+chat**, independently of their workflow connection.
+
 The temporary secret expires after ten minutes, but expiration is not deletion. If cleanup cannot be confirmed, the result identifies the generated secret for an administrator to remove. Soft-deleted test metadata remains under the vault's retention policy. Do not remove other application secrets when cleaning up a test.
 
 A denied-write result or save error names the missing permission rather than suggesting that a successful list operation proves write access. Check the identity, vault-scoped role or access policy, propagation of a recent role assignment, and network restrictions. A failed secret write does not fall back to storing the submitted credential as plaintext. See [Admin settings troubleshooting]({{ '/troubleshooting/#admin-settings-saves-and-connection-tests' | relative_url }}).
