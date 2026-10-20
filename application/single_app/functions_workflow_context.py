@@ -14,35 +14,19 @@ from semantic_kernel.connectors.ai.chat_completion_client_base import ChatComple
 
 from functions_model_capabilities import (
     ModelTokenBudget,
+    ModelTokenBudgetError,
     normalize_token_limit,
     resolve_model_token_budget,
 )
 from model_endpoint_clients import ModelEndpointBehavior
 from functions_workflow_execution import assert_workflow_execution_owned
 from functions_workflow_loop_runners import assert_workflow_loop_agent_type
+from functions_workflow_policy_errors import WorkflowContextBudgetError
 
 
 # This is a disclosed compatibility policy, not an invented model capability.
 UNKNOWN_MODEL_INPUT_TOKENS = 8192
 _active_workflow = ContextVar("workflow_context_budget", default=None)
-
-
-class WorkflowContextBudgetError(ValueError):
-    """Required input remains durable but cannot fit the selected request."""
-
-    def __init__(self, audit):
-        self.audit = audit
-        budget_name = (
-            "the compatibility input budget (model limits are unverified)"
-            if audit.get("limit_source") == "compatibility_policy"
-            else "the selected model's input budget"
-        )
-        super().__init__(
-            f"The complete workflow input exceeds {budget_name} "
-            f"({audit['input_tokens']} estimated tokens; {audit['input_budget_tokens']} available). "
-            "The upstream result is retained without truncation. Configure verified model limits, "
-            "select a larger context window, or process the input in explicit batches."
-        )
 
 
 def _count_request_tokens(messages, tools, tokenizer, *, bounded_model=False):
@@ -75,7 +59,9 @@ def calculate_workflow_context_budget(messages, model, *, provider=None, tools=N
         "Workflow response length",
     )
     if requested_output and output_limit and requested_output > output_limit:
-        raise ValueError("The requested workflow response length exceeds the model's output limit.")
+        raise ModelTokenBudgetError(
+            "model_context_invalid", "The requested workflow response length exceeds the model's output limit.",
+        )
     try:
         tokenizer = tiktoken.encoding_name_for_model(budget.model_id)
     except KeyError:

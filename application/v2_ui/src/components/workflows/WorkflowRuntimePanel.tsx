@@ -214,6 +214,7 @@ export function WorkflowRuntimePanel({
     runId,
     durable,
     structuredRun = false,
+    actionsDisabled = false,
     onRuntimeChanged,
     onAccessLost,
     onRuntimeSnapshot,
@@ -223,6 +224,7 @@ export function WorkflowRuntimePanel({
     runId: string;
     durable: boolean;
     structuredRun?: boolean;
+    actionsDisabled?: boolean;
     onRuntimeChanged?: () => void;
     onAccessLost?: (status: number) => void;
     onRuntimeSnapshot?: (runId: string, runtime: WorkflowRuntimeProjection | null) => void;
@@ -245,6 +247,13 @@ export function WorkflowRuntimePanel({
     useEffect(() => {
         onRuntimeSnapshot?.(runId, runtime);
     }, [onRuntimeSnapshot, runId, runtime]);
+
+    useEffect(() => {
+        if (!actionsDisabled) return;
+        setConfirmRetry(false);
+        setRetryTarget(null);
+        setRepeatTarget(null);
+    }, [actionsDisabled]);
 
     useEffect(() => {
         setEnabled(durable);
@@ -303,7 +312,7 @@ export function WorkflowRuntimePanel({
                 setPollReadToken((value) => value + 1);
             }
         }
-    }, [onAccessLost, runId, scope, scopeKey, workflowId]);
+    }, [onAccessLost, runId, scopeKey, workflowId]);
 
     useEffect(() => {
         if (!enabled) {
@@ -358,7 +367,7 @@ export function WorkflowRuntimePanel({
     };
 
     const decide = async (choice: WorkflowRuntimeDecisionChoice) => {
-        if (action) return;
+        if (action || actionsDisabled) return;
         if (choice === 'continue_repeat') {
             if (!runtime?.gate?.repeat || !repeatTarget || repeatTarget.key !== recoveryKey(runtime) ||
                 runtime.gate.kind !== 'pause' || runtime.gate.reason_code !== 'repeat_iteration_limit' || !canDecide) {
@@ -431,7 +440,7 @@ export function WorkflowRuntimePanel({
     };
 
     const resume = async () => {
-        if (!runtime || action || !canDecide || !workflowRuntimeCanResume(runtime)) {
+        if (!runtime || action || actionsDisabled || !canDecide || !workflowRuntimeCanResume(runtime)) {
             return;
         }
         abortRef.current?.abort();
@@ -464,7 +473,7 @@ export function WorkflowRuntimePanel({
     };
 
     const cancel = async () => {
-        if (action) {
+        if (action || actionsDisabled) {
             return;
         }
         abortRef.current?.abort();
@@ -495,7 +504,7 @@ export function WorkflowRuntimePanel({
         }
         return `${runtime.progress.completed} of ${runtime.progress.total} units complete`;
     }, [runtime?.progress]);
-    const canMutate = canDecide && Boolean(runtime) && !loading && !unsupportedRuntimeSchema;
+    const canMutate = canDecide && Boolean(runtime) && !loading && !actionsDisabled && !unsupportedRuntimeSchema;
     const canResume = canMutate && workflowRuntimeCanResume(runtime);
     const canCancel = canMutate && runtime && !gateAllows('cancel') ? !runtimeIsTerminal(runtime) : false;
 

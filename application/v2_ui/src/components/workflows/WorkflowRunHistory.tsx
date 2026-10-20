@@ -10,7 +10,8 @@ import { WorkflowFlowView } from './WorkflowFlowView';
 import { WorkflowRunAskInChat } from './WorkflowRunAskInChat';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill, RowAction } from '../workspace/primitives';
-import { useSectionResource } from '../workspace/useSectionResource';
+import { useWorkflowResource } from './useWorkflowResource';
+import { workflowRunIsActive, workflowStatusLabel } from '../../lib/workflowWorkbench';
 import {
     fetchScopedWorkflowRunItems,
     fetchScopedWorkflowRuns,
@@ -37,11 +38,6 @@ function statusTone(status: unknown): 'ok' | 'warn' | 'danger' | 'neutral' {
         return 'danger';
     }
     return 'neutral';
-}
-
-function isTerminalStatus(status: unknown): boolean {
-    const value = String(status ?? '').toLowerCase();
-    return ['completed', 'succeeded', 'success', 'finished', 'failed', 'error', 'cancelled', 'canceled', 'incomplete', 'invalid', 'completed_partial'].includes(value);
 }
 
 function formatTimestamp(value: unknown): string {
@@ -276,22 +272,27 @@ function RunItems({
     scope,
     workflowId,
     runId,
+    status,
 }: {
     scope: WorkflowScope;
     workflowId: string;
     runId: string;
+    status: string;
 }) {
+    const scopeKey = workflowScopeKey(scope);
+    const loaded = useRef(false);
     const [items, setItems] = useState<WorkflowRunItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
     useEffect(() => {
         const controller = new AbortController();
-        setLoading(true);
+        setLoading(!loaded.current);
         setError('');
         void fetchScopedWorkflowRunItems(scope, workflowId, runId, controller.signal)
             .then((next) => {
                 if (!controller.signal.aborted) {
+                    loaded.current = true;
                     setItems(next);
                 }
             })
@@ -306,7 +307,7 @@ function RunItems({
                 }
             });
         return () => controller.abort();
-    }, [runId, scope, workflowId]);
+    }, [runId, scopeKey, workflowId, status]);
 
     if (loading) {
         return <p role="status" className="px-3 pb-3 text-xs text-text-3">Loading task results…</p>;
@@ -369,18 +370,32 @@ export function WorkflowRunHistory({
     workflowId,
     refreshToken = 0,
     onWorkflowRefresh,
+    statusUnavailable = false,
     initialRunId = null,
 }: {
     scope: WorkflowScope;
     workflowId: string;
     refreshToken?: number;
     onWorkflowRefresh?: () => void;
+    statusUnavailable?: boolean;
     /** A run a link named: expanded and scrolled into view once the history loads. */
     initialRunId?: string | null;
 }) {
-    const { items, loading, error, refresh } = useSectionResource<WorkflowRunSummary>(
+    const scopeKey = workflowScopeKey(scope);
+    const observedStates = useRef('');
+    const { items, loading, error, loadFailed, refresh } = useWorkflowResource<WorkflowRunSummary>(
+        `${scopeKey}:${workflowId}`,
         (signal) => fetchScopedWorkflowRuns(scope, workflowId, signal),
-        'Failed to load run history.',
+        'Could not refresh run history. Showing the last received status; retry before acting.',
+        (runs) => runs.slice(0, 10).some((run) => workflowRunIsActive(run.status)),
+        (runs) => {
+            // Only state/identity changes invalidate the summary, not each poll or runtime version.
+            const signature = JSON.stringify(runs.slice(0, 10).map((run) => [run.id ?? run.run_id, run.status]));
+            if (signature !== observedStates.current) {
+                observedStates.current = signature;
+                onWorkflowRefresh?.();
+            }
+        },
     );
     const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
     const [showFlow, setShowFlow] = useState(false);
@@ -429,27 +444,23 @@ export function WorkflowRunHistory({
         }
     }, [refresh, refreshToken]);
 
-    useEffect(() => {
-        const shouldPoll = shown.some((run) => run.durable_execution === true && !isTerminalStatus(run.status));
-        if (!shouldPoll) {
-            return undefined;
-        }
-        const timer = window.setTimeout(() => void refresh(), 2500);
-        return () => window.clearTimeout(timer);
-    }, [refresh, shown]);
-
     if (loading && !shown.length) {
         return <p role="status" className="px-3 pb-3 text-xs text-text-3">Loading runs…</p>;
     }
-    if (error) {
-        return <p role="alert" className="px-3 pb-3 text-xs text-danger">{error}</p>;
-    }
+    const readError = error ? (
+        <div className="space-y-2 px-3 pb-3">
+            <p role="alert" className="text-xs text-danger">{error}</p>
+            <GlassButton size="sm" onClick={() => void refresh()}>Retry run history</GlassButton>
+        </div>
+    ) : null;
+    if (!shown.length && readError) return readError;
     if (!shown.length) {
         return <p className="px-3 pb-3 text-xs text-text-3">This workflow has not run yet.</p>;
     }
 
     return (
         <>
+        {readError}
         {linkedRunMissing ? <p role="status" className="px-3 pb-2 text-xs text-text-3">
             The linked run is not among the most recent runs shown here.
         </p> : null}
@@ -482,7 +493,7 @@ export function WorkflowRunHistory({
                                     setRuntimeSnapshot(null);
                                 }}
                             />
-                            <Pill tone={statusTone(status)}>{status}</Pill>
+                            <Pill tone={statusTone(status)}>{workflowStatusLabel(status)}</Pill>
                             <span className="min-w-0 flex-1 truncate">
                                 {formatTimestamp(run.started_at) || 'Not started'}
                                 {run.completed_at ? ` → ${formatTimestamp(run.completed_at)}` : ''}
@@ -513,6 +524,7 @@ export function WorkflowRunHistory({
                                         workflowId={workflowId}
                                         runId={runId}
                                         durable={run.durable_execution === true}
+                                        actionsDisabled={statusUnavailable || loadFailed}
                                         structuredRun={isStructuredRun}
                                         onAccessLost={isStructuredRun ? onAccessLost : undefined}
                                         onRuntimeSnapshot={isStructuredRun ? onRuntimeSnapshot : undefined}
@@ -536,7 +548,7 @@ export function WorkflowRunHistory({
                                         <WorkflowExecutionHistory key={`${workflowScopeKey(scope)}:${workflowId}:${runId}`}
                                             scope={scope} workflowId={workflowId} runId={runId} onAccessLost={onAccessLost} />
                                     ) : (
-                                        <RunItems scope={scope} workflowId={workflowId} runId={runId} />
+                                        <RunItems scope={scope} workflowId={workflowId} runId={runId} status={status} />
                                     )}
                                 </>
                             )

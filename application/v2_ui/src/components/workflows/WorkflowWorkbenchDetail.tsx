@@ -15,7 +15,7 @@ import { WorkflowFlowView } from './WorkflowFlowView';
 import { WorkflowRunHistory } from './WorkflowRunHistory';
 import { WorkflowStatusChip } from './WorkflowStatusChip';
 import { workflowScopeKey, type WorkflowDefinition, type WorkflowScope } from '../../lib/workflowEditor';
-import { workflowDetailMeta, workflowOverviewFacts } from '../../lib/workflowWorkbench';
+import { workflowDetailMeta, workflowIsRunning, workflowOverviewFacts } from '../../lib/workflowWorkbench';
 
 export type WorkflowDetailTab = 'overview' | 'runs' | 'flow';
 
@@ -45,6 +45,7 @@ export function WorkflowWorkbenchDetail({
     headingRef,
     permissions,
     busy,
+    statusUnavailable = false,
     actionError,
     historyRefreshToken,
     linkedRun,
@@ -62,6 +63,7 @@ export function WorkflowWorkbenchDetail({
     permissions: WorkflowDetailPermissions;
     /** A run, cancel or delete request for this workflow is in flight. */
     busy: boolean;
+    statusUnavailable?: boolean;
     actionError: string | null;
     historyRefreshToken: number;
     /** A run a link named, expanded in Runs; `navigation` remounts the history for each new link. */
@@ -78,7 +80,7 @@ export function WorkflowWorkbenchDetail({
     const shown = tabs.includes(tab) ? tab : 'overview';
     const tabRefs = useRef<Partial<Record<WorkflowDetailTab, HTMLButtonElement | null>>>({});
     const workflowId = workflow.id ?? '';
-    const activeRun = Boolean(workflow.active_run_id);
+    const activeRun = workflowIsRunning(workflow);
     const name = String(workflow.name ?? '');
     const description = String(workflow.description ?? '');
     const scopeKey = workflowScopeKey(scope);
@@ -112,20 +114,20 @@ export function WorkflowWorkbenchDetail({
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                         {activeRun ? (permissions.canCancel ? (
-                            <GlassButton type="button" variant="subtle" size="sm" disabled={busy || !workflowId}
+                            <GlassButton type="button" variant="subtle" size="sm" disabled={busy || statusUnavailable || !workflowId}
                                 aria-label={`Cancel ${workflow.name ?? 'workflow'}`} title="Cancel the active run"
                                 onClick={onCancel}>
                                 {busy ? <Loader2 size={14} aria-hidden="true" className="animate-spin" /> : <Ban size={14} aria-hidden="true" />}
                                 Cancel
                             </GlassButton>
                         ) : null) : permissions.canRun ? (
-                            <GlassButton type="button" variant="primary" size="sm" disabled={busy || !workflowId}
+                            <GlassButton type="button" variant="primary" size="sm" disabled={busy || statusUnavailable || !workflowId}
                                 aria-label={`Run ${workflow.name ?? 'workflow'}`} onClick={onRun}>
                                 {busy ? <Loader2 size={14} aria-hidden="true" className="animate-spin" /> : <Play size={14} aria-hidden="true" />}
                                 Run
                             </GlassButton>
                         ) : null}
-                        <GlassButton type="button" variant="subtle" size="sm" disabled={activeRun || !workflowId}
+                        <GlassButton type="button" variant="subtle" size="sm" disabled={activeRun || statusUnavailable || !workflowId}
                             aria-label={!permissions.canEdit ? `View ${workflow.name || 'workflow'}`
                                 : activeRun ? `${workflow.name || 'Workflow'} is running; cancel or wait before editing`
                                     : `Edit ${workflow.name || 'workflow'}`}
@@ -140,7 +142,7 @@ export function WorkflowWorkbenchDetail({
                                 label={`Delete ${workflow.name ?? 'workflow'}`}
                                 confirmLabel="Delete"
                                 busy={busy}
-                                disabled={!workflowId}
+                                disabled={statusUnavailable || !workflowId}
                                 onConfirm={onDelete}
                             />
                         ) : null}
@@ -218,6 +220,7 @@ export function WorkflowWorkbenchDetail({
                             refreshToken={historyRefreshToken}
                             initialRunId={linkedRun?.runId ?? null}
                             onWorkflowRefresh={onWorkflowRefresh}
+                            statusUnavailable={statusUnavailable}
                         />
                     </div>
                 ) : null}

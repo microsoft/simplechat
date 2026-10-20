@@ -23,10 +23,10 @@ export function workflowStatusTone(status: unknown): WorkflowStatusTone {
     if (['completed', 'succeeded', 'success', 'finished'].includes(value)) {
         return 'ok';
     }
-    if (['running', 'queued', 'pending', 'in_progress', 'started', 'completed_partial'].includes(value)) {
+    if (['running', 'queued', 'pending', 'in_progress', 'started', 'completed_partial', 'paused', 'cancelling'].includes(value) || WAITING_STATUS.test(value)) {
         return 'warn';
     }
-    if (['failed', 'error', 'cancelled', 'canceled'].includes(value)) {
+    if (['failed', 'error', 'cancelled', 'canceled', 'invalid', 'incomplete'].includes(value)) {
         return 'danger';
     }
     return 'neutral';
@@ -45,6 +45,10 @@ const STATUS_LABELS: Readonly<Record<string, string>> = {
     queued: 'Queued',
     pending: 'Queued',
     cancelling: 'Cancelling',
+    waiting_recovery: 'Waiting for recovery',
+    waiting_approval: 'Waiting for approval',
+    waiting_output: 'Waiting for output',
+    paused: 'Paused',
     failed: 'Failed',
     error: 'Failed',
     cancelled: 'Cancelled',
@@ -63,7 +67,13 @@ export function workflowStatusLabel(status: unknown): string {
 
 const IN_PROGRESS_STATUSES = ['running', 'queued', 'pending', 'in_progress', 'started', 'cancelling'];
 /** A run paused until a person acts on it: an approval, a sign-in, a decision. */
-const WAITING_STATUS = /^(awaiting|waiting)_/;
+const WAITING_STATUS = /^(?:(?:awaiting|waiting)_|paused$)/;
+
+/** Known active run states, including waits that may be resolved in another browser. */
+export function workflowRunIsActive(status: unknown): boolean {
+    const value = normalizedStatus(status);
+    return IN_PROGRESS_STATUSES.includes(value) || WAITING_STATUS.test(value);
+}
 
 function normalizedStatus(value: unknown): string {
     return String(value ?? '').trim().toLowerCase();

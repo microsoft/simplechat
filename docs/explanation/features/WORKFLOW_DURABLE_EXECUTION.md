@@ -2,7 +2,7 @@
 
 Implemented in version: **0.261.111**
 
-Updated in version: **0.261.305**.
+Updated in version: **0.261.362**.
 
 Application version tracking: `application/single_app/config.py`.
 
@@ -162,6 +162,20 @@ An interrupted operation with no possible external side effects can retry
 within a bounded automatic attempt policy. Operations that may have performed
 external actions require an explicit recovery decision. The warning remains
 important even if the original worker disappeared before reporting an error.
+
+Since **0.261.362**, application-owned input-budget and model-token configuration
+refusals finish the task as failed instead of opening a generic recovery gate.
+The task retains its safe reason and error code; an oversized request also keeps
+its context-budget audit. These refusals do not retry automatically, even when
+ordinary task retries are configured. The workflow's existing halt/continue
+policy determines whether independent later tasks can run.
+
+A refusal on a later model round does not undo or repeat earlier tool calls.
+Worker interruption, unclassified operation failures, approval waits, and
+uncertain external effects retain their existing explicit recovery safeguards.
+Correcting the saved workflow and explicitly starting a new run leaves the
+original failed run intact. Existing waiting runs are not migrated automatically.
+See [Workflow budget failure recovery](../fixes/WORKFLOW_BUDGET_FAILURE_RECOVERY_FIX.md).
 
 Cancellation revokes the journal's execution ownership. It cannot undo a
 previously completed email, upload, or third-party action. A delayed worker

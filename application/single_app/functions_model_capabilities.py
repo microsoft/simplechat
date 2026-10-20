@@ -582,16 +582,18 @@ class ModelTokenBudget:
         return max(0, min(bounds) - input_tokens)
 
 
-def _numeric_catalog_record(model, records=None):
+def _numeric_model_identifier(model):
     if isinstance(model, str):
-        identifier = model
-    else:
-        identifier = next((
-            _get_record_field(model, field_name)
-            for field_name in ("catalogModelId", "modelName", "deploymentName", "deployment", "name")
-            if _get_record_field(model, field_name)
-        ), "")
-    normalized = _normalize_model_identifier(identifier)
+        return model
+    return next((
+        _get_record_field(model, field_name)
+        for field_name in ("catalogModelId", "modelName", "deploymentName", "deployment", "name")
+        if _get_record_field(model, field_name)
+    ), "")
+
+
+def _numeric_catalog_record(model, records=None):
+    normalized = _normalize_model_identifier(_numeric_model_identifier(model))
     if not normalized:
         return None
     for record in get_model_capability_catalog_records() if records is None else records:
@@ -599,6 +601,23 @@ def _numeric_catalog_record(model, records=None):
         if any(normalized == _normalize_model_identifier(value) for value in identifiers):
             return record
     return None
+
+
+def _verified_catalog_model_version(model, record):
+    """Recover a snapshot only from an exact numeric alias and an audited profile."""
+    if record is None:
+        return ""
+    identifier = _normalize_model_identifier(_numeric_model_identifier(model))
+    aliases = {
+        _normalize_model_identifier(alias) for alias in record.get("verifiedAliases") or ()
+    }
+    if identifier not in aliases:
+        return ""
+    for profile in record.get("tokenLimitProfiles") or ():
+        for version in profile.get("modelVersions") or ():
+            if identifier == _normalize_model_identifier(f"{record['id']}-{version}"):
+                return version
+    return ""
 
 
 def _budget_provider(model, endpoint, record, provider):
@@ -663,11 +682,17 @@ def resolve_model_token_budget(
     provider = _budget_provider(
         model_overrides, endpoint_overrides, record, provider or _get_record_field(endpoint, "provider"),
     )
+    alias_version = _verified_catalog_model_version(model, record)
     version = str(
         model_version or model_overrides.get("modelVersion")
         or _get_record_field(model, "version")
-        or endpoint_overrides.get("modelVersion") or ""
+        or endpoint_overrides.get("modelVersion") or alias_version
     )
+    if alias_version and version != alias_version:
+        raise ModelTokenBudgetError(
+            "model_context_invalid",
+            "The selected model snapshot conflicts with its configured model version.",
+        )
     profile = _catalog_budget_profile(record, provider, protocol, version)
     evidence = profile.get("tokenLimitEvidence") or {}
     provenance = []
