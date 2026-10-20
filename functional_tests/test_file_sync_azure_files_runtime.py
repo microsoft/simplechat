@@ -1,7 +1,7 @@
 # test_file_sync_azure_files_runtime.py
 """
 Functional tests for the Azure Files token-authenticated SDK boundary.
-Version: 0.261.358
+Version: 0.261.359
 Implemented in: 0.261.358
 
 Execute production connector functions with the real pinned SDK and an offline

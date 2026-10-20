@@ -516,17 +516,6 @@
     "application/single_app/functions_document_provenance.py::_read_conversation": "f7748a80784d0254864dc3ec55fbff8c1ecd357b5ba2568577a141806bf971e0",
     "application/single_app/functions_embedding_compatibility.py::inspect_empty_embedding_stores": "7401781be74e07ab4fc8043c69c5d8c58e91bf34209a12084e853e3433279eec",
     "application/single_app/functions_embedding_compatibility.py::persist_fact_with_embedding": "c4eec8143936830d06d7316baaac5ef8863c99ce8a26b30a39c021cd4f9ca3a5",
-    "application/single_app/functions_file_sync.py::_write_with_etag_guard": "adf47a1cff121465fbe6f4fcc8357548fda928e1a78a9531867466c0cdb4a699",
-    "application/single_app/functions_file_sync.py::get_authorized_sync_source": "f866450eacb43ba3f57c9d75b1f7bb85cddd5b8531b0ba971feb2e2771dc860b",
-    "application/single_app/functions_file_sync.py::list_file_sync_sources": "97925c713538a41941ac6b22c91389e3b83d9b9ea9baacb59dacf94979c95631",
-    "application/single_app/functions_file_sync.py::delete_file_sync_source": "21237c51e3f28855776a359f23f47f12e1faece00d0257877ced9b1f4a225c8c",
-    "application/single_app/functions_file_sync.py::list_file_sync_runs": "7455bf1ebe3ef550bc7d310aeafaba7144dd67795b119dbd58b031b7e93def98",
-    "application/single_app/functions_file_sync.py::process_file_sync_run_by_id": "e8244be2147fccd23250685e26c5238fc6372ef12ac00e4f24fbb45dc363e105",
-    "application/single_app/functions_file_sync.py::_load_existing_items": "9297e9ad17079b666d2aeb87afce9bc69b440c2d74bbe741c48ada40b15c791c",
-    "application/single_app/functions_file_sync.py::_count_active_runs": "a8d0ed4fefd439a5331565ce3e5a52a65ab1d0e1d5fbfe5c3513f986298a3463",
-    "application/single_app/functions_file_sync.py::_source_has_active_run": "6959dae437a3cbfc384f359e53076bdad487e64e8485c6d80f1ee4bf29346baf",
-    "application/single_app/functions_file_sync.py::_get_due_sources_for_scope": "b000bf660ffa02fa32bf087fa34daefe59759a379204a18d7133e84a995e043e",
-    "application/single_app/functions_file_sync.py::_read_file_sync_source_for_document_action": "e4f6866fa997d42ae8ab69f843eae09e1ff16a5d7137e48cd2f24c5a1626f7a1",
     "application/single_app/functions_generated_file_approvals.py::list_expired_pending_generated_file_artifacts": "78ea99973634f39416647e7e7b9882ba3636da488c84829cea7d535459ec33db",
     "application/single_app/functions_global_actions.py::get_global_actions": "1f59301db98927a6b50b0c53398dc1cc073dc1c6260a7e92aa804d59870f5e97",
     "application/single_app/functions_global_actions.py::get_global_action": "96000fd3b279b520960961dcb3778049c354491052e2d5ae3df4c5121cefbbcf",
@@ -7896,13 +7885,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "sdk-compatible",
-      "contract": "_write_with_etag_guard: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Reads CosmosDict through mapping operations, preserves ETags when applying callbacks, and returns SDK create/replace documents. Conditional conflicts retry against the current record; missing records are not recreated without an explicit factory.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_guarded_writes_preserve_sdk_fields_and_retry_current_etags",
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_storage_write_failures_are_not_successful_results"
       ]
     },
     "application/single_app/functions_file_sync.py::get_authorized_sync_source": {
@@ -7917,13 +7907,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "sdk-compatible",
-      "contract": "get_authorized_sync_source: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Authorizes workspace access before the partition-scoped point read, checks scope fields through mapping access, and returns CosmosDict with its ETag. Missing partitions and mismatched stored scope are rejected.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_source_writes_and_authorized_reads_use_sdk_documents"
       ]
     },
     "application/single_app/functions_file_sync.py::list_file_sync_sources": {
@@ -7938,13 +7928,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "sdk-compatible",
-      "contract": "list_file_sync_sources: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Enumerates plain SDK query dictionaries within the requested workspace partition. Source results do not cross an exact-dictionary point-response contract.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_source_item_and_run_queries_keep_plain_rows"
       ]
     },
     "application/single_app/functions_file_sync.py::create_file_sync_source": {
@@ -7959,12 +7949,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "response-unused",
-      "contract": "create_file_sync_source: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "Discards the SDK create response and returns the locally constructed source dictionary; the stored response preserves SDK shape and ETag. Storage write failures still propagate.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_source_writes_and_authorized_reads_use_sdk_documents",
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_storage_write_failures_are_not_successful_results"
+      ]
     },
     "application/single_app/functions_file_sync.py::delete_file_sync_source": {
       "boundary": {
@@ -7988,13 +7981,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "sdk-compatible",
-      "contract": "delete_file_sync_source: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Consumes the authorized SDK source and a fresh CosmosDict after a conditional-delete conflict through mapping access. Preserves configuration revision semantics while retrying an ETag-only change; delete responses are unused.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_conditional_delete_retries_sdk_point_read_after_etag_change"
       ]
     },
     "application/single_app/functions_file_sync.py::list_file_sync_runs": {
@@ -8009,13 +8002,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "sdk-compatible",
-      "contract": "list_file_sync_runs: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Enumerates plain SDK query dictionaries from the source partition, ordered by run start and bounded by TOP. No point-response conversion is required.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_source_item_and_run_queries_keep_plain_rows"
       ]
     },
     "application/single_app/functions_file_sync.py::_create_run": {
@@ -8030,12 +8023,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "response-unused",
-      "contract": "_create_run: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "Discards the SDK create response and returns its locally built run dictionary. The stored point response is CosmosDict with plain nested counts; create failures propagate.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_source_item_and_run_queries_keep_plain_rows",
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_storage_write_failures_are_not_successful_results"
+      ]
     },
     "application/single_app/functions_file_sync.py::_update_run": {
       "boundary": {
@@ -8049,12 +8045,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "response-unused",
-      "contract": "_update_run: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "Updates either a local run dictionary or SDK mapping in place and discards the upsert response. The stored ETag advances independently of the caller's old response; write errors propagate.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_source_item_and_run_queries_keep_plain_rows",
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_storage_write_failures_are_not_successful_results"
+      ]
     },
     "application/single_app/functions_file_sync.py::process_file_sync_run_by_id": {
       "boundary": {
@@ -8073,13 +8072,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "sdk-compatible",
-      "contract": "process_file_sync_run_by_id: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Reads source and run from their workspace/source partitions and forwards the SDK mappings, ETags, and plain nested counts to the engine. A missing source fails before engine invocation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_process_by_id_preserves_sdk_documents_at_engine_boundary"
       ]
     },
     "application/single_app/functions_file_sync.py::_load_existing_items": {
@@ -8094,13 +8093,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "sdk-compatible",
-      "contract": "_load_existing_items: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Indexes plain SDK query rows by item id inside the requested source partition; the resulting item map contains plain nested dictionaries rather than point wrappers.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_source_item_and_run_queries_keep_plain_rows"
       ]
     },
     "application/single_app/functions_file_sync.py::_count_active_runs": {
@@ -8115,13 +8114,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "sdk-compatible",
-      "contract": "_count_active_runs: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Sums scalar COUNT query results across personal, group, and public run containers; queued/running records count and completed records do not.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_source_item_and_run_queries_keep_plain_rows"
       ]
     },
     "application/single_app/functions_file_sync.py::_source_has_active_run": {
@@ -8136,13 +8135,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "sdk-compatible",
-      "contract": "_source_has_active_run: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Consumes a scalar COUNT query scoped to the source partition and tests the count, without treating query values as point documents.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_source_item_and_run_queries_keep_plain_rows"
       ]
     },
     "application/single_app/functions_file_sync.py::_get_due_sources_for_scope": {
@@ -8157,13 +8156,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "sdk-compatible",
-      "contract": "_get_due_sources_for_scope: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Enumerates plain source query rows for enabled schedules due by the supplied clock. Disabled sources and future schedules are excluded without point-response normalization.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_source_item_and_run_queries_keep_plain_rows"
       ]
     },
     "application/single_app/functions_file_sync.py::_read_file_sync_source_for_document_action": {
@@ -8178,13 +8177,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "63f161c702a4c01e757e3f99b171d7e1de1d0d7b19c97895e0452ca5c29abd58"
+        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_file_sync_source_for_document_action: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Returns the partition-scoped SDK point mapping with its ETag for document-action consumers. Only a missing record or absent input becomes None; provider failures remain failures.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_file_sync_cosmos_response_contract.py::test_document_action_reads_keep_sdk_shape_and_missing_semantics"
       ]
     },
     "application/single_app/functions_generated_file_approvals.py::list_expired_pending_generated_file_artifacts": {
@@ -32752,6 +32751,24 @@
       "contract": "Scoped read_item failure injection raises an SDK 503 containing a private sentinel. The real credential route must return safe 503 JSON with no-store, not an empty success or private details; all successful points retain the installed SDK default.",
       "tests": [
         "functional_tests/test_action_credentials_shared_conversations.py::test_storage_failure_remains_explicit_and_safe"
+      ]
+    },
+    "functional_tests/test_file_sync_cosmos_response_contract.py::FileSyncContainer": {
+      "boundary": {
+        "sha256": "f14f39dffad3e876b7c287f764fe2f1d38fe13cdfc6b81665659a8ff2ee3c983",
+        "methods": [
+          "delete_item"
+        ],
+        "kind": "class",
+        "inherited_bases": [
+          "AtomicMemoryContainer"
+        ],
+        "imports_sha256": "78a6739dc8ffef6db528b82e888e06bc9e3dba0229653a71e8d29f33a1887d95"
+      },
+      "classification": "sdk-default",
+      "contract": "Inherits real installed SDK CosmosDict point responses, nested plain JSON, ETags, partition routing, conditional writes and fault injection from AtomicMemoryContainer. Adds the File Sync query subset with plain rows/scalar counts and a one-shot conditional-delete race.",
+      "tests": [
+        "functional_tests/test_file_sync_cosmos_response_contract.py"
       ]
     }
   }

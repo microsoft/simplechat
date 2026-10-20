@@ -3725,6 +3725,7 @@ def _list_azure_files(source: Dict[str, Any], config: Dict[str, Any]) -> List[Di
                     add_file(selected_file_path, file_properties)
                     continue
                 except AzureResourceNotFoundError:
+                    # The selected path may be a directory; its listing below must still succeed.
                     pass
             walk_directory(selected_file_path)
     return remote_files

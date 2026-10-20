@@ -2,6 +2,8 @@
 
 Fixed in version: **0.261.358**
 
+Validation follow-up in version: **0.261.359**
+
 ## Issue and root cause
 
 Azure Files connection tests using managed identity failed before reaching the
@@ -65,9 +67,12 @@ temporary file before propagating a safe error.
 ### Files and documentation
 
 - `application/single_app/functions_file_sync.py`: token intent and diagnostics.
-- `application/single_app/config.py`: application patch version `0.261.358`.
+- `application/single_app/config.py`: application patch version `0.261.359`.
 - `functional_tests/test_file_sync_azure_files_runtime.py`: real SDK contracts.
 - `functional_tests/test_file_sync_azure_files_diagnostics.py`: failure contracts.
+- `functional_tests/test_file_sync_cosmos_response_contract.py`: storage-owner
+  contracts with SDK `CosmosDict` point responses, plain query rows, ETag retries,
+  partition isolation, and storage failures in all three workspace scopes.
 - `functional_tests/test_file_sync_ssrf_validation.py`: updated constructor
   keyword expectation without weakening endpoint checks.
 - [Azure Files feature](../features/v0.241.127/AZURE_FILES_FILE_SYNC.md),
@@ -97,6 +102,11 @@ failure without remote deletion, and saved/unsaved personal, group, and public
 Flask error responses. Existing endpoint tests retain hostile-origin rejection
 before credential construction.
 
+The validation follow-up renews the shared module's reviewed Cosmos inventory
+with owner-runtime evidence rather than extending source-only exemptions.
+It also explains why a selected-file-not-found probe falls back to a directory
+listing; a failure of that listing still fails the sync.
+
 ### Local results
 
 Commands below used an isolated Python environment with the pinned Azure Files
@@ -108,6 +118,8 @@ was not changed.
 | `python -m pytest -q functional_tests\test_file_sync_azure_files_runtime.py functional_tests\test_file_sync_azure_files_diagnostics.py functional_tests\test_file_sync_azure_files_identity.py functional_tests\test_file_sync_ssrf_validation.py` | 214 passed, including normal/optimized subprocess probes |
 | `python -m pytest -q functional_tests\test_file_sync_azure_blob_storage.py functional_tests\test_file_source_credential_round_trip_fix.py functional_tests\test_personal_file_source_apis.py functional_tests\test_group_file_source_apis.py functional_tests\test_public_file_source_apis.py` | 183 passed, 1 pre-existing failure |
 | `python -m pytest -q functional_tests\test_file_sync_azure_files_runtime.py -k real_sdk_accepts` | 12 passed, 14 deselected after strengthening saved-identity credential assertions |
+| `python -m pytest -q -p test_support.cosmos_network_guard functional_tests\test_file_sync_cosmos_response_contract.py functional_tests\test_file_sync_azure_files_runtime.py functional_tests\test_file_sync_azure_files_diagnostics.py --tb=short` | 95 passed in the validation follow-up, with application and functional-test directories on `PYTHONPATH` |
+| `python scripts\check_cosmos_response_boundaries.py` | 1067 owners, 413 doubles, 0 review gaps |
 | `python functional_tests\test_docs_app_surface_coverage.py` | 7 checks passed; generated inventory unchanged and current |
 | `python functional_tests\test_docs_site_quality.py` | 6 checks passed |
 | `git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check` | Passed |
@@ -118,6 +130,13 @@ The pre-existing failure is
 route uses `[FILE_SYNC] Request failed.`. The same assertion was reproduced
 against the route read from `HEAD`, whose content matches the working-tree route.
 Neither the unrelated test nor the route was modified.
+
+The full `python scripts\check_cosmos_response_boundaries.py --run-contracts`
+gate was attempted locally, but did not complete. Unrelated credential-chat
+coverage encountered a missing declared `yamcs-client` dependency in the inherited
+environment. Restoring the complete pinned requirements then failed during a
+PyPI TLS handshake. The full CI contract gate is unchanged and must still pass;
+the inventory result and focused runtime results above do not claim that it did.
 
 ### Live-evidence boundary
 

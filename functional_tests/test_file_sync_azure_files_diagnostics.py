@@ -1,7 +1,7 @@
 # test_file_sync_azure_files_diagnostics.py
 """
 Functional tests for safe Azure Files provider diagnostics and API responses.
-Version: 0.261.358
+Version: 0.261.359
 Implemented in: 0.261.358
 
 Validate structured classification, lazy failures, real logging sanitization,

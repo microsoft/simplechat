@@ -1,7 +1,7 @@
 # test_file_sync_ssrf_validation.py
 """
 Functional tests for File Sync SSRF endpoint and path boundaries.
-Version: 0.261.358
+Version: 0.261.359
 Implemented in: 0.261.314
 Token client keyword contract updated in: 0.261.358
 
