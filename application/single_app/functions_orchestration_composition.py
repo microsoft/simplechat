@@ -32,6 +32,7 @@ from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event, workflow_log_context
 from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE, normalize_inline_chart_markdown
 from functions_diagram_operations import MERMAID_BLOCK_LANGUAGE
+from functions_document_citations import build_inline_citation_marker
 from functions_m365_citations import M365_ANSWER_STYLE_INSTRUCTIONS
 from functions_mixed_source_orchestration import MixedSourceCancellationError
 from functions_orchestration_context import ConversationContextError, execution_conversation_messages
@@ -49,7 +50,8 @@ from functions_orchestration_result_contracts import (
     validate_record,
 )
 from functions_orchestration_result_runtime import (
-    raise_source_service_failure, read_complete_input, require_result_service, resolve_step_inputs,
+    raise_source_service_failure, read_complete_input, read_result_document_citations,
+    require_result_service, resolve_step_inputs,
 )
 from functions_orchestration_results import MAX_VALUE_BYTES, NamedOutput, ResultUnavailableError
 from functions_orchestration_schema import (
@@ -328,6 +330,24 @@ def _answer_memory(context):
     return getattr(context, 'memory_context', None) or {}
 
 
+def _input_document_citations(context, reference):
+    citations = []
+    for citation in read_result_document_citations(context, reference):
+        location = citation.get('location_value')
+        if location is None or location == '':
+            location = citation.get('page_number')
+        if not citation.get('citation_id') or location in (None, ''):
+            continue
+        citations.append({
+            **citation,
+            'citation': build_inline_citation_marker(
+                citation.get('file_name'), citation.get('location_label') or 'Page',
+                str(location), citation['citation_id'],
+            ),
+        })
+    return citations
+
+
 def _carries_citation_values(inputs):
     """Whether any named input holds a citation value the answer must copy verbatim."""
     try:
@@ -388,6 +408,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 'kind': reader.result_kind, 'completeness': reader.completeness.to_dict(),
                 'columns': [column.to_dict() for column in reader.columns],
                 'value': read_complete_input(reader),
+                'document_citations': _input_document_citations(context, reader.reference),
             }
             for name, reader in readers.items() if name not in image_names
         }

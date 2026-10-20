@@ -21,7 +21,7 @@ from functions_orchestration_result_contracts import (
     canonical_bytes, canonical_digest, output_name,
 )
 from functions_orchestration_results import (
-    MAX_LINEAGE_RESULTS, MAX_VALUE_BYTES, NamedOutput, OrchestrationResults, ResultUnavailableError,
+    MAX_LINEAGE_RESULTS, MAX_VALUE_BYTES, NamedOutput, OrchestrationResults, ResultUnavailableError, _reference,
 )
 from functions_orchestration_schema import step_input_specs
 
@@ -175,6 +175,7 @@ def read_result_document_citations(context, reference):
                 sources.setdefault(source_key(source), source)
             for parent in lineage['upstream']:
                 visit(ResultRef.from_dict(parent))
+        retained_citations = []
         if (
             producer.capability_id == 'document_search'
             and current.output_name == 'prepared' and current.kind == 'structured-v1'
@@ -188,25 +189,39 @@ def read_result_document_citations(context, reference):
                 or type(prepared.get('citations')) is not list
             ):
                 raise ResultContractError('result_citations_invalid')
-            for citation in prepared['citations']:
-                if type(citation) is not dict or citation.get('source_type') not in (None, 'document'):
-                    raise ResultContractError('result_citations_invalid')
-                matches = [
-                    source for source in lineage['sources']
-                    if source['document_id'] == citation.get('document_id')
-                    and (not citation.get('group_id') or (
-                        source['scope'] == 'group' and source['scope_id'] == citation['group_id']
-                    ))
-                    and (not citation.get('public_workspace_id') or (
-                        source['scope'] == 'public' and source['scope_id'] == citation['public_workspace_id']
-                    ))
-                ]
-                if len(matches) != 1:
-                    raise ResultContractError('result_citation_source_invalid')
-                projected = project(matches[0], citation)
-                citations.setdefault(source_key(matches[0]), {}).setdefault(
-                    canonical_digest(projected), projected,
+            retained_citations = prepared['citations']
+        elif producer.capability_id in ('document_analyze', 'document_compare'):
+            # Coverage is this producer's citation sidecar, not an implicit input from
+            # another task. Reopen the exact committed digest, including after recovery.
+            descriptor = manifest['outputs'].get('coverage')
+            if descriptor is not None:
+                coverage_reader = service.open_result(
+                    _reference(producer, 'coverage', descriptor, current.manifest_sha256),
+                    allow_partial=True, require_current_sources=True,
                 )
+                coverage = read_complete_input(coverage_reader)
+                if type(coverage) is not dict or type(coverage.get('citations', [])) is not list:
+                    raise ResultContractError('result_citations_invalid')
+                retained_citations = coverage.get('citations', [])
+        for citation in retained_citations:
+            if type(citation) is not dict or citation.get('source_type') not in (None, 'document'):
+                raise ResultContractError('result_citations_invalid')
+            matches = [
+                source for source in lineage['sources']
+                if source['document_id'] == citation.get('document_id')
+                and (not citation.get('group_id') or (
+                    source['scope'] == 'group' and source['scope_id'] == citation['group_id']
+                ))
+                and (not citation.get('public_workspace_id') or (
+                    source['scope'] == 'public' and source['scope_id'] == citation['public_workspace_id']
+                ))
+            ]
+            if len(matches) != 1:
+                raise ResultContractError('result_citation_source_invalid')
+            projected = project(matches[0], citation)
+            citations.setdefault(source_key(matches[0]), {}).setdefault(
+                canonical_digest(projected), projected,
+            )
         reader.recheck()
 
     visit(reference)

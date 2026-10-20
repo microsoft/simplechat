@@ -7,6 +7,7 @@ from copy import deepcopy
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 from urllib.parse import urlsplit, urlunsplit
 
+from functions_document_citations import resolve_citation_location
 from functions_m365_citations import rebuild_conversation_used_m365_items
 
 
@@ -143,31 +144,6 @@ def _location_reference_matches(
         if lower_bound <= citation_number <= upper_bound:
             return True
     return False
-
-
-def resolve_citation_location(
-    page_number: Any = None,
-    chunk_text: Any = None,
-    sheet_name: Any = None,
-    is_tabular: bool = False,
-) -> tuple[str, str]:
-    """Return a schema-, sheet-, or page-aware citation location."""
-    if sheet_name not in (None, ""):
-        return "Sheet", str(sheet_name)
-
-    normalized_chunk_text = str(chunk_text or "").strip()
-    if is_tabular and (
-        normalized_chunk_text.startswith("Tabular workbook:")
-        or normalized_chunk_text.startswith("Tabular data file:")
-    ):
-        return "Location", "Workbook Schema"
-
-    # Preserve a valid page or sequence of 0. Video chunks are keyed by second and
-    # legitimately start at zero, so truthiness would relabel them as page 1.
-    if page_number is None or page_number == "":
-        return "Page", "1"
-
-    return "Page", str(page_number)
 
 
 def _source_reference_matches_citation(
