@@ -1,7 +1,7 @@
 # orchestration_harness_execution.py
 """Initialized headless harness fixtures; only external storage/model I/O is doubled.
 
-Version: 0.261.324
+Version: 0.261.355
 Implemented in: 0.261.127
 Publication-only admission guard updated in: 0.261.129
 Direct result-store binding guard updated in: 0.261.130
@@ -20,6 +20,8 @@ from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
+
+from openpyxl import Workbook
 
 from functions_orchestration_context import build_conversation_snapshot, normalize_history_message
 from functions_orchestration_memory import validate_memory_audience
@@ -157,9 +159,11 @@ class HarnessBlobIO(FakeBlobService):
                     service.file_uploads += 1
 
             def download_blob(self, **kwargs):
+                for name in ("connection_timeout", "read_timeout", "retry_total"):
+                    kwargs.pop(name, None)
                 return original.download_blob(**kwargs)
 
-            def get_blob_properties(self):
+            def get_blob_properties(self, **kwargs):
                 return original.get_blob_properties()
 
             def delete_blob(self, **kwargs):
@@ -338,7 +342,7 @@ class HarnessEnvironment:
         )
 
     @contextmanager
-    def native_io(self, row_count=37):
+    def native_io(self, row_count=37, *, source_format="csv"):
         """Use real native computation and source policy with external I/O isolated."""
         engine = importlib.import_module("functions_tabular_generated_exports")
         plugin = importlib.import_module("semantic_kernel_plugins.tabular_processing_plugin")
@@ -349,9 +353,9 @@ class HarnessEnvironment:
         resolve_other_blob = screening._resolve_blob_document
         jobs, blobs = MemoryContainer("user_id"), MemoryBlobs()
         document = {
-            "id": "document-1", "user_id": "owner", "file_name": "source.csv",
+            "id": "document-1", "user_id": "owner", "file_name": f"source.{source_format}",
             "version": 1, "_etag": "source-revision-1",
-            "blob_container": "harness-documents", "blob_path": "owner/source.csv",
+            "blob_container": "harness-documents", "blob_path": f"owner/source.{source_format}",
         }
         state = {"allowed": True}
         data = io.StringIO()
@@ -361,8 +365,22 @@ class HarnessEnvironment:
             {"Item_ID": f"item-{index:06}", "amount": index}
             for index in range(1, row_count + 1)
         )
-        blobs.values[("harness-documents", "owner/source.csv")] = {
-            "bytes": data.getvalue().encode("utf-8"), "etag": "source-blob-1", "metadata": {},
+        content = data.getvalue().encode("utf-8")
+        if source_format == "xlsx":
+            workbook = Workbook()
+            workbook.active.title = "Original records"
+            workbook.active.append(["Item_ID", "amount"])
+            for index in range(1, row_count + 1):
+                workbook.active.append([f"item-{index:06}", index])
+            buffer = io.BytesIO()
+            workbook.save(buffer)
+            workbook.close()
+            content = buffer.getvalue()
+        elif source_format != "csv":
+            raise ValueError("Choose a CSV or XLSX fixture source.")
+        source_key = ("harness-documents", document["blob_path"])
+        blobs.values[source_key] = {
+            "bytes": content, "etag": "source-blob-1", "metadata": {},
         }
 
         def read_document(document_id, user_id, **kwargs):
@@ -373,7 +391,7 @@ class HarnessEnvironment:
             return deepcopy(document)
 
         def read_blob_document(container, blob, user_id):
-            if (container, blob) != ("harness-documents", "owner/source.csv"):
+            if (container, blob) != source_key:
                 return resolve_other_blob(container, blob, user_id)
             return read_document(document["id"], user_id)
 

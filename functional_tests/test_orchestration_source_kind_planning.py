@@ -1,12 +1,12 @@
 # test_orchestration_source_kind_planning.py
 """Plan mixed document types from authorized metadata, not user-facing labels.
 
-Version: 0.261.140
+Version: 0.261.355
 Implemented in: 0.261.140
 
 The real manifest classifier, context projection, planner, compiler and HTTP
-routes run with metadata storage and model completions doubled. No document
-contents, native jobs or generated files are read or produced while planning.
+routes run with metadata/blob storage and model completions doubled. Bounded
+source discovery reads no native jobs and produces no generated files.
 """
 
 import importlib
@@ -41,6 +41,9 @@ def source_runtime(real_http_harness, monkeypatch):
             "blob_container": "PRIVATE_CONTAINER", "blob_path": "PRIVATE_PATH",
         })
     monkeypatch.setattr(runtime.harness.config, "cosmos_user_documents_container", documents)
+    runtime.harness.blobs.records[("PRIVATE_CONTAINER", "PRIVATE_PATH")] = {
+        "data": b"Code,Amount\n001,25\n", "metadata": {}, "etag": "source-etag",
+    }
 
     def read_contexts(**kwargs):
         state.reads.append(deepcopy(kwargs))

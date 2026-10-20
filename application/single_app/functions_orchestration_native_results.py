@@ -40,6 +40,7 @@ _MESSAGES = {
     "native_binding_required": "The native computation bridge is not configured.",
     "native_runtime_invalid": "The native computation has no valid owning runtime.",
     "native_selection_unsupported": "Native computation requires one authorized replayable tabular source. No work was submitted.",
+    "native_source_changed": "A selected source changed after planning. Create and review a fresh plan before running it.",
     "native_inputs_unsupported": "Native computation accepts an original tabular document, not named result inputs. No work was submitted.",
     "native_outputs_invalid": "The declared outputs do not match the requested native computation mode.",
     "native_request_invalid": "The native computation requires a trusted executable request, not a preview or prose-only plan.",
@@ -477,6 +478,14 @@ def _sources(step, context, service, *, require_current, require_replay=False):
         or manifest[0].get("authorization_status") != "authorized"
     ):
         raise NativeOrchestrationBridgeError("native_selection_unsupported")
+    # A schema discovered during planning belongs to that source revision, not to
+    # whatever later occupies the same document ID. Older plans have no such fence.
+    from functions_orchestration_source_context import source_planning_revision
+
+    revisions = getattr(context, "planning_source_revisions", None) or {}
+    expected = revisions.get(manifest[0].get("document_id"))
+    if expected is not None and expected != source_planning_revision(manifest[0]):
+        raise NativeOrchestrationBridgeError("native_source_changed")
     arguments = step.get("arguments", {})
     if type(arguments) is not dict:
         raise NativeOrchestrationBridgeError("native_runtime_invalid")

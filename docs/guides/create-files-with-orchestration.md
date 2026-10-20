@@ -4,7 +4,7 @@ title: "Create files with orchestration"
 description: "Plan several files from the same retained results and recover an individual output."
 section: "Guides"
 audience: user
-version: "0.261.321"
+version: "0.261.355"
 ---
 
 ## Availability
@@ -43,6 +43,32 @@ You can also request source-free content:
 Such a plan does not need a search task or invented document sources. Likewise,
 selected documents do not require a redundant search when the requested analysis
 can use them directly.
+
+## Use selected spreadsheets without pasting their rows
+
+Since **0.261.355**, planning checks explicitly selected sources before resolving
+the request. For supported spreadsheets, it can read ordered column names,
+visible worksheet names and a few sample rows while preparing the plan. This is
+read-only discovery: in Review mode, computation and file creation still wait
+for approval. The version is recorded in `application/single_app/config.py`.
+
+For example:
+
+> Calculate totals and category subtotals from the selected ledger. Show a bar
+> chart with its data table, and export every original row as XLSX in the
+> original column order.
+
+The plan should use the complete uploaded source for calculations and retain
+the original native records for the export. Samples are not the complete
+dataset and must not supply totals or replace the original rows with generated
+text. Only a Render task produces the downloadable CSV or XLSX.
+
+The planner may still ask which worksheet, source or reporting rule you intend.
+It should not ask you to paste an available selected file merely because its
+contents are not embedded in the planning prompt. Large files, unusual headers
+or complex workbooks can exceed discovery limits; a limited preview does not
+mean the upload is missing. If a source changes after planning, create and
+review a fresh plan rather than applying an old schema to the replacement.
 
 ## Check that the plan delivers what you asked for
 

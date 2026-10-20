@@ -1536,6 +1536,55 @@ def _parse_date(value):
 # ---------------------------------------------------------------------------
 
 
+def preview_tabular_source(source):
+    """Read headers and at most three rows per visible sheet; never count the dataset.
+
+    Planning uses much smaller limits than execution. An explicit first-row header
+    also prevents a blank/malicious input from triggering an unbounded header scan.
+    """
+    limits = TabularMergeLimits(
+        max_source_bytes=8 * 1024 * 1024, max_columns=50,
+        max_workbook_uncompressed_bytes=32 * 1024 * 1024,
+        max_workbook_entries=1000, max_sheets_per_source=8,
+    )
+    _validate_sources([source], limits, minimum=1)
+    content = _load_source_bytes(source, limits)
+    reader = _open_reader(source, content, limits)
+    try:
+        options = TabularInspectOptions(sheets=SHEETS_ALL, header_row=1, sample_rows=3)
+        tables = []
+        for sheet, skip_reason in reader.plan(options, limits):
+            if skip_reason:
+                continue
+            table = reader.open_table(sheet, 1)
+            try:
+                header = list(table.header)
+                if len(header) > limits.max_columns:
+                    raise TabularMergeError("too_many_columns", "This source exceeds the planning column limit.")
+                if any(not isinstance(value, str) or not value.strip() for value in header):
+                    raise TabularMergeError("ambiguous_headers", "This source needs explicit column headers.")
+                header = [value.strip() for value in header]
+                if any(len(value) > 128 for value in header):
+                    raise TabularMergeError("header_too_long", "A column exceeds the native header limit.")
+                if len({value.casefold() for value in header}) != len(header):
+                    raise TabularMergeError("duplicate_columns", "This source needs unambiguous column headers.")
+                samples = []
+                for _row_number, values in table.rows():
+                    samples.append([_clip_sample(value) for value in values[:len(header)]])
+                    if len(samples) >= options.sample_rows:
+                        break
+                tables.append({
+                    "sheet": sheet, "header_row": table.header_row,
+                    "columns": header,
+                    "sample_rows": samples, "content_complete": False,
+                })
+            finally:
+                table.close()
+        return {"status": "inspected", "tables": tables, "content_complete": False}
+    finally:
+        reader.close()
+
+
 def inspect_tabular_sources(
     sources: Sequence[TabularMergeSource],
     *,

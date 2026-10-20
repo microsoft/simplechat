@@ -77,6 +77,10 @@ from functions_orchestration_schema import (
     validate_plan_requirements,
     plan_contract_version,
 )
+from functions_orchestration_source_context import (
+    SOURCE_PLANNING_INSTRUCTIONS, SourceClarificationError,
+    resolver_source_context, validate_source_clarification,
+)
 from functions_orchestration_visuals import (
     image_requested_by_user,
     planner_visual_outputs,
@@ -1096,7 +1100,7 @@ def _normalize_request_resolution(parsed, valid_ids, *, has_answers=False):
 
 def resolve_conversation_request(
     user_message, snapshot, settings=None, answered_questions=None, planner_model=None,
-    *, seeds=None, memory_context=None,
+    *, seeds=None, memory_context=None, selected_sources=None, conversation_id=None, turn_id=None,
 ):
     """Resolve context before retrieval, using the captured model binding when supplied."""
     message = str(user_message or '').strip()
@@ -1129,6 +1133,7 @@ def resolve_conversation_request(
             'documents': (seeds or {}).get('document_ids') or [],
             'context_references': (seeds or {}).get('elicitation_references') or [],
         },
+        'selected_sources': resolver_source_context(selected_sources),
     }
     try:
         if planner_model is not None:
@@ -1144,7 +1149,9 @@ def resolve_conversation_request(
         raise ConversationResolutionError(reason='planner_unavailable') from exc
 
     messages = [
-        {'role': 'system', 'content': RESOLUTION_SYSTEM_PROMPT},
+        {'role': 'system', 'content': RESOLUTION_SYSTEM_PROMPT + (
+            SOURCE_PLANNING_INSTRUCTIONS if selected_sources else ''
+        )},
         {'role': 'user', 'content': json.dumps(
             payload, ensure_ascii=False, separators=(',', ':')
         )},
@@ -1175,15 +1182,19 @@ def resolve_conversation_request(
             if isinstance(value, int):
                 token_usage[field] = token_usage.get(field, 0) + value
         try:
+            parsed = extract_planner_json(reply)
             resolution = _normalize_request_resolution(
-                extract_planner_json(reply), valid_ids, has_answers=bool(answered_questions),
+                parsed, valid_ids, has_answers=bool(answered_questions),
             )
+            if resolution['relationship'] == 'clarification':
+                validate_source_clarification(parsed.get('clarification_context'), selected_sources)
             break
-        except ConversationResolutionError as exc:
+        except (ConversationResolutionError, SourceClarificationError) as exc:
             log_event(
                 '[ORCHESTRATION_PLANNER] Rejected a conversation resolution response.',
                 level=logging.WARNING,
                 extra={
+                    **workflow_log_context(conversation_id=conversation_id, turn_id=turn_id),
                     'stage': 'request_resolution', 'reason': exc.reason, 'attempt': attempt,
                     'history_message_count': len(history), 'response_length': len(reply),
                 },
@@ -1224,6 +1235,7 @@ def resolve_conversation_request(
         '[ORCHESTRATION_PLANNER] Resolved the conversational request.',
         debug_only=True,
         extra={
+            **workflow_log_context(conversation_id=conversation_id, turn_id=turn_id),
             'stage': 'request_resolution',
             'relationship': resolution['relationship'],
             'attempt': attempt,
@@ -1231,6 +1243,8 @@ def resolve_conversation_request(
             'selected_message_count': len(resolution['message_ids']),
             'memory_context_included': bool((memory_context or {}).get('context_messages')),
             'clarification_answer_count': len(answered_questions or []),
+            'reason': (parsed.get('clarification_context') or {}).get('reason')
+            if resolution['relationship'] == 'clarification' and selected_sources else None,
         },
     )
     return resolution
@@ -1663,6 +1677,15 @@ def plan_request(
             settings, capabilities, context['workflow_planning']['handoff'],
         )} if handoff_offered else {}),
     )
+    if context.get('selected_sources'):
+        messages[0] = {
+            **messages[0], 'content': messages[0]['content'] + SOURCE_PLANNING_INSTRUCTIONS
+            + '\nFor a complete original-row CSV/XLSX export, query the native source with its '
+            'exact ordered columns and query_expression="index == index", retain the complete table, and '
+            'bind that named table directly to render_file. Do not recreate its records through '
+            'compose or preview samples. Separate aggregate analysis must consume the full source; '
+            'chart values and displayed totals must come from execution results, not samples.',
+        }
     reasoning_metadata = build_model_reasoning_metadata(planner_model, 'planner')
     token_usage, usage_seen = {}, False
     for attempt in range(1, PLAN_REPAIR_ATTEMPTS + 2):
@@ -1712,6 +1735,40 @@ def plan_request(
                     return _failure('invalid_revised_request')
 
         if kind == 'elicitation' and allow_elicitation:
+            try:
+                validate_source_clarification(
+                    parsed.get('clarification_context'), context.get('selected_sources'),
+                )
+                if context.get('selected_sources'):
+                    log_event(
+                        '[ORCHESTRATION_PLANNER] Prepared a selected-source clarification.',
+                        extra={
+                            **correlation, 'stage': 'plan_clarification', 'outcome': 'elicitation',
+                            'reason': parsed['clarification_context']['reason'], 'attempt': attempt,
+                            'selected_source_count': len(context['selected_sources']),
+                        },
+                    )
+            except SourceClarificationError as exc:
+                log_event(
+                    '[ORCHESTRATION_PLANNER] Rejected a conflicting selected-source question.',
+                    level=logging.WARNING, extra={
+                        **correlation, 'stage': 'plan_clarification',
+                        'reason': exc.reason, 'attempt': attempt,
+                        'selected_source_count': len(context.get('selected_sources') or []),
+                    },
+                )
+                if attempt > PLAN_REPAIR_ATTEMPTS:
+                    return _failure(exc.reason, exc, stage='plan_clarification', attempt=attempt)
+                messages = [*messages, {
+                    'role': 'user',
+                    'content': (
+                        f'Validation reason: {exc.reason}. Correct the response for the unchanged '
+                        'request using the verified selected_sources above. Include typed '
+                        'clarification_context for a genuinely missing choice. An available '
+                        'source can be read after approval; missing prompt bytes are not missing input.'
+                    ),
+                }]
+                continue
             try:
                 fields = (parsed.get('ui_hints') or {}).get('fields') or {}
                 candidates = []
