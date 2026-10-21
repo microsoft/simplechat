@@ -76,6 +76,26 @@ exceptions
 
 If startup logs show an error while Flask instrumentation is initializing, disable it with the `DISABLE_FLASK_INSTRUMENTATION` environment variable. Set the value to `1` or `true`, then restart the app service so the process starts cleanly without the instrumentation hook.
 
+## Context token already used after a streaming response
+
+If a response completes and Application Insights records `Failed to detach
+context` with `RuntimeError: ... has already been used once`, check the installed
+Azure Monitor and Flask instrumentation versions. The older Azure Monitor 1.6.13
+distribution is incompatible with the application's Flask 3.1.3 streaming
+cleanup. This is different from an instrumentation startup failure or a token
+created in a different context.
+
+SimpleChat **0.261.365** updates Azure Monitor to **1.8.9**, which includes the
+upstream Flask streaming fix. Restore the application's pinned requirements
+together rather than upgrading individual OpenTelemetry packages independently.
+Do not disable instrumentation or filter its errors to treat this signature.
+See the [streaming cleanup fix in the repository](https://github.com/microsoft/simplechat/blob/paullizer-react-v2-ui/docs/explanation/fixes/OPENTELEMETRY_FLASK_STREAM_CLEANUP_FIX.md)
+for the compatibility details and offline regression checks.
+
+Confirm response content and stream lifecycle status separately from HTTP request
+success. After an approved rollout, verify that request spans and exception
+telemetry still arrive as well as checking that the token-reuse error is gone.
+
 ## Admin settings saves and connection tests
 
 The diagnostics below apply to **0.261.125** and later. A redirect after posting the classic settings form is not proof that the save succeeded: check its banner and correlate the request with dependency operations.
