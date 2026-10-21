@@ -1,6 +1,6 @@
 # Selected-source orchestration planning fix
 
-Current version: **0.261.357**
+Current version: **0.261.369**
 
 Fixed in version: **0.261.355**
 
@@ -32,6 +32,10 @@ content-screening boundaries for personal, group and public scopes. Blob size
 is checked before download; downloads are range-bounded and ETag-pinned.
 Metadata revisions are checked around the read. Private storage locators and
 callbacks never enter the model projection.
+
+Version **0.261.369** corrects the reader's Azure SDK range invocation with an
+explicit zero offset. See the [selected-source SDK range fix](ORCHESTRATION_SELECTED_SOURCE_SDK_RANGE_FIX.md)
+for the SDK-backed regression coverage and debug-only read diagnostics.
 
 `functions_tabular_merge.py` reuses its CSV/Excel parsers and archive safeguards
 for a planning-only preview. It reads the first header row and at most three

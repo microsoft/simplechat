@@ -4,7 +4,7 @@ title: "Create files with orchestration"
 description: "Plan several files from the same retained results and recover an individual output."
 section: "Guides"
 audience: user
-version: "0.261.355"
+version: "0.261.369"
 ---
 
 ## Availability
@@ -69,6 +69,11 @@ contents are not embedded in the planning prompt. Large files, unusual headers
 or complex workbooks can exceed discovery limits; a limited preview does not
 mean the upload is missing. If a source changes after planning, create and
 review a fresh plan rather than applying an old schema to the replacement.
+
+Version **0.261.369** fixes a source-preparation error that could prevent selected
+spreadsheets from reaching plan review. Future requests use a bounded,
+ETag-checked source download. No re-upload or historical conversation repair is
+required by this code change; it does not automatically retry failed requests.
 
 ## Check that the plan delivers what you asked for
 
