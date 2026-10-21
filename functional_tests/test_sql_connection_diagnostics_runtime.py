@@ -1,7 +1,7 @@
 # test_sql_connection_diagnostics_runtime.py
 """
 Functional tests for SQL connection diagnostics across routes, plugins, and logging.
-Version: 0.261.356
+Version: 0.261.373
 Implemented in: 0.261.351
 
 Run real plugin classes, connection builders, Flask handlers, and log_event against
@@ -14,7 +14,7 @@ import importlib.util
 import json
 import logging
 import re
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import socket
 import sys
 from types import SimpleNamespace
@@ -32,7 +32,7 @@ SECRET = "private-provider-credential"
 
 
 def load_module(monkeypatch, name, filename):
-    spec = importlib.util.spec_from_file_location(name, APP_ROOT / filename)
+    spec = importlib.util.spec_from_file_location(name, APP_ROOT.joinpath(*PureWindowsPath(filename).parts))
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, name, module)
     spec.loader.exec_module(module)

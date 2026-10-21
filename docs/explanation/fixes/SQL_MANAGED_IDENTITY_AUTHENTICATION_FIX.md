@@ -2,6 +2,8 @@
 
 Fixed in version: **0.261.372**
 
+Validation follow-up in version: **0.261.373**
+
 ## Issue and root cause
 
 SQL connection checks and action execution could use different authentication
@@ -53,7 +55,8 @@ or change the platform-specific ODBC identity-selection contract.
   mode even when inactive password fields remain and preserves safe
   application-owned configuration failures.
 - Both SQL additional-settings schemas declare `managed_identity_client_id`.
-- `application/single_app/config.py` records version **0.261.372**.
+- `application/single_app/config.py` records version **0.261.373**, including
+  the test-loading and network-guard follow-up.
 
 ## Configuration and compatibility
 
@@ -105,3 +108,19 @@ passed all **28 checks**, and documentation coverage/quality passed all
 
 These focused results do not assert that the full repository runtime suite is
 green or that a deployed database login has succeeded.
+
+### Portable test loading and explicit network guard
+
+Version **0.261.373** makes the shared SQL/authoring module loaders resolve
+relative filename components with the host's path implementation. A fixture
+reference containing Windows separators therefore identifies the same source
+file on Linux CI instead of treating the backslash as a filename character.
+The SQL suite also explicitly installs the existing autouse network guard,
+rather than relying on an apparently unused fixture import. Regressions
+exercise both loader entry points with POSIX path semantics and confirm that
+DNS access is refused before external I/O. No assertion, network guard, or CI
+check is removed or weakened.
+
+The follow-up passed **261 focused SQL tests** and **57 affected SDK
+owner/CI-fixture cases**, including the twelve identity-hydration cases that
+previously failed during setup on the hosted Linux runner.

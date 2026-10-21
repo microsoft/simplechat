@@ -1,7 +1,7 @@
 # test_sql_managed_identity_authentication.py
 """
 Functional tests for consistent SQL managed identity authentication.
-Version: 0.261.372
+Version: 0.261.373
 Implemented in: 0.261.372
 
 Exercise real identity storage/hydration, SQL handlers, query/schema plugins and
@@ -9,11 +9,15 @@ connection builders with SDK-shaped Cosmos responses and blocked network access.
 """
 
 import ast
+from contextlib import ExitStack
 from copy import deepcopy
+import importlib.util
 import json
 import logging
+from pathlib import PurePosixPath
+import socket
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import Mock
 
@@ -24,19 +28,51 @@ import pytest
 
 from test_sql_connection_diagnostics_runtime import (
     APP_ROOT,
-    block_network,
+    block_network as sql_block_network,
     load_module,
     plugin_manifest,
     runtime as sql_runtime,
 )
 from test_support.agent_delegation import execute_functions, module_stub
 from test_support.m365 import CosmosContainer
-from test_workspace_authoring_backend import environment
+from test_workspace_authoring_backend import _load_module as load_authoring_module, environment
 
 
 CLIENT_ID = "11111111-2222-4333-8444-555555555555"
 STALE_CLIENT_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 STALE_PASSWORD = "synthetic-inactive-sql-password"
+
+
+@pytest.fixture(autouse=True)
+def block_network(monkeypatch):
+    sql_block_network.__wrapped__(monkeypatch)
+
+
+def test_network_guard_blocks_dns_before_external_io():
+    with pytest.raises(AssertionError, match="must not contact live services"):
+        socket.getaddrinfo("sql-regression.invalid", 1433)
+
+
+@pytest.mark.parametrize("loader", [load_module, load_authoring_module])
+@pytest.mark.parametrize("relative_path", [
+    r"semantic_kernel_plugins\rocksdb_plugin.py",
+    str(PurePosixPath("semantic_kernel_plugins", "rocksdb_plugin.py")),
+])
+def test_shared_module_loaders_resolve_host_path_components(monkeypatch, loader, relative_path):
+    monkeypatch.setitem(loader.__globals__, "APP_ROOT", PurePosixPath("virtual-app"))
+    spec = SimpleNamespace(loader=SimpleNamespace(exec_module=Mock()))
+    spec_factory = Mock(return_value=spec)
+    module = ModuleType("sql_portable_loader_test")
+    monkeypatch.setattr(importlib.util, "spec_from_file_location", spec_factory)
+    monkeypatch.setattr(importlib.util, "module_from_spec", Mock(return_value=module))
+    with ExitStack() as stack:
+        owner = monkeypatch if loader is load_module else stack
+        loaded = loader(owner, "sql_portable_loader_test", relative_path)
+    assert loaded is module
+    assert spec_factory.call_args.args[1] == PurePosixPath(
+        "virtual-app", "semantic_kernel_plugins", "rocksdb_plugin.py",
+    )
+    spec.loader.exec_module.assert_called_once_with(module)
 
 
 @pytest.fixture

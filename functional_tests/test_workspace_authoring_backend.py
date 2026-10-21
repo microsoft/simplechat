@@ -1,7 +1,7 @@
 # test_workspace_authoring_backend.py
 """Executable contracts for native personal agent/action authoring.
 
-Version: 0.261.372
+Version: 0.261.373
 Implemented in: 0.261.096
 
 Real Flask route definitions, validators, payload normalizers, Key Vault helpers,
@@ -19,6 +19,7 @@ import uuid
 from contextlib import ExitStack
 from copy import deepcopy
 from functools import wraps
+from pathlib import PureWindowsPath
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -45,7 +46,8 @@ CURRENT_TYPES = sorted({
 
 
 def _load_module(stack, name, relative_path=None):
-    spec = importlib.util.spec_from_file_location(name, APP_ROOT / (relative_path or f"{name}.py"))
+    path = APP_ROOT.joinpath(*PureWindowsPath(relative_path or f"{name}.py").parts)
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     stack.enter_context(patch.dict(sys.modules, {name: module}))
     spec.loader.exec_module(module)
