@@ -7885,7 +7885,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "sdk-compatible",
       "contract": "Reads CosmosDict through mapping operations, preserves ETags when applying callbacks, and returns SDK create/replace documents. Conditional conflicts retry against the current record; missing records are not recreated without an explicit factory.",
@@ -7907,7 +7907,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "sdk-compatible",
       "contract": "Authorizes workspace access before the partition-scoped point read, checks scope fields through mapping access, and returns CosmosDict with its ETag. Missing partitions and mismatched stored scope are rejected.",
@@ -7928,7 +7928,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "sdk-compatible",
       "contract": "Enumerates plain SDK query dictionaries within the requested workspace partition. Source results do not cross an exact-dictionary point-response contract.",
@@ -7949,7 +7949,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "response-unused",
       "contract": "Discards the SDK create response and returns the locally constructed source dictionary; the stored response preserves SDK shape and ETag. Storage write failures still propagate.",
@@ -7981,7 +7981,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "sdk-compatible",
       "contract": "Consumes the authorized SDK source and a fresh CosmosDict after a conditional-delete conflict through mapping access. Preserves configuration revision semantics while retrying an ETag-only change; delete responses are unused.",
@@ -8002,7 +8002,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "sdk-compatible",
       "contract": "Enumerates plain SDK query dictionaries from the source partition, ordered by run start and bounded by TOP. No point-response conversion is required.",
@@ -8023,7 +8023,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "response-unused",
       "contract": "Discards the SDK create response and returns its locally built run dictionary. The stored point response is CosmosDict with plain nested counts; create failures propagate.",
@@ -8045,7 +8045,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "response-unused",
       "contract": "Updates either a local run dictionary or SDK mapping in place and discards the upsert response. The stored ETag advances independently of the caller's old response; write errors propagate.",
@@ -8072,7 +8072,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "sdk-compatible",
       "contract": "Reads source and run from their workspace/source partitions and forwards the SDK mappings, ETags, and plain nested counts to the engine. A missing source fails before engine invocation.",
@@ -8093,7 +8093,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "sdk-compatible",
       "contract": "Indexes plain SDK query rows by item id inside the requested source partition; the resulting item map contains plain nested dictionaries rather than point wrappers.",
@@ -8114,7 +8114,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "sdk-compatible",
       "contract": "Sums scalar COUNT query results across personal, group, and public run containers; queued/running records count and completed records do not.",
@@ -8135,7 +8135,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "sdk-compatible",
       "contract": "Consumes a scalar COUNT query scoped to the source partition and tests the count, without treating query values as point documents.",
@@ -8156,7 +8156,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "sdk-compatible",
       "contract": "Enumerates plain source query rows for enabled schedules due by the supplied clock. Disabled sources and future schedules are excluded without point-response normalization.",
@@ -8177,7 +8177,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5e4a9b3483a53500148840657d564849f261c17188d0c22aa1d994839fd84ca5"
+        "module_sha256": "9920f576f264519bde1eea95af0f97e0ced5ea81536ccb6fb53312c15a2f4e88"
       },
       "classification": "sdk-compatible",
       "contract": "Returns the partition-scoped SDK point mapping with its ETag for document-action consumers. Only a missing record or absent input becomes None; provider failures remain failures.",

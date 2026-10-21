@@ -129,6 +129,28 @@ network restrictions still apply. SimpleChat does not assign roles for you.
 Connection-string authentication and existing saved sources remain supported
 without changing their configuration.
 
+### When selected remote paths disappear
+
+From **0.261.365**, Azure Files sync checks selected files and folders against
+complete directory listings. If a selection is confirmed absent, the saved
+delete policy determines whether SimpleChat retains or deletes its imported
+copy. This also applies when a folder containing a selected path disappears.
+The selection stays saved, so a path that returns can be discovered by a later
+sync without editing the source.
+
+The credential must be able to list the configured root and folders along the
+selected path, not just read an individual file.
+
+If the configured share or root is missing or cannot be read, or a listing fails
+partway through, the run fails without treating that uncertainty as deletion.
+Restore access or verify the source root before trying again.
+
+Azure Files also refuses an incomplete inventory when the selected scope exceeds
+twice the administrator's per-run file limit, before include/exclude filters.
+Narrow the selected folders or files, or ask an administrator to review that
+limit. This prevents an unscanned document from being mistaken for a deleted
+remote file.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -141,6 +163,7 @@ without changing their configuration.
 | Azure Files could not find the share, directory, or file | The selected resource is missing or inaccessible | Verify the configured root and browse path with the storage owner. |
 | Azure Files could not be reached reliably | A transport request failed | Check service availability and the app's network access. |
 | Azure Files SDK or client initialization is unavailable | The server cannot initialize the connector | Ask an administrator to check the deployed SDK and authentication configuration. |
+| Azure Files inventory exceeds the sync safety limit | The selected scope contains too many files for complete reconciliation | Choose smaller folders or individual files, or ask an administrator to review the per-run file limit. |
 
 ## Related
 

@@ -1,7 +1,7 @@
 # test_file_sync_azure_files_diagnostics.py
 """
 Functional tests for safe Azure Files provider diagnostics and API responses.
-Version: 0.261.359
+Version: 0.261.365
 Implemented in: 0.261.358
 
 Validate structured classification, lazy failures, real logging sanitization,
@@ -197,16 +197,20 @@ def test_identity_authorization_errors_are_not_translated():
     functions["log_event"].assert_not_called()
 
 
-def test_selected_directory_fallback_and_missing_directory_remain_distinct():
+def test_selected_directory_inventory_and_missing_root_remain_distinct():
     share = Mock()
-    share.get_file_client.return_value.get_file_properties.side_effect = azure_exceptions.ResourceNotFoundError(SECRET)
-    share.list_directories_and_files.return_value = []
+    share.list_directories_and_files.side_effect = lambda directory_name: (
+        [{"name": "reports", "is_directory": True}] if directory_name == "team" else []
+    )
     functions = connector_functions(_get_azure_files_share_client=lambda source: share)
     item = source()
     item["connection"]["selected_paths"] = ["reports"]
     files = functions["_list_azure_files"](item, {"file_sync_max_files_per_run": 10})
     assert files == []
-    share.list_directories_and_files.assert_called_once_with(directory_name="team/reports")
+    assert [call.kwargs["directory_name"] for call in share.list_directories_and_files.call_args_list] == [
+        "team", "team/reports",
+    ]
+    share.get_file_client.assert_not_called()
     functions["log_event"].assert_not_called()
     share.list_directories_and_files.side_effect = azure_exceptions.ResourceNotFoundError(SECRET)
     with pytest.raises(functions["FileSyncPublicValidationError"], match="could not find"):

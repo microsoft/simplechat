@@ -3685,25 +3685,55 @@ def _list_azure_files(source: Dict[str, Any], config: Dict[str, Any]) -> List[Di
     selected_paths = connection.get("selected_paths") or [""]
     recursive_enabled = bool(source.get("recursive", True) and config.get("file_sync_allow_recursive_sources", True))
     remote_files = []
+    directory_entries = {}
+    seen_files = set()
+    walked_directories = set()
+    max_files = config["file_sync_max_files_per_run"] * 2
+
+    def list_directory(directory_path: str) -> Dict[str, Any]:
+        if directory_path not in directory_entries:
+            # Exhaust pagination before treating an absent child as a remote deletion.
+            entries = {}
+            for entry in share_client.list_directories_and_files(directory_name=directory_path or None):
+                name = _azure_files_item_name(entry)
+                if name:
+                    entries[name.casefold()] = entry
+            directory_entries[directory_path] = entries
+        return directory_entries[directory_path]
 
     def add_file(file_path: str, entry: Any) -> None:
+        if file_path in seen_files:
+            return
+        if len(remote_files) >= max_files:
+            log_event(
+                "[FILE_SYNC] Azure Files inventory limit exceeded.",
+                level=logging.WARNING,
+                extra={"operation": "azure_files_list", "failure_code": "azure_files_inventory_limit_exceeded"},
+            )
+            raise FileSyncPublicValidationError(
+                "Azure Files inventory exceeds the sync safety limit. "
+                "Select fewer files or smaller folders, or ask an administrator to increase the file limit."
+            )
+        file_properties = share_client.get_file_client(file_path).get_file_properties()
+        seen_files.add(file_path)
         file_name = file_path.strip("/").split("/")[-1]
         remote_files.append(
             {
                 "remote_path": _build_azure_files_url(account_url, share_name, file_path),
                 "relative_path": _relative_azure_file_path(root_directory_path, file_path),
                 "file_name": file_name,
-                "size": _azure_files_item_size(entry),
-                "modified_at": _azure_files_item_modified_at(entry),
-                "remote_change_token": _azure_files_item_change_token(entry),
+                "size": _azure_files_item_size(file_properties or entry),
+                "modified_at": _azure_files_item_modified_at(file_properties or entry),
+                "remote_change_token": _azure_files_item_change_token(file_properties or entry),
                 "azure_file_path": file_path,
             }
         )
 
     def walk_directory(directory_path: str) -> None:
-        if len(remote_files) >= config["file_sync_max_files_per_run"] * 2:
+        if directory_path in walked_directories:
             return
-        for entry in share_client.list_directories_and_files(directory_name=directory_path or None):
+        walked_directories.add(directory_path)
+        for entry in list_directory(directory_path).values():
             entry_name = _azure_files_item_name(entry)
             if not entry_name:
                 continue
@@ -3713,21 +3743,36 @@ def _list_azure_files(source: Dict[str, Any], config: Dict[str, Any]) -> List[Di
                     walk_directory(entry_path)
                 continue
 
-            file_properties = share_client.get_file_client(entry_path).get_file_properties()
-            add_file(entry_path, file_properties or entry)
+            add_file(entry_path, entry)
+
+    def resolve_selection(selected_path: str) -> Optional[Tuple[str, Any]]:
+        directory_path = root_directory_path
+        parts = selected_path.strip("/").split("/")
+        for index, part in enumerate(parts):
+            entry = list_directory(directory_path).get(part.casefold())
+            if entry is None:
+                return None
+            entry_path = _join_azure_file_path(directory_path, _azure_files_item_name(entry))
+            if index == len(parts) - 1:
+                return entry_path, entry
+            if not _azure_files_item_is_directory(entry):
+                return None
+            directory_path = entry_path
+        return None
 
     with _azure_files_operation("azure_files_list"):
         for selected_path in selected_paths:
-            selected_file_path = _join_selected_azure_file_path(root_directory_path, selected_path)
-            if selected_path:
-                try:
-                    file_properties = share_client.get_file_client(selected_file_path).get_file_properties()
-                    add_file(selected_file_path, file_properties)
-                    continue
-                except AzureResourceNotFoundError:
-                    # The selected path may be a directory; its listing below must still succeed.
-                    pass
-            walk_directory(selected_file_path)
+            if not selected_path:
+                walk_directory(root_directory_path)
+                continue
+            selected = resolve_selection(selected_path)
+            if selected is None:
+                continue
+            selected_file_path, entry = selected
+            if _azure_files_item_is_directory(entry):
+                walk_directory(selected_file_path)
+            else:
+                add_file(selected_file_path, entry)
     return remote_files
 
 

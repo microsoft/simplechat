@@ -157,6 +157,14 @@ No source/identity identifiers, endpoints, paths, credentials, signed URLs, raw
 provider messages, or provider tracebacks are added to this event. Existing
 request OperationId correlation requires no new identifier logging.
 
+Since **0.261.365**, `[FILE_SYNC] Azure Files inventory limit exceeded.` records
+`sc_operation=azure_files_list` and
+`sc_failure_code=azure_files_inventory_limit_exceeded` when the selected scope
+exceeds twice the per-run file limit. This application safety refusal has no
+provider HTTP status or exception type. It prevents partial inventory from
+triggering remote-delete reconciliation. Confirmed absent selections do not
+emit a provider error; unavailable roots and failed listings still do.
+
 ```kusto
 AppTraces
 | where TimeGenerated > ago(30m)
