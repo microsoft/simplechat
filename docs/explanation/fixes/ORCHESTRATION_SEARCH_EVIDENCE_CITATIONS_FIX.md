@@ -4,6 +4,8 @@ Fixed/Implemented in version: **0.261.365**
 
 Application version: `application/single_app/config.py`.
 
+Current application version: **0.261.366**.
+
 ## Issue and root cause
 
 A document-backed orchestration answer could contain the retrieved facts without
@@ -44,6 +46,13 @@ The ordinary Compose policy, saved `hybrid_citations`, completion event, used
 document tracking and V2 citation viewer remain the delivery path. No route,
 setting, browser asset, answer-style policy or external qualification harness
 was changed.
+
+### Review follow-up in 0.261.366
+
+The Search browser regression declares `@pytest.mark.ui` directly on its test
+instead of using the module-level `pytestmark` convention. This retains UI test
+selection without CodeQL's unused-global warning. Citation behavior is unchanged.
+All four Search browser cases passed when selected with `-m ui`.
 
 ## Behavior and compatibility
 

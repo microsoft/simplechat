@@ -1,7 +1,7 @@
 # test_v2_search_citations.py
 """Search-grounded V2 answers open the exact passage before and after reload.
 
-Version: 0.261.365
+Version: 0.261.366
 Implemented in: 0.261.365
 
 The backend payload comes from real Search/Compose adapters and retained storage.
@@ -30,9 +30,9 @@ from test_orchestration_search_citations import HITS, runtime, search_content, s
 
 
 __all__ = ['connect_options', 'runtime', 'search_content']
-pytestmark = pytest.mark.ui
 
 
+@pytest.mark.ui
 @pytest.mark.parametrize('output', ['evidence', 'prepared'])
 @pytest.mark.parametrize('enhanced', [False, True])
 def test_search_answer_citations_open_exact_passages_and_survive_reload(page, search_content, output, enhanced):
