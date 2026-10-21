@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.367"
+version: "0.261.370"
 ---
 
 ## Decide what should run
@@ -103,6 +103,19 @@ first. A short planning preview is not the complete input. The execution step
 reopens the referenced saved message with current access and content checks.
 An earlier AI answer can be rewritten as text, but it is not independently
 verified evidence for new factual claims.
+
+Since **0.261.370**, a formatting-only follow-up can reuse the selected answer's
+retained result and original passage references. For example, ask to turn an
+existing comparison into an old/new/change table without searching again.
+SimpleChat carries the selected answer's provenance through the transformation,
+so citations remain available in the saved response and after reload. Reusing
+an answer is not a new check of the underlying facts, and opening a cited source
+still requires current access.
+
+This association requires the saved answer to match its retained text. Edited
+or partially masked answers are not replaced with an unedited original to recover
+citations. Source-free text does not gain source references, and unrelated
+messages do not supply them.
 
 If the intended material is missing or unclear, identify it when the planner
 asks for clarification. Review a proposed workspace search before running if

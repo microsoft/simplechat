@@ -44,6 +44,7 @@ from functions_appinsights import log_event, workflow_log_context
 from functions_orchestration_context import conversation_reference_messages, resolve_elicitation_candidates
 from functions_orchestration_deliverables import build_deliverable_availability
 from functions_orchestration_events import build_model_reasoning_metadata
+from functions_orchestration_result_contracts import InputBinding
 from functions_model_catalog import TASKS, ModelCatalogError
 from functions_orchestration_model_routing import (
     DEPENDENCY_ROUTING_INSTRUCTIONS, ROUTING_INSTRUCTIONS, assign_step_models, authorized_routing_candidates,
@@ -694,6 +695,11 @@ text is actually supplied, and gather again when a requested fact is missing or 
 evidence. Earlier assistant claims do not establish current facts or opening hours.
 When source_policy is conversation_only, use the selected historical messages for the
 transformation; do not search workspaces or the web, or invent a document audit.
+conversation_results associates a selected assistant message with its retained answer alias.
+Use that existing_result as a named input when transforming the answer, preserving its real
+inline citations and original attribution. This is reuse of earlier content, not fresh
+verification of its claims. A compose step without named inputs receives these selected
+answers as inputs from the server; do not substitute general knowledge for them.
 content_complete=false marks a discovery preview, not a complete source: the server
 reloads the exact selected stored messages for execution. If the requested target is
 missing or ambiguous, ask which content to use instead of substituting external sources.
@@ -1540,6 +1546,8 @@ def plan_request(
 
     context = dict(planner_context or {})
     context['source_policy'] = 'conversation_only' if conversation_only else 'retrieval_allowed'
+    if (context.get('request_resolution') or {}).get('conversation_results'):
+        context['conversation_results'] = deepcopy(context['request_resolution']['conversation_results'])
     model_candidates = []
     if (seeds or {}).get('model_routing') == 'auto':
         model_candidates = authorized_routing_candidates(settings, user_id)
@@ -1627,6 +1635,28 @@ def plan_request(
                 'The plan searches outside the selected conversation despite its no-retrieval resolution.',
                 code='conversation_retrieval_conflict',
             )
+        if conversation_only and context.get('conversation_results'):
+            raw = deepcopy(raw)
+            for step in raw.get('steps') or []:
+                if (
+                    isinstance(step, dict) and step.get('capability_id') == 'compose'
+                    and ('inputs' not in step or step['inputs'] == {})
+                    and isinstance(step.get('arguments'), dict)
+                ):
+                    step['inputs'] = {
+                        f'conversation_answer_{index}': {
+                            'binding': InputBinding(existing_result=item['alias']).to_dict(),
+                            'allow_partial': False,
+                        }
+                        for index, item in enumerate(context['conversation_results'], 1)
+                    }
+                    arguments = step.get('arguments') or {}
+                    step['arguments'] = {
+                        **arguments, 'knowledge_basis': (
+                            'sources_and_general_knowledge'
+                            if arguments.get('knowledge_basis') == 'sources_and_general_knowledge' else 'sources'
+                        ),
+                    }
         normalized = normalize_plan(
             raw,
             conversation_id,

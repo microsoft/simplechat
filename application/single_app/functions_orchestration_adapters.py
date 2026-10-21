@@ -73,6 +73,7 @@ from functions_orchestration_result_contracts import (
     ProducerIdentity, ResultContractError, digest as validate_result_digest,
 )
 from functions_orchestration_result_runtime import retain_document_search_result, source_selection_provenance
+from functions_orchestration_timing import OrchestrationExecutionStopped
 from functions_mixed_source_orchestration import (
     AUTHORIZATION_STATUS_AUTHORIZED,
     MixedSourceCancellationError,
@@ -1307,6 +1308,9 @@ def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
                 step, context, settings, user_id=user_id, capability_id=CAPABILITY_WEB_SEARCH,
             ),
         }
+        execution_control = _ctx(context, '_execution_control', None)
+        if execution_control is not None:
+            invocation_kwargs['_execution_control'] = execution_control
         settings = deepcopy(settings)
         invocation_kwargs['invocation_capture']('web', settings=settings)
         from route_backend_chats import perform_web_search
@@ -1330,6 +1334,8 @@ def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
             **invocation_kwargs,
         )
         invocation_kwargs['invocation_capture'].require_valid(captured=True)
+    except OrchestrationExecutionStopped:
+        raise
     except OrchestrationInvocationCancelledError:
         return _cancelled_result('Web search authorization was cancelled.')
     except (
@@ -1668,6 +1674,10 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
 
         active_group_ids = _ctx(context, 'active_group_ids', None) or []
         try:
+            search_kwargs = {}
+            execution_control = _ctx(context, '_execution_control', None)
+            if execution_control is not None:
+                search_kwargs['_execution_control'] = execution_control
             search_result = perform_research_web_searches(
                 settings=settings,
                 conversation_id=_ctx(context, 'conversation_id', None),
@@ -1692,6 +1702,7 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
                 cancel_requested=cancel_requested,
                 on_query_progress=query_progress,
                 invocation_capture=capture,
+                **search_kwargs,
             )
         except (MixedSourceCancellationError, OrchestrationInvocationCancelledError):
             return _cancelled_result('Cancelled during research searches.')
