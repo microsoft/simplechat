@@ -24,6 +24,69 @@ export const CHAT_UPLOAD_ACCEPT = [
 const IMAGE_FILE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic']);
 const BROWSER_RENDERABLE_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'bmp']);
 
+const CHAT_TRANSFER_MIME_EXTENSIONS = new Map([
+    ['image/png', 'png'],
+    ['image/jpeg', 'jpg'],
+    ['image/jpg', 'jpg'],
+    ['image/bmp', 'bmp'],
+    ['image/tiff', 'tiff'],
+    ['image/heif', 'heif'],
+    ['image/heic', 'heic'],
+    ['application/pdf', 'pdf'],
+    ['text/plain', 'txt'],
+    ['text/markdown', 'md'],
+    ['application/json', 'json'],
+    ['text/csv', 'csv'],
+    ['application/xml', 'xml'],
+    ['text/xml', 'xml'],
+    ['application/yaml', 'yaml'],
+    ['text/yaml', 'yaml'],
+]);
+
+interface ChatFileTransfer {
+    items?: ArrayLike<Pick<DataTransferItem, 'kind' | 'getAsFile'>>;
+    files?: ArrayLike<File>;
+    getData?: (format: string) => string;
+}
+
+export function chatTransferFiles(
+    transfer: ChatFileTransfer | null,
+    source: 'paste' | 'drop',
+): File[] {
+    if (!transfer) {
+        return [];
+    }
+    const itemFiles = Array.from(transfer.items ?? []).flatMap((item) => {
+        if (item.kind !== 'file') {
+            return [];
+        }
+        const file = item.getAsFile();
+        return file ? [file] : [];
+    });
+    const files = itemFiles.length ? itemFiles : Array.from(transfer.files ?? []);
+    if (!files.length) {
+        return [];
+    }
+    // Some text clipboard payloads retain an unnamed auxiliary image. Keep those as text,
+    // but do not mistake a named file accompanied by its path for an ordinary text paste.
+    if (source === 'paste' && !files.some((file) => file.name.trim())
+        && (transfer.getData?.('text/plain') || transfer.getData?.('Text'))) {
+        return [];
+    }
+    const timestamp = Date.now();
+    return files.map((file, index) => {
+        if (file.name.trim()) {
+            return file;
+        }
+        const mime = file.type.split(';', 1)[0].trim().toLowerCase();
+        const extension = CHAT_TRANSFER_MIME_EXTENSIONS.get(mime) ?? 'bin';
+        return new File([file], `${source === 'paste' ? 'pasted' : 'dropped'}_file_${timestamp}_${index + 1}.${extension}`, {
+            type: file.type,
+            lastModified: file.lastModified,
+        });
+    });
+}
+
 function fileExtension(fileName: string): string {
     const value = fileName.trim().toLowerCase();
     const index = value.lastIndexOf('.');
