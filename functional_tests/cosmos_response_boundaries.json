@@ -11848,7 +11848,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0693ffdcfcc0601742b243df8f117a2e549b695b3370fc569c582f71d54a2646"
+        "module_sha256": "3f7fdea5320eb92d9e78f2b85202225c517261aa1b0c61955a4c6dec0db1da07"
       },
       "classification": "normalized-strict",
       "contract": "Ownership and deletion flags are Mapping reads; normalize_cosmos_document produces the plain top-level document before strict orchestration consumers.",
@@ -11870,13 +11870,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0693ffdcfcc0601742b243df8f117a2e549b695b3370fc569c582f71d54a2646"
+        "module_sha256": "3f7fdea5320eb92d9e78f2b85202225c517261aa1b0c61955a4c6dec0db1da07"
       },
       "classification": "normalized-strict",
       "contract": "The lazy identity reader normalizes the SDK user-settings point response through _document_response before the external-identity strict settings projection.",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py",
-        "functional_tests/test_workflow_chat_execution.py"
+        "functional_tests/test_workflow_chat_execution.py",
+        "functional_tests/test_orchestration_external_bootstrap.py"
       ],
       "evidence_scope": "owner-runtime"
     },
@@ -11892,12 +11893,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0693ffdcfcc0601742b243df8f117a2e549b695b3370fc569c582f71d54a2646"
+        "module_sha256": "3f7fdea5320eb92d9e78f2b85202225c517261aa1b0c61955a4c6dec0db1da07"
       },
       "classification": "sdk-compatible",
       "contract": "The image reader consumes SDK message fields and nested plain metadata, verifies the retained blob binding, and returns bytes rather than the point wrapper.",
       "tests": [
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
+        "functional_tests/test_orchestration_cosmos_response_contract.py",
+        "functional_tests/test_orchestration_deliverables.py::test_the_image_reader_refuses_a_deleted_or_moved_image"
       ],
       "evidence_scope": "owner-runtime"
     },
@@ -11913,18 +11915,19 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0693ffdcfcc0601742b243df8f117a2e549b695b3370fc569c582f71d54a2646"
+        "module_sha256": "3f7fdea5320eb92d9e78f2b85202225c517261aa1b0c61955a4c6dec0db1da07"
       },
       "classification": "sdk-compatible",
       "contract": "Artifact enumeration returns plain query rows after a fresh normalized owner-conversation read; no point wrapper enters the transform candidate contract.",
       "tests": [
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
+        "functional_tests/test_orchestration_cosmos_response_contract.py",
+        "functional_tests/test_orchestration_selected_source_sdk.py::test_source_service_artifact_query_keeps_sdk_owner_and_plain_rows"
       ],
       "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_bootstrap.py::build_orchestration_services": {
       "boundary": {
-        "sha256": "d9d96c844384a859bc9c4fe30682484d7994e54b7ddd676b55cdc4e098e2ca86",
+        "sha256": "493c77bd9c7ec4fb0cf26b221f51cbacf348d070571c31471aee03927f16dc5c",
         "points": [
           {
             "method": "read_item",
@@ -11934,14 +11937,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0693ffdcfcc0601742b243df8f117a2e549b695b3370fc569c582f71d54a2646"
+        "module_sha256": "3f7fdea5320eb92d9e78f2b85202225c517261aa1b0c61955a4c6dec0db1da07"
       },
       "classification": "sdk-compatible",
-      "contract": "The artifact transport callback still supplies SDK point messages to Mapping-compatible binding checks. The new selected-source reader receives authorized manifest DTOs and returns bounded plain source context, not Cosmos wrappers or settings. Existing normalized storage owners retain their contracts.",
+      "contract": "The artifact transport callback supplies SDK point messages to Mapping-compatible binding checks. The selected-source reader returns bounded plain source context from authorized manifests and now receives the owner conversation ID only for hashed diagnostics; it retains screening, revision and conditional Blob-read fences.",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_workflow_chat_execution.py",
-        "functional_tests/test_orchestration_selected_source_planning.py"
+        "functional_tests/test_orchestration_selected_source_planning.py",
+        "functional_tests/test_orchestration_selected_source_sdk.py"
       ],
       "evidence_scope": "owner-runtime"
     },
@@ -11962,12 +11966,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0693ffdcfcc0601742b243df8f117a2e549b695b3370fc569c582f71d54a2646"
+        "module_sha256": "3f7fdea5320eb92d9e78f2b85202225c517261aa1b0c61955a4c6dec0db1da07"
       },
       "classification": "normalized-strict",
       "contract": "Conversation and run-tombstone point callbacks normalize through _document_response before strict cleanup-source checks; write status contracts remain separate.",
       "tests": [
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
+        "functional_tests/test_orchestration_cosmos_response_contract.py",
+        "functional_tests/test_orchestration_cleanup_bootstrap.py"
       ],
       "evidence_scope": "owner-runtime"
     },

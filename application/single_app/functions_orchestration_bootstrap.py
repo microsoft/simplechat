@@ -1,7 +1,7 @@
 # functions_orchestration_bootstrap.py
 """Application-owned factories shared by web requests and scheduler continuations.
 
-Version: 0.261.270
+Version: 0.261.365
 
 Unlike the result/rendering services, this is an application composition root.
 Import it only after config has initialized the existing clients. Registering the
@@ -19,10 +19,12 @@ from copy import deepcopy
 from threading import Lock
 
 from azure.core import MatchConditions
+from azure.core.exceptions import AzureError
 from flask import has_request_context
 
 import config
 from agent_execution_context import capture_execution_identity, current_workflow_identity
+from functions_appinsights import log_event, workflow_log_context
 from functions_generated_export_contracts import GeneratedFileExportRequest
 from functions_generated_export_registry import resolve_generated_file_export_format
 from functions_orchestration_artifacts import (
@@ -292,61 +294,97 @@ def build_merge_document_reader(user_id):
     return read
 
 
-def build_selected_source_reader(user_id):
+def build_selected_source_reader(user_id, *, conversation_id=None):
     """Inspect only released bytes, bounded before download and pinned to their ETag."""
     # Screening services require initialized config and belong at this I/O boundary.
     from content_screening.access import (
         get_available_blob_reference, read_available_document_bytes, strict_source_authority,
     )
+    from content_screening.contracts import ScreeningError
 
     def read(source, *, max_bytes):
         scope, scope_id = source.get("scope"), source.get("scope_id")
         group_id = scope_id if scope == "group" else None
         public_id = scope_id if scope == "public" else None
-        with strict_source_authority():
-            document, container, path = get_available_blob_reference(
-                source, user_id, group_id, public_id, purpose="native",
-            )
-            def check_revision(current):
-                revised = {
-                    **source,
-                    "source_version": current.get("version") or current.get("source_version"),
-                    "source_revision": current.get("_etag") or current.get("updated_at") or current.get("last_updated"),
-                }
-                if source_planning_revision(revised) != source_planning_revision(source):
-                    raise SourceContextError("selected_source_changed")
+        stage = "source_metadata"
 
-            check_revision(document)
-            client = config.CLIENTS["storage_account_office_docs_client"].get_blob_client(
-                container=container, blob=path,
+        def trace(status, *, error=None, content_bytes=None):
+            details = {
+                **workflow_log_context(conversation_id=conversation_id),
+                "operation": "selected_source_read", "stage": stage, "status": status,
+                "max_bytes": max_bytes,
+            }
+            if error is not None:
+                details["error_type"] = type(error).__name__
+                if error.__cause__ is not None:
+                    details["reason"] = type(error.__cause__).__name__
+            if content_bytes is not None:
+                details["content_bytes"] = content_bytes
+            log_event(
+                "[ORCHESTRATION_CONTEXT] Selected source read diagnostic.",
+                extra=details, debug_only=True,
             )
-            properties = client.get_blob_properties(
-                connection_timeout=5, read_timeout=5, retry_total=0,
-            )
-            if type(properties.size) is not int or properties.size < 0:
-                raise ValueError("Invalid selected source size.")
-            if properties.size > max_bytes:
-                raise TabularMergeError("source_too_large", "This source exceeds the planning read limit.")
-            marker = document.get("content_screening") or {}
-            active = marker.get("active_blob") or {}
-            expected_etag = active.get("etag") or properties.etag
 
-            def download(current_container, current_path, current_document):
-                if (current_container, current_path) != (container, path):
-                    raise ValueError("The selected source changed.")
-                return client.download_blob(
-                    etag=expected_etag, match_condition=MatchConditions.IfNotModified,
-                    length=max_bytes + 1, connection_timeout=5, read_timeout=5, retry_total=0,
-                ).readall()
+        try:
+            with strict_source_authority():
+                trace("started")
+                document, container, path = get_available_blob_reference(
+                    source, user_id, group_id, public_id, purpose="native",
+                )
+                def check_revision(current):
+                    revised = {
+                        **source,
+                        "source_version": current.get("version") or current.get("source_version"),
+                        "source_revision": current.get("_etag") or current.get("updated_at") or current.get("last_updated"),
+                    }
+                    if source_planning_revision(revised) != source_planning_revision(source):
+                        raise SourceContextError("selected_source_changed")
 
-            _document, content = read_available_document_bytes(
-                source, user_id, group_id, public_id, purpose="native", blob_reader=download,
-            )
-            current, _container, _path = get_available_blob_reference(
-                source, user_id, group_id, public_id, purpose="native",
-            )
-            check_revision(current)
-            return content
+                check_revision(document)
+                stage = "blob_properties"
+                trace("started")
+                client = config.CLIENTS["storage_account_office_docs_client"].get_blob_client(
+                    container=container, blob=path,
+                )
+                properties = client.get_blob_properties(
+                    connection_timeout=5, read_timeout=5, retry_total=0,
+                )
+                if type(properties.size) is not int or properties.size < 0:
+                    raise ValueError("Invalid selected source size.")
+                if properties.size > max_bytes:
+                    raise TabularMergeError("source_too_large", "This source exceeds the planning read limit.")
+                marker = document.get("content_screening") or {}
+                active = marker.get("active_blob") or {}
+                expected_etag = active.get("etag") or properties.etag
+
+                def download(current_container, current_path, current_document):
+                    nonlocal stage
+                    stage = "blob_download"
+                    trace("started")
+                    if (current_container, current_path) != (container, path):
+                        raise ValueError("The selected source changed.")
+                    content = client.download_blob(
+                        etag=expected_etag, match_condition=MatchConditions.IfNotModified,
+                        offset=0, length=max_bytes + 1, connection_timeout=5, read_timeout=5, retry_total=0,
+                    ).readall()
+                    stage = "source_integrity"
+                    return content
+
+                stage = "screened_source_read"
+                _document, content = read_available_document_bytes(
+                    source, user_id, group_id, public_id, purpose="native", blob_reader=download,
+                )
+                stage = "source_revision"
+                trace("started")
+                current, _container, _path = get_available_blob_reference(
+                    source, user_id, group_id, public_id, purpose="native",
+                )
+                check_revision(current)
+                trace("completed", content_bytes=len(content))
+                return content
+        except (AzureError, ScreeningError, ValueError, TypeError, LookupError, PermissionError, ConnectionError, TimeoutError) as exc:
+            trace("failed", error=exc)
+            raise
 
     return lambda sources: build_selected_source_context(sources, read_bytes=read)
 
@@ -523,7 +561,7 @@ def build_orchestration_services(user_id, conversation_id, *, settings=None):
         document_transform_source_reader=transform_sources.read_reference,
         document_transform_source_resolver=transform_sources.resolve_reference,
         document_transform_candidate_reader=transform_sources.planning_candidates,
-        selected_source_context_reader=build_selected_source_reader(user_id),
+        selected_source_context_reader=build_selected_source_reader(user_id, conversation_id=conversation_id),
     )
     return services
 
