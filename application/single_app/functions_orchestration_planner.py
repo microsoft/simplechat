@@ -25,8 +25,9 @@ error, not evidence that the task can be answered without gathering information.
 Every plan uses the Gather / Reason / Render contract. There is one planner prompt,
 ``PLANNER_SYSTEM_PROMPT``, and one validator.
 
-Version: 0.261.293
+Version: 0.261.365
 Gathered results must be read, and an action's chart reaches the answer, in: 0.261.293
+Empty-history clarification continuation fixed in: 0.261.365
 """
 
 import json
@@ -818,6 +819,10 @@ truly cannot proceed, or when a capability's when_to_use, a fact in
 capability_availability.deliverables or the workflow instructions say to ask; otherwise a
 reasonable assumption about what the user means, stated in "assumptions", is better than a
 question.
+Optional presentation choices such as extra sections, tone, or layout are not missing
+facts: use sensible defaults within the requested scope unless the user or a capability
+requires a choice. Honor an explicit request to ask for a missing fact before preparing
+the work, but do not expand that into a general interview.
 """
 
 def build_planner_messages(
@@ -1032,6 +1037,10 @@ Read the supplied clarification answers before asking a question. Ask only if th
 conversation and answers genuinely do not resolve the request. Do not ask what kind of
 business the user means when the preceding conversation already establishes that subject.
 If the user declined a clarification, do not ask it again or invent the missing information.
+Your job is resolving conversation references, not collecting task requirements or expanding
+scope. Do not ask about optional extra sections, formatting, or style. Preserve the original
+request and accepted answers so the capability planner can decide what work and essential
+task-specific questions remain.
 The current original_message may itself contain all source text or facts, even in ordinary
 prose without a colon or separate paragraph. "This", "above", or the noun "review" do not
 prove a historical source is missing. For a self-contained request use new_topic, empty
@@ -1114,7 +1123,7 @@ def resolve_conversation_request(
         'token_usage': {},
     }
     needs_source_resolution = _conversation_transformation(message) and not _explicit_retrieval(message, seeds)
-    if not history and not answered_questions and not needs_source_resolution:
+    if not history and not (snapshot or {}).get('truncated') and not needs_source_resolution:
         return default
     if ACKNOWLEDGMENT_PATTERN.fullmatch(message) and not answered_questions:
         return default
