@@ -1,9 +1,10 @@
 # test_orchestration_elicitation_routes.py
 """
 Route-level clarification regressions for the single orchestration contract.
-Version: 0.261.139
+Version: 0.261.367
 Implemented in: 0.261.139
 Single orchestration contract updated in: 0.261.139
+Empty-history clarification continuation fixed in: 0.261.367
 
 Ports still-relevant clarification route behavior from the removed legacy-plan tests
 onto the Gather / Reason / Render plan and run routes.
@@ -11,8 +12,10 @@ onto the Gather / Reason / Render plan and run routes.
 
 import json
 
+import pytest
+
 from test_orchestration_harness_routes import modules, real_http_harness  # noqa: F401
-from test_support.orchestration_harness_execution import compose_step, input_binding
+from test_support.orchestration_harness_execution import compose_step, input_binding, render_step
 
 
 def sse_frames(response):
@@ -80,6 +83,126 @@ def run_plan(runtime, plan, reply="Completed answer."):
     assert response.status_code == 200, frames
     assert frames[-1]["status"] == "completed", frames
     return frames
+
+
+def input_question(field, title, field_type="string"):
+    return {
+        "kind": "elicitation", "message": title,
+        "requested_schema": {
+            "type": "object", "properties": {field: {"type": field_type, "title": title}},
+            "required": [field],
+        },
+    }
+
+
+@pytest.fixture
+def empty_history_runtime(real_http_harness, modules, monkeypatch):
+    runtime = real_http_harness
+    runtime.harness.messages.delete_item("user-turn-1", "conversation-1")
+    # The source-free scenario has no search service; only its discovery I/O is replaced.
+    monkeypatch.setattr(modules.route, "resolve_candidate_documents", lambda *args, **kwargs: ([], False))
+    return runtime
+
+
+@pytest.mark.parametrize("field,value,filename,identifiers", [
+    ("budget", 225000, "project-brief.txt", ("PROJECT-47", "BRIEF-68")),
+    ("delivery_date", "2027-02-12", "shipping-note.txt", ("ORDER-12", "NOTE-93")),
+])
+def test_empty_history_answer_reaches_saved_plan_and_file(
+    empty_history_runtime, field, value, filename, identifiers,
+):
+    runtime = empty_history_runtime
+    harness = runtime.harness
+    request = (
+        f"Prepare a short text file with Primary ID {identifiers[0]} and "
+        f"Reference {identifiers[1]} as separate fields. Owner Casey, readiness amber. "
+        f"Ask me for the {field} before preparing it. Save it as {filename}."
+    )
+    harness.replies.append(json.dumps(input_question(
+        field, f"What {field} should I use?", "number" if isinstance(value, int) else "string",
+    )))
+    response = runtime.client.post("/api/v2/orchestration/plan", json={
+        "conversation_id": "conversation-1", "turn_id": "self-contained",
+        "message": request, "approval_mode": "manual",
+    }, buffered=True)
+    question = event_document(response, "orchestration_elicitation")
+    assert len(harness.model_calls) == 1
+    render = render_step("save", "txt", profile="prepared_text_v1")
+    render["arguments"]["file_name"] = filename
+    harness.replies.append(json.dumps({
+        "kind": "plan",
+        "steps": [compose_step(outputs=[{"name": "answer", "kind": "text-v1"}]), render],
+        "final_response": input_binding("prepare"),
+    }))
+    payload = reply_payload(
+        question, turn_id="self-contained", content={field: value},
+        context={field: {"text": "Keep both identifiers unchanged."}},
+    )
+    response = runtime.client.post("/api/v2/orchestration/plan", json=payload, buffered=True)
+    plan = event_document(response, "orchestration_plan")
+    assert len(harness.model_calls) == 2
+    context = json.loads(harness.model_calls[-1]["messages"][1]["content"])
+    assert context["message"] == context["original_message"] == request
+    assert context["clarifications"][0]["answer"] == {field: value}
+    assert "Keep both identifiers unchanged." in context["user_request"]
+    assert plan["approval"]["mode"] == "manual"
+    file_step = next(step for step in plan["steps"] if step["capability_id"] == "render_file")
+    assert file_step["arguments"]["file_name"] == filename
+    record = harness.runs.read_item(plan["run_id"], "conversation-1")
+    assert record["status"] == "awaiting_approval"
+    assert record["answered_questions"][0]["answer"] == {field: value}
+    assert harness.blobs.file_uploads == 0
+    replay = runtime.client.post("/api/v2/orchestration/plan", json=payload, buffered=True)
+    replay_plan = event_document(replay, "orchestration_plan")
+    assert replay_plan["run_id"] == plan["run_id"]
+    assert len(harness.model_calls) == 2
+
+    content = (
+        f"Primary ID: {identifiers[0]}\nReference: {identifiers[1]}\n"
+        f"Owner: Casey\nReadiness: amber\n{field}: {value}"
+    )
+    frames = run_plan(runtime, plan, reply=content)
+    assert frames[-1]["status"] == "completed"
+    assert frames[-1]["outputs"][0]["file_name"] == filename
+    execution_context = json.dumps(harness.model_calls[-1]["messages"])
+    assert all(identifier in execution_context for identifier in identifiers)
+    assert str(value) in execution_context
+    assert "Keep both identifiers unchanged." in execution_context
+    assert harness.blobs.file_uploads == 1
+    rendered = [
+        blob for blob in harness.blobs.records.values()
+        if blob["data"] == content.encode("utf-8")
+    ]
+    assert len(rendered) == 1
+
+
+def test_empty_history_still_allows_essential_second_question(empty_history_runtime):
+    runtime = empty_history_runtime
+    harness = runtime.harness
+    request = "Prepare an order note. Ask me for the delivery date and destination first."
+    harness.replies.append(json.dumps(input_question("date", "What is the delivery date?")))
+    response = runtime.client.post("/api/v2/orchestration/plan", json={
+        "conversation_id": "conversation-1", "turn_id": "two-questions",
+        "message": request, "approval_mode": "manual",
+    }, buffered=True)
+    first = event_document(response, "orchestration_elicitation")
+    harness.replies.append(json.dumps(input_question("destination", "Where should it be delivered?")))
+    response = runtime.client.post("/api/v2/orchestration/plan", json=reply_payload(
+        first, turn_id="two-questions", content={"date": "2027-02-12"},
+    ), buffered=True)
+    second = event_document(response, "orchestration_elicitation")
+    assert second["elicitation_id"] != first["elicitation_id"]
+    assert len(harness.model_calls) == 2
+    harness.replies.append(json.dumps(plan_doc()))
+    response = runtime.client.post("/api/v2/orchestration/plan", json=reply_payload(
+        second, turn_id="two-questions", content={"destination": "North office"}, submission="answer-2",
+    ), buffered=True)
+    plan = event_document(response, "orchestration_plan")
+    record = harness.runs.read_item(plan["run_id"], "conversation-1")
+    assert [answer["answer"] for answer in record["answered_questions"]] == [
+        {"date": "2027-02-12"}, {"destination": "North office"},
+    ]
+    assert len(harness.model_calls) == 3
 
 
 def test_split_and_combined_answer_prompts_reach_execution_once(real_http_harness):

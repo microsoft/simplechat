@@ -1,10 +1,11 @@
 # test_orchestration_conversation_context.py
 """
 Functional regressions for bounded, conversation-aware orchestration.
-Version: 0.261.139
+Version: 0.261.367
 Implemented in: 0.261.096
 Resolver response compatibility and bounded recovery: 0.261.103
 Single orchestration contract updated in: 0.261.139
+Empty-history clarification continuation fixed in: 0.261.367
 
 Exercises the real history, resolution, planner prompt, and selected adapter code with external
 model/search boundaries replaced. No Azure resources or credentials are used.
@@ -250,6 +251,69 @@ class ResolutionTests(unittest.TestCase):
         client.assert_not_called()
         self.assertEqual(first['resolved_message'], 'A new question')
         self.assertEqual(acknowledgment['message_ids'], [])
+
+    def test_empty_history_answers_go_to_planning_without_resolving_again(self):
+        planner = self.modules.planner
+        for action in ('accept', 'decline', 'cancel'):
+            with self.subTest(action=action):
+                answers = [{
+                    'question': 'Which delivery date?', 'action': action,
+                    'answer': {'date': '2027-02-12'} if action == 'accept' else {},
+                }]
+                before = deepcopy(answers)
+                request = 'Prepare a delivery note; ask me for its delivery date first.'
+                with patch.object(planner, 'resolve_planner_client', return_value=(object(), 'planner')) as client, \
+                        patch.object(planner, '_call_planner', return_value=(json.dumps({
+                            'relationship': 'new_topic', 'resolved_message': request,
+                            'message_ids': [], 'requires_retrieval': False, 'clarification': '',
+                        }), None)):
+                    result = planner.resolve_conversation_request(
+                        request, {'messages': [], 'truncated': False},
+                        answered_questions=answers,
+                    )
+                client.assert_not_called()
+                self.assertEqual(result['resolved_message'], request)
+                self.assertEqual(result['relationship'], 'new_topic')
+                self.assertIsNone(result['requires_retrieval'])
+                self.assertEqual(result['message_ids'], [])
+                self.assertEqual(result['token_usage'], {})
+                self.assertEqual(answers, before)
+                context = self.modules.context.build_planner_context(
+                    request, answered_questions=answers, request_resolution=result,
+                )
+                self.assertEqual(context['clarifications'], answers)
+                self.assertEqual(context['original_message'], request)
+                if action == 'accept':
+                    self.assertIn('2027-02-12', context['user_request'])
+                else:
+                    self.assertEqual(context['user_request'], request)
+
+    def test_empty_history_does_not_bypass_missing_source_or_truncation(self):
+        planner = self.modules.planner
+        answers = [{'action': 'accept', 'answer': {'tone': 'concise'}}]
+        for request, truncated in (
+            ('Rewrite the text above.', False),
+            ('Prepare a delivery note.', True),
+        ):
+            with self.subTest(request=request, truncated=truncated):
+                question = {
+                    'relationship': 'clarification', 'resolved_message': request,
+                    'message_ids': [], 'requires_retrieval': False,
+                    'clarification': 'Which source text should I use?',
+                }
+                with patch.object(planner, 'resolve_planner_client', return_value=(object(), 'planner')), \
+                        patch.object(planner, '_call_planner', return_value=(
+                            json.dumps(question), None,
+                        )) as call:
+                    result = planner.resolve_conversation_request(
+                        request, {'messages': [], 'truncated': truncated},
+                        answered_questions=answers,
+                    )
+                self.assertEqual(call.call_count, 1)
+                self.assertEqual(result['relationship'], 'clarification')
+                supplied = json.loads(call.call_args.args[2][1]['content'])
+                self.assertEqual(supplied['answered_questions'], answers)
+                self.assertEqual(supplied['truncated'], truncated)
 
     def test_new_topic_uses_unchanged_request_and_no_old_constraints(self):
         payload = {**self.payload, 'relationship': 'new_topic', 'message_ids': [],
