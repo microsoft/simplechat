@@ -10,6 +10,7 @@ import functions_settings
 from typing import Iterable
 
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+from functions_appinsights import log_event
 from functions_workspace_branding import DEFAULT_WORKSPACE_HERO_COLOR
 
 
@@ -324,6 +325,25 @@ def require_active_group(
 
     assert_group_role(user_id, active_group_id, allowed_roles=allowed_roles)
     return active_group_id
+
+
+def get_optional_active_group(user_id):
+    """Resolve an optional scope, repairing only confirmed lost membership/deletion."""
+    settings = functions_settings.get_user_settings(user_id)
+    active_group_id = settings.get("settings", {}).get("activeGroupOid")
+    if not active_group_id:
+        return None
+
+    group_doc = find_group_by_id(active_group_id)
+    if group_doc and get_user_role_in_group(group_doc, user_id):
+        return active_group_id
+
+    repaired = functions_settings._clear_stale_active_group(user_id, active_group_id)
+    log_event(
+        "[USER_SETTINGS] Stale active group is no longer selected.",
+        extra={"user_id": user_id, "group_id": active_group_id, "persisted": repaired},
+    )
+    return None
 
 
 def assert_group_role(user_id: str, group_id: str, allowed_roles: Iterable[str] = ("Owner", "Admin")) -> str:
