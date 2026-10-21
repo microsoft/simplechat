@@ -1,20 +1,13 @@
 // PublicDirectoryPage.tsx
 //
-// The V2 public workspace directory: a browse-and-curate surface over every public workspace
+// The V2 public workspace directory: a browse surface over every public workspace
 // the caller may discover. It is not a workspace shell -- there is no active handshake and no
 // per-workspace context load. It reads one route, GET /api/public_workspaces/directory, keeps
 // the view, search and page in the URL so back, forward and a shared link reopen the same view,
-// and offers three writes beyond curation: creating a public workspace (the classic route), and
+// and offers three writes: creating a public workspace (the classic route), and
 // asking to manage a workspace's documents or cancelling that request (the M10A request routes).
 // Each membership write returns the server's fresh row, which replaces the row in place, so the
 // affordance is gated purely on the server-computed membership and never a client role check.
-//
-// Its one write is the per-user "visible for chat" preference, which curates which public
-// workspaces appear in the aggregate public chat. That preference lives in publicDirectorySettings
-// and is shared verbatim with the classic interface. Every rule about it lives in publicVisibility:
-// with no custom map every workspace is visible, and a toggle writes only the one workspace's
-// entry, so opening or hiding one never rewrites another. Opening a workspace never hides the rest,
-// unlike the classic "Set active".
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -23,31 +16,20 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { EmptyState, GlassButton, Skeleton } from '../components/ui/primitives';
 import { SectionSearch } from '../components/workspace/primitives';
 import { PublicDirectoryList } from '../components/workspace/PublicDirectoryList';
-import { PublicDirectoryVisibilityTools } from '../components/workspace/PublicDirectoryVisibilityTools';
 import { CreatePublicWorkspaceDialog } from '../components/workspace/CreatePublicWorkspaceDialog';
 import { ApiError } from '../lib/apiClient';
 import {
     DIRECTORY_PAGE_SIZE, DIRECTORY_MAX_PAGE, DIRECTORY_SEARCH_MAX_LENGTH, PUBLIC_DIRECTORY,
-    DirectoryBulkTooLargeError,
     codePointLength, publicDirectoryErrorCode,
     type PublicDirectoryPage as PublicDirectoryPageData, type PublicDirectoryView,
 } from '../lib/publicDirectory';
-import {
-    hasCustomVisibility, isVisibleForChat, setChatVisibility,
-    markEvery, mapForSavedList, visibleIdsFromMap, chattableIds,
-    type ChatVisibilityMap,
-} from '../lib/publicVisibility';
 import { useBootstrapStore } from '../stores/bootstrapStore';
-import { useUserSetting, useUserSettingsStore } from '../stores/userSettingsStore';
 import { usePublicWorkspaceLabels } from '../lib/publicWorkspaceLabels';
 
 const VIEWS: { id: PublicDirectoryView; label: string }[] = [
     { id: 'all', label: 'All' },
     { id: 'mine', label: 'My workspaces' },
 ];
-
-const VISIBILITY_KEY = 'publicDirectorySettings';
-const SAVED_LISTS_KEY = 'publicDirectorySavedLists';
 
 // A membership refusal that means the client's row is stale: the only way to learn the true state
 // is to re-read the directory. A write conflict keeps the row for a plain retry, so it is omitted.
@@ -65,40 +47,6 @@ function readPageNumber(value: string | null): number {
     return Math.min(parsed, DIRECTORY_MAX_PAGE);
 }
 
-function countLabel(count: number): string {
-    return `${count} ${count === 1 ? 'workspace' : 'workspaces'}`;
-}
-
-function unavailableLabel(count: number): string {
-    return `${count} unavailable ${count === 1 ? 'workspace' : 'workspaces'}`;
-}
-
-// A bulk "show all" only ever makes *available* workspaces visible, so it reports both what it made
-// visible and how many it skipped -- never implying it touched the ones it deliberately left alone.
-function bulkVisibleNotice(visible: number, skipped: number): string {
-    const base = `Made ${countLabel(visible)} visible in chat.`;
-    if (skipped === 0) return base;
-    return `${base} ${unavailableLabel(skipped)} ${skipped === 1 ? 'was' : 'were'} skipped because `
-        + `${skipped === 1 ? 'it is' : 'they are'} not available for chat.`;
-}
-
-// Applying a saved list leaves an unavailable member hidden rather than claiming it for chat, so
-// its notice reports the visible count and, honestly, how many named workspaces stayed hidden.
-function useListNotice(visible: number, skipped: number): string {
-    const base = `${countLabel(visible)} now visible in chat; the rest are hidden.`;
-    if (skipped === 0) return base;
-    return `${base} ${unavailableLabel(skipped)} in the list stayed hidden because `
-        + `${skipped === 1 ? 'it is' : 'they are'} not available for chat.`;
-}
-
-// A bulk action either covers the whole directory or refuses; it never writes a partial set. The
-// too-large refusal carries its own count-bearing sentence, and any transport failure during the
-// page walk means nothing was written, so a plain retry message is safe.
-function bulkErrorMessage(cause: unknown): string {
-    if (cause instanceof DirectoryBulkTooLargeError) return cause.message;
-    return cause instanceof Error ? cause.message : 'The change could not be completed. Please retry.';
-}
-
 export function PublicDirectoryPage() {
     const bootstrap = useBootstrapStore((state) => state.data);
     const enabled = Boolean(bootstrap?.features?.enable_public_workspaces);
@@ -111,15 +59,6 @@ export function PublicDirectoryPage() {
     const urlSearch = searchParams.get('search') ?? '';
     const page = readPageNumber(searchParams.get('page'));
 
-    const visibilityMap = useUserSetting<ChatVisibilityMap>(VISIBILITY_KEY, {});
-    const savedLists = useUserSetting<Record<string, string[]>>(SAVED_LISTS_KEY, {});
-    const saveError = useUserSettingsStore((state) => state.saveError);
-    const customVisibility = hasCustomVisibility(visibilityMap);
-    const savedListNames = useMemo(
-        () => Object.keys(savedLists).sort((left, right) => left.localeCompare(right)),
-        [savedLists],
-    );
-
     const [searchInput, setSearchInput] = useState(urlSearch);
     const [searchError, setSearchError] = useState('');
     const [result, setResult] = useState<PublicDirectoryPageData | null>(null);
@@ -131,7 +70,6 @@ export function PublicDirectoryPage() {
     const [creating, setCreating] = useState(false);
     const [createError, setCreateError] = useState('');
     const [busyId, setBusyId] = useState<string | null>(null);
-    const [bulkBusy, setBulkBusy] = useState(false);
 
     const reload = useCallback(() => setRetry((value) => value + 1), []);
 
@@ -190,123 +128,6 @@ export function PublicDirectoryPage() {
         setSearchParams(params);
     }, [searchParams, setSearchParams]);
 
-    const toggleVisibility = useCallback((id: string, next: boolean) => {
-        // Read the store directly, not the closed-over render value, so rapid toggles compose on the
-        // latest map. Writing only this one entry keeps the change additive per the R2 ruling.
-        const current = (useUserSettingsStore.getState().settings[VISIBILITY_KEY] as ChatVisibilityMap | undefined) ?? {};
-        const nextMap = setChatVisibility(current, id, next);
-        useUserSettingsStore.getState().update({ [VISIBILITY_KEY]: nextMap });
-        setNotice(next ? 'This workspace will appear in public chat.' : 'This workspace is hidden from public chat.');
-    }, []);
-
-    const readVisibilityMap = useCallback(
-        () => (useUserSettingsStore.getState().settings[VISIBILITY_KEY] as ChatVisibilityMap | undefined) ?? {},
-        [],
-    );
-
-    // Show or hide every workspace in the directory. The workspaces are walked across the server's
-    // pages (bounded), then merged onto the live map so entries the walk did not name are preserved
-    // per the R2 additive rule. Showing marks only *available* workspaces -- making an unavailable
-    // one visible would claim it for chat when its status forbids it (decision 32) -- and reports
-    // both the count it made visible and the count it skipped. Hiding covers every workspace, since
-    // hiding one a reader cannot currently use is always a valid choice.
-    const runBulkVisibility = useCallback(async (visible: boolean) => {
-        setBulkBusy(true);
-        setNotice('');
-        try {
-            const workspaces = await adapter.listAllWorkspaces();
-            const targets = visible ? chattableIds(workspaces) : workspaces.map((workspace) => workspace.id);
-            useUserSettingsStore.getState().update({ [VISIBILITY_KEY]: markEvery(readVisibilityMap(), targets, visible) });
-            setNotice(visible
-                ? bulkVisibleNotice(targets.length, workspaces.length - targets.length)
-                : `Hid ${countLabel(targets.length)} from chat.`);
-        } catch (cause: unknown) {
-            setNotice(bulkErrorMessage(cause));
-        } finally {
-            setBulkBusy(false);
-        }
-    }, [adapter, readVisibilityMap]);
-
-    // Flush curation before launching a fresh native chat; launching never changes visibility.
-    const chatWithVisible = useCallback(async () => {
-        setBulkBusy(true);
-        try {
-            await useUserSettingsStore.getState().flush();
-            if (useUserSettingsStore.getState().saveError) {
-                setNotice('Your visibility changes could not be saved, so chat was not opened. Please retry.');
-                return;
-            }
-            navigate('/chat?public_workspace_selection=visible');
-        } finally {
-            setBulkBusy(false);
-        }
-    }, [navigate]);
-
-    // Snapshot the workspaces visible across the whole directory into a named list, applying the
-    // empty-map fallback (no map means every workspace is visible) so the snapshot is the real set.
-    const saveList = useCallback(async (name: string) => {
-        setBulkBusy(true);
-        setNotice('');
-        try {
-            const allIds = await adapter.listAllWorkspaceIds();
-            const visibleIds = visibleIdsFromMap(readVisibilityMap(), allIds);
-            const lists = (useUserSettingsStore.getState().settings[SAVED_LISTS_KEY] as Record<string, string[]> | undefined) ?? {};
-            useUserSettingsStore.getState().update({ [SAVED_LISTS_KEY]: { ...lists, [name]: visibleIds } });
-            setNotice(`Saved "${name}" with ${countLabel(visibleIds.length)}.`);
-        } catch (cause: unknown) {
-            setNotice(bulkErrorMessage(cause));
-        } finally {
-            setBulkBusy(false);
-        }
-    }, [adapter, readVisibilityMap]);
-
-    // Replace the whole visibility map with a saved list: exactly its *available* workspaces are
-    // visible and the rest hidden. The list is walked against the directory so an unavailable member
-    // is left hidden rather than claimed for chat (decision 32); the rest hide because any custom map
-    // hides everything absent. An empty list, or a list whose members are all unavailable, hides
-    // every id, so it builds an explicit all-hidden map (an empty map would instead mean "all
-    // visible"). The count reported is exactly the available members made visible.
-    const useList = useCallback(async (name: string) => {
-        const lists = (useUserSettingsStore.getState().settings[SAVED_LISTS_KEY] as Record<string, string[]> | undefined) ?? {};
-        const listIds = lists[name];
-        if (!Array.isArray(listIds)) {
-            setNotice('That saved list is no longer available.');
-            return;
-        }
-        setBulkBusy(true);
-        setNotice('');
-        try {
-            const workspaces = await adapter.listAllWorkspaces();
-            if (listIds.length === 0) {
-                useUserSettingsStore.getState().update({ [VISIBILITY_KEY]: markEvery({}, workspaces.map((workspace) => workspace.id), false) });
-                setNotice('All workspaces are now hidden from chat.');
-                return;
-            }
-            const available = new Set(chattableIds(workspaces));
-            const inDirectory = new Set(workspaces.map((workspace) => workspace.id));
-            const visibleIds = listIds.filter((id) => available.has(id));
-            const skipped = listIds.filter((id) => inDirectory.has(id) && !available.has(id)).length;
-            const nextMap = visibleIds.length > 0
-                ? mapForSavedList(visibleIds)
-                : markEvery({}, workspaces.map((workspace) => workspace.id), false);
-            useUserSettingsStore.getState().update({ [VISIBILITY_KEY]: nextMap });
-            setNotice(useListNotice(visibleIds.length, skipped));
-        } catch (cause: unknown) {
-            setNotice(bulkErrorMessage(cause));
-        } finally {
-            setBulkBusy(false);
-        }
-    }, [adapter]);
-
-    const deleteList = useCallback((name: string) => {
-        const lists = (useUserSettingsStore.getState().settings[SAVED_LISTS_KEY] as Record<string, string[]> | undefined) ?? {};
-        if (!(name in lists)) return;
-        const next = { ...lists };
-        delete next[name];
-        useUserSettingsStore.getState().update({ [SAVED_LISTS_KEY]: next });
-        setNotice(`Deleted the saved list "${name}".`);
-    }, []);
-
     const runRequestAction = useCallback(async (id: string, kind: 'request' | 'cancel') => {
         // The server's fresh row is the single source of truth: a request or cancel replaces the row
         // in place, so its membership -- and thus the affordance -- always reflects what the server
@@ -360,10 +181,6 @@ export function PublicDirectoryPage() {
     const totalCount = result?.totalCount ?? 0;
     const totalPages = Math.max(1, Math.ceil(totalCount / DIRECTORY_PAGE_SIZE));
     const canCreate = Boolean(result?.hints?.canCreate);
-    // The curation tools act on the whole directory, so they show whenever there is something to
-    // curate: a populated directory, an existing custom list, or saved lists to reuse. They stay
-    // hidden on a genuinely empty directory where every action would be a no-op.
-    const showTools = !error && (totalCount > 0 || customVisibility || savedListNames.length > 0);
 
     const emptyDescription = useMemo(() => {
         if (urlSearch) return `No ${labels.lower_plural} match your search.`;
@@ -384,10 +201,12 @@ export function PublicDirectoryPage() {
     }
 
     const header = (
-        <PageHeader title="Public directory" description={`Browse ${labels.lower_plural} and choose which appear in chat`}
+        <PageHeader title="Public directory" description={`Browse ${labels.lower_plural}. All available workspaces are searchable in chat.`}
             leading={<Globe size={20} className="text-accent" />}
             actions={[
                 { id: 'back', label: labels.plural, icon: <ArrowLeft size={14} />, onClick: () => navigate('/public') },
+                { id: 'chat', label: 'Chat with all public', icon: <Globe size={14} />,
+                    onClick: () => navigate('/chat?public_workspace_selection=all') },
                 canCreate && { id: 'create', label: `Create ${labels.lower_singular}`, icon: <Plus size={14} />,
                     variant: 'primary', onClick: openCreate },
             ]} />
@@ -417,22 +236,7 @@ export function PublicDirectoryPage() {
                             <GlassButton size="sm" disabled={loading} onClick={reload}>Retry directory</GlassButton>
                         </div>
                     ) : null}
-                    {saveError ? (
-                        <p role="alert" className="rounded-xl border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">{saveError}</p>
-                    ) : null}
                     {notice ? <p role="status" className="rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-2">{notice}</p> : null}
-                    {showTools ? (
-                        <PublicDirectoryVisibilityTools
-                            lowerSingular={labels.lower_singular} lowerPlural={labels.lower_plural}
-                            customVisibility={customVisibility} savedListNames={savedListNames}
-                            busy={bulkBusy} disabled={loading}
-                            onAllVisible={() => void runBulkVisibility(true)}
-                            onAllHidden={() => void runBulkVisibility(false)}
-                            onChatWithVisible={() => void chatWithVisible()}
-                            onSaveList={(name) => void saveList(name)}
-                            onUseList={(name) => void useList(name)}
-                            onDeleteList={deleteList} />
-                    ) : null}
                     {loading ? (
                         <div role="status" className="space-y-2">
                             <p className="flex items-center gap-2 text-sm text-text-2"><Loader2 size={16} className="animate-spin" />Loading {labels.lower_plural}...</p>
@@ -449,10 +253,8 @@ export function PublicDirectoryPage() {
                                 Showing {workspaces.length} of {totalCount} {totalCount === 1 ? 'workspace' : 'workspaces'}.
                             </p>
                             <PublicDirectoryList workspaces={workspaces} busyId={busyId} disabled={busyId !== null}
-                                visibleFor={(workspace) => isVisibleForChat(visibilityMap, workspace.id)}
                                 logoUrlFor={(workspace) => adapter.logoUrl(workspace)}
                                 onOpen={(id) => navigate(adapter.openPath(id))}
-                                onToggleVisibility={toggleVisibility}
                                 onRequestAccess={(id) => void runRequestAction(id, 'request')}
                                 onCancelRequest={(id) => void runRequestAction(id, 'cancel')} />
                             {totalCount > DIRECTORY_PAGE_SIZE || page > 1 ? (

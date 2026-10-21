@@ -128,8 +128,7 @@ from functions_embedding_compatibility import (
 from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, resolve_embedding_profile
 from functions_public_workspaces import (
     find_public_workspace_by_id,
-    get_user_visible_public_workspace_ids_from_settings,
-    visible_public_workspace_ids_from_user_settings,
+    get_public_source_workspace_ids,
 )
 from functions_prompt_variables import (
     MAX_REQUEST_BYTES as PROMPT_FILL_MAX_REQUEST_BYTES,
@@ -1105,7 +1104,7 @@ def register_route_backend_v2(bp):
 
             public_workspaces = []
             try:
-                for workspace_id in get_user_visible_public_workspace_ids_from_settings(user_id):
+                for workspace_id in get_public_source_workspace_ids(user_id, settings=settings):
                     workspace_doc = find_public_workspace_by_id(workspace_id)
                     if workspace_doc:
                         public_workspaces.append(
@@ -1304,7 +1303,7 @@ def register_route_backend_v2(bp):
             }
 
             def is_visible_workspace(workspace_id):
-                visible_ids = visible_public_workspace_ids_from_user_settings(user_settings)
+                visible_ids = get_public_source_workspace_ids(user_id, user_settings=user_settings)
                 if workspace_id not in visible_ids:
                     return False
                 return find_public_workspace_by_id(workspace_id) is not None

@@ -8,6 +8,7 @@
 // told, so it can offer a link to open it by hand.
 
 import { CREDENTIALS_MODE } from './apiClient';
+import { safeV2SourceUrl, v2ApiFetch } from './v2SourcePolicy';
 import { saveBlob } from './endpoints';
 import { decodeImageDataUri, openImageInNewTab, resolveImageSource } from './images';
 import { safeMediaUrl } from './inlineMedia';
@@ -126,7 +127,7 @@ async function fetchMediaBlob(kind: MediaKind, src: string): Promise<Blob> {
     const timer = window.setTimeout(() => controller.abort(), RESPONSE_TIMEOUT_MS);
     let response: Response;
     try {
-        response = await fetch(target.url, { credentials: target.credentials, signal: controller.signal });
+        response = await v2ApiFetch(target.url, { credentials: target.credentials, signal: controller.signal });
     } finally {
         // Only the wait for an answer is limited. A large clip may take longer to arrive.
         window.clearTimeout(timer);
@@ -150,7 +151,7 @@ export function openMediaInNewTab(kind: MediaKind, src: string): boolean {
         return false;
     }
     // Severed by hand: passing `noopener` makes window.open return null even when it succeeds.
-    const opened = window.open(url, '_blank');
+    const opened = window.open(safeV2SourceUrl(url), '_blank');
     if (opened) {
         opened.opener = null;
     }

@@ -22,6 +22,7 @@
 // image element.
 
 import { apiUrl, CREDENTIALS_MODE } from './apiClient';
+import { safeV2SourceUrl, v2ApiFetch } from './v2SourcePolicy';
 import { saveBlob } from './endpoints';
 
 /** Where an image message's bytes actually live. */
@@ -162,7 +163,7 @@ export async function resolveImageBlob(source: ResolvedImageSource): Promise<Blo
 
     let response: Response;
     try {
-        response = await fetch(
+        response = await v2ApiFetch(
             source.src,
             source.kind === 'endpoint' ? { credentials: CREDENTIALS_MODE } : {},
         );
@@ -230,13 +231,15 @@ export function imageFileName(
  * Returns false when the browser refused to open the tab, so the caller can say so.
  */
 export function openImageInNewTab(source: ResolvedImageSource): boolean {
+    const resolved = resolveImageSource(source.src);
+    if (!resolved) return false;
     const url =
-        source.kind === 'data-uri' ? objectUrlForDataUri(source.src) : source.src;
+        resolved.kind === 'data-uri' ? objectUrlForDataUri(resolved.src) : resolved.src;
     if (!url) {
         return false;
     }
 
-    const opened = window.open(url, '_blank');
+    const opened = window.open(safeV2SourceUrl(url), '_blank');
     if (opened) {
         opened.opener = null;
     }
@@ -269,4 +272,3 @@ export async function downloadImageSource(
     const blob = await resolveImageBlob(source);
     saveBlob(blob, imageFileName(naming, blob.type));
 }
-

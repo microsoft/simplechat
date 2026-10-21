@@ -32,19 +32,17 @@ every public workspace you can discover.
 - Switch between **All** and **My workspaces** (the ones you own, administer
   or manage documents in), and search by name, description or id.
 - **Open** a workspace to go to its page.
-- **Visible for chat** chooses which public workspaces your public chat
-  searches. It's the same setting as the classic directory's, so a choice
-  made in one interface shows in the other. With no choices saved, every
-  workspace is visible.
+- From **0.261.371**, V2 searches every currently available public workspace.
+  There are no Visible for chat switches or saved visibility lists in V2.
+  Classic keeps its existing choices, but they do not hide sources from V2.
 - The directory and the workspace pages use the names your administrator
   gave public workspaces.
 
-From version **0.261.355**, public workspaces created without a stored status
-are treated as active in the directory, consistent with chat and workspace
-settings. An otherwise eligible workspace can therefore be made **Visible for
-chat** normally. This does not automatically show a workspace you have hidden:
-choose it yourself when you want it in your chat sources. Explicit inactive or
-invalid statuses still prevent showing an unavailable workspace.
+The earlier **0.261.355** compatibility fix treats public workspaces created without a stored status
+as active in the directory, consistent with chat and workspace
+settings. Classic still lets an eligible workspace be made Visible for chat.
+V2 no longer requires that step. Explicit inactive or invalid statuses still
+prevent using an unavailable workspace.
 
 Public workspace documents open in the same document explorer as My Workspace
 and group workspaces, from version **0.261.132**. Open **Public Workspaces** and
@@ -107,19 +105,16 @@ don't see either section. See
 [V2 Public Connections]({{ '/explanation/features/V2_PUBLIC_CONNECTIONS/' | relative_url }}).
 
 From version **0.261.184**, the directory lets you ask to manage a workspace's
-documents, and cancel the request, from its row. It also shows or hides every
-workspace for chat at once, saves and reuses lists of visible workspaces, and
-opens classic chat over the visible ones.
+documents, and cancel the request, from its row. Its former visibility and
+saved-list controls were removed from V2 in **0.261.371**; classic retains them.
 
-From version **0.261.310**, **Chat with visible** instead opens a fresh native
-V2 chat. Its public scope stays **Visible public workspaces** for
-follow-up questions. From **0.261.315**, open **Documents → Search in** to
-change it; in Orchestrate, use **Manual controls → Documents** when available.
-Select **All public workspaces** inside that picker to
-include hidden workspaces too, without changing visibility preferences.
-Both scopes retrieve only public documents from currently chat-available
-workspaces; personal and group active selections are excluded. **Current
-context** returns to normal search, and **New chat** resets the aggregate scope.
+The directory's **Chat with all public** action opens a fresh native V2 chat over all
+available public workspaces. Open **Documents → Search in** to change its
+public-only scope; in Orchestrate, use **Manual controls → Documents** when available.
+**All public workspaces** excludes personal and group retrieval. **Current
+context** supports mixed personal, group and public sources, with all eligible
+public sources discoverable and explicit selections still respected.
+Old V2 Visible links reopen as All. **New chat** resets the aggregate scope.
 If no workspace qualifies, the request explains the empty scope rather than
 searching somewhere else.
 
@@ -164,9 +159,10 @@ request was being saved. Try again." Nothing else is lost, so try again.
 From version **0.261.347**, chat's **Documents** picker searches public documents
 by filename or title across the eligible current revisions before paging the
 results. A document does not need a generated title to match its filename.
-The ordinary picker follows the same saved visibility defaults as **Visible
-public workspaces**; an explicit **All** choice is still required to include
-hidden workspaces.
+From **0.261.371**, the ordinary V2 picker ignores classic visibility preferences,
+so a processed public guide can be selected alongside personal and group sources
+without changing any directory preference. Classic retains its saved visibility
+defaults.
 
 If a source request fails, **Documents** and `#` suggestions name the unavailable
 source and offer **Retry sources**. Results from successful sources remain usable.

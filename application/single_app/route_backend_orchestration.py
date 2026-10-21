@@ -55,6 +55,7 @@ from functions_appinsights import log_event, workflow_log_context
 from functions_assist_submissions import SubmissionIdError, normalize_submission_id
 from public_chat_scope import prepare_public_chat_scope, public_chat_scope_required
 from public_chat_scope_state import PublicChatScopeError, current_public_chat_scope
+from public_source_policy import current_public_source_policy
 from functions_public_workspaces import resolve_public_chat_workspace_ids
 from functions_chat_content_checks import (
     CHECK_METADATA, check_chat_content, orchestration_input_text,
@@ -734,6 +735,8 @@ def _regeneration_request(record):
         'active_group_ids': deepcopy(seeds.get('active_group_ids') or []),
         'active_public_workspace_ids': deepcopy(seeds.get('active_public_workspace_ids') or []),
         'public_workspace_selection': deepcopy(seeds.get('public_workspace_selection')),
+        **({'public_source_policy': seeds['public_source_policy']}
+           if 'public_source_policy' in seeds else {}),
         'reasoning_effort': seeds.get('reasoning_effort'),
         'web_search_enabled': bool(seeds.get('web_search')),
         'image_generation_enabled': bool(seeds.get('image_generation')),
@@ -783,6 +786,7 @@ def _authorize_regeneration_request(source, body, user_id, settings, *, override
         'tags': seeds['tags'], 'active_group_ids': seeds['active_group_ids'],
         'active_public_workspace_ids': seeds['active_public_workspace_ids'],
         'public_workspace_selection': seeds['public_workspace_selection'],
+        'public_source_policy': seeds.get('public_source_policy', current_public_source_policy(user_id)),
         'document_filter_mode': seeds['document_filter_mode'],
     }
     authorized = _build_authorized_message_replay_request(
@@ -1585,6 +1589,7 @@ def _save_turn_message(
         'orchestration_turn_id': turn_id,
         'workspace_search': {
             'public_workspace_selection': (current_public_chat_scope(user_id) or {}).get('selection'),
+            'public_source_policy': current_public_source_policy(user_id),
         },
     }
     if prompt_selection:

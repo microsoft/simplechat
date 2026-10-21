@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from typing import Callable
 
 from agent_execution_context import capture_execution_identity, workflow_identity_scope
+from public_source_policy import current_public_source_policy
 
 
 class WorkflowChatExecutionError(ValueError):
@@ -73,6 +74,9 @@ def build_workflow_chat_seeds(workflow, configuration):
         "active_group_ids": list(action.get("active_group_ids") or ([group_id] if group_id and scope in {"all", "group"} else [])),
         "active_public_workspace_ids": list(action.get("active_public_workspace_id") or []),
         "public_workspace_selection": None,
+        "public_source_policy": workflow.get(
+            "public_source_policy", current_public_source_policy(workflow.get("user_id")),
+        ),
         "agent": deepcopy(selected),
         "model": model or None,
         "prompt": None,

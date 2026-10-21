@@ -42,6 +42,7 @@ from public_chat_scope_state import (
     PublicChatScopeError, aggregate_public_workspace_ids, current_public_chat_scope,
     normalize_public_workspace_selection,
 )
+from public_source_policy import ALL_AVAILABLE, current_public_source_policy, normalize_public_source_policy
 from functions_action_catalog import build_action_planner_projection
 from functions_assist_references import sanitize_reference_label
 from functions_message_block_revisions import resolve_block_sources_in_content
@@ -148,6 +149,14 @@ def resolve_seeds(request_data):
     vocabulary for orchestration.
     """
     request_data = request_data if isinstance(request_data, dict) else {}
+    source_policy = normalize_public_source_policy(
+        request_data.get('public_source_policy', current_public_source_policy()),
+    )
+    if current_public_source_policy() == ALL_AVAILABLE:
+        source_policy = ALL_AVAILABLE
+    public_selection = normalize_public_workspace_selection(request_data.get('public_workspace_selection'))
+    if source_policy == ALL_AVAILABLE and public_selection == 'visible':
+        public_selection = 'all'
 
     document_ids = _string_list(
         request_data.get('selected_document_ids')
@@ -192,7 +201,8 @@ def resolve_seeds(request_data):
 
     return {
         **({'model_routing': 'auto'} if routing == 'auto' else {}),
-        'public_workspace_selection': normalize_public_workspace_selection(request_data.get('public_workspace_selection')),
+        'public_workspace_selection': public_selection,
+        'public_source_policy': source_policy,
         'document_ids': document_ids,
         'document_labels': document_labels,
         'doc_scope': _text(request_data.get('doc_scope')) or 'all',
@@ -576,7 +586,7 @@ def _authorize_reference_scope(scope, user_id, settings, locked_contexts=None):
     """Authorize a personal, group or public workspace for ``user_id`` as of now.
 
     ``locked_contexts`` is a scope-locked conversation's allowlist, or None when no lock
-    applies. Membership and visibility are rechecked on every call: a workspace id from
+    applies. Membership and source eligibility are rechecked on every call: a workspace id from
     the browser, or an active workspace, is never evidence of access.
     """
     kind, scope_id = scope['kind'], scope['id']
@@ -613,10 +623,10 @@ def _authorize_reference_scope(scope, user_id, settings, locked_contexts=None):
     else:
         from functions_public_workspaces import (
             find_public_workspace_by_id,
-            get_user_visible_public_workspace_ids_from_settings,
+            get_public_source_workspace_ids,
         )
 
-        public_ids = aggregate_public_workspace_ids(user_id) if aggregate else get_user_visible_public_workspace_ids_from_settings(user_id)
+        public_ids = aggregate_public_workspace_ids(user_id) if aggregate else get_public_source_workspace_ids(user_id)
         if scope_id not in public_ids:
             raise ElicitationContextError(
                 'That public workspace is not available.', reason='workspace_unavailable',

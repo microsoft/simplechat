@@ -260,7 +260,7 @@ def get_workflow_editor_options(user_id, settings, *, group_id=""):
         is_document_action_enabled,
     )
     from functions_group import assert_group_role, get_user_groups
-    from functions_public_workspaces import get_user_visible_public_workspace_docs
+    from functions_public_workspaces import find_public_workspace_by_id, get_public_source_workspace_ids
     from functions_group_workflows import (
         GROUP_WORKFLOW_MEMBER_ROLES,
         _build_model_endpoint_candidates as group_endpoints,
@@ -314,7 +314,8 @@ def get_workflow_editor_options(user_id, settings, *, group_id=""):
         if settings.get('enable_public_workspaces'):
             workspaces.extend({
                 'scope_type': 'public', 'scope_id': str(workspace['id']), 'name': str(workspace.get('name') or 'Public workspace'),
-            } for workspace in get_user_visible_public_workspace_docs(user_id))
+            } for workspace_id in get_public_source_workspace_ids(user_id, settings=settings)
+              if (workspace := find_public_workspace_by_id(workspace_id)))
     options['document_workspaces'] = workspaces
     user_roles = (session.get('user') or {}).get('roles', []) if has_request_context() else []
     options.update(build_workflow_configuration_options(

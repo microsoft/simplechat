@@ -6,13 +6,14 @@
 // Keeping them in one module means a backend path change is a one-line edit here.
 
 import { api, apiUrl, request, uploadFile, ApiError, API_BASE, CREDENTIALS_MODE } from './apiClient';
+import { safeV2SourceUrl, v2ApiFetch } from './v2SourcePolicy';
 import type { SelectionFields } from './chatRequestSelection';
 import type { OrchestrationPlanRequest } from './orchestration';
 import { buildDocumentListParams } from './documentExplorer';
 import { artifactDownloadPath, artifactFileName } from './generatedArtifacts';
 import { ANALYSIS_PAGE_SIZE, analysisResultContext, validateAnalysisPage } from './savedAnalysis';
 import type { EnhancedCitationMetadata } from './enhancedCitations';
-import type { PublicWorkspaceSelection } from './publicChatScope';
+import { readPublicWorkspaceSelection, type PublicWorkspaceSelection } from './publicChatScope';
 import type { ExportVisualAsset } from './exportVisuals';
 import type { GeneratedArtifact, GeneratedRunStatus } from './generatedArtifacts';
 import type { MaskAction, MaskedRange, MaskSelection } from './masking';
@@ -951,7 +952,7 @@ export async function downloadMessageExport(
     format: 'word' | 'powerpoint',
     body: MessageExportRequest,
 ): Promise<void> {
-    const response = await fetch(apiUrl(EXPORT_PATHS[format]), {
+    const response = await v2ApiFetch(apiUrl(EXPORT_PATHS[format]), {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Accept: '*/*' },
@@ -1124,7 +1125,7 @@ export function filenameFromContentDisposition(header: string | null): string | 
 export async function downloadConversationExport(
     body: ConversationExportRequest,
 ): Promise<void> {
-    const response = await fetch(apiUrl(CONVERSATION_EXPORT_PATH), {
+    const response = await v2ApiFetch(apiUrl(CONVERSATION_EXPORT_PATH), {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Accept: '*/*' },
@@ -1186,11 +1187,11 @@ export async function fetchEnhancedCitationMetadata(
 
 /** Direct URL for a media element's src, so the browser can issue its own requests. */
 export function enhancedCitationMediaUrl(kind: 'video' | 'audio', docId: string): string {
-    return apiUrl(`/api/enhanced_citations/${kind}?doc_id=${encodeURIComponent(docId)}`);
+    return safeV2SourceUrl(apiUrl(`/api/enhanced_citations/${kind}?doc_id=${encodeURIComponent(docId)}`));
 }
 
 export function enhancedCitationImageUrl(docId: string): string {
-    return apiUrl(`/api/enhanced_citations/image?doc_id=${encodeURIComponent(docId)}`);
+    return safeV2SourceUrl(apiUrl(`/api/enhanced_citations/image?doc_id=${encodeURIComponent(docId)}`));
 }
 
 export function enhancedCitationVisioUrl(docId: string, page = 1, download = false): string {
@@ -1198,17 +1199,17 @@ export function enhancedCitationVisioUrl(docId: string, page = 1, download = fal
     if (download) {
         params.set('download', 'true');
     }
-    return apiUrl(`/api/enhanced_citations/visio?${params.toString()}`);
+    return safeV2SourceUrl(apiUrl(`/api/enhanced_citations/visio?${params.toString()}`));
 }
 
 export function workspaceDocumentDownloadUrl(docId: string): string {
-    return apiUrl(`/api/workspace_documents/download?doc_id=${encodeURIComponent(docId)}`);
+    return safeV2SourceUrl(apiUrl(`/api/workspace_documents/download?doc_id=${encodeURIComponent(docId)}`));
 }
 
 export function tabularWorkspaceDownloadUrl(docId: string): string {
-    return apiUrl(
+    return safeV2SourceUrl(apiUrl(
         `/api/enhanced_citations/tabular_workspace?doc_id=${encodeURIComponent(docId)}`,
-    );
+    ));
 }
 
 /**
@@ -1218,11 +1219,11 @@ export function tabularWorkspaceDownloadUrl(docId: string): string {
  * addressed by the conversation it was attached to and the file id within it.
  */
 export function chatUploadTabularDownloadUrl(conversationId: string, fileId: string): string {
-    return apiUrl(
+    return safeV2SourceUrl(apiUrl(
         `/api/enhanced_citations/tabular?conversation_id=${encodeURIComponent(
             conversationId,
         )}&file_id=${encodeURIComponent(fileId)}`,
-    );
+    ));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1312,7 +1313,7 @@ export async function downloadGeneratedArtifact(
     if (!url) {
         throw new Error('Generated export is missing download metadata.');
     }
-    const response = await fetch(url, { credentials: CREDENTIALS_MODE, cache: 'no-store' });
+    const response = await v2ApiFetch(url, { credentials: CREDENTIALS_MODE, cache: 'no-store' });
     const disposition = response.headers.get('Content-Disposition');
     if (!response.ok || response.redirected || !/^\s*attachment(?:;|$)/i.test(disposition ?? '')) {
         throw new ApiError('The artifact could not be downloaded. Refresh the conversation and try again.', response.status, null);
@@ -1371,7 +1372,7 @@ export async function fetchEnhancedCitationPdf(
         params.set('show_all', 'true');
     }
 
-    const response = await fetch(apiUrl(`/api/enhanced_citations/pdf?${params.toString()}`), {
+    const response = await v2ApiFetch(apiUrl(`/api/enhanced_citations/pdf?${params.toString()}`), {
         credentials: API_BASE ? 'include' : 'same-origin',
     });
 
@@ -1594,11 +1595,8 @@ export function fetchGroupDocuments(
 }
 
 /**
- * List documents across every public workspace the user has made visible.
- *
- * The route derives the set from `publicDirectorySettings` rather than taking ids, so a
- * workspace the user has not surfaced in their directory is not searchable here — which
- * matches what the rest of the interface shows them.
+ * Discover all eligible public documents under V2 policy. An explicit aggregate selector
+ * additionally makes the turn public-only; ordinary mixed context must not set it.
  */
 export function fetchPublicWorkspaceDocuments(
     query: Partial<DocumentQuery> = {},
@@ -1606,7 +1604,8 @@ export function fetchPublicWorkspaceDocuments(
     selection?: PublicWorkspaceSelection | null,
 ) {
     const params = new URLSearchParams(buildDocumentListParams(query));
-    if (selection) params.set('public_workspace_selection', selection);
+    const normalized = readPublicWorkspaceSelection(selection);
+    if (normalized) params.set('public_workspace_selection', normalized);
     return api.get<DocumentListResponse>(
         `/api/public_workspace_documents?${params}`,
         signal,
@@ -1660,7 +1659,7 @@ export const fetchPublicWorkspaceDocumentTags = (
     selection?: PublicWorkspaceSelection | null,
 ) => api.get<{ tags?: WorkspaceTag[] }>(
     selection
-        ? `/api/public_workspace_documents/tags?public_workspace_selection=${encodeURIComponent(selection)}`
+        ? `/api/public_workspace_documents/tags?public_workspace_selection=${readPublicWorkspaceSelection(selection) ?? 'all'}`
         : '/api/public_workspace_documents/tags',
     signal,
 );
@@ -1757,7 +1756,7 @@ export const searchShareableUsers = (query: string, signal?: AbortSignal) =>
  * instead of navigating the tab to a sign-in redirect and losing the explorer's state.
  */
 export async function downloadPersonalDocument(documentId: string): Promise<Blob> {
-    const response = await fetch(
+    const response = await v2ApiFetch(
         apiUrl(`/api/documents/${encodeURIComponent(documentId)}/download`),
         { credentials: CREDENTIALS_MODE },
     );
@@ -1773,7 +1772,7 @@ export async function downloadPersonalDocument(documentId: string): Promise<Blob
 
 /** Download several documents. The server returns a single file, or a ZIP for a batch. */
 export async function downloadPersonalDocuments(documentIds: string[]): Promise<Blob> {
-    const response = await fetch(apiUrl('/api/documents/download'), {
+    const response = await v2ApiFetch(apiUrl('/api/documents/download'), {
         method: 'POST',
         credentials: CREDENTIALS_MODE,
         headers: { 'Content-Type': 'application/json' },

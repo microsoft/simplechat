@@ -128,7 +128,7 @@ import {
 } from '../lib/conversationSelection';
 import type { ModelCatalogEntry } from '../lib/models';
 import { resolveDocumentScope } from '../lib/documentScope';
-import { publicChatScopeFromMessages, type PublicWorkspaceSelection } from '../lib/publicChatScope';
+import { publicChatScopeFromMessages, readPublicWorkspaceSelection, type PublicWorkspaceSelection } from '../lib/publicChatScope';
 import {
     contextDocumentIds,
     contextFilterMode,
@@ -2372,7 +2372,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     drawerMode: null,
     metadata: null,
     publicWorkspaceSelection: null,
-    setPublicWorkspaceSelection: (selection) => set({ publicWorkspaceSelection: selection }),
+    setPublicWorkspaceSelection: (selection) => set({ publicWorkspaceSelection: readPublicWorkspaceSelection(selection) }),
     metadataLoading: false,
     metadataError: null,
     attemptsByThread: {},
@@ -3106,8 +3106,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     sendMessage: async (text, options) => {
         options = {
             ...options,
-            publicWorkspaceSelection: options.publicWorkspaceSelection === undefined
-                ? get().publicWorkspaceSelection : options.publicWorkspaceSelection,
+            publicWorkspaceSelection: readPublicWorkspaceSelection(options.publicWorkspaceSelection === undefined
+                ? get().publicWorkspaceSelection : options.publicWorkspaceSelection),
         };
         const trimmed = text.trim();
         if (!trimmed || get().streaming) {

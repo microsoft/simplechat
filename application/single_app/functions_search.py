@@ -23,7 +23,7 @@ from functions_embedding_compatibility import (
 )
 from functions_public_workspaces import (
     get_user_visible_public_workspace_docs,
-    get_user_visible_public_workspace_ids_from_settings,
+    get_public_source_workspace_ids,
 )
 from utils_cache import (
     generate_search_cache_key,
@@ -134,7 +134,7 @@ def _resolve_public_workspace_ids_for_search(
         return requested_workspace_ids
 
     visible_workspace_ids = normalize_search_id_list(
-        get_user_visible_public_workspace_ids_from_settings(user_id) or []
+        get_public_source_workspace_ids(user_id) or []
     )
     if requested_workspace_ids:
         visible_workspace_id_set = set(visible_workspace_ids)

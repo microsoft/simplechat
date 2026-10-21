@@ -107,6 +107,7 @@ def document_analysis_runtime(documents):
             'functions_public_workspaces',
             get_user_visible_public_workspace_docs=lambda *args, **kwargs: [],
             get_user_visible_public_workspace_ids_from_settings=lambda user_id: public_ids,
+            get_public_source_workspace_ids=lambda user_id, **kwargs: public_ids,
             find_public_workspace_by_id=lambda workspace_id: {'id': workspace_id} if workspace_id in public_ids else None,
         ),
         'utils_cache': _module(

@@ -1,6 +1,7 @@
 // test_v2_image_reference_logic.mjs
-// Version: 0.261.192
+// Version: 0.261.371
 // Implemented in: 0.261.192
+// V2 policy preserved on public image previews in: 0.261.371
 // Pure helper coverage for v2 image reference request normalization, composer merging, and gating.
 
 import assert from 'node:assert/strict';
@@ -116,11 +117,15 @@ check('preview URLs target chat messages or workspace image previews', () => {
     );
     assert.equal(
         imageReferencePreviewUrl({ type: 'document', document_id: 'doc 1', scope: 'personal', scope_id: null }),
-        '/api/workspace_documents/image_preview?doc_id=doc+1&scope=personal&variant=thumbnail',
+        '/api/workspace_documents/image_preview?doc_id=doc+1&scope=personal&variant=thumbnail&ui_version=v2',
     );
     assert.equal(
         imageReferencePreviewUrl({ type: 'document', document_id: 'doc/2', scope: 'group', scope_id: 'g 1' }, 'display'),
-        '/api/workspace_documents/image_preview?doc_id=doc%2F2&scope=group&variant=display&scope_id=g+1',
+        '/api/workspace_documents/image_preview?doc_id=doc%2F2&scope=group&variant=display&scope_id=g+1&ui_version=v2',
+    );
+    assert.equal(
+        imageReferencePreviewUrl({ type: 'document', document_id: 'public-guide', scope: 'public', scope_id: 'public-1' }, 'display'),
+        '/api/workspace_documents/image_preview?doc_id=public-guide&scope=public&variant=display&scope_id=public-1&ui_version=v2',
     );
 });
 

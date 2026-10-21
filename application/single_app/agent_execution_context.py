@@ -17,6 +17,9 @@ from functions_orchestration_invocation_capture import (
     OrchestrationInvocationCapture,
     require_invocation_capture,
 )
+from public_source_policy import (
+    LEGACY_VISIBLE, current_public_source_policy, public_source_policy_context,
+)
 
 
 class AgentDelegationError(RuntimeError):
@@ -103,6 +106,7 @@ class ExecutionIdentity:
     roles: tuple = ()
     email: Optional[str] = None
     publish_authentication_requirement: Optional[Callable] = field(default=None, repr=False, compare=False)
+    public_source_policy: str = LEGACY_VISIBLE
 
 
 @dataclass(frozen=True)
@@ -181,7 +185,11 @@ def agent_execution(frame):
         orchestration_file_policy(allow_generated_files=captured_policy)
         if captured_policy is not None else nullcontext()
     )
-    with policy:
+    source_policy = (
+        public_source_policy_context(frame.identity.user_id, frame.identity.public_source_policy)
+        if isinstance(frame, AgentExecutionFrame) else nullcontext()
+    )
+    with policy, source_policy:
         effective_policy = current_orchestration_file_policy()
         if isinstance(frame, AgentExecutionFrame) and captured_policy is not effective_policy:
             frame = replace(frame, orchestration_allow_generated_files=effective_policy)
@@ -207,7 +215,9 @@ def capture_execution_identity(user_id, conversation_id=None):
     from public_chat_scope_state import current_public_chat_scope, public_chat_scope_context
 
     if not has_request_context():
-        return ExecutionIdentity(user_id, conversation_id)
+        return ExecutionIdentity(
+            user_id, conversation_id, public_source_policy=current_public_source_policy(user_id),
+        )
     authenticated_user = session.get("user") or {}
     if str(authenticated_user.get("oid") or "") != str(user_id or ""):
         raise PermissionError("The agent execution identity is unavailable.")
@@ -215,6 +225,7 @@ def capture_execution_identity(user_id, conversation_id=None):
     origin = request.host_url
     identity_session = {"user": deepcopy(authenticated_user)}
     public_scope = deepcopy(current_public_chat_scope(user_id))
+    source_policy = current_public_source_policy(user_id)
     root_session = session._get_current_object()
     if session.get("token_cache"):
         identity_session["token_cache"] = session["token_cache"]
@@ -233,7 +244,7 @@ def capture_execution_identity(user_id, conversation_id=None):
     @contextmanager
     def bridge(agent):
         # An app context as well as a request context is needed to isolate g.
-        with app.app_context(), app.test_request_context("/internal/agent-execution", base_url=origin):
+        with app.app_context(), app.test_request_context("/internal/agent-execution", base_url=origin), public_source_policy_context(user_id, source_policy):
             session.update(deepcopy(identity_session))
             g.conversation_id = conversation_id
             g.request_agent_info = deepcopy(agent)
@@ -265,4 +276,5 @@ def capture_execution_identity(user_id, conversation_id=None):
         user_id, conversation_id, bridge,
         tuple(authenticated_user.get("roles") or ()), authenticated_user.get("preferred_username"),
         publish_authentication_requirement,
+        public_source_policy=source_policy,
     )

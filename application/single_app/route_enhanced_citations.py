@@ -38,7 +38,7 @@ from functions_image_references import personal_document_metadata_reader
 from functions_conversation_memory import is_conversation_memory_blob_path
 from functions_visio import render_vsdx_page_preview
 from functions_group import get_user_groups
-from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
+from functions_public_workspaces import get_public_source_workspace_ids
 from functions_collaboration import build_conversation_participation_context
 from functions_generated_file_approvals import assert_generated_file_approval_allows_download
 from functions_generated_artifact_sources import authorize_generated_artifact_source, has_generated_artifact_source
@@ -1134,7 +1134,7 @@ def get_document(user_id, doc_id):
     if settings.get("enable_public_workspaces", False):
         scopes.extend(
             {"public_workspace_id": workspace_id}
-            for workspace_id in get_user_visible_public_workspace_ids_from_settings(user_id) or []
+            for workspace_id in get_public_source_workspace_ids(user_id) or []
         )
     for scope in scopes:
         document = get_document_record(user_id, doc_id, **scope)

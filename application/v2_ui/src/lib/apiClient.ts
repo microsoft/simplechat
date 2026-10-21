@@ -6,6 +6,7 @@
 // change to every call site.
 
 import { SESSION_REQUIRED_MESSAGE, useAppSessionStore } from '../stores/appSessionStore';
+import { v2ApiFetch } from './v2SourcePolicy';
 
 /**
  * Base URL for API requests.
@@ -83,7 +84,7 @@ function checkWriteSession(method: string): void {
 
 async function fetchWithSessionCheck(path: string, init: RequestInit): Promise<Response> {
     try {
-        return await fetch(apiUrl(path), init);
+        return await v2ApiFetch(apiUrl(path), init);
     } catch (error) {
         if (error instanceof TypeError && !init.signal?.aborted &&
             useAppSessionStore.getState().viewerId) {
@@ -104,7 +105,7 @@ export function verifyAppSession(force = false): Promise<boolean> {
     const timer = setTimeout(() => controller.abort(), 5000);
     sessionVerification = (async () => {
         try {
-            const response = await fetch(apiUrl('/api/v2/bootstrap'), {
+            const response = await v2ApiFetch(apiUrl('/api/v2/bootstrap'), {
                 credentials: CREDENTIALS_MODE,
                 cache: 'no-store',
                 headers: { Accept: 'application/json' },

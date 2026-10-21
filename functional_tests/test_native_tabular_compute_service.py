@@ -1,7 +1,7 @@
 # test_native_tabular_compute_service.py
 """
 Real native query, transformation, checkpoint and data-only service regressions.
-Version: 0.261.143
+Version: 0.261.371
 Implemented in: 0.261.127
 Replay-location revision identity check added in: 0.261.141
 Re-uploaded source revision replay added in: 0.261.143
@@ -221,6 +221,7 @@ def native_runtime(monkeypatch, row_count=25, scope="personal", filename="source
         "functions_public_workspaces": _module(
             "functions_public_workspaces", find_public_workspace_by_id=lambda *args: {"id": scope_id},
             get_user_visible_public_workspace_ids_from_settings=lambda *args: [scope_id] if state["allowed"] else [],
+            get_public_source_workspace_ids=lambda *args, **kwargs: [scope_id] if state["allowed"] else [],
         ),
         "functions_simplechat_operations": _module(
             "functions_simplechat_operations",

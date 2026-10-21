@@ -36,7 +36,8 @@ from functions_debug import debug_print
 from functions_documents import get_document_record, get_ordered_document_chunks
 from functions_group import get_user_groups
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
-from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
+from functions_public_workspaces import get_public_source_workspace_ids
+from public_source_policy import uses_all_public_sources
 from functions_search import (
     SEARCH_DEFAULT_TOP_N,
     SEARCH_MAX_TOP_N,
@@ -137,19 +138,19 @@ def _resolve_active_group_ids(user_id, active_group_ids=None, fallback_to_member
 
 
 def _resolve_public_workspace_ids(user_id, active_public_workspace_id=None, visible_public_workspace_ids=None):
-    """Intersect the requested public workspaces with those the user has made visible.
+    """Intersect requested public workspaces with the current discovery policy.
 
     A caller that must not write, such as a workflow dry run, passes ``visible_public_workspace_ids``
-    it computed from a read-only settings snapshot, because the settings lookup can repair the
-    user's settings document. The same validation and intersection apply either way.
+    it computed from a read-only settings snapshot, because the classic settings lookup can
+    repair that document. V2 instead resolves all currently available public workspaces.
     """
     aggregate_ids = aggregate_public_workspace_ids(user_id)
     if aggregate_ids is not None:
         requested_ids = normalize_search_id_list(active_public_workspace_id)
         return [value for value in aggregate_ids if not requested_ids or value in requested_ids]
     try:
-        if visible_public_workspace_ids is None:
-            visible_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+        if visible_public_workspace_ids is None or uses_all_public_sources(user_id):
+            visible_ids = get_public_source_workspace_ids(user_id)
         else:
             visible_ids = visible_public_workspace_ids
         if strict_source_authority_enabled() and (
@@ -751,7 +752,7 @@ def build_search_request(
     if resolved_public_workspace_ids and normalized_scope in ("all", "public"):
         search_request["active_public_workspace_id"] = (
             resolved_public_workspace_ids
-            if include_all_public_workspaces or current_public_chat_scope(user_id)
+            if include_all_public_workspaces or current_public_chat_scope(user_id) or uses_all_public_sources(user_id)
             else resolved_public_workspace_ids[0]
         )
 

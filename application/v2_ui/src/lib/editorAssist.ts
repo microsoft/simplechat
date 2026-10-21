@@ -8,6 +8,7 @@
 // values, and every string is plain text for the UI to render as a text node.
 
 import { apiUrl, CREDENTIALS_MODE } from './apiClient';
+import { v2ApiFetch } from './v2SourcePolicy';
 import { codePointLength, codePointPrefix } from './codePoints';
 import { isRecord } from './workspaceAuthoring';
 
@@ -488,7 +489,7 @@ export async function postEditorAssist(
     try {
         // A raw fetch rather than apiClient: ApiError drops the headers, and a throttled 429 carries
         // its wait in Retry-After.
-        const response = await fetch(apiUrl(EDITOR_ASSIST_PATHS[kind]), {
+        const response = await v2ApiFetch(apiUrl(EDITOR_ASSIST_PATHS[kind]), {
             method: 'POST',
             credentials: CREDENTIALS_MODE,
             signal: controller.signal,

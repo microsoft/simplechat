@@ -2002,7 +2002,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     icon={<Search size={15} />}
                                     label={
                                         `Documents${publicWorkspaceSelection
-                                            ? ` · ${publicWorkspaceSelection === 'all' ? 'All' : 'Visible'} ${publicLabels.plural.toLowerCase()}`
+                                            ? ` · All ${publicLabels.plural.toLowerCase()}`
                                             : ''}${contextItems.length > 0 ? ` · ${contextItems.length}` : ''}`
                                     }
                                 />

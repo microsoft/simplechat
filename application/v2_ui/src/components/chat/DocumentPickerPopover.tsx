@@ -189,13 +189,10 @@ export function DocumentPickerPopover({
                     >
                         <option value="">Current context</option>
                         <option value="all" disabled={!scopeControl.publicEnabled}>All {publicLabels.plural.toLowerCase()}</option>
-                        <option value="visible" disabled={!scopeControl.publicEnabled}>Visible {publicLabels.plural.toLowerCase()}</option>
                     </select>
                     {scope.publicWorkspaceSelection && (
                         <p id={`${scopeControl.id}-description`} className="text-xs text-text-3">
-                            {scope.publicWorkspaceSelection === 'all'
-                                ? 'Public only, including hidden workspaces.'
-                                : 'Public only, using your directory visibility choices.'}
+                            Public only, searching all available {publicLabels.plural.toLowerCase()}.
                         </p>
                     )}
                     {scopeControl.error && <p role="alert" className="text-xs text-danger">{scopeControl.error}</p>}

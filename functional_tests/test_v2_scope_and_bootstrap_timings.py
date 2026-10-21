@@ -2,7 +2,7 @@
 """
 Functional contracts for the lightweight V2 active-scope read and phase timings.
 
-Version: 0.261.306
+Version: 0.261.371
 Implemented in: 0.261.305
 
 The real route bodies, scope helper, timer, and authentication decorators execute
@@ -57,7 +57,7 @@ def environment():
                                             {"id": workspace_id, "name": "Public A"}
                                             if workspace_id == "public-a" else None),
         "get_all_public_workspaces": Mock(return_value=[{"id": "public-a"}]),
-        "get_user_visible_public_workspace_ids_from_settings": Mock(return_value=["public-a"]),
+        "get_public_source_workspace_ids": Mock(return_value=["public-a"]),
         "build_accessible_agent_catalog": Mock(return_value=[]),
         "_is_chat_agent_allowed_by_governance": Mock(return_value=True),
         "_build_chat_model_catalog": Mock(return_value=[]),

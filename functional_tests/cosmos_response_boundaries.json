@@ -423,14 +423,6 @@
     "application/single_app/functions_chat_content_review.py::_clear_conversation_projection": "87256fcc6fd1385dd3ab6f7321c64b5e27f269e4d3d08d9c652dabb1e1e4f44f",
     "application/single_app/functions_chat_content_review.py::propagate_chat_retraction": "6e15bad8550a21ca03fa61d10826025620c504f0d454e7be6b1f54517a24e28c",
     "application/single_app/functions_chat_message_metadata.py::patch_message_metadata": "1ac4f68a384e77afa49a655e76e61b33779a8f68a46712c440ade40c0e544e04",
-    "application/single_app/functions_chat_retry.py::load_owned_retry_message": "f428dfdc38f8fb4889e3f110cec43a2c964eb16ab4c49f4cd19263dbb101cbd4",
-    "application/single_app/functions_chat_retry.py::retry_source_user": "c98dcecfed6d77a2526edc0b1d343d9de85726a5b97b4f182adb50b23f81a6e1",
-    "application/single_app/functions_chat_retry.py::retry_thread_messages": "cd673c851a02f8524cd59c888eb6a32a0e7c15674915987d24968c40daf6de55",
-    "application/single_app/functions_chat_retry.py::reconcile_prepared_retry": "270dbedba98ebd1357fac1eb709744aa478e65996e2fa8abcfb1ad34ec7f6a33",
-    "application/single_app/functions_chat_retry.py::_publish_retry_attempt": "7ec917d171d91e3fa32281c49163e46b6980c828dd434c4cf92b79241f232c16",
-    "application/single_app/functions_chat_retry.py::prepare_retry_attempt": "5b9a93ccc34ab2db33f29cf69e0420e5d95d6a41478a3766afb2a2dd5bd96d78",
-    "application/single_app/functions_chat_retry.py::claim_retry_attempt": "4752adacc06eb7f8a0a939d98d85e36f849498f067362076383f56c3c14003da",
-    "application/single_app/functions_chat_retry.py::set_retry_attempt_state": "4e4ac5134b028ce986305f34eff2985b686ee419886332e75cbd2ea5d54e6fd3",
     "application/single_app/functions_control_center.py::execute_control_center_refresh": "065c8d8282a45e12f5b6bca8dd0f43db460bcf160aef49e629e4238ba724a716",
     "application/single_app/functions_control_center_activity.py::query_activity_rows": "f41fd14cbf03cd85c0b5b0d853c742e099011097c50b89cd8c54d5ab8278fc05",
     "application/single_app/functions_control_center_activity_display.py::_lookup": "9fd0065570fd02edb4e8e3717464de5bee8681594506ebf92586ee5767bd5be5",
@@ -593,10 +585,6 @@
     "application/single_app/functions_orchestration_runs.py::save_orchestration_step": "73eb814415222ab91add82c86cf9fb7bce32e68241d68013225909cca583bf71",
     "application/single_app/functions_orchestration_runs.py::get_orchestration_step_record": "d2d2acb89ed64a68e561ef8c8096bf6f9045060bdd2cf2894abe036151ce01f9",
     "application/single_app/functions_orchestration_runs.py::list_run_steps": "ab9d6e26de5970720e6bcd4b74c8374f1ae5b53aa9c966f4042aad6993f355ed",
-    "application/single_app/functions_orchestration_workflow_context.py::_read_personal_agents": "f2e09eb63b012196502aa502ab60a41ad5efd4cc3f6f90c0b53fb81602123b18",
-    "application/single_app/functions_orchestration_workflow_context.py::_read_global_agents": "4fdd993d426241ca7b83baba80475546e8a66ba25fa227f09a990a0d169a54c3",
-    "application/single_app/functions_orchestration_workflow_context.py::_read_workflows": "55c742e6c677be568c66ee47f57819528633c8c458698c7081556d099c1f14cf",
-    "application/single_app/functions_orchestration_workflow_context.py::_read_wait_workflows": "98d5b536075b0cbf5637fc53322385839420c3d25d1c5446558303a75585cef9",
     "application/single_app/functions_orchestration_workflow_handoff_decisions.py::_read_workflow": "22cc82878b1df27322b3bb4a529f07ab3d4451cc5aa70ba0d2daa5bb7b25dcae",
     "application/single_app/functions_orchestration_workflow_handoff_decisions.py::_read_workflow_run": "8fb41cefbc1cead5c2ffb73bc63b1cc9075993afab480e50205e47fb4eb4fdd3",
     "application/single_app/functions_orchestration_workflow_proposals.py::_read_workflow": "04f5f464541540a451389a3e23a63ddf75c485e2ca6fbb21d1856fa3e551222c",
@@ -617,7 +605,6 @@
     "application/single_app/functions_personal_agents.py::get_personal_agents": "d1d7261b51a3a2a6be02c655ef7a9d673436b015dfe549305bb99e1d030990d5",
     "application/single_app/functions_personal_agents.py::get_personal_agent": "637b0cf6c26df0351f7cf571bed018f0b7791071e00b01a59a56dfac1be32b87",
     "application/single_app/functions_personal_agents.py::save_personal_agent": "430c4e509d52a810269035864de8f732badf5c4cc24f12bdc6285458348b0e51",
-    "application/single_app/functions_prompt_variables.py::_authorize_conversation": "99041e0e602e80f65fd0347e101aee569e840a6f2b0c251da79bfba6ba2790e1",
     "application/single_app/functions_prompts.py::_query_prompt_items": "f44507a724b5ceeaf06811d848537ad56a8fea7d6221f5f391ca6e1ac3eb4591",
     "application/single_app/functions_prompts.py::_read_prompt_from_container": "0da4805dd65c93d8a494f40cf8627747bcd8f44345636c3b46c75396fa3954ca",
     "application/single_app/functions_prompts.py::create_prompt_doc": "cca1769ccc0ab0a2ee49101d2a799eb9db495de8c904c81ae91df0a42c373d56",
@@ -671,12 +658,6 @@
     "application/single_app/functions_shared_cache.py::get_shared_cache_version": "d0784f8f867d64d7e3052c1d1d45e8b20c6c6e0a89179682a72d943399487aa6",
     "application/single_app/functions_shared_cache.py::ensure_shared_cache_version_doc": "28bd35630eb9e2832fe133fb3bf27c4bc4b2e60c1c7e0241a5618d4cdb9c87da",
     "application/single_app/functions_shared_cache.py::bump_shared_cache_version": "930ad1e81d001ded49ba2b61e44c46cee587ecc1b799021ce78c569306afbb59",
-    "application/single_app/functions_tabular_generated_exports.py::_authorize_tabular_export_run_conversation": "05f3fd2909cf45e3317dfd0b53f846ba5cff6c34547a2f6991b9be33cfc1a1ba",
-    "application/single_app/functions_tabular_generated_exports.py::_authorize_tabular_export_run_execution": "56a006ca21b75f7cff9a55adc8c704fa5851679ffd38a9cff60df08f07eb6b88",
-    "application/single_app/functions_tabular_generated_exports.py::_query_scheduler_candidates_by_status": "24d03e4ca306eaff41cda3f2a37d1b0f31ca6fce7f38e8c03210dfbafc1bf443",
-    "application/single_app/functions_tabular_generated_exports.py::get_tabular_generated_output_run_status": "5023ef6e61cebd6447bbac4c0e88185dbed0c159b2d8f7e44f2c14baeabd18d5",
-    "application/single_app/functions_tabular_generated_exports.py::_read_run": "ad6c62ac31ed11cd30b4fb3e505f487470f0c7ec36c596b95af6f9d89805407f",
-    "application/single_app/functions_tabular_generated_exports.py::_replace_run": "39c7814062c3b09084d628c3fa86853aa3b5a5f9d0beef21dafcce5d382922d3",
     "application/single_app/functions_thoughts.py::ThoughtTracker.complete_thought": "d2d4196faa7ad8201fce499290ababb5dcd1e46f985fe62a6af4d73e073a3f95",
     "application/single_app/functions_thoughts.py::_visible_chat_thoughts": "0c876891412f40df99f3a2b54e40fd6283784524bf3b69019220d5f7a82865b1",
     "application/single_app/functions_thoughts.py::get_thoughts_for_message": "f9acf410e21f2b3b2b42ed6e597bf972e13419789241657db825e24df7523cfa",
@@ -762,16 +743,6 @@
     "application/single_app/route_backend_conversation_export.py::_load_exportable_conversation_for_user": "ca4f7705686b225dc75a93cf8f1e95682478fd1cb9cb25b99a51bfb95790812e",
     "application/single_app/route_backend_conversation_export.py::_load_export_message_for_user": "b423a5373bedddedf3035705845bd9e8279573b342112c56518810ce633556c3",
     "application/single_app/route_backend_conversation_export.py::_load_generated_image_proposal_assets": "e0a4bc16710f97f752cd231daee89f7263feccf9e6ce645de27896ddc667b529",
-    "application/single_app/route_backend_documents.py::_load_accessible_personal_documents": "c30706d4a4f55e432daf154e9f56ff6937167cfb89682658c1fecacec0d4b6f4",
-    "application/single_app/route_backend_documents.py::register_route_backend_documents.get_file_content": "68a6779aa45f86f39b70204731c10eb41dcf31c9602a14cbbfefb625148a025e",
-    "application/single_app/route_backend_documents.py::register_route_backend_documents.api_get_user_documents": "b81faefe7664165df55537ee7dbb81b7a6fc70b24285b217e68bac72caa03bcc",
-    "application/single_app/route_backend_documents.py::register_route_backend_documents.api_bulk_tag_documents": "f275b79c37f49904ba026995bded04bf6e080de97e98f1f4cd996a54b1e80345",
-    "application/single_app/route_backend_documents.py::register_route_backend_documents.api_update_tag": "15ce812213181ad82cab2088baa21e2c6007dad4ab3bc3753ffaaad70113dfb6",
-    "application/single_app/route_backend_documents.py::register_route_backend_documents.api_delete_tag": "5e8b87a738b333a977f79c982e7b0beba82cfffec209859f97c2d6f6a2b6b7a6",
-    "application/single_app/route_backend_documents.py::register_route_backend_documents.api_share_document": "3f596961340f7c38c7672acf447020be3deabfcbb259c4d370e18192bacaa4ef",
-    "application/single_app/route_backend_documents.py::register_route_backend_documents.api_unshare_document": "1a600bc5aea1d28e62c67c6c23a118975c8a956b43299060d7eb4db8834917b8",
-    "application/single_app/route_backend_documents.py::register_route_backend_documents.api_remove_self_from_document": "440a94d1d29bcb460e985f9931913042a73e30a9d3dfbf76dc4ab53529be58cf",
-    "application/single_app/route_backend_documents.py::register_route_backend_documents.api_approve_shared_document": "f81a4d9059cfb878117c73af41fb61b924b25e6998b9f1f744abff8330e44083",
     "application/single_app/route_backend_feedback.py::_authorize_feedback_conversation": "503eebf0fd7a1c3f29ea3aea00f580303bd7b9be9b8e60315b2942736a04d7c4",
     "application/single_app/route_backend_feedback.py::_query_feedback_items": "252878ebe98d82d375991e2091193dd17e4005cc7a3d522b51ad2ff0e09ac857",
     "application/single_app/route_backend_feedback.py::_apply_feedback_review_update": "54c1024e778b5d8bcf60470ec1945faa6befa362d0f85634e72e9d2ca941fc08",
@@ -801,8 +772,6 @@
     "application/single_app/route_backend_users.py::_read_authorized_user_profile_document": "e688d444fe9c984a5ba523afdcf389eb3dcf607bd1aa75d299224d20cbf9d6d7",
     "application/single_app/route_backend_users.py::register_route_backend_users.api_get_user_info": "d8d706d12b688508e1b6d3ef6c2015ab8a3c4f99f3fa404bebdc6c3805f78cfa",
     "application/single_app/route_backend_users.py::register_route_backend_users.api_collaboration_suggestions": "aa7205083648342089c7b7d6ab2d17e54e0947471f882ebe5115c933c09d296a",
-    "application/single_app/route_enhanced_citations.py::_get_authorized_chat_artifact_message": "b2d9c0fc54c4cf9545a6c46bb93b71c0e1a69d429c8ef1c05ba3fb071582bc4b",
-    "application/single_app/route_enhanced_citations.py::register_enhanced_citations_routes.get_enhanced_citation_tabular": "ff7e5776314ddaf82390e3ac0817fb8270307d32da2b29a7bf4f4c7ef529d61e",
     "application/single_app/route_external_public_documents.py::register_route_external_public_documents.external_get_public_documents": "7a2cab5fcb36b8d80f2733e2a3fa2df33e04fbeeea7095bec72bf185778aef02",
     "application/single_app/route_frontend_control_center.py::get_control_center_statistics": "6fd3ab6692fe40b5e63490edcdae51eae7ebeb8067996c361cde4cac14c296e6",
     "application/single_app/route_frontend_conversations.py::_authorize_frontend_personal_conversation_access": "a8650a20c098eb598306d3827dce49f4b4c1501404cbd3b200d4887b1fbde552",
@@ -2904,13 +2873,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "862a867593565934209249de42af138960830ee3b8cdb3ab87d9f7150cdf0b6e"
+        "module_sha256": "eef9f7a650ec90610b667e51fa3aab0180415210e7b1e77f04aee91fd16b2d02"
       },
       "classification": "sdk-compatible",
-      "contract": "load_owned_retry_message: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Query rows remain plain messages; the partitioned conversation CosmosDict is checked through user_id/shared-backing fields and returned unchanged alongside the plain message.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_retry_owner_preserves_sdk_points_conditional_writes_and_plain_queries"
       ]
     },
     "application/single_app/functions_chat_retry.py::retry_source_user": {
@@ -2925,13 +2894,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "862a867593565934209249de42af138960830ee3b8cdb3ab87d9f7150cdf0b6e"
+        "module_sha256": "eef9f7a650ec90610b667e51fa3aab0180415210e7b1e77f04aee91fd16b2d02"
       },
       "classification": "sdk-compatible",
-      "contract": "retry_source_user: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Partitioned question query rows remain plain dictionaries; nested metadata/thread fields select exactly one nondeleted attempt and the chosen plain row is returned.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_retry_owner_preserves_sdk_points_conditional_writes_and_plain_queries"
       ]
     },
     "application/single_app/functions_chat_retry.py::retry_thread_messages": {
@@ -2946,13 +2915,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "862a867593565934209249de42af138960830ee3b8cdb3ab87d9f7150cdf0b6e"
+        "module_sha256": "eef9f7a650ec90610b667e51fa3aab0180415210e7b1e77f04aee91fd16b2d02"
       },
       "classification": "sdk-compatible",
-      "contract": "retry_thread_messages: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The partitioned thread query is materialized as a list of plain query dictionaries, separate from SDK point response mappings.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_retry_owner_preserves_sdk_points_conditional_writes_and_plain_queries"
       ]
     },
     "application/single_app/functions_chat_retry.py::reconcile_prepared_retry": {
@@ -2967,13 +2936,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "862a867593565934209249de42af138960830ee3b8cdb3ab87d9f7150cdf0b6e"
+        "module_sha256": "eef9f7a650ec90610b667e51fa3aab0180415210e7b1e77f04aee91fd16b2d02"
       },
       "classification": "sdk-compatible",
-      "contract": "reconcile_prepared_retry: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The source question CosmosDict is read through deletion/metadata/content fields for fingerprint comparison; publishing retains the current plain query-row question return shape.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_retry_owner_preserves_sdk_points_conditional_writes_and_plain_queries"
       ]
     },
     "application/single_app/functions_chat_retry.py::_publish_retry_attempt": {
@@ -2998,13 +2967,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "862a867593565934209249de42af138960830ee3b8cdb3ab87d9f7150cdf0b6e"
+        "module_sha256": "eef9f7a650ec90610b667e51fa3aab0180415210e7b1e77f04aee91fd16b2d02"
       },
       "classification": "sdk-compatible",
-      "contract": "_publish_retry_attempt: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Conversation point mappings supply nested retry counters and ETags; deepcopy retains the SDK mapping for conditional replacement. Replace responses are discarded and the caller question is returned unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_retry_owner_preserves_sdk_points_conditional_writes_and_plain_queries"
       ]
     },
     "application/single_app/functions_chat_retry.py::prepare_retry_attempt": {
@@ -3049,13 +3018,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "862a867593565934209249de42af138960830ee3b8cdb3ab87d9f7150cdf0b6e"
+        "module_sha256": "eef9f7a650ec90610b667e51fa3aab0180415210e7b1e77f04aee91fd16b2d02"
       },
       "classification": "sdk-compatible",
-      "contract": "prepare_retry_attempt: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "SDK message/conversation points supply identity, counters, source fingerprints and ETags. Conditional conversation writes discard responses; created or replayed question CosmosDict values return through mapping-compatible publication.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_retry_owner_preserves_sdk_points_conditional_writes_and_plain_queries"
       ]
     },
     "application/single_app/functions_chat_retry.py::claim_retry_attempt": {
@@ -3085,13 +3054,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "862a867593565934209249de42af138960830ee3b8cdb3ab87d9f7150cdf0b6e"
+        "module_sha256": "eef9f7a650ec90610b667e51fa3aab0180415210e7b1e77f04aee91fd16b2d02"
       },
       "classification": "sdk-compatible",
-      "contract": "claim_retry_attempt: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Partitioned question/source/conversation CosmosDict values are checked using fields and nested plain metadata. The original ETag guards replacement and its SDK mapping is returned without changing strict domain contracts.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_retry_owner_preserves_sdk_points_conditional_writes_and_plain_queries"
       ]
     },
     "application/single_app/functions_chat_retry.py::set_retry_attempt_state": {
@@ -3111,13 +3080,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "862a867593565934209249de42af138960830ee3b8cdb3ab87d9f7150cdf0b6e"
+        "module_sha256": "eef9f7a650ec90610b667e51fa3aab0180415210e7b1e77f04aee91fd16b2d02"
       },
       "classification": "sdk-compatible",
-      "contract": "set_retry_attempt_state: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The SDK question mapping is copied, its nested response-attempt state changed and its ETag used for conditional replace; the write response is discarded and the function returns None.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_retry_owner_preserves_sdk_points_conditional_writes_and_plain_queries"
       ]
     },
     "application/single_app/functions_collaboration.py::get_collaboration_conversation": {
@@ -12222,7 +12191,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0397b7790cee18856f79f8c79af213be4ebd0356f8d7b02b940da4e3184dd3cd"
+        "module_sha256": "e5b7524bb6f4b55cded4cf4998037dfcefecfd61a7986b3dc368db97aa33a176"
       },
       "classification": "sdk-compatible",
       "contract": "Partitioned message point mappings are checked for conversation identity, image/file role and supported filename; only a plain candidate DTO is emitted, never the SDK document.",
@@ -12243,7 +12212,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0397b7790cee18856f79f8c79af213be4ebd0356f8d7b02b940da4e3184dd3cd"
+        "module_sha256": "e5b7524bb6f4b55cded4cf4998037dfcefecfd61a7986b3dc368db97aa33a176"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation point mapping is authorized through user_id and passed to Mapping-compatible scope-lock readers; missing or foreign conversations retain ElicitationContextError rather than an empty fallback.",
@@ -12264,7 +12233,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0397b7790cee18856f79f8c79af213be4ebd0356f8d7b02b940da4e3184dd3cd"
+        "module_sha256": "e5b7524bb6f4b55cded4cf4998037dfcefecfd61a7986b3dc368db97aa33a176"
       },
       "classification": "sdk-compatible",
       "contract": "Authorized chat-attachment readiness uses partitioned query rows, which remain plain dictionaries; workspace manifests and readiness checks consume field projections without changing strict reference validation.",
@@ -13342,13 +13311,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "91913e2ec2c0d81027420730f9933bd32da062fcdcb7fdc1d1af301095a15e36"
+        "module_sha256": "f9a0f43bdffb644871315810be01a47a4d5940ad402d090d9a4ae8ae79c459bd"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_personal_agents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Projected personal-agent query rows are plain dictionaries materialized into a list in the user partition; no point document reaches the planning catalog.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_workflow_context_owner_reads_plain_partitioned_query_rows"
       ]
     },
     "application/single_app/functions_orchestration_workflow_context.py::_read_global_agents": {
@@ -13363,13 +13332,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "91913e2ec2c0d81027420730f9933bd32da062fcdcb7fdc1d1af301095a15e36"
+        "module_sha256": "f9a0f43bdffb644871315810be01a47a4d5940ad402d090d9a4ae8ae79c459bd"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_global_agents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Enabled global-agent discovery materializes plain cross-partition query rows; nested catalog shape checks do not consume a point wrapper.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_workflow_context_owner_reads_plain_partitioned_query_rows"
       ]
     },
     "application/single_app/functions_orchestration_workflow_context.py::_read_workflows": {
@@ -13384,13 +13353,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "91913e2ec2c0d81027420730f9933bd32da062fcdcb7fdc1d1af301095a15e36"
+        "module_sha256": "f9a0f43bdffb644871315810be01a47a4d5940ad402d090d9a4ae8ae79c459bd"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_workflows: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The bounded personal-workflow catalog is a list of plain projected query rows in the user partition, not a point-response normalization boundary.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_workflow_context_owner_reads_plain_partitioned_query_rows"
       ]
     },
     "application/single_app/functions_orchestration_workflow_context.py::_read_wait_workflows": {
@@ -13405,13 +13374,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "91913e2ec2c0d81027420730f9933bd32da062fcdcb7fdc1d1af301095a15e36"
+        "module_sha256": "f9a0f43bdffb644871315810be01a47a4d5940ad402d090d9a4ae8ae79c459bd"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_wait_workflows: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The explicit workflow-id selection returns a list of plain query rows from the user partition, or an empty list before storage for an empty selection.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_workflow_context_owner_reads_plain_partitioned_query_rows"
       ]
     },
     "application/single_app/functions_orchestration_workflow_handoff_decisions.py::_read_workflow": {
@@ -14331,13 +14300,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55d8262d5dc2cd6df651b7d02e890333eecc2224071254de5a5c3ab0331570f4"
+        "module_sha256": "73b406b394dd9d1f32f9079a9d367c83155832ffa4de65143ada2631a71d1cec"
       },
       "classification": "sdk-compatible",
-      "contract": "_authorize_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The personal conversation CosmosDict is checked through id/user_id fields; success returns None and missing/wrong-owner points follow the existing 403 error path. Collaboration remains with its participation owner.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_prompt_variable_owner_checks_sdk_conversation_identity"
       ]
     },
     "application/single_app/functions_prompts.py::_query_prompt_items": {
@@ -14796,7 +14765,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1e24550f3e9908064f72561182dc979298e19f9f286f6c831911e4ff46d45766"
+        "module_sha256": "4d70dd5a462be3bf1b4d001bd1ae3143efe069c0549cf7a6524dd5f934bc1b24"
       },
       "classification": "sdk-compatible",
       "contract": "update_public_workspace_document_with_etag_guard: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
@@ -14817,7 +14786,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1e24550f3e9908064f72561182dc979298e19f9f286f6c831911e4ff46d45766"
+        "module_sha256": "4d70dd5a462be3bf1b4d001bd1ae3143efe069c0549cf7a6524dd5f934bc1b24"
       },
       "classification": "response-unused",
       "contract": "create_public_workspace: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -14838,7 +14807,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1e24550f3e9908064f72561182dc979298e19f9f286f6c831911e4ff46d45766"
+        "module_sha256": "4d70dd5a462be3bf1b4d001bd1ae3143efe069c0549cf7a6524dd5f934bc1b24"
       },
       "classification": "sdk-compatible",
       "contract": "find_public_workspace_by_id: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
@@ -14859,7 +14828,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "1e24550f3e9908064f72561182dc979298e19f9f286f6c831911e4ff46d45766"
+        "module_sha256": "4d70dd5a462be3bf1b4d001bd1ae3143efe069c0549cf7a6524dd5f934bc1b24"
       },
       "classification": "sdk-compatible",
       "contract": "get_user_public_workspaces: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -14880,7 +14849,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "1e24550f3e9908064f72561182dc979298e19f9f286f6c831911e4ff46d45766"
+        "module_sha256": "4d70dd5a462be3bf1b4d001bd1ae3143efe069c0549cf7a6524dd5f934bc1b24"
       },
       "classification": "sdk-compatible",
       "contract": "get_all_public_workspaces: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -14901,7 +14870,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "1e24550f3e9908064f72561182dc979298e19f9f286f6c831911e4ff46d45766"
+        "module_sha256": "4d70dd5a462be3bf1b4d001bd1ae3143efe069c0549cf7a6524dd5f934bc1b24"
       },
       "classification": "sdk-compatible",
       "contract": "search_public_workspaces: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -14922,7 +14891,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "1e24550f3e9908064f72561182dc979298e19f9f286f6c831911e4ff46d45766"
+        "module_sha256": "4d70dd5a462be3bf1b4d001bd1ae3143efe069c0549cf7a6524dd5f934bc1b24"
       },
       "classification": "sdk-compatible",
       "contract": "search_all_public_workspaces: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -14943,7 +14912,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "1e24550f3e9908064f72561182dc979298e19f9f286f6c831911e4ff46d45766"
+        "module_sha256": "4d70dd5a462be3bf1b4d001bd1ae3143efe069c0549cf7a6524dd5f934bc1b24"
       },
       "classification": "sdk-compatible",
       "contract": "find_public_workspaces_by_ids: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -14964,7 +14933,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "1e24550f3e9908064f72561182dc979298e19f9f286f6c831911e4ff46d45766"
+        "module_sha256": "4d70dd5a462be3bf1b4d001bd1ae3143efe069c0549cf7a6524dd5f934bc1b24"
       },
       "classification": "sdk-compatible",
       "contract": "list_public_workspaces_for_admin_directory: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -14985,7 +14954,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1e24550f3e9908064f72561182dc979298e19f9f286f6c831911e4ff46d45766"
+        "module_sha256": "4d70dd5a462be3bf1b4d001bd1ae3143efe069c0549cf7a6524dd5f934bc1b24"
       },
       "classification": "response-unused",
       "contract": "delete_public_workspace: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -15006,7 +14975,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "1e24550f3e9908064f72561182dc979298e19f9f286f6c831911e4ff46d45766"
+        "module_sha256": "4d70dd5a462be3bf1b4d001bd1ae3143efe069c0549cf7a6524dd5f934bc1b24"
       },
       "classification": "sdk-compatible",
       "contract": "count_public_workspace_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -15691,7 +15660,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e1e1d5fd22d370d860867adf4561e3d492ee3e9450a6ba9dfa5eb6f1282c4d95"
+        "module_sha256": "dd63150855c988fabaef5d1942ac37fe905386586f1c176e3237ac759045602e"
       },
       "classification": "sdk-compatible",
       "contract": "_authorize_chat_upload_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
@@ -15718,7 +15687,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e1e1d5fd22d370d860867adf4561e3d492ee3e9450a6ba9dfa5eb6f1282c4d95"
+        "module_sha256": "dd63150855c988fabaef5d1942ac37fe905386586f1c176e3237ac759045602e"
       },
       "classification": "sdk-compatible",
       "contract": "_resolve_chat_upload_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
@@ -16542,18 +16511,18 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7b22e886bd1fd300ac8ff9bb18bb5a9abe1f0f29118f8789f23d43229e2ccae7"
+        "module_sha256": "a2797b15fcc043467dd926cc4ffac2a6b8e30e55bcd73b22f118571ddddac8e1"
       },
       "classification": "sdk-compatible",
-      "contract": "_authorize_tabular_export_run_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The partitioned conversation CosmosDict is checked through its user_id and returned unchanged; missing conversations and ownership changes remain PermissionError refusals.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_tabular_export_owner_keeps_sdk_etags_and_public_scope_fences"
       ]
     },
     "application/single_app/functions_tabular_generated_exports.py::_authorize_tabular_export_run_execution": {
       "boundary": {
-        "sha256": "46bcb71e46489ffc9447c96e6de8ddd5e215935c7efd696857aa0efe597a2f07",
+        "sha256": "7d4f6e9fff2a09cfdadff4a52acea40827b6c3b75fdbab423bc5ccf804ce7f72",
         "points": [
           {
             "method": "read_item",
@@ -16563,13 +16532,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7b22e886bd1fd300ac8ff9bb18bb5a9abe1f0f29118f8789f23d43229e2ccae7"
+        "module_sha256": "a2797b15fcc043467dd926cc4ffac2a6b8e30e55bcd73b22f118571ddddac8e1"
       },
       "classification": "sdk-compatible",
-      "contract": "_authorize_tabular_export_run_execution: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The conversation and optional producer point mappings feed field-based owner/native-compute checks. Public source ids and blob provenance are revalidated separately, and the authorized conversation mapping is returned.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_tabular_export_owner_keeps_sdk_etags_and_public_scope_fences"
       ]
     },
     "application/single_app/functions_tabular_generated_exports.py::_query_scheduler_candidates_by_status": {
@@ -16584,13 +16553,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "7b22e886bd1fd300ac8ff9bb18bb5a9abe1f0f29118f8789f23d43229e2ccae7"
+        "module_sha256": "a2797b15fcc043467dd926cc4ffac2a6b8e30e55bcd73b22f118571ddddac8e1"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_scheduler_candidates_by_status: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Scheduler discovery iterates plain projected query rows, applies eligibility before the bounded result limit and returns those rows; query failures are logged and re-raised.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_tabular_export_owner_keeps_sdk_etags_and_public_scope_fences"
       ]
     },
     "application/single_app/functions_tabular_generated_exports.py::get_tabular_generated_output_run_status": {
@@ -16605,13 +16574,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7b22e886bd1fd300ac8ff9bb18bb5a9abe1f0f29118f8789f23d43229e2ccae7"
+        "module_sha256": "a2797b15fcc043467dd926cc4ffac2a6b8e30e55bcd73b22f118571ddddac8e1"
       },
       "classification": "sdk-compatible",
-      "contract": "get_tabular_generated_output_run_status: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The user-partitioned SDK run mapping feeds field-based screening and bounded completion repair; the status builder accepts dict subclasses and constructs an explicit plain public projection. Representative runtime evidence exercises this module's read/replace/authorization/query boundaries, not every status branch.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_tabular_export_owner_keeps_sdk_etags_and_public_scope_fences"
       ]
     },
     "application/single_app/functions_tabular_generated_exports.py::_read_run": {
@@ -16626,13 +16595,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7b22e886bd1fd300ac8ff9bb18bb5a9abe1f0f29118f8789f23d43229e2ccae7"
+        "module_sha256": "a2797b15fcc043467dd926cc4ffac2a6b8e30e55bcd73b22f118571ddddac8e1"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The exact user/run partitioned read returns the SDK mapping unchanged to field-based run consumers, preserving nested source descriptors and ETags.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_tabular_export_owner_keeps_sdk_etags_and_public_scope_fences"
       ]
     },
     "application/single_app/functions_tabular_generated_exports.py::_replace_run": {
@@ -16647,13 +16616,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7b22e886bd1fd300ac8ff9bb18bb5a9abe1f0f29118f8789f23d43229e2ccae7"
+        "module_sha256": "a2797b15fcc043467dd926cc4ffac2a6b8e30e55bcd73b22f118571ddddac8e1"
       },
       "classification": "sdk-compatible",
-      "contract": "_replace_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The existing run mapping and its ETag are passed to IfNotModified replacement; the returned CosmosDict and fresh ETag remain available to the caller, and stale ETags still fail.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_tabular_export_owner_keeps_sdk_etags_and_public_scope_fences"
       ]
     },
     "application/single_app/functions_tabular_generated_exports.py::queue_tabular_generated_output_run": {
@@ -16673,10 +16642,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7b22e886bd1fd300ac8ff9bb18bb5a9abe1f0f29118f8789f23d43229e2ccae7"
+        "module_sha256": "a2797b15fcc043467dd926cc4ffac2a6b8e30e55bcd73b22f118571ddddac8e1"
       },
       "classification": "response-unused",
-      "contract": "queue_tabular_generated_output_run: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "Both queue create responses are discarded; the constructed plain run is returned for new work. The data-only replay/collision branches use _read_run mappings, compare exact compute/source fields and reauthorize before returning the existing SDK run.",
       "evidence_scope": "source-review",
       "tests": []
     },
@@ -18033,7 +18002,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "response-unused",
       "contract": "Artifact upsert responses are discarded; compact citation dictionaries returned by the artifact builder are retained. Failed writes use the existing citation fallback without consuming an SDK response.",
@@ -18059,7 +18028,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "sdk-compatible",
       "contract": "SDK point messages are read through Mapping access, checked for posted_via=agent_action, and assigned plain nested supersession metadata. Upsert responses are discarded; missing or failed messages retain the existing best-effort path.",
@@ -18085,7 +18054,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "sdk-compatible",
       "contract": "The SDK conversation is inspected and mutated through Mapping access for workflow/hidden state. Its upsert response is discarded, and the cache update uses the user_id field; read/write failures retain the existing False result.",
@@ -18116,7 +18085,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "sdk-compatible",
       "contract": "SDK conversations use Mapping ownership/group checks and unread/citation updates. Existing SDK messages feed the same Mapping-compatible summary update and are normalized before returning; new authored message upsert responses are discarded.",
@@ -18157,7 +18126,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "normalized-strict",
       "contract": "Existing/collision audit point documents are owner-checked and normalized before returning to the workflow runner. New create/upsert responses are unused; run-bound IDs preserve retries and manual titles.",
@@ -18179,7 +18148,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "sdk-compatible",
       "contract": "_get_latest_thread_id: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -18205,7 +18174,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "sdk-compatible",
       "contract": "A replayed SDK message is checked through nested metadata/run_id field reads and returned unchanged. Assistant tracking consumes its id and thread metadata through Mapping access; new-message upsert responses are discarded.",
@@ -18231,7 +18200,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "response-unused",
       "contract": "Assistant, citation and conversation upsert responses are discarded. The authored assistant dictionary is returned without SDK metadata; unread state is persisted on the Mapping-compatible conversation input.",
@@ -18252,7 +18221,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "sdk-compatible",
       "contract": "_query_recent_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -18273,7 +18242,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "sdk-compatible",
       "contract": "_query_merge_candidate_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -18294,7 +18263,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "sdk-compatible",
       "contract": "A resumed SDK user-message point response supplies id and nested thread metadata through Mapping access to assistant tracking. Policy failures add application-owned error/error_code strings to the locally authored run record; no point wrapper enters a new strict sink.",
@@ -18321,7 +18290,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f764de96a537bfaa6aba567a3945066c197c94a60f44fece86acc43a6426219f"
+        "module_sha256": "98fa44d5157506a95ace2d5e323ffe9d7f77a96a7afa7239988029a1d65a4ec5"
       },
       "classification": "sdk-compatible",
       "contract": "_bind_active_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. SDK-default queue/projection/status execution provides representative real-owner runtime evidence; continuation selectors remain field projections, not strict outer-document validation.",
@@ -18332,7 +18301,7 @@
     },
     "application/single_app/functions_workflow_runtime.py::queue_durable_workflow_run": {
       "boundary": {
-        "sha256": "e98462a2dfb1d5f81ca51301bd9a781ff56bb46e1029ebff9f45241ca004813b",
+        "sha256": "eb451ec7107d3ce5242ab5ada6303e3c26e12f9e63aadd949e01b96693dce639",
         "points": [
           {
             "method": "read_item",
@@ -18362,7 +18331,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f764de96a537bfaa6aba567a3945066c197c94a60f44fece86acc43a6426219f"
+        "module_sha256": "98fa44d5157506a95ace2d5e323ffe9d7f77a96a7afa7239988029a1d65a4ec5"
       },
       "classification": "sdk-compatible",
       "contract": "queue_durable_workflow_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. SDK-default queue/projection/status execution provides representative real-owner runtime evidence; continuation selectors remain field projections, not strict outer-document validation.",
@@ -18398,7 +18367,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f764de96a537bfaa6aba567a3945066c197c94a60f44fece86acc43a6426219f"
+        "module_sha256": "98fa44d5157506a95ace2d5e323ffe9d7f77a96a7afa7239988029a1d65a4ec5"
       },
       "classification": "sdk-compatible",
       "contract": "_project_runtime_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. SDK-default queue/projection/status execution provides representative real-owner runtime evidence; continuation selectors remain field projections, not strict outer-document validation.",
@@ -18419,7 +18388,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f764de96a537bfaa6aba567a3945066c197c94a60f44fece86acc43a6426219f"
+        "module_sha256": "98fa44d5157506a95ace2d5e323ffe9d7f77a96a7afa7239988029a1d65a4ec5"
       },
       "classification": "sdk-compatible",
       "contract": "workflow_runtime_status: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. SDK-default queue/projection/status execution provides representative real-owner runtime evidence; continuation selectors remain field projections, not strict outer-document validation.",
@@ -18430,7 +18399,7 @@
     },
     "application/single_app/functions_workflow_runtime.py::continue_durable_workflow_run": {
       "boundary": {
-        "sha256": "85ca4c534f0fb39b9602e90510a072dc167c532a12efbbb8ae3dbc88661e5ad9",
+        "sha256": "f71de1caf52eac06d68c7cb9827c9da580e8d6ff0a4ab057c94e38e7abde325e",
         "points": [
           {
             "method": "read_item",
@@ -18440,7 +18409,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f764de96a537bfaa6aba567a3945066c197c94a60f44fece86acc43a6426219f"
+        "module_sha256": "98fa44d5157506a95ace2d5e323ffe9d7f77a96a7afa7239988029a1d65a4ec5"
       },
       "classification": "sdk-compatible",
       "contract": "continue_durable_workflow_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. SDK-default queue/projection/status execution provides representative real-owner runtime evidence; continuation selectors remain field projections, not strict outer-document validation.",
@@ -18461,7 +18430,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f764de96a537bfaa6aba567a3945066c197c94a60f44fece86acc43a6426219f"
+        "module_sha256": "98fa44d5157506a95ace2d5e323ffe9d7f77a96a7afa7239988029a1d65a4ec5"
       },
       "classification": "sdk-compatible",
       "contract": "resume_m365_durable_workflow_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. SDK-default queue/projection/status execution provides representative real-owner runtime evidence; continuation selectors remain field projections, not strict outer-document validation.",
@@ -18482,7 +18451,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f764de96a537bfaa6aba567a3945066c197c94a60f44fece86acc43a6426219f"
+        "module_sha256": "98fa44d5157506a95ace2d5e323ffe9d7f77a96a7afa7239988029a1d65a4ec5"
       },
       "classification": "sdk-compatible",
       "contract": "check_durable_workflows_once: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. SDK-default queue/projection/status execution provides representative real-owner runtime evidence; continuation selectors remain field projections, not strict outer-document validation.",
@@ -19236,7 +19205,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "response-unused",
       "contract": "Plain query rows provide chunk IDs; all chunk/artifact delete responses are discarded and rollback failure accounting remains explicit.",
@@ -19257,7 +19226,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "The user-message point mapping supplies nested plain metadata/thread fields for paired image attribution; only user/thread values escape the boundary.",
@@ -19279,7 +19248,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "Partitioned assistant query rows remain plain dictionaries through soft-delete filtering and saved-analysis history sanitization.",
@@ -19301,7 +19270,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "Artifact and chunk discovery returns plain query rows to build_message_artifact_payload_map; it is not a point-response normalization boundary.",
@@ -19323,7 +19292,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "response-unused",
       "contract": "The local Cosmos delete response is discarded on source-screening rollback; its IfNotModified ETag comes from the persistence owner result. Assistant point normalization remains with persist_chat_reply rather than weakening screening.",
@@ -19344,7 +19313,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "Workspace lookup consumes plain query rows, rechecks document availability and projects only id/name/title/workspace fields into a plain selection DTO.",
@@ -19371,7 +19340,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "response-unused",
       "contract": "Both conversation upsert responses are discarded; the constructed plain conversation is logged and cache-invalidated, with existing persistence failures unchanged.",
@@ -19392,7 +19361,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation point mapping feeds shared-backing and participation authorization using Mapping fields; no raw document reaches an exact-dictionary domain validator or bypasses access checks.",
@@ -19419,7 +19388,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "response-unused",
       "contract": "Artifact upsert and cancellation-rollback delete responses are discarded; artifact identities are taken from constructed plain documents and cancellation remains visible.",
@@ -19440,7 +19409,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "The user-message point mapping is read through get() into a plain response-context dictionary; nested thread/user metadata stays JSON and read failures retain existing fallback fields.",
@@ -19472,7 +19441,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "response-unused",
       "contract": "Safety/user-message upsert and conversation replace responses are discarded; the browser payload is constructed from plain screened documents and explicit public fields.",
@@ -19493,7 +19462,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "Workspace document discovery consumes plain query rows and builds bounded related-document metadata; no Cosmos point wrapper enters its document catalog.",
@@ -19515,7 +19484,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "A new-message upsert may return the SDK mapping to Mapping-compatible chat persistence callers; retry metadata is delegated to patch_chat_message_metadata, which owns conditional update/normalization. No strict top-level DTO is synthesized from arbitrary iterables.",
@@ -19537,7 +19506,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "Chat attachment resolution consumes plain partitioned query rows and emits display-name/context projections; workspace ownership remains with the document resolver.",
@@ -19559,7 +19528,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "The TOP 1 thread projection is a plain query row; only thread_id is returned, with the existing read-failure fallback unchanged.",
@@ -19586,7 +19555,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "Existing point mappings are checked for owner/deletion state; newly created SDK conversation mappings feed field-based activity logging and cache invalidation, not exact-dictionary result validation.",
@@ -19639,7 +19608,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "Retry input point mappings supply authorized role/content/thread fields; history queries are plain, and user/system writes and rollback deletes discard responses. Saved-analysis strict result admission remains with its storage owner.",
@@ -19681,7 +19650,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "The original Analyze point mapping is checked for role/conversation/content and nested thread metadata; local message writes and cleanup deletes discard responses, while retained analysis contracts remain strict.",
@@ -19708,7 +19677,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "The source assistant SDK mapping is authorized by conversation/role and used by Mapping-compatible planned-image lookup; conversation replacement discards its response and public image data is projected explicitly.",
@@ -19730,7 +19699,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "The partitioned point mapping is returned to find_planned_proposal_image, which inspects message fields; a missing message returns None, without an empty-document or strict-type fallback.",
@@ -19752,7 +19721,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "Proposal status iterates plain query rows, validates nested proposal dictionaries and emits explicit public image status fields.",
@@ -19764,7 +19733,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_api": {
       "boundary": {
-        "sha256": "68dc871abb811420f22847aa99ffe36a67f857711d616905bfb1e9ded7492dd6",
+        "sha256": "f13b3ac5dea995320810344065bc8d02d41d49c78f1b15615482e104b97a123a",
         "points": [
           {
             "method": "read_item",
@@ -19845,7 +19814,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "Retry/source point mappings supply role/content and nested model/thread metadata through Mapping access; history queries stay plain. Metadata persistence remains with its existing owner and local write responses are discarded. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged.",
@@ -19858,7 +19827,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_stream_api.generate": {
       "boundary": {
-        "sha256": "bc7c7b9941156e69547412c579fe59595ad6a2b2e0f256586c27ef371aa33104",
+        "sha256": "164a07d7cec48926b18512064973a5c51705d9567170704bb287e558e16b8be4",
         "points": [
           {
             "method": "read_item",
@@ -19919,7 +19888,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "Retry point mappings are checked for role/conversation and nested metadata through Mapping access; history queries remain plain, and local create/replace/delete return values are discarded. SSE telemetry does not alter storage contracts. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged.",
@@ -19942,7 +19911,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "response-unused",
       "contract": "Cancellation refreshes the conversation with a discarded replace response; screened message persistence remains with its existing owner and the stream payload is assembled separately.",
@@ -19974,7 +19943,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "Point message/conversation mappings and plain fallback query rows use field-based ownership and soft-delete checks; nested mask metadata goes to existing persistence, and public JSON projects mask fields only.",
@@ -19996,7 +19965,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "The point message mapping is checked for conversation identity and passed to Mapping-compatible visual-style/persistence owners; public JSON projects nested visual_styles rather than the SDK document.",
@@ -20018,7 +19987,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "The point message mapping is checked against the authorized conversation and passed to Mapping-compatible revision readers/persistence; missing messages retain their 404 contract.",
@@ -20040,7 +20009,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "The partitioned prior-user query returns plain rows; only the first row content string is used as the originating request.",
@@ -20062,7 +20031,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "A reread SDK message is checked for conversation membership and inspected by Mapping-compatible block revision helpers; conflict/replay JSON consists of explicit revision fields, not the SDK wrapper.",
@@ -20084,7 +20053,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e3317b725d3277689aa5bbd46b578770edead571fb0521f8967b9e369aa692f5"
+        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
       },
       "classification": "sdk-compatible",
       "contract": "The reload callback returns a partitioned SDK message mapping to the Mapping-compatible image revision owner, which rechecks concurrent versions; the route emits only explicit revision/error fields.",
@@ -22027,7 +21996,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "_query_matching_messages: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22049,7 +22018,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "_query_legacy_conversations_for_feed: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22071,7 +22040,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "_count_hidden_legacy_conversations: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22093,7 +22062,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "_load_unread_collaboration_notification_map: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22115,7 +22084,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "_collect_child_message_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22137,7 +22106,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "_promote_remaining_thread_attempt: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22159,7 +22128,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "_authorize_personal_conversation_read: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22181,7 +22150,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "_list_personal_conversation_generated_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22214,7 +22183,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "response-unused",
       "contract": "_rebuild_authorized_personal_conversation_used_documents: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22235,7 +22204,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "_load_scope_lock_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22262,7 +22231,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "response-unused",
       "contract": "_persist_scope_lock_update: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22283,7 +22252,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.api_get_messages: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22305,7 +22274,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.get_conversations: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22332,7 +22301,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.update_conversation_title: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22375,7 +22344,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "response-unused",
       "contract": "register_route_backend_conversations.delete_conversation: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22417,7 +22386,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "response-unused",
       "contract": "register_route_backend_conversations.delete_multiple_conversations: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22443,7 +22412,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.toggle_conversation_pin: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22470,7 +22439,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.toggle_conversation_hide: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22497,7 +22466,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.bulk_pin_conversations: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22524,7 +22493,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.bulk_hide_conversations: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22551,7 +22520,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.get_conversation_metadata_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22573,7 +22542,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.get_conversation_kind_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22600,7 +22569,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.mark_conversation_read_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22622,7 +22591,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.generate_conversation_summary_api: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22644,7 +22613,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.get_user_classifications: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22666,7 +22635,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.search_conversations: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22714,7 +22683,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.delete_message: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22752,7 +22721,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
+        "module_sha256": "ba3ac4f8f2cef4d5a2d00f0791f198b44ef61f4b3d7c924a94b8bd97015cdfd1"
       },
       "classification": "sdk-compatible",
       "contract": "register_route_backend_conversations.switch_attempt: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
@@ -22774,13 +22743,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "8098cb1414887d448127f154f49df7fa6f9eae65fc66274a81f43ef9c0c0a094"
+        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
       },
       "classification": "sdk-compatible",
-      "contract": "_load_accessible_personal_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Fallback source discovery materializes plain query rows before current-revision selection; the access-index success path retains its owner-provided document list.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_document_route_owner_consumes_sdk_conversation_and_plain_file_rows"
       ]
     },
     "application/single_app/route_backend_documents.py::register_route_backend_documents.get_file_content": {
@@ -22801,13 +22770,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "8098cb1414887d448127f154f49df7fa6f9eae65fc66274a81f43ef9c0c0a094"
+        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_documents.get_file_content: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The partitioned SDK conversation is checked through user_id before message discovery. File query rows stay plain, supply chunk/content fields and produce an explicit plain JSON content response.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_document_route_owner_consumes_sdk_conversation_and_plain_file_rows"
       ]
     },
     "application/single_app/route_backend_documents.py::register_route_backend_documents.api_get_user_documents": {
@@ -22822,13 +22791,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "8098cb1414887d448127f154f49df7fa6f9eae65fc66274a81f43ef9c0c0a094"
+        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_documents.api_get_user_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The legacy count fallback consumes a scalar query result, while document/index listing projections remain with their existing owners; no point wrapper is treated as an exact plain document.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_document_route_owner_consumes_sdk_conversation_and_plain_file_rows"
       ]
     },
     "application/single_app/route_backend_documents.py::register_route_backend_documents.api_bulk_tag_documents": {
@@ -22843,13 +22812,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "8098cb1414887d448127f154f49df7fa6f9eae65fc66274a81f43ef9c0c0a094"
+        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_documents.api_bulk_tag_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Bulk-tag source lookups consume plain query rows, check document ownership and pass selected ids to the document mutation owner; local discovery introduces no SDK point-to-strict conversion.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_document_route_owner_consumes_sdk_conversation_and_plain_file_rows"
       ]
     },
     "application/single_app/route_backend_documents.py::register_route_backend_documents.api_update_tag": {
@@ -22864,13 +22833,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "8098cb1414887d448127f154f49df7fa6f9eae65fc66274a81f43ef9c0c0a094"
+        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_documents.api_update_tag: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Tag rename discovery consumes plain query dictionaries and field-based tag/owner values before existing document mutation calls.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_document_route_owner_consumes_sdk_conversation_and_plain_file_rows"
       ]
     },
     "application/single_app/route_backend_documents.py::register_route_backend_documents.api_delete_tag": {
@@ -22885,13 +22854,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "8098cb1414887d448127f154f49df7fa6f9eae65fc66274a81f43ef9c0c0a094"
+        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_documents.api_delete_tag: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Tag deletion iterates plain query rows and their tag lists before delegating mutations; query rows are not SDK point mappings.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_document_route_owner_consumes_sdk_conversation_and_plain_file_rows"
       ]
     },
     "application/single_app/route_backend_documents.py::register_route_backend_documents.api_share_document": {
@@ -22911,13 +22880,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8098cb1414887d448127f154f49df7fa6f9eae65fc66274a81f43ef9c0c0a094"
+        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_documents.api_share_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The document CosmosDict supplies user_id and shared-user fields for owner authorization; the refreshed SDK mapping is passed to field-based notification projection, while sharing persistence remains with its document owner.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_document_share_owner_passes_sdk_upsert_mapping_to_index"
       ]
     },
     "application/single_app/route_backend_documents.py::register_route_backend_documents.api_unshare_document": {
@@ -22932,13 +22901,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8098cb1414887d448127f154f49df7fa6f9eae65fc66274a81f43ef9c0c0a094"
+        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_documents.api_unshare_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The point document mapping is checked through user_id and shared-user fields before the document owner removes sharing; JSON responses contain explicit result fields, not the SDK wrapper.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_document_share_owner_passes_sdk_upsert_mapping_to_index"
       ]
     },
     "application/single_app/route_backend_documents.py::register_route_backend_documents.api_remove_self_from_document": {
@@ -22953,13 +22922,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8098cb1414887d448127f154f49df7fa6f9eae65fc66274a81f43ef9c0c0a094"
+        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_documents.api_remove_self_from_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The SDK document supplies owner and sharing-list fields for removal checks before delegated mutation; no exact-dict domain admission occurs on the point value.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_document_share_owner_passes_sdk_upsert_mapping_to_index"
       ]
     },
     "application/single_app/route_backend_documents.py::register_route_backend_documents.api_approve_shared_document": {
@@ -22979,13 +22948,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8098cb1414887d448127f154f49df7fa6f9eae65fc66274a81f43ef9c0c0a094"
+        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_documents.api_approve_shared_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The SDK document is field-read and mutated for sharing approval; upsert returns CosmosDict, accepted by isinstance(dict), and that persisted mapping with fresh ETag is passed to index synchronization. Browser JSON is projected separately.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_document_share_owner_passes_sdk_upsert_mapping_to_index"
       ]
     },
     "application/single_app/route_backend_feedback.py::_authorize_feedback_conversation": {
@@ -23349,7 +23318,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "Ledger source revalidation consumes plain projected query rows to check source visibility; failed reads omit the ledger rather than authorizing point documents or widening scope.",
@@ -23370,7 +23339,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation point mapping proves owner/nondeleted state through field access and now rechecks shared-source membership before dependent reads; missing or unauthorized records retain ConversationContextError.",
@@ -23392,7 +23361,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "Historical context discovery consumes plain partitioned query rows, applies retry-prefix/screening rules and builds a bounded plain conversation snapshot.",
@@ -23413,7 +23382,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "Point answer mappings supply conversation/visibility and nested thread fields; metadata patching retains its existing owner and stale or missing answers are not silently restored.",
@@ -23440,7 +23409,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "A cutoff point mapping supplies authorized conversation/role/timestamp; plain bounded query rows pass through screening and saved-analysis sanitization before plain snapshot construction.",
@@ -23461,7 +23430,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "Source revalidation consumes plain bounded query rows through screening and strict saved-snapshot checks; no point wrapper is repaired into a domain context. Selected-history projection uses plain SDK query rows, existing visibility/fingerprint checks and admitted typed result references; new full-text projection and assistant-only result selection are exercised through real planning, execution and editor routes with SDK-default containers.",
@@ -23483,7 +23452,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "The saved turn point mapping is normalized by normalize_history_message before role/conversation/fingerprint validation; history-disabled snapshots fail before reuse and source authorization is rechecked.",
@@ -23515,7 +23484,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "Requested conversation point mappings supply owner/scope/deletion fields; constructed create/upsert bodies are plain and write responses are discarded. Shared ownership is established separately, not inferred from wrapper type.",
@@ -23536,7 +23505,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "response-unused",
       "contract": "The message upsert response is discarded; screening and source-availability checks occur before publication, and persistence errors retain the existing failure path.",
@@ -23560,7 +23529,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "Conversation/message point mappings feed shared-backing ownership checks and Mapping-compatible collaboration mirroring; no strict task/result descriptor consumes the wrappers.",
@@ -23581,7 +23550,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "The saved question point mapping updates nested orchestration metadata through the existing metadata-patch owner; durable returned planning identity is a separate plain scoped DTO.",
@@ -23592,7 +23561,7 @@
     },
     "application/single_app/route_backend_orchestration.py::_save_turn_message": {
       "boundary": {
-        "sha256": "60e2d02d068178246d072f878c7063fa4f18fa5003fa9de3c2498470ed95e693",
+        "sha256": "b05e8634d174ceba3cdee9fbdd21ad0ef4b8864a7a572aae0795b6a64578e257",
         "points": [
           {
             "method": "read_item",
@@ -23607,7 +23576,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "Saved turn point mappings are converted through normalize_history_message before identity/fingerprint reuse; nested metadata patches retain conditional ownership, and the returned identity/fingerprint are scalar projections.",
@@ -23633,7 +23602,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation point mapping supplies owner/deletion and mutable index fields; replace response is discarded and the Mapping-compatible cache invalidator consumes the authorized input.",
@@ -23654,7 +23623,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "The assistant point mapping supplies role/deletion/mask metadata to reply_is_retracted; absence is treated as removed, never as an empty valid response.",
@@ -23675,7 +23644,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "Artifact point mappings are checked by field access for conversation/user/visibility and nested content metadata; no top-level exact-dictionary result contract consumes them.",
@@ -23696,7 +23665,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "Artifact point mappings are JSON-encoded by the existing checkpoint fingerprint helper; SDK dictionary subclasses are supported and nested artifact validation is unchanged.",
@@ -23717,7 +23686,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "993e64056a88500e06d5cc02a0e85577360dfa3b6aeb0b722eac19c981972c45"
+        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
       },
       "classification": "sdk-compatible",
       "contract": "Clarification admission consumes SDK conversation ownership fields. Selected-source preparation uses current authorized manifest DTOs before resolution; only bounded plain identity/schema projections enter model context. Only source revision hashes persist in seeds. Point wrappers never enter strict planner contracts, and approval precedes computation/export. Selected-history projection uses plain SDK query rows, existing visibility/fingerprint checks and admitted typed result references; new full-text projection and assistant-only result selection are exercised through real planning, execution and editor routes with SDK-default containers.",
@@ -24327,13 +24296,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e7c2b601ff10d30163c943231ff1f33043f237e89159ac46f68dcfbcbd139197"
+        "module_sha256": "7c52ad99acab84e607f9ba078b221a64979679c4ec74b5dcb40a4eee789eb031"
       },
       "classification": "sdk-compatible",
-      "contract": "_get_authorized_chat_artifact_message: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Partitioned SDK conversation/message mappings feed participation, generated-artifact, publication and optional workspace screening checks through fields. The authorized message mapping is returned intact with nested plain metadata and ETag.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_enhanced_citation_owner_returns_sdk_artifact_and_uses_plain_upload_rows"
       ]
     },
     "application/single_app/route_enhanced_citations.py::register_enhanced_citations_routes.get_enhanced_citation_tabular": {
@@ -24354,13 +24323,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e7c2b601ff10d30163c943231ff1f33043f237e89159ac46f68dcfbcbd139197"
+        "module_sha256": "7c52ad99acab84e607f9ba078b221a64979679c4ec74b5dcb40a4eee789eb031"
       },
       "classification": "sdk-compatible",
-      "contract": "register_enhanced_citations_routes.get_enhanced_citation_tabular: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The SDK conversation owner check precedes file discovery. Partitioned file query rows remain plain dictionaries through approval/provenance checks and blob-field projection; the SDK conversation never enters strict JSON admission.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_v2_public_source_owner_sdk.py::test_enhanced_citation_owner_returns_sdk_artifact_and_uses_plain_upload_rows"
       ]
     },
     "application/single_app/route_external_public_documents.py::register_route_external_public_documents.external_get_public_documents": {
@@ -25806,7 +25775,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "61fe8ffd3a50c93a1d8522f190cd62e265310519177403b57198c470278a57ba"
+        "module_sha256": "42616043993bf5e4d3a887ed69c911919ac97fd1401e052e7a15b6bae098379e"
       },
       "classification": "sdk-compatible",
       "contract": "The task request create response is unused. On an idempotent conflict, the SDK point message is compared by Mapping fields; planner input is the newly constructed plain message.",
@@ -25827,7 +25796,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "61fe8ffd3a50c93a1d8522f190cd62e265310519177403b57198c470278a57ba"
+        "module_sha256": "42616043993bf5e4d3a887ed69c911919ac97fd1401e052e7a15b6bae098379e"
       },
       "classification": "normalized-strict",
       "contract": "The saved assistant point response is normalized before workflow_chat_result validates the exact bound assistant document and projects outputs.",
@@ -25848,7 +25817,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "61fe8ffd3a50c93a1d8522f190cd62e265310519177403b57198c470278a57ba"
+        "module_sha256": "42616043993bf5e4d3a887ed69c911919ac97fd1401e052e7a15b6bae098379e"
       },
       "classification": "sdk-compatible",
       "contract": "Plain query selectors are restricted by audit partition, user and workflow/run binding, then re-read through the normalized orchestration-run owner before cancellation/fencing.",
@@ -25894,7 +25863,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "normalized-strict",
       "contract": "Audit ownership and existing target checks use Mapping fields. Retained file/image/chunk point documents are normalized before strict source authorization and reference remapping; returned writes are unused.",
@@ -25915,7 +25884,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "normalized-strict",
       "contract": "A copied-image SDK point response is normalized before collaboration mirroring. Other backing and destination messages go through their existing authorized delivery owners.",
@@ -25936,7 +25905,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "787ef29b38c90ed49510a3cebaeaea6abafdc4e2ff681ee171bd043e49fd51d2"
+        "module_sha256": "7f81aec394daa3b4186516218c95252dea491043f484994cf71890277a607479"
       },
       "classification": "response-unused",
       "contract": "The unread/citation summary mutates its Mapping-compatible conversation input; the returned upsert response is discarded.",
@@ -32778,6 +32747,22 @@
       "contract": "Inherits real installed SDK CosmosDict point responses, nested plain JSON, ETags, partition routing, conditional writes and fault injection from AtomicMemoryContainer. Adds the File Sync query subset with plain rows/scalar counts and a one-shot conditional-delete race.",
       "tests": [
         "functional_tests/test_file_sync_cosmos_response_contract.py"
+      ]
+    },
+    "functional_tests/test_v2_public_source_owner_sdk.py::OwnerContainer": {
+      "boundary": {
+        "sha256": "598d5b9ddc97381fc579b2b5fc4549463adb80296b08d93cb4d07304f0a2eea1",
+        "methods": [],
+        "kind": "class",
+        "inherited_bases": [
+          "AtomicMemoryContainer"
+        ],
+        "imports_sha256": "5705eccae8c0947e5b7f6bf19038cd49964fefd4e7d81124cb6230aafb5933a7"
+      },
+      "classification": "sdk-default",
+      "contract": "SDK-default points, conditional ETags, partition routing and failure semantics are inherited unchanged from AtomicMemoryContainer. Only bounded query predicates are added; query rows remain plain dictionaries. Representative real-owner regressions assert SDK point/write types and plain query shapes.",
+      "tests": [
+        "functional_tests/test_v2_public_source_owner_sdk.py"
       ]
     }
   }

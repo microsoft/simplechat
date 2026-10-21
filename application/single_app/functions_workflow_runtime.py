@@ -38,6 +38,9 @@ from functions_workflow_runtime_store import (
     validate_repeat_admission_policy,
     WAITING_STATES,
 )
+from public_source_policy import (
+    LEGACY_VISIBLE, current_public_source_policy, public_source_policy_context,
+)
 
 
 RUNTIME_TERMINAL_STATES = frozenset({
@@ -226,6 +229,9 @@ def queue_durable_workflow_run(
         "definition_version": snapshot.get("definition_version", 1),
         "started_at": control.get("created_at") or _now(), "completed_at": None,
         "definition_revision": snapshot["definition_revision"],
+        "public_source_policy": current.get(
+            "public_source_policy", current_public_source_policy(actor_user_id),
+        ),
     }
     if invocation_metadata is not None:
         run["mcp_invocation"] = deepcopy(invocation_metadata)
@@ -526,11 +532,15 @@ def continue_durable_workflow_run(workflow, run_id):
         controller = StructuredWorkflowExecution if snapshot.get("definition_version") == 3 else DurableWorkflowExecution
         execution = controller(store, lease, snapshot, run_id, settings=settings)
         result = None
-        with workflow_execution_scope(execution):
+        run_record = services["runs"].read_item(item=run_id, partition_key=services["partition"])
+        source_policy = run_record.get(
+            "public_source_policy", snapshot.get("public_source_policy", LEGACY_VISIBLE),
+        )
+        with workflow_execution_scope(execution), public_source_policy_context(control["actor_user_id"], source_policy):
             try:
                 result = run_personal_workflow(
                     snapshot,
-                    trigger_source=services["runs"].read_item(item=run_id, partition_key=services["partition"])["trigger_source"],
+                    trigger_source=run_record["trigger_source"],
                     actor_user_id=control["actor_user_id"], run_id=run_id,
                 )
                 execution.check()

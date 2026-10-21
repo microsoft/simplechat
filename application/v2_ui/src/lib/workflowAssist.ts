@@ -7,6 +7,7 @@
 // string is plain text for the UI to render as a text node.
 
 import { api, apiUrl, ApiError, CREDENTIALS_MODE } from './apiClient';
+import { v2ApiFetch } from './v2SourcePolicy';
 import type { ContextItem } from './chatContext';
 import { codePointLength, codePointPrefix } from './codePoints';
 import { canonicalPlanReferences, planDraftReferences, PlanReferenceError, type PlanReference } from './planReferences';
@@ -482,7 +483,7 @@ export async function postWorkflowAssist(
     try {
         // A raw fetch rather than apiClient: ApiError drops the headers, and a throttled 503 carries
         // its wait only in Retry-After.
-        const response = await fetch(apiUrl(workflowAssistPath(body.draft)), {
+        const response = await v2ApiFetch(apiUrl(workflowAssistPath(body.draft)), {
             method: 'POST',
             credentials: CREDENTIALS_MODE,
             signal: controller.signal,

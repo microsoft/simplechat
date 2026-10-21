@@ -6,6 +6,7 @@
 // answer is checked against what was asked (lib/reviewSuggestions.ts) before anything shows it.
 
 import { apiUrl, CREDENTIALS_MODE } from './apiClient';
+import { v2ApiFetch } from './v2SourcePolicy';
 import type { ReviewSectionId } from './reviewAccess';
 import {
     describeReviewAssistFailure,
@@ -47,7 +48,7 @@ export async function postReviewAssist(
     try {
         // A raw fetch rather than apiClient: ApiError drops the headers, and a throttled 429
         // carries its wait in Retry-After.
-        const response = await fetch(apiUrl(REVIEW_ASSIST_PATHS[section]), {
+        const response = await v2ApiFetch(apiUrl(REVIEW_ASSIST_PATHS[section]), {
             method: 'POST',
             credentials: CREDENTIALS_MODE,
             signal: controller.signal,
