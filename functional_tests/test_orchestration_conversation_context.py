@@ -1,11 +1,11 @@
 # test_orchestration_conversation_context.py
 """
 Functional regressions for bounded, conversation-aware orchestration.
-Version: 0.261.365
+Version: 0.261.367
 Implemented in: 0.261.096
 Resolver response compatibility and bounded recovery: 0.261.103
 Single orchestration contract updated in: 0.261.139
-Empty-history clarification continuation fixed in: 0.261.365
+Empty-history clarification continuation fixed in: 0.261.367
 
 Exercises the real history, resolution, planner prompt, and selected adapter code with external
 model/search boundaries replaced. No Azure resources or credentials are used.

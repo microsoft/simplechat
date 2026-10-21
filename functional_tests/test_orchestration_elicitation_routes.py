@@ -1,10 +1,10 @@
 # test_orchestration_elicitation_routes.py
 """
 Route-level clarification regressions for the single orchestration contract.
-Version: 0.261.365
+Version: 0.261.367
 Implemented in: 0.261.139
 Single orchestration contract updated in: 0.261.139
-Empty-history clarification continuation fixed in: 0.261.365
+Empty-history clarification continuation fixed in: 0.261.367
 
 Ports still-relevant clarification route behavior from the removed legacy-plan tests
 onto the Gather / Reason / Render plan and run routes.

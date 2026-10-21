@@ -1,6 +1,6 @@
-# Orchestration clarification continuation fix (0.261.365)
+# Orchestration clarification continuation fix (0.261.367)
 
-Fixed/Implemented in version: **0.261.365**
+Fixed/Implemented in version: **0.261.367**
 
 Application version: `application/single_app/config.py`.
 

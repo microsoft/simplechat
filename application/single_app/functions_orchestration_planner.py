@@ -25,9 +25,9 @@ error, not evidence that the task can be answered without gathering information.
 Every plan uses the Gather / Reason / Render contract. There is one planner prompt,
 ``PLANNER_SYSTEM_PROMPT``, and one validator.
 
-Version: 0.261.365
+Version: 0.261.367
 Gathered results must be read, and an action's chart reaches the answer, in: 0.261.293
-Empty-history clarification continuation fixed in: 0.261.365
+Empty-history clarification continuation fixed in: 0.261.367
 """
 
 import json

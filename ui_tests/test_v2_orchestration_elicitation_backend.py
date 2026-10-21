@@ -1,8 +1,8 @@
 # test_v2_orchestration_elicitation_backend.py
 """
 Browser-to-Flask regression for self-contained clarification continuation.
-Version: 0.261.365
-Implemented in: 0.261.365
+Version: 0.261.367
+Implemented in: 0.261.367
 
 The real card, controller, resolver, planner, routes and persistence run unchanged.
 Only external model, storage and source-discovery I/O is deterministic. The browser
