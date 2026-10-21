@@ -11,7 +11,7 @@
 // Everything here reads both, so a caller never has to know which it received.
 
 import { readM365Citations } from './m365Citations';
-import type { AgentCitation, HybridCitation, Json, M365Citation, WebCitation } from './types';
+import type { AgentCitation, ChatMessage, ChatStreamEvent, HybridCitation, Json, M365Citation, WebCitation } from './types';
 
 type Bag = Record<string, unknown>;
 
@@ -272,6 +272,19 @@ export function readSources(source: Json | ChatMessageLike | null | undefined): 
         tools,
         m365,
         total: documents.length + web.length + tools.length + m365.length,
+    };
+}
+
+/** Keep the same server-owned evidence on ordinary and orchestrated finished replies. */
+export function completionCitations(event: ChatStreamEvent): Pick<
+    ChatMessage, 'hybrid_citations' | 'web_search_citations' | 'agent_citations' | 'm365_citations'
+> {
+    const sources = readSources(event.blocked || event.role === 'safety' ? null : event);
+    return {
+        hybrid_citations: sources.documents,
+        web_search_citations: sources.web,
+        agent_citations: sources.tools,
+        m365_citations: sources.m365,
     };
 }
 
