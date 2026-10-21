@@ -3947,6 +3947,59 @@ def get_user_ui_settings(user_id, allow_cross_user=False):
         'settings': _extract_user_ui_settings(doc),
     }
     
+def _clear_stale_active_group(user_id, stale_group_id):
+    """Compare-and-clear a confirmed stale preference without changing agent defaults.
+
+    Called only by the group owner after membership validation. A failed repair
+    still masks the stale preference for this request; later requests retry it.
+    """
+    _authorize_user_settings_access(user_id, "update")
+    doc = _get_request_cached_user_settings(user_id)
+    for attempt in range(3):
+        try:
+            doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+            if doc.get("settings", {}).get("activeGroupOid") != stale_group_id:
+                invalidate_user_settings_caches(user_id)
+                _set_request_cached_user_settings(user_id, doc)
+                return True
+            if not doc.get("_etag"):
+                log_event(
+                    "[USER_SETTINGS] Cannot clear stale active group without an ETag.",
+                    extra={"user_id": user_id}, level=logging.WARNING,
+                )
+                break
+            doc["settings"]["activeGroupOid"] = None
+            doc["lastUpdated"] = datetime.now(timezone.utc).isoformat()
+            doc = cosmos_user_settings_container.replace_item(
+                user_id, body=doc,
+                etag=doc["_etag"], match_condition=MatchConditions.IfNotModified,
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            invalidate_user_settings_caches(user_id)
+            return True
+        except exceptions.CosmosHttpResponseError as exc:
+            if exc.status_code == 412 and attempt < 2:
+                continue
+            log_event(
+                "[USER_SETTINGS] Failed to clear stale active group.",
+                extra={"user_id": user_id, "error_type": type(exc).__name__},
+                level=logging.WARNING,
+            )
+            break
+        else:
+            invalidate_user_settings_caches(user_id)
+            _set_request_cached_user_settings(user_id, doc)
+            return True
+
+    # The write is best effort, but the revoked preference is never authoritative.
+    invalidate_user_settings_caches(user_id)
+    if doc is not None and doc.get("settings", {}).get("activeGroupOid") == stale_group_id:
+        doc["settings"]["activeGroupOid"] = None
+    if doc is not None:
+        _set_request_cached_user_settings(user_id, doc)
+    return False
+
+
 def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
     """
     Updates or creates user settings in Cosmos DB, merging new settings

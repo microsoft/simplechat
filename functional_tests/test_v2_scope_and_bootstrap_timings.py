@@ -2,7 +2,7 @@
 """
 Functional contracts for the lightweight V2 active-scope read and phase timings.
 
-Version: 0.261.306
+Version: 0.261.371
 Implemented in: 0.261.305
 
 The real route bodies, scope helper, timer, and authentication decorators execute
@@ -48,6 +48,7 @@ def environment():
         "get_settings": Mock(return_value={"private_key": "fixture-private-settings"}),
         "sanitize_settings_for_user": Mock(return_value={"enable_group_workspaces": True}),
         "get_user_settings": Mock(side_effect=lambda user_id: {"settings": preferences}),
+        "get_optional_active_group": Mock(return_value=None),
         "get_current_user_info": lambda: {"userId": session.get("user", {}).get("oid")},
         "get_user_groups": Mock(side_effect=lambda user_id: groups),
         "find_group_by_id": Mock(side_effect=lambda group_id: next(
