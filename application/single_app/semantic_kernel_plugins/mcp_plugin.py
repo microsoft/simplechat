@@ -31,7 +31,10 @@ from functions_mcp_tool_pinning import (
     normalize_mcp_tool_fingerprints,
 )
 from semantic_kernel_plugins.base_plugin import BasePlugin
-from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
+from semantic_kernel_plugins.plugin_invocation_logger import (
+    plugin_function_logger,
+    report_plugin_invocation_failure,
+)
 
 
 class McpPlugin(BasePlugin):
@@ -152,7 +155,8 @@ class McpPlugin(BasePlugin):
             description = f"{description}\n\nInput schema: {input_schema}"
 
         async def tool_function(**kwargs):
-            return await self.call_tool(original_name, kwargs)
+            result = await self.call_tool(original_name, kwargs)
+            return self._report_tool_outcome(result)
 
         tool_function.__name__ = function_name
         tool_function.__qualname__ = f"McpPlugin.{function_name}"
@@ -176,6 +180,16 @@ class McpPlugin(BasePlugin):
     @kernel_function(description="Call an MCP tool by its original MCP tool name with a JSON object of arguments.")
     async def call_tool(self, tool_name: str, arguments: Optional[dict] = None) -> dict:
         """Call a configured MCP tool by original name."""
+        result = await self._call_tool(tool_name, arguments)
+        return self._report_tool_outcome(result)
+
+    @staticmethod
+    def _report_tool_outcome(result: dict) -> dict:
+        if result.get("success") is False:
+            report_plugin_invocation_failure(result.get("error") or "MCP tool call failed.")
+        return result
+
+    async def _call_tool(self, tool_name: str, arguments: Optional[dict] = None) -> dict:
         try:
             self._validate_manifest()
         except (ValueError, PermissionError) as exc:
