@@ -1,5 +1,5 @@
 // test_v2_stream_citation_delivery.mjs
-// Version: 0.261.365
+// Version: 0.261.367
 // Implemented in: 0.261.365
 // Real chat-store/SSE regressions with mocked HTTP only; no live model or connector calls.
 

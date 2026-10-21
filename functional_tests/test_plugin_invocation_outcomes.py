@@ -1,7 +1,7 @@
 # test_plugin_invocation_outcomes.py
 """
 Functional regressions for explicit connector outcomes and plugin invocation logging.
-Version: 0.261.365
+Version: 0.261.367
 Implemented in: 0.261.365
 
 Real modules run in fresh processes with the existing offline bootstrap and mocked HTTP.

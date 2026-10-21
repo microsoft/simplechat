@@ -5,6 +5,9 @@ Fixed/Implemented in version: **0.261.365**
 Related config.py update: `VERSION = "0.261.365"` in
 `application/single_app/config.py`.
 
+Current application version after merging the V2 base: **0.261.367**.
+This retains the search-evidence fixes from base version **0.261.366**.
+
 ## Issue and root causes
 
 An ordinary V2 agent reply could finish with an empty Sources panel even when
@@ -124,6 +127,22 @@ The shared machine's `pyOpenSSL 25.3.0` / `cryptography 50.0.0` combination
 prevented importing the full chat route. Real citation-builder integration
 was validated in a session-local environment with compatible cryptography,
 without changing application dependencies or the shared Python installation.
+
+### Base synchronization in 0.261.367
+
+The V2 base at `ef8da7beb` merged with only a `config.py` version conflict.
+The combined version is **0.261.367**; both citation fixes are retained.
+Post-merge validation passed the frontend production build, 60 stream tests,
+30 Chromium tests covering tool/Search/Microsoft 365/Analyze citations,
+7 documentation-coverage checks, and 6 site-quality checks.
+
+The backend outcome, Search citation/delivery, dependency-citation, and
+Search-result-integrity suites produced **75 passed, 1 failed** with external
+network access blocked. The failure is the base's already documented
+`test_checkpoint_child_keeps_original_grounded_citations_without_replaying_source`
+checkpoint-recovery limitation (`result_producer_unavailable`), not a merge
+conflict or a newly introduced behavior change. Backend and browser validation
+used a temporary compatible Python environment without changing shared packages.
 
 ## Limitations
 

@@ -1,7 +1,7 @@
 # test_v2_stream_citation_delivery.py
 """
 UI regressions for live tool/web evidence and recorded tool outcomes.
-Version: 0.261.365
+Version: 0.261.367
 Implemented in: 0.261.365
 
 Drives the real send/SSE/store/message inspector locally with synthetic HTTP boundaries.
