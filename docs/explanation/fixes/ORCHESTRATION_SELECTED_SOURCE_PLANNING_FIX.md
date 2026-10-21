@@ -1,6 +1,6 @@
 # Selected-source orchestration planning fix
 
-Current version: **0.261.365**
+Current version: **0.261.369**
 
 Fixed in version: **0.261.355**
 
@@ -33,7 +33,7 @@ is checked before download; downloads are range-bounded and ETag-pinned.
 Metadata revisions are checked around the read. Private storage locators and
 callbacks never enter the model projection.
 
-Version **0.261.365** corrects the reader's Azure SDK range invocation with an
+Version **0.261.369** corrects the reader's Azure SDK range invocation with an
 explicit zero offset. See the [selected-source SDK range fix](ORCHESTRATION_SELECTED_SOURCE_SDK_RANGE_FIX.md)
 for the SDK-backed regression coverage and debug-only read diagnostics.
 

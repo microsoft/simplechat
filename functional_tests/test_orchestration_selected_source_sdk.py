@@ -1,8 +1,8 @@
 # test_orchestration_selected_source_sdk.py
 """Selected-source reads use the real Azure Blob SDK's bounded download contract.
 
-Version: 0.261.365
-Implemented in: 0.261.365
+Version: 0.261.369
+Implemented in: 0.261.369
 
 The real bootstrap, screening boundary, parsers and SDK execute offline. Only
 external metadata/directory I/O and the SDK's HTTP transport are substituted.

@@ -1,8 +1,8 @@
 # Selected-source Azure SDK range fix
 
-Current version: **0.261.365**
+Current version: **0.261.369**
 
-Fixed in version: **0.261.365**
+Fixed in version: **0.261.369**
 
 Application version: `application/single_app/config.py`.
 
@@ -100,12 +100,17 @@ SDK-backed suite passed **30 cases** using:
 python -m pytest -q -p no:cacheprovider -p test_support.cosmos_network_guard --tb=short --disable-warnings functional_tests\test_orchestration_selected_source_sdk.py
 ```
 
-A combined run of the SDK, selected-source planning, source-access, orchestration
-Cosmos-response, external-bootstrap, cleanup-bootstrap, image-reader and workflow
-chat-execution checks passed **314 cases** before the final additional SDK
-owner/query assertion was added. That assertion is included in the final
-30-case result above. The cold action-credentials bootstrap suite also passed
-**9 cases**.
+After merging the latest V2 base and aligning the application version to
+**0.261.369**, the combined SDK, selected-source planning, source-access,
+orchestration Cosmos-response, external-bootstrap, cleanup-bootstrap,
+image-reader, workflow chat-execution and streaming-telemetry checks passed
+**326 cases**:
+
+```powershell
+python -m pytest -q -p no:cacheprovider -p test_support.cosmos_network_guard --tb=short --disable-warnings functional_tests\test_orchestration_selected_source_sdk.py functional_tests\test_orchestration_selected_source_planning.py functional_tests\test_orchestration_source_access.py functional_tests\test_orchestration_cosmos_response_contract.py functional_tests\test_orchestration_external_bootstrap.py functional_tests\test_orchestration_cleanup_bootstrap.py functional_tests\test_orchestration_deliverables.py::test_the_image_reader_refuses_a_deleted_or_moved_image functional_tests\test_workflow_chat_execution.py functional_tests\test_appinsights_streaming_context.py
+```
+
+The earlier cold action-credentials bootstrap suite also passed **9 cases**.
 
 The SDK regression failed before the correction with the SDK's missing-offset
 `ValueError`, wrapped by the unchanged screening boundary. Afterward it observes

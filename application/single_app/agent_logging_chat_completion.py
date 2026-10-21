@@ -14,6 +14,7 @@ from functions_m365_agent_continuation import (
 from functions_appinsights import log_event
 from functions_model_capabilities import ModelTokenBudget, ModelTokenBudgetError
 from functions_model_budget_runtime import prepare_model_execution_settings
+from functions_model_message_names import wrap_agent_message_names
 import datetime
 import re
 from typing import Literal
@@ -70,7 +71,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
     async def _get_chat_completion_service_and_settings(self, kernel, arguments):
         service, settings = await super()._get_chat_completion_service_and_settings(kernel, arguments)
         if self.model_token_budget is None:
-            return service, settings
+            return wrap_agent_message_names(service), settings
         if (
             self.service is not None and service is not self.service
             or self.deployment_name is not None and service.ai_model_id != self.deployment_name
@@ -94,7 +95,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
                 extra={"agent_id": self.id, "code": error.code}, level=logging.ERROR,
             )
             raise
-        return service, settings
+        return wrap_agent_message_names(service), settings
 
     def log_tool_execution(self, tool_name, arguments=None, result=None):
         """Manual method to log tool executions. Can be called by plugins."""

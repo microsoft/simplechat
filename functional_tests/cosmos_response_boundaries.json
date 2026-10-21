@@ -11848,7 +11848,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "3f7fdea5320eb92d9e78f2b85202225c517261aa1b0c61955a4c6dec0db1da07"
+        "module_sha256": "5242f781a3af069bf6240ecd5025dd37466179528d0dcebbceadd4e66c631fc5"
       },
       "classification": "normalized-strict",
       "contract": "Ownership and deletion flags are Mapping reads; normalize_cosmos_document produces the plain top-level document before strict orchestration consumers.",
@@ -11870,7 +11870,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "3f7fdea5320eb92d9e78f2b85202225c517261aa1b0c61955a4c6dec0db1da07"
+        "module_sha256": "5242f781a3af069bf6240ecd5025dd37466179528d0dcebbceadd4e66c631fc5"
       },
       "classification": "normalized-strict",
       "contract": "The lazy identity reader normalizes the SDK user-settings point response through _document_response before the external-identity strict settings projection.",
@@ -11893,7 +11893,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "3f7fdea5320eb92d9e78f2b85202225c517261aa1b0c61955a4c6dec0db1da07"
+        "module_sha256": "5242f781a3af069bf6240ecd5025dd37466179528d0dcebbceadd4e66c631fc5"
       },
       "classification": "sdk-compatible",
       "contract": "The image reader consumes SDK message fields and nested plain metadata, verifies the retained blob binding, and returns bytes rather than the point wrapper.",
@@ -11915,7 +11915,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "3f7fdea5320eb92d9e78f2b85202225c517261aa1b0c61955a4c6dec0db1da07"
+        "module_sha256": "5242f781a3af069bf6240ecd5025dd37466179528d0dcebbceadd4e66c631fc5"
       },
       "classification": "sdk-compatible",
       "contract": "Artifact enumeration returns plain query rows after a fresh normalized owner-conversation read; no point wrapper enters the transform candidate contract.",
@@ -11937,7 +11937,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "3f7fdea5320eb92d9e78f2b85202225c517261aa1b0c61955a4c6dec0db1da07"
+        "module_sha256": "5242f781a3af069bf6240ecd5025dd37466179528d0dcebbceadd4e66c631fc5"
       },
       "classification": "sdk-compatible",
       "contract": "The artifact transport callback supplies SDK point messages to Mapping-compatible binding checks. The selected-source reader returns bounded plain source context from authorized manifests and now receives the owner conversation ID only for hashed diagnostics; it retains screening, revision and conditional Blob-read fences.",
@@ -11966,7 +11966,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "3f7fdea5320eb92d9e78f2b85202225c517261aa1b0c61955a4c6dec0db1da07"
+        "module_sha256": "5242f781a3af069bf6240ecd5025dd37466179528d0dcebbceadd4e66c631fc5"
       },
       "classification": "normalized-strict",
       "contract": "Conversation and run-tombstone point callbacks normalize through _document_response before strict cleanup-source checks; write status contracts remain separate.",
