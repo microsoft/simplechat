@@ -381,6 +381,27 @@ provider-qualified capabilities, not the text-chat model or the application's cl
 Unsupported or stale masks/options are rejected rather than silently changed into a
 different operation. See [Generate images]({{ '/guides/generate-images/' | relative_url }}).
 
+## Chat attachments (V2 interface)
+
+Fixed/Implemented in version: **0.261.368**
+(`application/single_app/config.py`).
+File paste and drag-and-drop work in normal chat, not just in Image reference mode.
+These gestures use the existing attachment controls and do not add another upload setting.
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Attach a file | Opens the picker for a supported local file and queues its upload. | Add a source you have not already stored in a workspace. | [`enable_chat_file_uploads`]({{ '/admin/workspaces/' | relative_url }}) and the existing upload role policy |
+| Paste into Message | Attaches supported images or files exposed by the browser's clipboard event. Ordinary text still pastes at the cursor. | Ask about a screenshot or copied file without opening the picker. | Same as Attach a file |
+| Drop onto Message | Uploads supported files dropped on the message box without replacing the text already written. Text-only drops remain text. | Bring a file into the question directly from another window. | Same as Attach a file |
+| Attached files | Shows each file's upload, processing, ready, or failed state, with local thumbnails for browser-renderable images. | Check that the intended source is ready before sending. | Same as Attach a file |
+| Retry / Remove attachment | Retries a failed attachment or removes it from the draft without clearing the question. Removal does not delete an already uploaded copy. | Recover from an upload failure or correct an accidental attachment. | Same as Attach a file |
+
+Clipboard file availability depends on the browser and source application. Copied paths,
+links, and HTML images are not automatically uploads; use **Attach a file** when the browser
+does not expose a file. The same file-type and size limits apply to every attachment method.
+Image mode retains its separate reference-image restrictions. See
+[Upload documents in chat]({{ '/guides/upload-documents-in-chat/' | relative_url }}).
+
 ## Uploaded and reference images (V2 interface)
 
 From version **0.261.192**, images you upload are shown in the conversation and can be sent to

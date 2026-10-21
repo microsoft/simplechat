@@ -1,7 +1,7 @@
 # test_v2_image_reference_generation.py
 """
 UI coverage for v2 direct Image mode reference-image generation.
-Version: 0.261.192
+Version: 0.261.368
 Implemented in: 0.261.192
 
 This test ensures reference uploads, "Use as reference", sent thumbnails, and capability
@@ -54,6 +54,9 @@ class ImageReferenceApi:
             return
         if is_pending_actions_list(request.method, path):
             route.fulfill(json=pending_actions_payload())
+            return
+        if request.method == "GET" and path == "/api/action-credentials/pending":
+            route.fulfill(json={"requests": []})
             return
         self.requests.append({"method": request.method, "path": path})
         if request.method == "POST" and path == "/upload":
