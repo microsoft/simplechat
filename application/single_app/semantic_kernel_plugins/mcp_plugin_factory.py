@@ -7,10 +7,12 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
+from mcp.types import CallToolResult
 from semantic_kernel.connectors.mcp import (
     MCPSsePlugin,
     MCPStreamableHttpPlugin,
     MCPWebsocketPlugin,
+    _mcp_call_tool_result_to_kernel_contents,
 )
 
 from functions_appinsights import log_event
@@ -421,7 +423,11 @@ class McpPluginFactory:
         try:
             debug_print(f"[MCP_PLUGIN_FACTORY] Connecting to MCP server for tool call tool_name={tool_name}.")
             await connector.connect()
-            raw_result = await connector.call_tool(tool_name, **(arguments or {}))
+            if not connector.session:
+                raise McpConfigurationError("MCP server did not create a session.")
+            if not connector.load_tools_flag:
+                raise McpConfigurationError("MCP tool loading is disabled for this action.")
+            raw_result = await connector.session.call_tool(tool_name, arguments=arguments or {})
             manifest = cls._normalize_manifest(config)
             additional_fields = manifest["additionalFields"]
             result = cls._serialize_tool_result(
@@ -429,8 +435,16 @@ class McpPluginFactory:
                 raw_result,
                 additional_fields.get("tool_result_policy"),
             )
+            if not result["success"]:
+                cls._log_connector_event(
+                    "[MCP_OUTBOUND] Tool reported failure",
+                    config,
+                    "tool_call",
+                    level=logging.WARNING,
+                    extra={"tool_name": tool_name, "category": "tool_error", "retryable": False},
+                )
             debug_print(
-                f"[MCP_PLUGIN_FACTORY] MCP tool call succeeded tool_name={tool_name} "
+                f"[MCP_PLUGIN_FACTORY] MCP tool call completed tool_name={tool_name} "
                 f"success={result.get('success') if isinstance(result, dict) else '<unknown>'}."
             )
             return result
@@ -630,16 +644,24 @@ class McpPluginFactory:
         return {}
 
     @classmethod
-    def _serialize_tool_result(cls, tool_name: str, raw_result: Any, result_policy: str) -> Dict[str, Any]:
-        if isinstance(raw_result, list):
-            content = [cls._serialize_content_item(item, result_policy) for item in raw_result]
-        else:
-            content = cls._serialize_content_item(raw_result, result_policy)
-        return {
-            "success": True,
+    def _serialize_tool_result(cls, tool_name: str, raw_result: CallToolResult, result_policy: str) -> Dict[str, Any]:
+        # Preserve the pinned SDK's content format without discarding the protocol outcome.
+        content = [
+            cls._serialize_content_item(item, result_policy)
+            for item in _mcp_call_tool_result_to_kernel_contents(raw_result)
+        ]
+        result = {
+            "success": not raw_result.isError,
             "tool_name": tool_name,
             "content": content,
         }
+        if raw_result.isError:
+            result.update({
+                "error": "MCP server reported a tool failure.",
+                "error_type": "tool_error",
+                "retryable": False,
+            })
+        return result
 
     @classmethod
     def _serialize_content_item(cls, item: Any, result_policy: str) -> Any:

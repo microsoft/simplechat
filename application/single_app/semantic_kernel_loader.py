@@ -112,7 +112,7 @@ from functions_global_actions import get_global_actions
 from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agent, get_group_agents
 from functions_group_actions import get_group_actions
-from functions_group import assert_group_role, get_group_model_endpoints, require_active_group
+from functions_group import assert_group_role, get_group_model_endpoints, get_optional_active_group, require_active_group
 from functions_personal_actions import (
     get_governed_personal_actions,
     ensure_migration_complete as ensure_actions_migration_complete,
@@ -3161,8 +3161,8 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         agent['is_global'] = False
 
     # Load group agents for user's active group (if any)
-    try:
-        active_group_id = require_active_group(user_id)
+    active_group_id = get_optional_active_group(user_id)
+    if active_group_id:
         group_agents = get_group_agents(active_group_id)
         if group_agents:
             print(f"[SK_LOADER] Found {len(group_agents)} group agents for active group '{active_group_id}'")
@@ -3174,9 +3174,9 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
             print(f"[SK_LOADER] After merging group agents: {len(agents_cfg)} total agents")
         else:
             print(f"[SK_LOADER] No group agents found for active group '{active_group_id}'")
-    except ValueError:
-        # No active group set - this is fine, just means no group agents available
-        print(f"[SK_LOADER] User '{user_id}' has no active group - skipping group agent loading")
+    else:
+        log_event("[SK_LOADER] No authorized active group; skipping optional group agents.",
+                  extra={"user_id": user_id}, level=logging.INFO)
 
     # Append selected group agent (if any) to the candidate list so downstream selection logic can resolve it
     selected_agent_data = selected_agent if isinstance(selected_agent, dict) else {}

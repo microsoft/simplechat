@@ -1,7 +1,7 @@
 # test_native_tabular_compute_service.py
 """
 Real native query, transformation, checkpoint and data-only service regressions.
-Version: 0.261.371
+Version: 0.261.372
 Implemented in: 0.261.127
 Replay-location revision identity check added in: 0.261.141
 Re-uploaded source revision replay added in: 0.261.143

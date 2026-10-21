@@ -527,14 +527,6 @@
     "application/single_app/functions_governance.py::list_feature_policies": "9b4a66d083c5e0c8e99e79ddc5dae47acaaf38c923823d737d987dcf425d9997",
     "application/single_app/functions_governance.py::list_item_policies": "dda00d89b7377011b2b08a970a0f80cd8b1ddd811cb08a8dff9fca63aa10c428",
     "application/single_app/functions_governance.py::list_item_policies_by_policy_id": "f363850661b60d214a03a9f328493300614147d11d7e5d71280342ed7c25d70c",
-    "application/single_app/functions_group.py::search_groups": "079c6b5e4cd0845f14ded10fef131a333379aabbeff8acc563cf53ba57a219e1",
-    "application/single_app/functions_group.py::search_all_groups": "ff669cc64b3ebd143ea67936caccb0017ea4a8dac30148fe28503569c065a142",
-    "application/single_app/functions_group.py::find_groups_by_ids": "7d3782ea77f57f8fae94f40b8a6fc04796695000074c26cdb5f7a7824cbba166",
-    "application/single_app/functions_group.py::list_groups_for_admin_directory": "f25a3e09685afe4b10bd35f17c4959600d0f5b771417167d7672599c246bfb55",
-    "application/single_app/functions_group.py::get_user_groups": "c875942337f57365eea717b60d1348decbe4e872bf751e92160aa9038d3aef43",
-    "application/single_app/functions_group.py::find_group_by_id": "de97382d2d96cd4ad3e6ecaafca8fe5f3cb5af119bb753c1360f64ae74393a0c",
-    "application/single_app/functions_group.py::discover_group_records": "a4c2924360826ba6f6593dd9987b642b5c357e9b35d8491473ce1f9044b5a0e9",
-    "application/single_app/functions_group.py::update_group_document_with_etag_guard": "694fa0c7aa39a668142e741691a0a0b3925f90358b6aab19fa15732724c2d127",
     "application/single_app/functions_group_actions.py::get_group_actions": "6985fe87070299f56a7b50ac7413ebb852ca4b98759299a50406bb31ccf30a3a",
     "application/single_app/functions_group_actions.py::get_group_action": "e34711c77890b49142b18ca05e6456d09fabd6eeffec1a78216f9978e924b47a",
     "application/single_app/functions_group_actions.py::save_group_action": "5a59d375c674b352b492d2565f3beb3e5537eb8ea7965772e151ddeae55c4e13",
@@ -647,13 +639,6 @@
     "application/single_app/functions_saved_analysis.py::_analysis_artifact_parents": "b253e83ae006f50320be2090d6f612c081fada02ddbf3dd4fb643620b880d9fb",
     "application/single_app/functions_saved_analysis.py::bind_native_analysis_artifacts": "dc1649545eaeaf6ac399751adc9eec8b468ad5ba0601505f7d5ef2700de519b5",
     "application/single_app/functions_saved_analysis.py::_bind_analysis_projection_contexts": "89e9cb200ff65fb81cf661310cfad1a1bb7e9657e8f69eca998d571f6c3c23e6",
-    "application/single_app/functions_settings.py::_get_app_settings_store": "c32884d48c1fcedf090ce5fe1898b41650a8764e2de6ebaa55fa5a0ad76e8a56",
-    "application/single_app/functions_settings.py::get_user_settings": "1eac7bca2255d23bce7f43b1ca84626fff5fc88da6a103495040bbe90d444d34",
-    "application/single_app/functions_settings.py::read_user_settings_snapshot": "f685c0cc5e67754797157174148bdcd09ddf0394079cc7967d026cb4c5270e0a",
-    "application/single_app/functions_settings.py::update_user_settings": "75b3764b98f200b1b0cb5310c893edd26f8a98cedcb96aceefc016d28270b0e8",
-    "application/single_app/functions_settings.py::get_user_search_history": "12dd0d7ddaa2c096a8163b80c8740e03d03741ebe74acda49b94d7a327012d90",
-    "application/single_app/functions_settings.py::add_search_to_history": "14f1f0bb6356b9a487bcd788af174b529b31846b090c88656c20cc995448b00d",
-    "application/single_app/functions_settings.py::clear_user_search_history": "844518191cf0e1bfe4cfefe206176d3029a01b6169ff6d545abb3e0c6e72ebbb",
     "application/single_app/functions_shared_cache.py::get_shared_cache_entry": "af2b42b667c1fd471de64bff1ff053d0d4abdc49357060c74fcae8ed2557ac8f",
     "application/single_app/functions_shared_cache.py::get_shared_cache_version": "d0784f8f867d64d7e3052c1d1d45e8b20c6c6e0a89179682a72d943399487aa6",
     "application/single_app/functions_shared_cache.py::ensure_shared_cache_version_doc": "28bd35630eb9e2832fe133fb3bf27c4bc4b2e60c1c7e0241a5618d4cdb9c87da",
@@ -8698,12 +8683,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "11084bfa4a4824b6d1df9aeecc39d1b7f77c7dd5369ce43fa695df3080a78812"
+        "module_sha256": "d678775f0611493ebbfaacdda135264c2a36c7fe3ef5d4e5d2cbfbcc68ddb884"
       },
       "classification": "response-unused",
       "contract": "create_group: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "tests": [],
+      "evidence_scope": "source-review"
     },
     "application/single_app/functions_group.py::search_groups": {
       "boundary": {
@@ -8717,14 +8702,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "11084bfa4a4824b6d1df9aeecc39d1b7f77c7dd5369ce43fa695df3080a78812"
+        "module_sha256": "d678775f0611493ebbfaacdda135264c2a36c7fe3ef5d4e5d2cbfbcc68ddb884"
       },
       "classification": "sdk-compatible",
-      "contract": "search_groups: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "search_groups: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_group.py::search_all_groups": {
       "boundary": {
@@ -8738,14 +8723,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "11084bfa4a4824b6d1df9aeecc39d1b7f77c7dd5369ce43fa695df3080a78812"
+        "module_sha256": "d678775f0611493ebbfaacdda135264c2a36c7fe3ef5d4e5d2cbfbcc68ddb884"
       },
       "classification": "sdk-compatible",
-      "contract": "search_all_groups: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "search_all_groups: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_group.py::find_groups_by_ids": {
       "boundary": {
@@ -8759,14 +8744,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "11084bfa4a4824b6d1df9aeecc39d1b7f77c7dd5369ce43fa695df3080a78812"
+        "module_sha256": "d678775f0611493ebbfaacdda135264c2a36c7fe3ef5d4e5d2cbfbcc68ddb884"
       },
       "classification": "sdk-compatible",
-      "contract": "find_groups_by_ids: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "find_groups_by_ids: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_group.py::list_groups_for_admin_directory": {
       "boundary": {
@@ -8780,14 +8765,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "11084bfa4a4824b6d1df9aeecc39d1b7f77c7dd5369ce43fa695df3080a78812"
+        "module_sha256": "d678775f0611493ebbfaacdda135264c2a36c7fe3ef5d4e5d2cbfbcc68ddb884"
       },
       "classification": "sdk-compatible",
-      "contract": "list_groups_for_admin_directory: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "list_groups_for_admin_directory: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_group.py::get_user_groups": {
       "boundary": {
@@ -8801,14 +8786,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "11084bfa4a4824b6d1df9aeecc39d1b7f77c7dd5369ce43fa695df3080a78812"
+        "module_sha256": "d678775f0611493ebbfaacdda135264c2a36c7fe3ef5d4e5d2cbfbcc68ddb884"
       },
       "classification": "sdk-compatible",
-      "contract": "get_user_groups: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_user_groups: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_group.py::find_group_by_id": {
       "boundary": {
@@ -8822,14 +8807,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "11084bfa4a4824b6d1df9aeecc39d1b7f77c7dd5369ce43fa695df3080a78812"
+        "module_sha256": "d678775f0611493ebbfaacdda135264c2a36c7fe3ef5d4e5d2cbfbcc68ddb884"
       },
       "classification": "sdk-compatible",
-      "contract": "find_group_by_id: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "find_group_by_id: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_group.py::discover_group_records": {
       "boundary": {
@@ -8843,14 +8828,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "11084bfa4a4824b6d1df9aeecc39d1b7f77c7dd5369ce43fa695df3080a78812"
+        "module_sha256": "d678775f0611493ebbfaacdda135264c2a36c7fe3ef5d4e5d2cbfbcc68ddb884"
       },
       "classification": "sdk-compatible",
-      "contract": "discover_group_records: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "discover_group_records: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_group.py::delete_group": {
       "boundary": {
@@ -8864,12 +8849,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "11084bfa4a4824b6d1df9aeecc39d1b7f77c7dd5369ce43fa695df3080a78812"
+        "module_sha256": "d678775f0611493ebbfaacdda135264c2a36c7fe3ef5d4e5d2cbfbcc68ddb884"
       },
       "classification": "response-unused",
       "contract": "delete_group: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "tests": [],
+      "evidence_scope": "source-review"
     },
     "application/single_app/functions_group.py::update_group_document_with_etag_guard": {
       "boundary": {
@@ -8888,14 +8873,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "11084bfa4a4824b6d1df9aeecc39d1b7f77c7dd5369ce43fa695df3080a78812"
+        "module_sha256": "d678775f0611493ebbfaacdda135264c2a36c7fe3ef5d4e5d2cbfbcc68ddb884"
       },
       "classification": "sdk-compatible",
-      "contract": "update_group_document_with_etag_guard: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "update_group_document_with_etag_guard: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_group_actions.py::get_group_actions": {
       "boundary": {
@@ -15708,14 +15693,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "a393c3f309753a4fa67ed29866b92d691d592e1e3b956040056cf801ff428bcb"
+        "module_sha256": "6e42fe5433169de252621c415dd0ff510882c1665ba956478b89decb17407345"
       },
       "classification": "sdk-compatible",
-      "contract": "_get_app_settings_store: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_get_app_settings_store: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_settings.py::get_user_settings": {
       "boundary": {
@@ -15739,14 +15724,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "a393c3f309753a4fa67ed29866b92d691d592e1e3b956040056cf801ff428bcb"
+        "module_sha256": "6e42fe5433169de252621c415dd0ff510882c1665ba956478b89decb17407345"
       },
       "classification": "sdk-compatible",
-      "contract": "get_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_settings.py::read_user_settings_snapshot": {
       "boundary": {
@@ -15760,14 +15745,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "a393c3f309753a4fa67ed29866b92d691d592e1e3b956040056cf801ff428bcb"
+        "module_sha256": "6e42fe5433169de252621c415dd0ff510882c1665ba956478b89decb17407345"
       },
       "classification": "sdk-compatible",
-      "contract": "read_user_settings_snapshot: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "read_user_settings_snapshot: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_settings.py::update_user_settings": {
       "boundary": {
@@ -15796,14 +15781,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "a393c3f309753a4fa67ed29866b92d691d592e1e3b956040056cf801ff428bcb"
+        "module_sha256": "6e42fe5433169de252621c415dd0ff510882c1665ba956478b89decb17407345"
       },
       "classification": "sdk-compatible",
-      "contract": "update_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "update_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_settings.py::get_user_search_history": {
       "boundary": {
@@ -15817,14 +15802,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "a393c3f309753a4fa67ed29866b92d691d592e1e3b956040056cf801ff428bcb"
+        "module_sha256": "6e42fe5433169de252621c415dd0ff510882c1665ba956478b89decb17407345"
       },
       "classification": "sdk-compatible",
-      "contract": "get_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_settings.py::add_search_to_history": {
       "boundary": {
@@ -15843,14 +15828,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "a393c3f309753a4fa67ed29866b92d691d592e1e3b956040056cf801ff428bcb"
+        "module_sha256": "6e42fe5433169de252621c415dd0ff510882c1665ba956478b89decb17407345"
       },
       "classification": "sdk-compatible",
-      "contract": "add_search_to_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "add_search_to_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_settings.py::clear_user_search_history": {
       "boundary": {
@@ -15869,14 +15854,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "a393c3f309753a4fa67ed29866b92d691d592e1e3b956040056cf801ff428bcb"
+        "module_sha256": "6e42fe5433169de252621c415dd0ff510882c1665ba956478b89decb17407345"
       },
       "classification": "sdk-compatible",
-      "contract": "clear_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "clear_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_shared_cache.py::set_shared_cache_entry": {
       "boundary": {
@@ -19205,14 +19190,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "response-unused",
-      "contract": "Plain query rows provide chunk IDs; all chunk/artifact delete responses are discarded and rollback failure accounting remains explicit.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Plain query rows provide chunk IDs; all chunk/artifact delete responses are discarded and rollback failure accounting remains explicit. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::_get_user_message_image_context": {
       "boundary": {
@@ -19226,15 +19211,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "The user-message point mapping supplies nested plain metadata/thread fields for paired image attribution; only user/thread values escape the boundary.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The user-message point mapping supplies nested plain metadata/thread fields for paired image attribution; only user/thread values escape the boundary. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::_read_recent_assistant_messages": {
       "boundary": {
@@ -19248,15 +19234,16 @@
           }
         ],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "Partitioned assistant query rows remain plain dictionaries through soft-delete filtering and saved-analysis history sanitization.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Partitioned assistant query rows remain plain dictionaries through soft-delete filtering and saved-analysis history sanitization. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::_read_agent_citation_artifact_payloads": {
       "boundary": {
@@ -19270,15 +19257,16 @@
           }
         ],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "Artifact and chunk discovery returns plain query rows to build_message_artifact_payload_map; it is not a point-response normalization boundary.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Artifact and chunk discovery returns plain query rows to build_message_artifact_payload_map; it is not a point-response normalization boundary. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::_persist_screened_assistant": {
       "boundary": {
@@ -19292,14 +19280,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "response-unused",
-      "contract": "The local Cosmos delete response is discarded on source-screening rollback; its IfNotModified ETag comes from the persistence owner result. Assistant point normalization remains with persist_chat_reply rather than weakening screening.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The local Cosmos delete response is discarded on source-screening rollback; its IfNotModified ETag comes from the persistence owner result. Assistant point normalization remains with persist_chat_reply rather than weakening screening. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::_resolve_chat_selected_document_metadata": {
       "boundary": {
@@ -19313,15 +19301,16 @@
           }
         ],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "Workspace lookup consumes plain query rows, rechecks document availability and projects only id/name/title/workspace fields into a plain selection DTO.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Workspace lookup consumes plain query rows, rechecks document availability and projects only id/name/title/workspace fields into a plain selection DTO. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::_create_personal_conversation": {
       "boundary": {
@@ -19340,14 +19329,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "response-unused",
-      "contract": "Both conversation upsert responses are discarded; the constructed plain conversation is logged and cache-invalidated, with existing persistence failures unchanged.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Both conversation upsert responses are discarded; the constructed plain conversation is logged and cache-invalidated, with existing persistence failures unchanged. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::_resolve_authorized_conversation_context": {
       "boundary": {
@@ -19361,15 +19350,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "The conversation point mapping feeds shared-backing and participation authorization using Mapping fields; no raw document reaches an exact-dictionary domain validator or bypasses access checks.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The conversation point mapping feeds shared-backing and participation authorization using Mapping fields; no raw document reaches an exact-dictionary domain validator or bypasses access checks. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::persist_agent_citation_artifacts": {
       "boundary": {
@@ -19388,14 +19378,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "response-unused",
-      "contract": "Artifact upsert and cancellation-rollback delete responses are discarded; artifact identities are taken from constructed plain documents and cancellation remains visible.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Artifact upsert and cancellation-rollback delete responses are discarded; artifact identities are taken from constructed plain documents and cancellation remains visible. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::_load_user_message_response_context": {
       "boundary": {
@@ -19409,15 +19399,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "The user-message point mapping is read through get() into a plain response-context dictionary; nested thread/user metadata stays JSON and read failures retain existing fallback fields.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The user-message point mapping is read through get() into a plain response-context dictionary; nested thread/user metadata stays JSON and read failures retain existing fallback fields. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::_reject_chat_submission": {
       "boundary": {
@@ -19441,14 +19432,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "response-unused",
-      "contract": "Safety/user-message upsert and conversation replace responses are discarded; the browser payload is constructed from plain screened documents and explicit public fields.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Safety/user-message upsert and conversation replace responses are discarded; the browser payload is constructed from plain screened documents and explicit public fields. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::_build_tabular_related_document_catalog": {
       "boundary": {
@@ -19462,15 +19453,16 @@
           }
         ],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "Workspace document discovery consumes plain query rows and builds bounded related-document metadata; no Cosmos point wrapper enters its document catalog.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Workspace document discovery consumes plain query rows and builds bounded related-document metadata; no Cosmos point wrapper enters its document catalog. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::_save_chat_user_metadata": {
       "boundary": {
@@ -19484,15 +19476,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "A new-message upsert may return the SDK mapping to Mapping-compatible chat persistence callers; retry metadata is delegated to patch_chat_message_metadata, which owns conditional update/normalization. No strict top-level DTO is synthesized from arbitrary iterables.",
-      "evidence_scope": "owner-runtime",
+      "contract": "A new-message upsert may return the SDK mapping to Mapping-compatible chat persistence callers; retry metadata is delegated to patch_chat_message_metadata, which owns conditional update/normalization. No strict top-level DTO is synthesized from arbitrary iterables. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats._resolve_document_action_selected_documents": {
       "boundary": {
@@ -19506,15 +19499,16 @@
           }
         ],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "Chat attachment resolution consumes plain partitioned query rows and emits display-name/context projections; workspace ownership remains with the document resolver.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Chat attachment resolution consumes plain partitioned query rows and emits display-name/context projections; workspace ownership remains with the document resolver. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats._get_latest_chat_thread_id": {
       "boundary": {
@@ -19528,15 +19522,16 @@
           }
         ],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "The TOP 1 thread projection is a plain query row; only thread_id is returned, with the existing read-failure fallback unchanged.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The TOP 1 thread projection is a plain query row; only thread_id is returned, with the existing read-failure fallback unchanged. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats._load_or_create_analyze_conversation": {
       "boundary": {
@@ -19555,15 +19550,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "Existing point mappings are checked for owner/deletion state; newly created SDK conversation mappings feed field-based activity logging and cache invalidation, not exact-dictionary result validation.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Existing point mappings are checked for owner/deletion state; newly created SDK conversation mappings feed field-based activity logging and cache invalidation, not exact-dictionary result validation. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.execute_saved_analysis_chat_request": {
       "boundary": {
@@ -19608,15 +19604,16 @@
           }
         ],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "Retry input point mappings supply authorized role/content/thread fields; history queries are plain, and user/system writes and rollback deletes discard responses. Saved-analysis strict result admission remains with its storage owner.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Retry input point mappings supply authorized role/content/thread fields; history queries are plain, and user/system writes and rollback deletes discard responses. Saved-analysis strict result admission remains with its storage owner. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.execute_document_action_chat_request": {
       "boundary": {
@@ -19650,15 +19647,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "The original Analyze point mapping is checked for role/conversation/content and nested thread metadata; local message writes and cleanup deletes discard responses, while retained analysis contracts remain strict.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The original Analyze point mapping is checked for role/conversation/content and nested thread metadata; local message writes and cleanup deletes discard responses, while retained analysis contracts remain strict. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.generate_image_from_proposal": {
       "boundary": {
@@ -19677,15 +19675,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "The source assistant SDK mapping is authorized by conversation/role and used by Mapping-compatible planned-image lookup; conversation replacement discards its response and public image data is projected explicitly.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The source assistant SDK mapping is authorized by conversation/role and used by Mapping-compatible planned-image lookup; conversation replacement discards its response and public image data is projected explicitly. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.generate_image_from_proposal.read_conversation_image": {
       "boundary": {
@@ -19699,15 +19698,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "The partitioned point mapping is returned to find_planned_proposal_image, which inspects message fields; a missing message returns None, without an empty-document or strict-type fallback.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The partitioned point mapping is returned to find_planned_proposal_image, which inspects message fields; a missing message returns None, without an empty-document or strict-type fallback. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.image_proposal_status": {
       "boundary": {
@@ -19721,15 +19721,16 @@
           }
         ],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "Proposal status iterates plain query rows, validates nested proposal dictionaries and emits explicit public image status fields.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Proposal status iterates plain query rows, validates nested proposal dictionaries and emits explicit public image status fields. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_api": {
       "boundary": {
@@ -19814,16 +19815,17 @@
           }
         ],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "Retry/source point mappings supply role/content and nested model/thread metadata through Mapping access; history queries stay plain. Metadata persistence remains with its existing owner and local write responses are discarded. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Retry/source point mappings supply role/content and nested model/thread metadata through Mapping access; history queries stay plain. Metadata persistence remains with its existing owner and local write responses are discarded. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
+        "functional_tests/test_action_runtime_recovery.py::test_actual_chat_routes_pause_before_kernel_initialization_or_user_persistence",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
-        "functional_tests/test_action_runtime_recovery.py::test_actual_chat_routes_pause_before_kernel_initialization_or_user_persistence"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_stream_api.generate": {
       "boundary": {
@@ -19888,16 +19890,17 @@
           }
         ],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "Retry point mappings are checked for role/conversation and nested metadata through Mapping access; history queries remain plain, and local create/replace/delete return values are discarded. SSE telemetry does not alter storage contracts. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Retry point mappings are checked for role/conversation and nested metadata through Mapping access; history queries remain plain, and local create/replace/delete return values are discarded. SSE telemetry does not alter storage contracts. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
+        "functional_tests/test_action_runtime_recovery.py::test_actual_chat_routes_pause_before_kernel_initialization_or_user_persistence",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
-        "functional_tests/test_action_runtime_recovery.py::test_actual_chat_routes_pause_before_kernel_initialization_or_user_persistence"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_stream_api.generate.finalize_cancelled_stream_response": {
       "boundary": {
@@ -19911,14 +19914,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "response-unused",
-      "contract": "Cancellation refreshes the conversation with a discarded replace response; screened message persistence remains with its existing owner and the stream payload is assembled separately.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Cancellation refreshes the conversation with a discarded replace response; screened message persistence remains with its existing owner and the stream payload is assembled separately. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.mask_message_api": {
       "boundary": {
@@ -19943,15 +19946,16 @@
           }
         ],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "Point message/conversation mappings and plain fallback query rows use field-based ownership and soft-delete checks; nested mask metadata goes to existing persistence, and public JSON projects mask fields only.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Point message/conversation mappings and plain fallback query rows use field-based ownership and soft-delete checks; nested mask metadata goes to existing persistence, and public JSON projects mask fields only. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.set_message_visual_style_api": {
       "boundary": {
@@ -19965,15 +19969,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "The point message mapping is checked for conversation identity and passed to Mapping-compatible visual-style/persistence owners; public JSON projects nested visual_styles rather than the SDK document.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The point message mapping is checked for conversation identity and passed to Mapping-compatible visual-style/persistence owners; public JSON projects nested visual_styles rather than the SDK document. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats._load_block_revision_message": {
       "boundary": {
@@ -19987,15 +19992,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "The point message mapping is checked against the authorized conversation and passed to Mapping-compatible revision readers/persistence; missing messages retain their 404 contract.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The point message mapping is checked against the authorized conversation and passed to Mapping-compatible revision readers/persistence; missing messages retain their 404 contract. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats._find_originating_user_request": {
       "boundary": {
@@ -20009,15 +20015,16 @@
           }
         ],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "The partitioned prior-user query returns plain rows; only the first row content string is used as the originating request.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The partitioned prior-user query returns plain rows; only the first row content string is used as the originating request. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats._answer_raced_block_submission": {
       "boundary": {
@@ -20031,15 +20038,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "A reread SDK message is checked for conversation membership and inspected by Mapping-compatible block revision helpers; conflict/replay JSON consists of explicit revision fields, not the SDK wrapper.",
-      "evidence_scope": "owner-runtime",
+      "contract": "A reread SDK message is checked for conversation membership and inspected by Mapping-compatible block revision helpers; conflict/replay JSON consists of explicit revision fields, not the SDK wrapper. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.add_message_image_revision_api": {
       "boundary": {
@@ -20053,15 +20061,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "55756f8e3480804e9cb0135a41d829bf45ab8b0047d84176a639cdb83063412c"
+        "module_sha256": "1fe29355710783b98758cfc33bfbe2451ebf97275b75855cbe6206067f49f1e1"
       },
       "classification": "sdk-compatible",
-      "contract": "The reload callback returns a partitioned SDK message mapping to the Mapping-compatible image revision owner, which rechecks concurrent versions; the route emits only explicit revision/error fields.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The reload callback returns a partitioned SDK message mapping to the Mapping-compatible image revision owner, which rechecks concurrent versions; the route emits only explicit revision/error fields. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained.",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_collaboration.py::_read_source_message_doc": {
       "boundary": {
@@ -24365,14 +24374,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0641427633cbce91db00156c6934580b2a5c9578f65b4816bce1fbdeaf9eb97f"
+        "module_sha256": "0c90ec59e214d9247ce0e6272a2837254fe42e027c334aef7f1ef64450d81cd2"
       },
       "classification": "response-unused",
       "contract": "Constructs and returns its own plain conversation dictionary; the SDK upsert response is discarded. Real-owner new/missing upload context tests verify persisted SDK responses retain ETags without changing the returned domain document.",
-      "evidence_scope": "source-review",
       "tests": [
         "functional_tests/test_chat_upload_cosmos_response_contract.py::test_chat_upload_context_real_owner_sdk_responses"
-      ]
+      ],
+      "evidence_scope": "source-review"
     },
     "application/single_app/route_frontend_chats.py::_resolve_chat_upload_context": {
       "boundary": {
@@ -24386,14 +24395,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0641427633cbce91db00156c6934580b2a5c9578f65b4816bce1fbdeaf9eb97f"
+        "module_sha256": "0c90ec59e214d9247ce0e6272a2837254fe42e027c334aef7f1ef64450d81cd2"
       },
       "classification": "sdk-compatible",
-      "contract": "Point conversation responses use mapping field access for backing detection, collaboration identity, and personal ownership; the returned upload context retains the mapping and ETag. Upload consumers read/mutate fields and upsert the mapping, without an exact-dictionary sink. Real-owner runtime checks cover SDK personal reads, cross-user denial, and new/missing context creation.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Point conversation responses use mapping field access for backing detection, collaboration identity, and personal ownership; the returned upload context retains the mapping and ETag. Upload consumers read/mutate fields and upsert the mapping, without an exact-dictionary sink. Real-owner runtime checks cover SDK personal reads, cross-user denial, and new/missing context creation. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
       "tests": [
-        "functional_tests/test_chat_upload_cosmos_response_contract.py::test_chat_upload_context_real_owner_sdk_responses"
-      ]
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_frontend_chats.py::register_route_frontend_chats.upload_file": {
       "boundary": {
@@ -24458,12 +24467,12 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0641427633cbce91db00156c6934580b2a5c9578f65b4816bce1fbdeaf9eb97f"
+        "module_sha256": "0c90ec59e214d9247ce0e6272a2837254fe42e027c334aef7f1ef64450d81cd2"
       },
       "classification": "response-unused",
       "contract": "All six message/conversation upsert responses are discarded; upload responses project constructed message/workspace fields and conversation title/id, not the SDK write response. Query rows supply thread ids and counts separately. The unchanged body reads/mutates the SDK-compatible upload context mapping.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "tests": [],
+      "evidence_scope": "source-review"
     },
     "application/single_app/route_frontend_control_center.py::get_control_center_statistics": {
       "boundary": {
@@ -25933,6 +25942,32 @@
       "tests": [
         "functional_tests/test_action_credentials_shared_conversations.py",
         "functional_tests/test_action_credentials_chat_reconstruction.py::test_shared_chat_private_prompt_and_exact_continuation"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_settings.py::_clear_stale_active_group": {
+      "boundary": {
+        "sha256": "8056026bd02ac3384eb8dab465006a366b652bd48d8aafde5a586cf9eab7444d",
+        "points": [
+          {
+            "method": "read_item",
+            "receiver": "cosmos_user_settings_container",
+            "response": "consumed"
+          },
+          {
+            "method": "replace_item",
+            "receiver": "cosmos_user_settings_container",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "6e42fe5433169de252621c415dd0ff510882c1665ba956478b89decb17407345"
+      },
+      "classification": "sdk-compatible",
+      "contract": "Fresh SDK mappings are consumed via get/item access; nested settings remain plain JSON, ETags are preserved for conditional replace, and the returned SDK mapping refreshes the request cache with the committed ETag. Real-owner recovery tests cover persisted null, request/UI caches and matching ETags, SDK representation, missing ETags, authorization, conflicts and concurrent selections.",
+      "tests": [
+        "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
       "evidence_scope": "owner-runtime"
     }

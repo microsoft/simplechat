@@ -32,7 +32,7 @@ every public workspace you can discover.
 - Switch between **All** and **My workspaces** (the ones you own, administer
   or manage documents in), and search by name, description or id.
 - **Open** a workspace to go to its page.
-- From **0.261.371**, V2 searches every currently available public workspace.
+- From **0.261.372**, V2 searches every currently available public workspace.
   There are no Visible for chat switches or saved visibility lists in V2.
   Classic keeps its existing choices, but they do not hide sources from V2.
 - The directory and the workspace pages use the names your administrator
@@ -106,7 +106,7 @@ don't see either section. See
 
 From version **0.261.184**, the directory lets you ask to manage a workspace's
 documents, and cancel the request, from its row. Its former visibility and
-saved-list controls were removed from V2 in **0.261.371**; classic retains them.
+saved-list controls were removed from V2 in **0.261.372**; classic retains them.
 
 The directory's **Chat with all public** action opens a fresh native V2 chat over all
 available public workspaces. Open **Documents → Search in** to change its
@@ -159,7 +159,7 @@ request was being saved. Try again." Nothing else is lost, so try again.
 From version **0.261.347**, chat's **Documents** picker searches public documents
 by filename or title across the eligible current revisions before paging the
 results. A document does not need a generated title to match its filename.
-From **0.261.371**, the ordinary V2 picker ignores classic visibility preferences,
+From **0.261.372**, the ordinary V2 picker ignores classic visibility preferences,
 so a processed public guide can be selected alongside personal and group sources
 without changing any directory preference. Classic retains its saved visibility
 defaults.

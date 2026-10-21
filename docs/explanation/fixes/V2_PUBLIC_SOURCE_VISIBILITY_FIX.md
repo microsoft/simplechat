@@ -1,6 +1,6 @@
 # V2 public source discovery fix
 
-Fixed/Implemented in version: **0.261.371**, tracked in
+Fixed/Implemented in version: **0.261.372**, tracked in
 `application/single_app/config.py`.
 
 ## Issue and root cause

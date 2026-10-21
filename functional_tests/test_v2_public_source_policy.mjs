@@ -1,6 +1,6 @@
 // test_v2_public_source_policy.mjs
-// Version: 0.261.371
-// Implemented in: 0.261.371
+// Version: 0.261.372
+// Implemented in: 0.261.372
 // Real V2 transport, scope, discovery, URL builders and SSE recovery; synthetic HTTP only.
 
 import assert from 'node:assert/strict';

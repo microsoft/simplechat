@@ -1,11 +1,11 @@
-# Native V2 Aggregate Public Chat (v0.261.371)
+# Native V2 Aggregate Public Chat (v0.261.372)
 
 Implemented in version: **0.261.310**, tracked in
 `application/single_app/config.py`. Addresses row 3 of
 [microsoft/simplechat#1722](https://github.com/microsoft/simplechat/issues/1722).
 Scope picker placement fixed in version: **0.261.315**, tracked in the same
 `application/single_app/config.py`.
-Public-source visibility corrected in version: **0.261.371**.
+Public-source visibility corrected in version: **0.261.372**.
 
 ## Purpose and dependencies
 

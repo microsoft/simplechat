@@ -1,7 +1,7 @@
 // test_v2_image_reference_logic.mjs
-// Version: 0.261.371
+// Version: 0.261.372
 // Implemented in: 0.261.192
-// V2 policy preserved on public image previews in: 0.261.371
+// V2 policy preserved on public image previews in: 0.261.372
 // Pure helper coverage for v2 image reference request normalization, composer merging, and gating.
 
 import assert from 'node:assert/strict';

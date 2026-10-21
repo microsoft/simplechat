@@ -2,7 +2,7 @@
 """
 Functional test for the V2 public directory user-settings keys.
 
-Version: 0.261.371
+Version: 0.261.372
 Implemented in: 0.261.175
 
 Classic retains its per-user visibility state. V2 no longer exposes or writes it:
@@ -21,7 +21,7 @@ The active pointer is different: the route pops it and routes it to
 NOT be declared writable by the V2 client (writing it through the settings store would make
 the store believe a save had been lost, exactly the reason ``activeGroupOid`` is excluded).
 
-Visibility curation was removed from V2 in 0.261.371. This pin therefore holds:
+Visibility curation was removed from V2 in 0.261.372. This pin therefore holds:
   * the server still accepts all three keys (a regression guard -- the server needs no change);
   * V2 does not declare either visibility key writable or expose its shapes;
   * V2 keeps the active pointer OUT of its writable list;
@@ -70,7 +70,7 @@ def _writable_keys():
 def test_version_is_at_least_the_implementing_release():
     """Guard against silently shipping this pin under an older application."""
     print("Checking application version floor...")
-    assert_app_version_at_least("0.261.371")
+    assert_app_version_at_least("0.261.372")
     print("  ok  version floor satisfied")
     return True
 

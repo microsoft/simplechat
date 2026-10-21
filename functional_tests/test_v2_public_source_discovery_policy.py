@@ -1,8 +1,8 @@
 # test_v2_public_source_discovery_policy.py
 """
 Functional regressions for V2 public source discovery.
-Version: 0.261.371
-Implemented in: 0.261.371
+Version: 0.261.372
+Implemented in: 0.261.372
 
 V2 ignores classic curation without becoming public-only or widening selected
 sources. Request, worker and legacy policies stay isolated without storage writes.
@@ -63,6 +63,7 @@ def test_native_scope_route_uses_eligibility_not_classic_curation(world):
         "get_current_user_id": lambda: USER,
         "get_user_settings": lambda user_id: world.preferences,
         "get_user_groups": lambda user_id: [],
+        "get_optional_active_group": lambda user_id: None,
         "get_public_source_workspace_ids": world.public.get_public_source_workspace_ids,
         "find_public_workspace_by_id": lambda workspace_id: next(
             (row for row in world.workspaces if row["id"] == workspace_id), None,

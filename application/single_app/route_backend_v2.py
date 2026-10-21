@@ -94,6 +94,7 @@ from functions_group import (
     find_group_by_id,
     find_groups_by_ids,
     get_user_groups,
+    get_optional_active_group,
     list_groups_for_admin_directory,
 )
 from functions_group_assignment_ids import normalize_group_workflow_allowed_group_ids
@@ -1015,6 +1016,7 @@ def register_route_backend_v2(bp):
             public_settings = sanitize_settings_for_user(settings)
             timer.mark("sanitize_settings")
 
+            get_optional_active_group(user_id)
             user_settings = get_user_settings(user_id)
             user_settings_dict = (
                 user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
@@ -1294,6 +1296,7 @@ def register_route_backend_v2(bp):
             return jsonify({"error": "User not authenticated"}), 401, {"Cache-Control": "no-store"}
 
         try:
+            get_optional_active_group(user_id)
             user_settings = get_user_settings(user_id)
             user_settings_dict = (
                 user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}

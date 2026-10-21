@@ -221,7 +221,7 @@ from functions_source_review import (
     URL_ACCESS_CONTEXT_CHAT,
 )
 from functions_agents import get_agent_id_by_name
-from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
+from functions_group import find_group_by_id, get_group_model_endpoints, get_optional_active_group, get_user_role_in_group
 from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
 from functions_documents import (
@@ -3938,6 +3938,7 @@ def _normalize_model_icon_payload(icon_payload):
 
 def _set_authorized_chat_request_context(user_id, conversation_id, scope_context):
     """Persist the canonical request authorization context for downstream plugin checks."""
+    get_optional_active_group(user_id)
     authorized_context = {
         'user_id': user_id,
         'conversation_id': conversation_id,

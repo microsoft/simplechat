@@ -36,6 +36,13 @@ and available sections. Your saved active group is restored on a later visit.
 If no valid selection exists, the page asks you to choose rather than selecting
 an arbitrary group.
 
+From version **0.261.371**, leaving a group, being removed from it, or having it
+deleted no longer makes its saved active selection block ordinary chat. Legacy
+chat and V2 clear the invalid selection when loading chat state or sending a
+message. They do not choose a replacement group. You can continue model-only
+chat or use an authorized personal/global agent even if you belong to no groups;
+the former group's resources remain unavailable.
+
 **Search your groups** searches the full membership list, not just the displayed
 page. From version **0.261.162** it ignores case and matches a group's name or
 description, like the group directory. A selected group stays selected when

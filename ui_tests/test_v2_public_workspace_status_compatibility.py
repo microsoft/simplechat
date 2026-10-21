@@ -1,9 +1,9 @@
 # test_v2_public_workspace_status_compatibility.py
 """
 UI regressions for public workspace status compatibility.
-Version: 0.261.371
+Version: 0.261.372
 Implemented in: 0.261.355
-V2 availability independent of classic preferences in: 0.261.371
+V2 availability independent of classic preferences in: 0.261.372
 
 The production directory and composer run with real backend-produced status rows
 and scope resolution. Azure Playwright uses synthetic HTTP, not live application

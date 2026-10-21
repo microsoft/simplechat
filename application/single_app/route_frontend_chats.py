@@ -41,6 +41,7 @@ from functions_group import (
     check_group_status_allows_operation,
     find_group_by_id,
     get_group_model_endpoints,
+    get_optional_active_group,
     get_user_groups,
     get_user_role_in_group,
     require_active_group,
@@ -717,6 +718,7 @@ def register_route_frontend_chats(bp):
             return redirect(url_for('frontend_authentication.login'))
 
         settings = get_settings()
+        active_group_id = get_optional_active_group(user_id)
         user_settings = get_user_settings(user_id)
         user_settings_dict = user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
         _ensure_public_chat_workspace_visible(user_id, request.args, user_settings_dict)
@@ -773,7 +775,6 @@ def register_route_frontend_chats(bp):
             public_settings.get("enable_desktop_notifications", False)
             and user_settings_dict.get("desktopNotificationsEnabled", True)
         )
-        active_group_id = user_settings_dict.get("activeGroupOid", "")
         active_group_name = ""
         if active_group_id:
             group_doc = find_group_by_id(active_group_id)
