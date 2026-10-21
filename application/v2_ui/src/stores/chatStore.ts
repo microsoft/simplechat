@@ -108,6 +108,7 @@ import {
     type SelectedWorkflowResult,
 } from '../lib/workflowResults';
 import { readM365Citations } from '../lib/m365Citations';
+import { completionCitations } from '../lib/messageDetails';
 import type { RunStreamEvent } from '../lib/orchestration';
 import type { CredentialRequest } from '../lib/actionCredentialTypes';
 import { openCredentialContinuation } from '../lib/actionCredentials';
@@ -1454,11 +1455,8 @@ function buildStreamHandlers(
                 model_deployment_name: event.model_deployment_name,
                 agent_display_name: event.agent_display_name,
                 augmented: event.augmented,
-                hybrid_citations: event.blocked ? undefined : event.hybrid_citations,
+                ...completionCitations(event),
                 metadata: retryReplyMetadata(completionMetadata(event) ?? {}, streamRetry()),
-                // Carried onto the finished message so its Microsoft 365 citation chips resolve
-                // without reading the thread again.
-                ...(m365Citations.length > 0 && !event.blocked ? { m365_citations: m365Citations } : {}),
                 // Carried onto the finished message so the reasoning steps stay
                 // available after the stream ends instead of disappearing with the
                 // streaming placeholder.
@@ -3834,15 +3832,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             model_deployment_name: event.model_deployment_name,
             agent_display_name: event.agent_display_name,
             augmented: event.augmented,
-            // Carried through so an orchestrated answer shows its sources exactly as a
-            // chat answer does. Dropping these left the reply citing documents in its prose
-            // with no citation chips under it and nothing in the Documents drawer.
-            hybrid_citations: event.hybrid_citations as ChatMessage['hybrid_citations'],
-            web_search_citations:
-                event.web_search_citations as ChatMessage['web_search_citations'],
-            agent_citations: event.agent_citations as ChatMessage['agent_citations'],
-            // Microsoft 365 emails, events and files the answer cites, for its chips.
-            ...(event.blocked ? {} : { m365_citations: readM365Citations(event.m365_citations) }),
+            ...completionCitations(event),
             ...(event.blocked ? {} : { m365_pending_actions: event.m365_pending_actions }),
             metadata: {
                 ...event.metadata,

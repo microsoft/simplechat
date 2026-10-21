@@ -1,8 +1,8 @@
 # test_file_sync_azure_files_selection_lifecycle.py
 """
 Functional tests for Azure Files selected-path reconciliation.
-Version: 0.261.365
-Implemented in: 0.261.365
+Version: 0.261.369
+Implemented in: 0.261.369
 
 Execute production selection, staging, run, and deletion-policy functions with
 the pinned SDK, paginated offline HTTP, and existing SDK-shaped Cosmos doubles.
@@ -445,7 +445,7 @@ print("confirmed-absence-probe-passed")
 
 
 def test_implementation_version():
-    assert_app_version_at_least("0.261.365")
+    assert_app_version_at_least("0.261.369")
 
 
 if __name__ == "__main__":

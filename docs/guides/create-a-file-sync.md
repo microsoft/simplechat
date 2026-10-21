@@ -131,7 +131,7 @@ without changing their configuration.
 
 ### When selected remote paths disappear
 
-From **0.261.365**, Azure Files sync checks selected files and folders against
+From **0.261.369**, Azure Files sync checks selected files and folders against
 complete directory listings. If a selection is confirmed absent, the saved
 delete policy determines whether SimpleChat retains or deletes its imported
 copy. This also applies when a folder containing a selected path disappears.

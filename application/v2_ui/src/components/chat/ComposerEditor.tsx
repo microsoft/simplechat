@@ -37,6 +37,7 @@ import {
     CHAT_UPLOAD_ACCEPT,
     addChatUploadLocalPreview,
     cancelRetainedComposerUpload,
+    chatTransferFiles,
     chatUploadTargets,
     chatUploadValidationError,
     conversationAttachmentReferences,
@@ -990,23 +991,29 @@ export function ComposerEditor({
                     }}
                     onSelect={(event) => syncQueries(event.currentTarget)}
                     onPaste={(event) => {
-                        const pasted = Array.from(event.clipboardData.files ?? []);
-                        if (pasted.length === 0 || !referenceUploadsOnly) {
+                        if (disabled || !uploadsEnabled) {
+                            return;
+                        }
+                        const pasted = chatTransferFiles(event.clipboardData, 'paste');
+                        if (pasted.length === 0) {
                             return;
                         }
                         event.preventDefault();
                         void enqueueSelectedFiles(pasted);
                     }}
                     onDrop={(event) => {
-                        const dropped = Array.from(event.dataTransfer.files ?? []);
-                        if (dropped.length === 0 || !referenceUploadsOnly) {
+                        if (disabled || !uploadsEnabled) {
+                            return;
+                        }
+                        const dropped = chatTransferFiles(event.dataTransfer, 'drop');
+                        if (dropped.length === 0) {
                             return;
                         }
                         event.preventDefault();
                         void enqueueSelectedFiles(dropped);
                     }}
                     onDragOver={(event) => {
-                        if (referenceUploadsOnly && event.dataTransfer.types.includes('Files')) {
+                        if (!disabled && uploadsEnabled && event.dataTransfer.types.includes('Files')) {
                             event.preventDefault();
                         }
                     }}

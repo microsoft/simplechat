@@ -1,6 +1,6 @@
 # Azure Files selected-path reconciliation fix
 
-Fixed in version: **0.261.365**
+Fixed in version: **0.261.369**
 
 Application version: `application/single_app/config.py`.
 

@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.347"
+version: "0.261.367"
 ---
 
 ## How to use this reference
@@ -309,6 +309,33 @@ outgoing actions** and **Refresh outgoing actions**. A notification about a save
 action opens its conversation and scrolls to the card. See
 [V2 Microsoft 365 pending-action cards]({{ '/explanation/features/V2_M365_PENDING_ACTION_CARDS/' | relative_url }}).
 
+## Reply sources and tool outcomes (V2 interface)
+
+Fixed/Implemented in version: **0.261.365** (`application/single_app/config.py`).
+
+Open **Show sources** beneath an assistant reply to inspect the evidence recorded
+for that reply, separately from what the assistant says in its answer. Tool and
+web evidence is available as soon as the stream finishes, without reopening the
+conversation. Ordinary and orchestrated answers use the same evidence handoff.
+
+| Existing control | What it shows | Why you would use it |
+| --- | --- | --- |
+| Show sources | The reply's recorded document, web, tool, and Microsoft 365 evidence; the accessible name includes a count when evidence exists. An empty panel says the response did not cite any sources. | Check whether an answer has supporting evidence rather than relying on plausible prose. |
+| Tool-call disclosure in Sources | Recorded operation label, arguments, result when available, execution outcome, and error when recorded. A failure without a result still shows its arguments and error. | Distinguish an executed operation's result from a failed request or the assistant's description of what it intended to do. |
+| Show reasoning | The reply's recorded reasoning activities, including failed tool activity when execution recorded a failure. | Understand the progression of work without treating reasoning text as proof of a tool result. |
+
+The tool disclosure says **Tool call failed**, **Tool call succeeded**, or
+**Outcome not recorded** according to the recorded execution outcome.
+OpenAPI HTTP/request/parse error returns are now recorded as failed invocations,
+even when the connector returns an error object instead of raising an exception.
+A successful response can contain business fields named `error`, `status_code`,
+or `success`; those field names alone do not classify the execution.
+
+Opening Sources does not rerun a tool. Missing citations are not reconstructed
+from model prose, and blocked/safety replies do not expose suppressed evidence.
+Previously recorded incorrect success values are not rewritten by this fix.
+See [Streamed tool evidence and outcomes fix]({{ '/explanation/fixes/STREAMED_TOOL_EVIDENCE_AND_OUTCOMES_FIX/' | relative_url }}).
+
 ## Microsoft 365 citations and Open online
 
 Implemented in version: **0.261.303** (`application/single_app/config.py`).
@@ -353,6 +380,27 @@ provider-qualified capabilities, not the text-chat model or the application's cl
 
 Unsupported or stale masks/options are rejected rather than silently changed into a
 different operation. See [Generate images]({{ '/guides/generate-images/' | relative_url }}).
+
+## Chat attachments (V2 interface)
+
+Fixed/Implemented in version: **0.261.368**
+(`application/single_app/config.py`).
+File paste and drag-and-drop work in normal chat, not just in Image reference mode.
+These gestures use the existing attachment controls and do not add another upload setting.
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Attach a file | Opens the picker for a supported local file and queues its upload. | Add a source you have not already stored in a workspace. | [`enable_chat_file_uploads`]({{ '/admin/workspaces/' | relative_url }}) and the existing upload role policy |
+| Paste into Message | Attaches supported images or files exposed by the browser's clipboard event. Ordinary text still pastes at the cursor. | Ask about a screenshot or copied file without opening the picker. | Same as Attach a file |
+| Drop onto Message | Uploads supported files dropped on the message box without replacing the text already written. Text-only drops remain text. | Bring a file into the question directly from another window. | Same as Attach a file |
+| Attached files | Shows each file's upload, processing, ready, or failed state, with local thumbnails for browser-renderable images. | Check that the intended source is ready before sending. | Same as Attach a file |
+| Retry / Remove attachment | Retries a failed attachment or removes it from the draft without clearing the question. Removal does not delete an already uploaded copy. | Recover from an upload failure or correct an accidental attachment. | Same as Attach a file |
+
+Clipboard file availability depends on the browser and source application. Copied paths,
+links, and HTML images are not automatically uploads; use **Attach a file** when the browser
+does not expose a file. The same file-type and size limits apply to every attachment method.
+Image mode retains its separate reference-image restrictions. See
+[Upload documents in chat]({{ '/guides/upload-documents-in-chat/' | relative_url }}).
 
 ## Uploaded and reference images (V2 interface)
 

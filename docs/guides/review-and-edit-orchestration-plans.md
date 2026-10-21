@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.359"
+version: "0.261.367"
 ---
 
 ## Decide what should run
@@ -17,6 +17,26 @@ focus.
 Conversational plan editing was implemented in version **0.261.102**, recorded in
 `application/single_app/config.py`. It is available in the V2 interface for plans
 that have not started.
+
+## Answer necessary follow-up questions
+
+Fixed/Implemented in version: **0.261.367**
+(`application/single_app/config.py`).
+
+If a required fact is missing, the planner can ask for it before proposing work.
+For example, ask it to confirm an unknown budget before preparing a brief, then
+answer the budget question in **Follow-up questions**. Your answer supplements the
+original request; it does not replace identifiers, filenames, or other requirements.
+
+For a self-contained request with no earlier conversation to resolve, answering
+returns directly to planning rather than starting another history-resolution pass.
+Optional extra sections, tone, or formatting should use sensible defaults within
+your requested scope, not become an additional required interview.
+
+A genuinely missing source, business rule, or other essential fact can still need
+another question. There is no one-question limit, and unanswered required fields
+still prevent **Finish**. When your plan is ready, the selected approval mode still
+applies; answering a question does not authorize execution by itself.
 
 ## Choose requirements, not permissions
 
@@ -51,12 +71,21 @@ planner may Analyze or Compare those inputs without adding a Search step merely
 because they were pinned. Explicitly selected Search still constrains the plan,
 and the validator still rejects a plan that omits selected documents.
 
-### Open the evidence behind Analyze and Compare answers
+### Open the evidence behind document answers
 
 Since **0.261.356**, Analyze and Compare supply source references through the same
 document-citation pipeline as Search. Click an inline citation to inspect the
 original passage; a comparison can reference both the baseline and target
 documents. Saved answers retain their citations when reopened.
+
+Fixed/Implemented in version: **0.261.365**
+(`application/single_app/config.py`).
+Search now preserves its passage references whether a later task receives its
+retained excerpts (`evidence`) or prepared search content (`prepared`). Ask your
+question normally; you do not need to request source quotations to make those
+references available. A sources-only input identifies documents but does not
+provide passages to cite. This does not prescribe an answer format or a fixed
+number of citations.
 
 Use those passages to check the answer against the source. A reference identifies
 evidence, not an independent verification of every conclusion. Partial coverage

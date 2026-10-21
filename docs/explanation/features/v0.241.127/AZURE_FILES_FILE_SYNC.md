@@ -10,7 +10,7 @@ Endpoint validation updated in version: **0.261.314**
 
 Token authentication and safe diagnostics fixed in version: **0.261.358**
 
-Selected-path reconciliation fixed in version: **0.261.365**
+Selected-path reconciliation fixed in version: **0.261.369**
 
 ## Dependencies
 
@@ -94,7 +94,7 @@ Failed listings remain failed runs, not empty successful inventories.
 
 ### Selected files and folders that disappear
 
-From **0.261.365**, sync resolves selections from complete directory listings
+From **0.261.369**, sync resolves selections from complete directory listings
 starting at the configured source root. A selected file, folder, or intermediate
 folder absent from a successfully listed parent follows the source's saved
 remote-delete policy: **ignore** retains the imported document, while
