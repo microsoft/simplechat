@@ -42,6 +42,20 @@ For existing actions:
 
 The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON**.
 
+### Managed identity compatibility
+
+Since **0.261.372**, SQL Schema uses the same managed identity normalization and
+client-ID selector as SQL Database. A blank selector uses the system-assigned
+identity; an explicit user-assigned client ID selects that identity on Azure
+App Service. This applies both to existing schema actions and to the automatic
+schema companion of a SQL Database action.
+
+Inactive SQL password fields cannot override managed identity. Complete
+connection strings keep their own authentication settings. See
+[SQL Database managed identity selection]({{ '/reference/actions/sql-query/' | relative_url }}#managed-identity-selection)
+for reusable identity and inline configuration, identifier requirements, and
+the separate database-access prerequisites.
+
 ## Example prompts
 
 - "What tables are available for order history, and how are they related?"

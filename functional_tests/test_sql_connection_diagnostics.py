@@ -1,7 +1,7 @@
 # test_sql_connection_diagnostics.py
 """
 Functional tests for credential-safe SQL connection diagnostics.
-Version: 0.261.357
+Version: 0.261.372
 Implemented in: 0.261.351
 UUID factory import regression added in: 0.261.357
 
@@ -121,7 +121,7 @@ def test_unknown_engine_cannot_supply_provider_evidence(diagnostics):
 @pytest.mark.parametrize("mode,uses_string,credentials,engine,expected", [
     ("managed_identity", False, False, "sqlserver", "managed_identity"),
     ("integrated", False, False, "sqlserver", "integrated"),
-    ("managed_identity", False, True, "sqlserver", "username_password"),
+    ("managed_identity", False, True, "sqlserver", "managed_identity"),
     ("username_password", False, True, "postgresql", "username_password"),
     ("managed_identity", True, False, "sqlserver", "unknown"),
     ("username_password", True, True, "sqlserver", "unknown"),

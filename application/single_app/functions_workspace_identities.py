@@ -902,6 +902,7 @@ def _apply_sql_action_identity_auth(
     auth_type = _normalize_text(identity_auth.get("auth_type"), 50).lower()
     if auth_type == "username_password":
         action_auth["type"] = "user"
+        additional_fields["auth_type"] = "username_password"
         additional_fields["username"] = identity_auth.get("username", "")
         additional_fields["password"] = identity_auth.get("password", "")
     elif auth_type == "connection_string":
@@ -912,6 +913,7 @@ def _apply_sql_action_identity_auth(
         action_auth["type"] = "identity"
         action_auth["identity"] = "managed_identity"
         additional_fields["auth_type"] = "managed_identity"
+        additional_fields["managed_identity_client_id"] = identity_auth.get("managed_identity_client_id", "")
     elif auth_type == "client_secret":
         action_auth["type"] = "servicePrincipal"
         action_auth["identity"] = identity_auth.get("identity", "")
