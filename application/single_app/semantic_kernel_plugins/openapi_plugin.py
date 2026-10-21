@@ -1,3 +1,4 @@
+# openapi_plugin.py
 """
 OpenAPI Semantic Kernel Plugin
 
@@ -56,7 +57,10 @@ from typing import Dict, Any, List, Optional, Union
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
-from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
+from semantic_kernel_plugins.plugin_invocation_logger import (
+    plugin_function_logger,
+    report_plugin_invocation_failure,
+)
 from functions_debug import debug_print
 
 
@@ -1198,6 +1202,7 @@ class OpenApiPlugin(BasePlugin):
                     # Return raw text as fallback
                     raw_text = _redact_openapi_string(response.text)
                     debug_print(f"Returning raw text: {raw_text[:200]}...")
+                    report_plugin_invocation_failure("JSON parse error")
                     return {"error": "JSON parse error", "raw_response": raw_text}
             else:
                 debug_print(f"ERROR - Status {response.status_code}")
@@ -1216,7 +1221,7 @@ class OpenApiPlugin(BasePlugin):
                 
                 debug_print(f"Returning error result: {error_result}")
                 logging.error(f"[OPEN_API_PLUGIN] HTTP {response.status_code} error from {operation_id}: {error_response}")
-                
+                report_plugin_invocation_failure(f"HTTP {response.status_code}")
                 return error_result
                 
         except requests.exceptions.RequestException as req_error:
@@ -1232,6 +1237,7 @@ class OpenApiPlugin(BasePlugin):
                 "base_url": _redact_openapi_url(self.base_url),
                 "url": _redact_openapi_url(full_url) if 'full_url' in locals() else "unknown",
             }
+            report_plugin_invocation_failure("OpenAPI request failed.")
             return error_result
         except Exception as e:
             redacted_error = _redact_openapi_string(str(e))
@@ -1242,6 +1248,7 @@ class OpenApiPlugin(BasePlugin):
                 "operation_id": operation_id,
                 "exception_type": type(e).__name__
             }
+            report_plugin_invocation_failure("OpenAPI operation failed.")
             return error_result
     
     def _track_function_call(self, operation_id: str, parameters: dict, result: dict, call_start: float, url: str):

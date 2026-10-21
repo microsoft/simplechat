@@ -15,6 +15,8 @@ import re
 import threading
 import uuid
 import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
 from agent_execution_context import current_agent_execution
 from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime
@@ -80,6 +82,39 @@ class PluginInvocationResult(str):
         instance = super().__new__(cls, value)
         instance.internal_metadata = dict(internal_metadata or {})
         return instance
+
+
+@dataclass
+class _PluginInvocationOutcome:
+    error_message: Optional[str] = None
+
+
+_plugin_invocation_outcome: ContextVar[Optional[_PluginInvocationOutcome]] = ContextVar(
+    "plugin_invocation_outcome", default=None,
+)
+
+
+@contextmanager
+def _capture_plugin_invocation_outcome(outcome=None):
+    outcome = outcome if outcome is not None else _PluginInvocationOutcome()
+    token = _plugin_invocation_outcome.set(outcome)
+    try:
+        yield outcome
+    finally:
+        _plugin_invocation_outcome.reset(token)
+
+
+def report_plugin_invocation_failure(error_message: str) -> None:
+    """Report a connector-declared failure without changing its returned value or raising.
+
+    Only the current decorated invocation is affected. Direct helper callers without a
+    logger scope retain their existing behavior; result dictionaries are never classified.
+    """
+    if not isinstance(error_message, str) or not error_message.strip():
+        raise ValueError("A plugin failure requires an error message.")
+    outcome = _plugin_invocation_outcome.get()
+    if outcome is not None and outcome.error_message is None:
+        outcome.error_message = error_message
 
 
 def _normalize_sensitive_key(key: Any) -> str:
@@ -890,7 +925,7 @@ def plugin_function_logger(plugin_name: str):
                 level=logging.INFO
             )
 
-        def _log_failure(function_name: str, error: Exception, duration_ms: float):
+        def _log_failure(function_name: str, error: Any, duration_ms: float):
             log_event(
                 f"[PLUGIN_FUNCTION_LOGGER] Function failed with error",
                 extra={
@@ -910,6 +945,26 @@ def plugin_function_logger(plugin_name: str):
                 or getattr(func, '__name__', 'unknown')
             )
 
+        def _log_completion(function_name, result, parameters, start_time, invocation_id, outcome):
+            end_time = time.time()
+            duration_ms = (end_time - start_time) * 1000
+            error_message = sanitize_plugin_invocation_value(outcome.error_message)
+            if error_message is None:
+                _log_success(function_name, result, duration_ms)
+            else:
+                _log_failure(function_name, error_message, duration_ms)
+            log_plugin_invocation(
+                plugin_name=plugin_name,
+                function_name=function_name,
+                parameters=parameters,
+                result=result,
+                start_time=start_time,
+                end_time=end_time,
+                success=error_message is None,
+                error_message=error_message,
+                invocation_id=invocation_id,
+            )
+
         if is_async_callable:
             @functools.wraps(func)
             async def wrapper(*args, **kwargs):
@@ -927,21 +982,9 @@ def plugin_function_logger(plugin_name: str):
                 )
 
                 try:
-                    result = await func(*args, **kwargs)
-                    end_time = time.time()
-                    duration_ms = (end_time - start_time) * 1000
-                    _log_success(function_name, result, duration_ms)
-
-                    log_plugin_invocation(
-                        plugin_name=plugin_name,
-                        function_name=function_name,
-                        parameters=parameters,
-                        result=result,
-                        start_time=start_time,
-                        end_time=end_time,
-                        success=True,
-                        invocation_id=invocation_id,
-                    )
+                    with _capture_plugin_invocation_outcome() as outcome:
+                        result = await func(*args, **kwargs)
+                    _log_completion(function_name, result, parameters, start_time, invocation_id, outcome)
 
                     return result
 
@@ -980,7 +1023,8 @@ def plugin_function_logger(plugin_name: str):
                 )
 
                 try:
-                    result = func(*args, **kwargs)
+                    with _capture_plugin_invocation_outcome() as outcome:
+                        result = func(*args, **kwargs)
                     if inspect.isawaitable(result):
                         log_event(
                             "[PLUGIN_FUNCTION_LOGGER] Awaitable returned from sync wrapper; deferring completion logging",
@@ -994,19 +1038,10 @@ def plugin_function_logger(plugin_name: str):
 
                         async def _await_and_log(awaitable_result):
                             try:
-                                awaited_value = await awaitable_result
-                                end_time = time.time()
-                                duration_ms = (end_time - start_time) * 1000
-                                _log_success(function_name, awaited_value, duration_ms)
-                                log_plugin_invocation(
-                                    plugin_name=plugin_name,
-                                    function_name=function_name,
-                                    parameters=parameters,
-                                    result=awaited_value,
-                                    start_time=start_time,
-                                    end_time=end_time,
-                                    success=True,
-                                    invocation_id=invocation_id,
+                                with _capture_plugin_invocation_outcome(outcome):
+                                    awaited_value = await awaitable_result
+                                _log_completion(
+                                    function_name, awaited_value, parameters, start_time, invocation_id, outcome,
                                 )
                                 return awaited_value
                             except (Exception, asyncio.CancelledError) as await_error:
@@ -1028,20 +1063,7 @@ def plugin_function_logger(plugin_name: str):
 
                         return _await_and_log(result)
 
-                    end_time = time.time()
-                    duration_ms = (end_time - start_time) * 1000
-                    _log_success(function_name, result, duration_ms)
-
-                    log_plugin_invocation(
-                        plugin_name=plugin_name,
-                        function_name=function_name,
-                        parameters=parameters,
-                        result=result,
-                        start_time=start_time,
-                        end_time=end_time,
-                        success=True,
-                        invocation_id=invocation_id,
-                    )
+                    _log_completion(function_name, result, parameters, start_time, invocation_id, outcome)
 
                     return result
 
