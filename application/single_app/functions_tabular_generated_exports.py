@@ -96,7 +96,7 @@ from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     infer_model_endpoint_protocol,
 )
-from functions_public_workspaces import get_public_source_workspace_ids
+from public_source_access import get_public_source_workspace_ids
 from functions_settings import get_settings
 from functions_simplechat_operations import (
     commit_generated_chat_artifact_publication_for_user,

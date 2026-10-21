@@ -1,10 +1,10 @@
 # test_v2_public_chat_scope.py
 """
 Native aggregate public chat, using the real React composer, stores and router.
-Version: 0.261.372
+Version: 0.261.373
 Implemented in: 0.261.310
 Scope controls moved into Documents in: 0.261.315
-All-available discovery and legacy-scope normalization in: 0.261.372
+All-available discovery and legacy-scope normalization in: 0.261.373
 
 HTTP boundaries reuse the context workflow harness; no Azure or model calls are made.
 """

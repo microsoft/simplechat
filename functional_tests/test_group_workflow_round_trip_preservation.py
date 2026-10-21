@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for group workflow save round-trip preservation.
-Version: 0.261.234
+Version: 0.261.373
 Implemented in: 0.261.141
 Chat delivery contract loaded by the harness in: 0.261.234
 
@@ -170,7 +170,7 @@ def _installed(names):
 def _document_analysis_seams():
     """The real document target and id normalizers, compiled away from their Azure-bound modules."""
     search = _compiled(
-        APP_ROOT / "functions_search.py",
+        APP_ROOT / "search_scope_utils.py",
         ("VALID_SEARCH_SCOPES", "normalize_search_scope", "normalize_search_id_list"),
         {},
     )

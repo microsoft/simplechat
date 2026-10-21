@@ -1,10 +1,10 @@
 # test_v2_public_directory.py
 """
 Production-SPA coverage for the native V2 public workspace directory page.
-Version: 0.261.372
+Version: 0.261.373
 Implemented in: 0.261.175
 The Create dialog holds keyboard focus and hands it back on close: 0.261.188
-V2 curation removed and classic preferences preserved in: 0.261.372
+V2 curation removed and classic preferences preserved in: 0.261.373
 
 Exercises the real public directory surface -- the browse page built on the My Workspace
 design system and driven by the public directory adapter -- against closed synthetic HTTP. The

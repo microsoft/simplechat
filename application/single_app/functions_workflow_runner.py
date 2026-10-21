@@ -299,7 +299,7 @@ from cosmos_document_utils import normalize_cosmos_document
 from functions_workflow_results_delivery import (
     RESULTS_RECEIPT_KEY, publish_workflow_results, workflow_run_title,
 )
-from functions_public_workspaces import get_public_source_workspace_ids
+from public_source_access import get_public_source_workspace_ids
 from public_source_policy import current_public_source_policy, public_source_policy_context
 from dataclasses import replace
 from functions_search_service import (

@@ -2,7 +2,7 @@
 """
 Functional contracts for the lightweight V2 active-scope read and phase timings.
 
-Version: 0.261.372
+Version: 0.261.373
 Implemented in: 0.261.305
 
 The real route bodies, scope helper, timer, and authentication decorators execute

@@ -1,8 +1,8 @@
 # test_v2_public_source_owner_sdk.py
 """Representative SDK contracts for storage owners touched by V2 public sources.
 
-Version: 0.261.372
-Implemented in: 0.261.372
+Version: 0.261.373
+Implemented in: 0.261.373
 
 Point reads and writes use the installed CosmosDict through the existing atomic
 container; queries remain plain dictionaries. Source-bound functions execute their

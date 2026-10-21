@@ -206,7 +206,7 @@ Cancelling or superseding a query does not replace a newer query's results.
 ### React V2 public document search scope
 
 Implemented in version: **0.261.310** (`application/single_app/config.py`).
-Public discovery corrected in version: **0.261.372**.
+Public discovery corrected in version: **0.261.373**.
 Placement fixed in version: **0.261.315**. Open **Documents → Search in**;
 in Orchestrate, use **Manual controls → Documents** when available.
 The choices appear only inside the picker, not above the message editor:

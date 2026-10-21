@@ -36,7 +36,7 @@ from functions_debug import debug_print
 from functions_documents import get_document_record, get_ordered_document_chunks
 from functions_group import get_user_groups
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
-from functions_public_workspaces import get_public_source_workspace_ids
+from public_source_access import get_public_source_workspace_ids
 from public_source_policy import uses_all_public_sources
 from functions_search import (
     SEARCH_DEFAULT_TOP_N,

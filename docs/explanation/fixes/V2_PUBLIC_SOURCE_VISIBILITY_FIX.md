@@ -1,6 +1,6 @@
 # V2 public source discovery fix
 
-Fixed/Implemented in version: **0.261.372**, tracked in
+Fixed/Implemented in version: **0.261.373**, tracked in
 `application/single_app/config.py`.
 
 ## Issue and root cause
@@ -41,6 +41,24 @@ agent worker identity and workflow execution. Explicit document selections,
 workspace locks, publication approval, screening, current availability and group
 membership checks remain restrictive. A mixed turn stays mixed; public-only All
 is still a separate choice.
+
+### Import and initialization boundary
+
+Search, execution and citation consumers import the bootstrap-free
+`public_source_access.py` boundary rather than importing the configuration-owning
+workspace module while it is still initializing. The public workspace storage
+owner configures its resolver after defining its readers and policies. Calling
+discovery before that initialization raises explicitly; it never imports the
+owner implicitly or pretends the source set is empty.
+Pure scope and identifier normalization lives in `search_scope_utils.py`, so
+document-analysis startup no longer imports the partially initialized search
+service merely to normalize inputs. `functions_search.py` retains its existing
+normalizer exports for callers.
+
+`functional_tests/test_v2_public_source_imports.py` runs real-module imports in
+both orders, real web/scheduler wiring and uninitialized refusal in fresh normal
+and optimized Python processes, using the repository's offline bootstrap seams.
+No local-import workaround or fake configuration module conceals the cycle.
 
 The React directory no longer writes visibility preferences or offers switches,
 bulk show/hide or saved visibility lists. Documents offers Current context and

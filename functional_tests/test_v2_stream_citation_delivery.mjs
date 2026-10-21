@@ -1,7 +1,7 @@
 // test_v2_stream_citation_delivery.mjs
-// Version: 0.261.372
+// Version: 0.261.373
 // Implemented in: 0.261.365
-// Source-policy marker asserted across send, edit, retry and recovery in: 0.261.372
+// Source-policy marker asserted across send, edit, retry and recovery in: 0.261.373
 // Real chat-store/SSE regressions with mocked HTTP only; no live model or connector calls.
 
 import assert from 'node:assert/strict';

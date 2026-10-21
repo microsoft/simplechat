@@ -1,8 +1,8 @@
 # test_v2_public_source_discovery_policy.py
 """
 Functional regressions for V2 public source discovery.
-Version: 0.261.372
-Implemented in: 0.261.372
+Version: 0.261.373
+Implemented in: 0.261.373
 
 V2 ignores classic curation without becoming public-only or widening selected
 sources. Request, worker and legacy policies stay isolated without storage writes.
@@ -11,10 +11,12 @@ sources. Request, worker and legacy policies stay isolated without storage write
 import ast
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from unittest.mock import Mock
 
 import pytest
 
-from test_v2_public_chat_scope import APP, USER, world
+from test_v2_public_chat_scope import APP, USER
+from test_v2_public_chat_scope import world as world
 from test_support.agent_delegation import execute_functions
 
 
@@ -103,9 +105,10 @@ def test_worker_policy_is_bound_to_user_and_reset_after_failure(world):
         (["shown", "hidden", "uploads-off"], ["shown"], ["shown"]),
         (["shown"], ["shown"], ["shown"]),
     ]
+    failing_operation = Mock(side_effect=RuntimeError("interrupted"))
     with pytest.raises(RuntimeError):
         with public_source_policy_context(USER, "all_available"):
-            raise RuntimeError("interrupted")
+            failing_operation()
     clean = world.public.get_public_source_workspace_ids(USER)
     assert clean == ["shown"]
 
@@ -217,9 +220,12 @@ def test_search_keeps_all_eligible_public_ids_and_explicit_narrowing(world):
         "_resolve_active_group_ids": lambda *args, **kwargs: ["group-a"],
         "SEARCH_DEFAULT_TOP_N": 12, "SEARCH_MAX_TOP_N": 500,
     }
-    execute_functions("functions_search.py", {
-        "normalize_search_scope", "normalize_search_top_n", "normalize_search_id_list",
-    }, namespace)
+    from search_scope_utils import normalize_search_id_list, normalize_search_scope
+    namespace.update(
+        normalize_search_id_list=normalize_search_id_list,
+        normalize_search_scope=normalize_search_scope,
+    )
+    execute_functions("functions_search.py", {"normalize_search_top_n"}, namespace)
     namespace["VALID_SEARCH_SCOPES"] = {"all", "personal", "group", "public"}
     execute_functions("functions_search_service.py", {
         "_resolve_public_workspace_ids", "build_search_request",

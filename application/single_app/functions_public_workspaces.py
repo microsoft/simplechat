@@ -11,6 +11,7 @@ from public_chat_scope_state import (
     normalize_public_workspace_selection,
 )
 from public_source_policy import uses_all_public_sources
+from public_source_access import configure_public_source_resolver
 
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_workspace_branding import (
@@ -708,3 +709,6 @@ def check_public_workspace_status_allows_operation(workspace_doc, operation_type
         return False, reason
     
     return True, ""
+
+
+configure_public_source_resolver(get_public_source_workspace_ids)

@@ -8,7 +8,7 @@ It replaces the placeholder that linked to the classic
 directory, and the V2 public workspace picker now reads the same list.
 
 Implemented in version **0.261.175**.
-Updated in version: **0.261.372** (`application/single_app/config.py`).
+Updated in version: **0.261.373** (`application/single_app/config.py`).
 
 Dependencies:
 - the public workspace feature (`enable_public_workspaces`);
@@ -40,7 +40,7 @@ row's `membership` from the server decides which appears, never the browser.
 
 ### Public source availability
 
-From **0.261.372**, V2 does not offer Visible for chat switches, show/hide
+From **0.261.373**, V2 does not offer Visible for chat switches, show/hide
 actions or saved visibility lists. Those legacy preferences could otherwise
 hide a processed public document from the picker even when the same reader
 could open its workspace. They remain available in classic and are not erased.

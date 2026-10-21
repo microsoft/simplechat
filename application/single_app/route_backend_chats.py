@@ -137,7 +137,7 @@ import csv
 from functools import wraps
 from public_chat_scope import public_chat_scope_required
 from public_source_policy import current_public_source_policy
-from functions_public_workspaces import get_public_source_workspace_ids
+from public_source_access import get_public_source_workspace_ids
 import io
 import inspect
 import json

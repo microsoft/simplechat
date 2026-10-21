@@ -1,7 +1,7 @@
 # test_native_tabular_compute_service.py
 """
 Real native query, transformation, checkpoint and data-only service regressions.
-Version: 0.261.372
+Version: 0.261.373
 Implemented in: 0.261.127
 Replay-location revision identity check added in: 0.261.141
 Re-uploaded source revision replay added in: 0.261.143
@@ -256,6 +256,10 @@ def native_runtime(monkeypatch, row_count=25, scope="personal", filename="source
         storage_account_public_documents_container_name="public-documents",
         storage_account_user_documents_container_name="user-documents",
     ):
+        patcher.setattr(
+            importlib.import_module("public_source_access"), "_resolver",
+            lambda *args, **kwargs: [scope_id] if state["allowed"] else [],
+        )
         patcher.setattr(socket.socket, "connect", offline_connect)
         patcher.setattr(socket, "create_connection", _no_network)
         patcher.setattr(
