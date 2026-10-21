@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.359"
+version: "0.261.365"
 ---
 
 ## Decide what should run
@@ -51,12 +51,21 @@ planner may Analyze or Compare those inputs without adding a Search step merely
 because they were pinned. Explicitly selected Search still constrains the plan,
 and the validator still rejects a plan that omits selected documents.
 
-### Open the evidence behind Analyze and Compare answers
+### Open the evidence behind document answers
 
 Since **0.261.356**, Analyze and Compare supply source references through the same
 document-citation pipeline as Search. Click an inline citation to inspect the
 original passage; a comparison can reference both the baseline and target
 documents. Saved answers retain their citations when reopened.
+
+Fixed/Implemented in version: **0.261.365**
+(`application/single_app/config.py`).
+Search now preserves its passage references whether a later task receives its
+retained excerpts (`evidence`) or prepared search content (`prepared`). Ask your
+question normally; you do not need to request source quotations to make those
+references available. A sources-only input identifies documents but does not
+provide passages to cite. This does not prescribe an answer format or a fixed
+number of citations.
 
 Use those passages to check the answer against the source. A reference identifies
 evidence, not an independent verification of every conclusion. Partial coverage

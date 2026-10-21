@@ -1,9 +1,10 @@
 # test_orchestration_dependency_citations.py
 """Functional tests for authorized citations from the selected retained answer.
 
-Version: 0.261.232
+Version: 0.261.365
 Implemented in: 0.261.127
 Container-only retained citations covered in: 0.261.232
+Search evidence citation sidecars covered in: 0.261.365
 Real compiler, adapters, result storage, lineage checks, executor and recovery are
 used. Only search/model/network/storage transport is isolated.
 """
@@ -67,8 +68,9 @@ def grounded(runtime, monkeypatch):
     return SimpleNamespace(runtime=runtime, hits=hits, make=make)
 
 
-def test_exact_search_citations_and_document_cache_exclude_incidental_sibling(grounded):
-    case = grounded.make()
+@pytest.mark.parametrize('selected', ['prepared', 'evidence'])
+def test_exact_search_citations_and_document_cache_exclude_incidental_sibling(grounded, selected):
+    case = grounded.make(selected=selected)
     case.context.citations = [{'document_id': 'ambient-private-document', 'citation_id': 'not-an-input'}]
     result = execute(grounded.runtime, case)
     used = build_used_documents(result['citations'])
@@ -92,9 +94,8 @@ def test_source_free_answer_does_not_inherit_sibling_or_ambient_citations(ground
     assert len(case.model.calls) == 1
 
 
-@pytest.mark.parametrize('selected', ['evidence', 'sources'])
-def test_source_only_binding_reports_document_provenance_without_invented_chunks(grounded, selected):
-    case = grounded.make(selected=selected)
+def test_source_only_binding_reports_document_provenance_without_invented_chunks(grounded):
+    case = grounded.make(selected='sources')
     result = execute(grounded.runtime, case)
     assert result['status'] == 'completed'
     assert result['citations'] == [{
@@ -104,15 +105,17 @@ def test_source_only_binding_reports_document_provenance_without_invented_chunks
     assert len(case.model.calls) == 1
 
 
-def test_repeated_named_binding_does_not_duplicate_citations(grounded):
-    case = grounded.make(duplicate=True)
+@pytest.mark.parametrize('selected', ['prepared', 'evidence'])
+def test_repeated_named_binding_does_not_duplicate_citations(grounded, selected):
+    case = grounded.make(selected=selected, duplicate=True)
     result = execute(grounded.runtime, case)
     assert result['status'] == 'completed' and len(result['citations']) == 2
     assert len(case.model.calls) == 1
 
 
-def test_reopened_exact_result_retains_citations_without_context_notes_or_generation(grounded):
-    case = grounded.make()
+@pytest.mark.parametrize('selected', ['prepared', 'evidence'])
+def test_reopened_exact_result_retains_citations_without_context_notes_or_generation(grounded, selected):
+    case = grounded.make(selected=selected)
     result = execute(grounded.runtime, case)
     reference = case.context.task_results['answer'].output('answer')
     fresh = SimpleNamespace(result_service=case.fixture.restart())
@@ -122,10 +125,11 @@ def test_reopened_exact_result_retains_citations_without_context_notes_or_genera
 
 
 @pytest.mark.parametrize('change', ['revoked', 'held', 'revision'])
-def test_citations_keep_the_answer_access_after_a_restart(grounded, change):
+@pytest.mark.parametrize('selected', ['prepared', 'evidence'])
+def test_citations_keep_the_answer_access_after_a_restart(grounded, change, selected):
     # 0.261.232: citations are provenance of the retained answer and take its conversation's
     # and run's access. Opening a cited document is a separate input read.
-    case = grounded.make()
+    case = grounded.make(selected=selected)
     result = execute(grounded.runtime, case)
     reference = case.context.task_results['answer'].output('answer')
     if change == 'revoked':
