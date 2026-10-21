@@ -759,6 +759,14 @@ view. If the answering model also fails, an application-generated status explana
 still describes the incomplete work. Errors are not classified from integration
 names or exception-message keywords.
 
+Since **0.261.370**, an orchestrated Foundry web search uses the remaining
+**Step timeout** and **Run timeout** budgets while waiting for its provider run.
+It no longer stops solely because Semantic Kernel's default one-minute polling
+window elapsed. Polling continues against the same run until completion, a real
+provider failure, cancellation, or the applicable application deadline. This
+does not increase either configured budget or add retries. A service that never
+finishes can still time out; this change is not a guarantee of provider success.
+
 Completed step results are saved in the existing orchestration Cosmos containers.
 No new storage connection or settings switch is required. **Retry from failed step**
 uses these results with the same effective plan and current authorization, rather

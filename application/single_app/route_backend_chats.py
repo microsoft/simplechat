@@ -42,6 +42,7 @@ from semantic_kernel_plugins.plugin_invocation_logger import (
 )
 from semantic_kernel_plugins.chart_plugin import ChartPlugin
 from foundry_agent_runtime import FoundryAgentInvocationError, FoundryAgentUserAuthenticationRequired, execute_foundry_agent, resolve_authority
+from functions_orchestration_timing import OrchestrationExecutionStopped
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -29206,6 +29207,7 @@ def perform_research_web_searches(
     cancel_requested=None,
     on_query_progress=None,
     invocation_capture=None,
+    _execution_control=None,
 ):
     """Run one or more current-message-only web searches for normal or Deep Research mode."""
     web_search_runs = []
@@ -29266,6 +29268,8 @@ def perform_research_web_searches(
             invocation_kwargs = {
                 "invocation_capture": invocation_capture, "invocation_source_type": "deep_research",
             }
+        if _execution_control is not None:
+            invocation_kwargs["_execution_control"] = _execution_control
         success = perform_web_search(
             settings=settings,
             conversation_id=conversation_id,
@@ -29320,6 +29324,7 @@ def perform_web_search(
     search_context_label=None,
     invocation_capture=None,
     invocation_source_type="web",
+    _execution_control=None,
 ):
     debug_print("[WEB_SEARCH] ========== ENTERING perform_web_search ==========")
     debug_print(f"[WEB_SEARCH] Parameters received:")
@@ -29448,6 +29453,8 @@ def perform_web_search(
         invocation_kwargs = {
             "invocation_capture": invocation_capture, "invocation_source_type": invocation_source_type,
         } if invocation_capture is not None else {}
+        if _execution_control is not None:
+            invocation_kwargs["_execution_control"] = _execution_control
         result = asyncio.run(
             execute_foundry_agent(
                 foundry_settings=foundry_settings,
@@ -29457,6 +29464,8 @@ def perform_web_search(
                 **invocation_kwargs,
             )
         )
+    except OrchestrationExecutionStopped:
+        raise
     except FoundryAgentInvocationError as exc:
         # Record structured facts first, so a caller can still classify the provider failure
         # when the capture check below reports that nothing had been acquired yet.

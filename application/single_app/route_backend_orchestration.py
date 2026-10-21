@@ -100,6 +100,7 @@ from functions_orchestration_context import (
     conversation_user_urls,
     history_message_limit,
     normalize_history_message,
+    resolve_conversation_source_messages,
     resolve_action_catalog,
     resolve_agent_catalog,
     resolve_candidate_documents,
@@ -130,7 +131,7 @@ from functions_orchestration_output_store import (
 )
 from functions_orchestration_result_contracts import ResultContractError
 from functions_orchestration_services import (
-    admitted_result_aliases, composition_profiles, discover_result_aliases,
+    admitted_result_aliases, composition_profiles, discover_result_aliases, selected_conversation_results,
 )
 from functions_orchestration_checkpoints import CheckpointError, fingerprint
 from functions_orchestration_recovery import (
@@ -1150,7 +1151,7 @@ def _load_conversation_snapshot(
     return snapshot
 
 
-def _validate_saved_conversation_context(snapshot, conversation_id, user_id):
+def _validate_saved_conversation_context(snapshot, conversation_id, user_id, *, full_message_ids=None):
     _authorize_context_conversation(conversation_id, user_id)
     entries = snapshot.get('messages') if isinstance(snapshot, dict) else None
     if not isinstance(entries, list) or len(entries) > HISTORY_MAX_MESSAGES:
@@ -1184,6 +1185,8 @@ def _validate_saved_conversation_context(snapshot, conversation_id, user_id):
     current_contexts = _remember_analysis_history_contexts(messages)
     if contexts or current_contexts:
         validated['analysis_result_contexts'] = contexts + [item for item in current_contexts if item not in contexts]
+    if full_message_ids is not None:
+        return resolve_conversation_source_messages(validated, messages, full_message_ids)
     return validated
 
 
@@ -2878,8 +2881,16 @@ def register_route_backend_orchestration(bp):
                     turn_context['seeds'] = deepcopy(seeds)
                     context['document_transform_references'] = deepcopy(seeds['document_transform_references'])
                 retained_runs = list_conversation_runs(resolved_conversation_id, user_id, limit=10, strict=True)
-                if context_ids is not None:
-                    retained_runs = [record for record in retained_runs if record.get('user_message_id') in context_ids]
+                if resolution['requires_retrieval'] is False and resolution['message_ids']:
+                    retained_runs = [
+                        record for record in retained_runs
+                        if record.get('assistant_message_id') in resolution['message_ids']
+                    ]
+                elif context_ids is not None:
+                    retained_runs = [
+                        record for record in retained_runs
+                        if record.get('user_message_id') in context_ids or record.get('assistant_message_id') in context_ids
+                    ]
                 retained = discover_result_aliases(retained_runs, services.results)
                 if retained['unavailable_count']:
                     yield build_planning_thought(
@@ -2889,6 +2900,16 @@ def register_route_backend_orchestration(bp):
                 turn_context['result_aliases'] = {
                     alias: reference.to_dict() for alias, reference in existing_results.items()
                 }
+                if resolution['requires_retrieval'] is False and resolution['message_ids']:
+                    selected_messages = _validate_saved_conversation_context(
+                        snapshot, resolved_conversation_id, user_id,
+                        full_message_ids=resolution['message_ids'],
+                    )
+                    conversation_results = selected_conversation_results(
+                        retained_runs, existing_results, services.results, selected_messages,
+                    )
+                    if conversation_results:
+                        resolution['conversation_results'] = conversation_results
                 context['export_catalog'] = _admitted_export_catalog(
                     user_id, resolved_conversation_id, settings=settings, services=services,
                 )

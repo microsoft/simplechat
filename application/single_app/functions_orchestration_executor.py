@@ -110,6 +110,7 @@ from functions_orchestration_checkpoints import (
     CheckpointError, restore_context, step_input_fingerprint,
 )
 from functions_orchestration_timing import (
+    OrchestrationExecutionControl, OrchestrationExecutionStopped,
     initial_execution_deadline, positive_setting_int as _setting_int,
 )
 from functions_orchestration_workflow_run_wait import SAVED_WORKFLOW_RUN_WAIT_KIND, plan_runs_headless
@@ -888,7 +889,7 @@ def _raise_dependency_service_failure(step, error):
 
 def _run_dependency_step(
     step, context, settings, user_id, emit, cancel_probe, resolver, *,
-    input_fingerprint, native_pending=None, finished_stop=None,
+    input_fingerprint, native_pending=None, finished_stop=None, execution_control=None,
 ):
     # The file policy is loaded where steps run, not when the executor is imported.
     from functions_orchestration_execution_policy import orchestration_file_policy, OrchestrationFilePolicyError
@@ -946,6 +947,7 @@ def _run_dependency_step(
                 ):
                     raise ResultUnavailableError('result_source_snapshot_changed')
         scoped = _dependency_adapter_context(context, manifest, step, input_fingerprint)
+        scoped._execution_control = execution_control
         scoped.source_selection_reader = readers.get('sources') if named_sources else None
         binding_scope = getattr(context, 'step_model_scope', None)
         model_scope = (
@@ -1033,7 +1035,7 @@ def _run_dependency_step(
             raise ResultContractError('result_not_ready')
         result['task_result'] = task
         return result
-    except MixedSourceCancellationError:
+    except (MixedSourceCancellationError, OrchestrationExecutionStopped):
         raise
     except Exception as exc:
         _raise_dependency_service_failure(step, exc)
@@ -1571,6 +1573,11 @@ def _execute_dependency_plan(
                         return False
                     return True
 
+                execution_control = OrchestrationExecutionControl(
+                    step_deadline=started + step_timeout, run_deadline=deadline,
+                    cancel_requested=step_cancel, monotonic=time.monotonic,
+                    utcnow=lambda: datetime.now(timezone.utc),
+                )
                 running = _step_record(context, step, index, STEP_STATUS_RUNNING, None, started_at, None, 0)
                 running.update({
                     'result_producer': context.result_producer(step).to_dict(),
@@ -1584,6 +1591,7 @@ def _execute_dependency_plan(
                     result = _run_dependency_step(
                         step, context, settings, user_id, emit, step_cancel, resolver,
                         input_fingerprint=input_fingerprint, finished_stop=finished_stop,
+                        execution_control=execution_control,
                     )
                     if _should_retry_transient(step, result, step_cancel):
                         _log_transient_retry(context, step, result)
@@ -1595,8 +1603,10 @@ def _execute_dependency_plan(
                             result = _run_dependency_step(
                                 step, context, settings, user_id, emit, step_cancel, resolver,
                                 input_fingerprint=input_fingerprint, finished_stop=finished_stop,
+                                execution_control=execution_control,
                             )
-                except MixedSourceCancellationError:
+                except (MixedSourceCancellationError, OrchestrationExecutionStopped):
+                    step_cancel()
                     result = build_step_result(
                         status=STEP_STATUS_CANCELLED if reason == 'user_cancelled' else STEP_STATUS_FAILED,
                         failure=build_failure(reason or 'execution_interrupted'),

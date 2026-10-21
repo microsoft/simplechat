@@ -170,6 +170,31 @@ def discover_result_aliases(runs, results):
     return {"aliases": aliases, "unavailable_count": unavailable_count}
 
 
+def selected_conversation_results(runs, aliases, results, messages):
+    """Associate exact selected answer text with its admitted final result.
+
+    Message text is checked after masking/revisions by the history owner. A
+    retained original must never replace a subsequently edited or masked answer.
+    """
+    selected = {message["id"]: message for message in messages if message["role"] == "assistant"}
+    references = {reference: alias for alias, reference in aliases.items()}
+    associated = []
+    for run in runs:
+        message = selected.get(run.get("assistant_message_id"))
+        if message is None or run.get("status") != "completed" or not run.get("final_response"):
+            continue
+        reference = ResultRef.from_dict(run["final_response"])
+        alias = references.get(reference)
+        if alias is None or reference.kind not in ("text-v1", "markdown-v1"):
+            continue
+        reader = results.open_result(reference, require_current_sources=True)
+        text = reader.read_text()
+        reader.recheck()
+        if text.strip() == message["content"].strip():
+            associated.append({"message_id": message["id"], "alias": alias})
+    return associated
+
+
 class OrchestrationServices:
     """Actor/conversation-scoped result and file services over existing containers."""
 

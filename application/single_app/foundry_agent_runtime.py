@@ -12,6 +12,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote
 
@@ -28,6 +29,7 @@ from azure.identity.aio import (  # type: ignore
     DefaultAzureCredential as AsyncDefaultAzureCredential,
 )
 from semantic_kernel.agents import AzureAIAgent
+from semantic_kernel.agents.open_ai.run_polling_options import RunPollingOptions
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 
 from functions_appinsights import log_event
@@ -41,6 +43,7 @@ from functions_orchestration_invocation_capture import (
     OrchestrationInvocationDeniedError,
     require_invocation_capture,
 )
+from functions_orchestration_timing import OrchestrationExecutionStopped
 
 _logger = logging.getLogger("foundry_agent_runtime")
 
@@ -62,6 +65,8 @@ FOUNDRY_DELEGATED_AUTH_REQUIRED_MESSAGE = (
     "Foundry agents and workflows require delegated access to Azure AI Foundry. "
     "Sign in or grant Foundry access, then try again."
 )
+_FOUNDRY_CLEANUP_TIMEOUT_SECONDS = 5
+_FOUNDRY_CONTROL_POLL_SECONDS = 0.25
 
 
 @dataclass
@@ -520,9 +525,55 @@ async def execute_foundry_agent(
     invocation_source_type="web",
     invocation_source=None,
     invocation_selector=None,
+    _execution_control=None,
 ) -> FoundryAgentInvocationResult:
     """Invoke a Foundry agent using Semantic Kernel's AzureAIAgent abstraction."""
 
+    if _execution_control is not None:
+        _execution_control.raise_if_stopped()
+    operation = _execute_foundry_agent(
+        foundry_settings=foundry_settings, global_settings=global_settings,
+        message_history=message_history, metadata=metadata,
+        max_completion_tokens=max_completion_tokens, invocation_capture=invocation_capture,
+        invocation_source_type=invocation_source_type, invocation_source=invocation_source,
+        invocation_selector=invocation_selector, _execution_control=_execution_control,
+    )
+    if _execution_control is None:
+        return await operation
+
+    async def watch_execution():
+        while True:
+            _execution_control.raise_if_stopped()
+            await asyncio.sleep(min(_FOUNDRY_CONTROL_POLL_SECONDS, _execution_control.remaining_seconds()))
+
+    invocation = asyncio.create_task(operation)
+    watcher = asyncio.create_task(watch_execution())
+    try:
+        await asyncio.wait((invocation, watcher), return_when=asyncio.FIRST_COMPLETED)
+        _execution_control.raise_if_stopped()
+        if watcher.done():
+            watcher.result()
+        return invocation.result()
+    finally:
+        watcher.cancel()
+        if not invocation.done():
+            invocation.cancel()
+        # The invocation's finally owns provider resources, including cancellation
+        # before the SDK yields its first message. Each cleanup await is bounded.
+        await asyncio.gather(watcher, invocation, return_exceptions=True)
+
+
+async def _bounded_foundry_cleanup(operation):
+    try:
+        await asyncio.wait_for(operation, timeout=_FOUNDRY_CLEANUP_TIMEOUT_SECONDS)
+    except Exception as exc:
+        log_event("[FOUNDRY_AGENT] Resource cleanup failed.", extra={"error_type": type(exc).__name__})
+
+
+async def _execute_foundry_agent(
+    *, foundry_settings, global_settings, message_history, metadata, max_completion_tokens,
+    invocation_capture, invocation_source_type, invocation_source, invocation_selector, _execution_control,
+):
     invocation_capture = require_invocation_capture(invocation_capture)
     if invocation_capture is not None:
         foundry_settings = deepcopy(foundry_settings)
@@ -547,18 +598,18 @@ async def execute_foundry_agent(
     )
 
     credential = _build_async_credential(foundry_settings, global_settings)
-    client = AzureAIAgent.create_client(
-        credential=credential,
-        endpoint=endpoint,
-        api_version=api_version,
-    )
+    client = None
     resolved_max_completion_tokens = _normalize_max_completion_tokens(max_completion_tokens)
     delegation_thread = None
     captured_runs = None
     original_runs = None
     agent_operations = None
+    interrupted = False
 
     try:
+        client = AzureAIAgent.create_client(
+            credential=credential, endpoint=endpoint, api_version=api_version,
+        )
         definition = await client.agents.get_agent(agent_id)
         capture_source = None
         if invocation_capture is not None:
@@ -567,13 +618,19 @@ async def execute_foundry_agent(
             capture_source = _captured_foundry_definition(
                 definition, agent_id, endpoint, effective_api_version, invocation_capture,
             )
-        azure_agent = AzureAIAgent(client=client, definition=definition)
+        agent_kwargs = {}
+        if _execution_control is not None:
+            _execution_control.raise_if_stopped()
+            agent_kwargs["polling_options"] = RunPollingOptions(
+                run_polling_timeout=timedelta(seconds=_execution_control.remaining_seconds()),
+            )
+        azure_agent = AzureAIAgent(client=client, definition=definition, **agent_kwargs)
         responses = []
         invoke_kwargs = {
             "messages": message_history,
             "metadata": {k: str(v) for k, v in metadata.items() if v is not None},
         }
-        if metadata.get("delegation_invocation_id") or invocation_capture is not None:
+        if metadata.get("delegation_invocation_id") or invocation_capture is not None or _execution_control is not None:
             # Retain the ephemeral thread before the first provider response so
             # cancellation can clean it up even when invoke never yields.
             from semantic_kernel.agents import AzureAIAgentThread
@@ -637,14 +694,11 @@ async def execute_foundry_agent(
                 metadata_thread_id = message_obj.metadata.get("thread_id")
             thread_id = metadata_thread_id or metadata.get("thread_id")
 
-        if thread_id:
-            try:
-                if last_response.thread is not None and hasattr(last_response.thread, "delete"):
-                    await last_response.thread.delete()
-                elif hasattr(client, "agents") and hasattr(client.agents, "delete_thread"):
-                    await client.agents.delete_thread(thread_id)
-            except Exception as cleanup_error:  # pragma: no cover - best effort cleanup
-                _logger.warning("Failed to delete Foundry thread: %s", cleanup_error)
+        if delegation_thread is None:
+            if last_response.thread is not None and hasattr(last_response.thread, "delete"):
+                delegation_thread = last_response.thread
+            elif thread_id and hasattr(client.agents, "delete_thread"):
+                await _bounded_foundry_cleanup(client.agents.delete_thread(thread_id))
         text = _extract_message_text(message_obj)
         citations = _extract_citations(message_obj)
         model_name = getattr(definition, "model", None)
@@ -670,20 +724,34 @@ async def execute_foundry_agent(
             citations=citations,
             metadata=message_obj.metadata or {},
         )
+    except (asyncio.CancelledError, OrchestrationExecutionStopped):
+        interrupted = True
+        raise
     finally:
+        if _execution_control is not None:
+            try:
+                _execution_control.raise_if_stopped()
+            except OrchestrationExecutionStopped:
+                interrupted = True
         if captured_runs is not None and agent_operations is not None:
             agent_operations.runs = original_runs
         try:
-            if delegation_thread is not None:
-                try:
-                    await asyncio.wait_for(delegation_thread.delete(), timeout=5)
-                except Exception as exc:
-                    log_event("[AGENT_DELEGATION] Foundry thread cleanup failed.", extra={"error_type": type(exc).__name__})
+            if (
+                interrupted and captured_runs is not None and captured_runs._identity is not None
+                and callable(getattr(original_runs, "cancel", None))
+            ):
+                run_id, thread_id = captured_runs._identity
+                await _bounded_foundry_cleanup(original_runs.cancel(thread_id=thread_id, run_id=run_id))
         finally:
             try:
-                await client.close()
+                if delegation_thread is not None:
+                    await _bounded_foundry_cleanup(delegation_thread.delete())
             finally:
-                await credential.close()
+                try:
+                    if client is not None:
+                        await _bounded_foundry_cleanup(client.close())
+                finally:
+                    await _bounded_foundry_cleanup(credential.close())
 
 
 async def execute_new_foundry_agent(

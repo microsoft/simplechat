@@ -46,7 +46,7 @@ from functions_orchestration_plan_revisions import (
     resolve_revision_export_catalog,
     resolve_revision_result_aliases,
 )
-from functions_orchestration_planner import plan_request
+from functions_orchestration_planner import conversation_retrieval_allowed, plan_request
 from functions_orchestration_registry import resolve_available_capabilities
 from functions_orchestration_schema import (
     PlanValidationError,
@@ -600,10 +600,13 @@ def build_plan_edit_outcome(
     )
     context['memory_audience'] = memory_context['audience']
     context['memory_scope'] = memory_context['scope']
-    candidates, _probed = resolve_candidate_documents(
-        build_elicitation_user_request(changed_request, context.get('answered_questions')),
-        user_id, seeds=seeds, conversation_id=context['conversation_id'], settings=settings,
-    )
+    resolution = context.get('request_resolution') or {}
+    candidates = []
+    if conversation_retrieval_allowed(resolution, changed_request, seeds):
+        candidates, _probed = resolve_candidate_documents(
+            build_elicitation_user_request(changed_request, context.get('answered_questions')),
+            user_id, seeds=seeds, conversation_id=context['conversation_id'], settings=settings,
+        )
     candidates = _available_sources(context, current_plan, user_id, settings, candidates)
     candidates = enrich_planner_candidates(
         candidates, user_id, conversation_id=context['conversation_id'], seeds=seeds,
@@ -628,7 +631,6 @@ def build_plan_edit_outcome(
         document_transform_source_reader=document_transform_source_reader,
         document_transform_source_resolver=document_transform_source_resolver,
     )
-    resolution = context.get('request_resolution') or {}
     signals = build_conversation_signals(
         conversation_context['messages'], context['user_message'],
         truncated=conversation_context.get('truncated', False),
