@@ -2,8 +2,8 @@
 
 Fixed/Implemented in version: **0.261.365**
 
-Current application version: **0.261.367**, after integrating base version
-**0.261.366** without reverting either fix.
+Current application version: **0.261.368**, after integrating base version
+**0.261.367** without reverting the telemetry or incoming fixes.
 
 ## Issue
 
@@ -44,7 +44,7 @@ The fix first appears in the 1.40.0/0.61b0 release. The related upstream report 
   and network access blocked.
 - `docs/troubleshooting/troubleshooting.md` distinguishes this post-response
   token-reuse signature from instrumentation startup failures.
-- `application/single_app/config.py` records application version **0.261.367**.
+- `application/single_app/config.py` records application version **0.261.368**.
   The telemetry fix was originally implemented in **0.261.365**.
 
 Flask, Werkzeug, and Flask-Executor pins remain unchanged. The fix does not

@@ -174,6 +174,8 @@ export interface ChatMessage {
     m365_citations?: M365Citation[];
     /** Retrieved document records used to resolve this message's inline citation labels. */
     hybrid_citations?: HybridCitation[];
+    web_search_citations?: WebCitation[];
+    agent_citations?: AgentCitation[];
     [key: string]: unknown;
 }
 
@@ -1351,6 +1353,9 @@ export interface ChatStreamEvent {
     agent_display_name?: string;
     augmented?: boolean;
     hybrid_citations?: HybridCitation[];
+    web_search_citations?: WebCitation[];
+    agent_citations?: AgentCitation[];
+    m365_citations?: M365Citation[];
     metadata?: Json;
     /** The outgoing Microsoft 365 action a `type: "m365_pending_action"` frame announces. */
     pending_action?: Json;
@@ -1502,8 +1507,12 @@ export interface WebCitation {
 /** A tool invocation recorded on an assistant message, under `agent_citations`. */
 export interface AgentCitation {
     tool_name?: string;
+    function_name?: string;
+    plugin_name?: string;
     function_arguments?: unknown;
     function_result?: unknown;
+    success?: boolean | null;
+    error_message?: unknown;
     timestamp?: string;
     artifact_id?: string;
     [key: string]: unknown;

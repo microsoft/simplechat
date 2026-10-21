@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.365"
+version: "0.261.367"
 ---
 
 ## Decide what should run
@@ -17,6 +17,26 @@ focus.
 Conversational plan editing was implemented in version **0.261.102**, recorded in
 `application/single_app/config.py`. It is available in the V2 interface for plans
 that have not started.
+
+## Answer necessary follow-up questions
+
+Fixed/Implemented in version: **0.261.367**
+(`application/single_app/config.py`).
+
+If a required fact is missing, the planner can ask for it before proposing work.
+For example, ask it to confirm an unknown budget before preparing a brief, then
+answer the budget question in **Follow-up questions**. Your answer supplements the
+original request; it does not replace identifiers, filenames, or other requirements.
+
+For a self-contained request with no earlier conversation to resolve, answering
+returns directly to planning rather than starting another history-resolution pass.
+Optional extra sections, tone, or formatting should use sensible defaults within
+your requested scope, not become an additional required interview.
+
+A genuinely missing source, business rule, or other essential fact can still need
+another question. There is no one-question limit, and unanswered required fields
+still prevent **Finish**. When your plan is ready, the selected approval mode still
+applies; answering a question does not authorize execution by itself.
 
 ## Choose requirements, not permissions
 

@@ -1,7 +1,7 @@
 # test_appinsights_streaming_context.py
 """
 Functional regressions for instrumented Flask streaming cleanup.
-Version: 0.261.367
+Version: 0.261.368
 Implemented in: 0.261.365
 
 Exercise the real Flask/OpenTelemetry lifecycle offline in fresh processes.
