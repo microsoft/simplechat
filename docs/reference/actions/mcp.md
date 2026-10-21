@@ -56,6 +56,23 @@ saves the action. Discovery updates the draft's approved tool metadata; saving
 remains a separate decision. A successful probe does not qualify a tool's actual
 output or authorize replaying a failed operation.
 
+### Understanding tool execution outcomes
+
+As of **0.261.371**, an MCP server's protocol-level tool error is recorded as a
+failed invocation, even when the server returns content rather than raising a
+transport exception. Local argument, configuration, and permission rejections
+also retain their failed outcome in reasoning and tool citations.
+
+After a reply, expand its tool disclosure in **Sources** to inspect the outcome,
+safe error message, arguments, and any returned evidence. Connection or discovery
+success does not mean a later tool call succeeded.
+
+A tool may successfully return business data with fields named `error` or
+`success`; those fields alone do not signal an execution failure. Server-reported
+tool errors are not automatically replayed. Configured transport retries remain
+separate, and this behavior does not force an agent to select MCP instead of
+another available tool.
+
 ## Tool fingerprint pinning
 
 Saving a new or materially changed MCP action is blocked until discovery has approved the current server manifest. SimpleChat computes a stable SHA-256 fingerprint from each tool's original name, description, input schema, output schema, and annotations, and from each prompt's name, description, and arguments. The approved manifest is stored in `additionalFields.mcp_tool_fingerprints` with the approved tool list.
