@@ -10,6 +10,8 @@ Endpoint validation updated in version: **0.261.314**
 
 Token authentication and safe diagnostics fixed in version: **0.261.358**
 
+Selected-path reconciliation fixed in version: **0.261.369**
+
 ## Dependencies
 
 - `azure-storage-file-share==12.25.0`
@@ -90,6 +92,33 @@ Use the request's existing OperationId with the
 [logging reference](../../../reference/logging-tags.md#azure-files-connector-diagnostics).
 Failed listings remain failed runs, not empty successful inventories.
 
+### Selected files and folders that disappear
+
+From **0.261.369**, sync resolves selections from complete directory listings
+starting at the configured source root. A selected file, folder, or intermediate
+folder absent from a successfully listed parent follows the source's saved
+remote-delete policy: **ignore** retains the imported document, while
+**hard_delete** invokes the existing synced-document deletion path. The selection
+remains saved, so a later run can discover a returning path. Overlapping
+selections import each file once.
+
+Credentials must allow directory listing at the configured root and along the
+selected path, as well as file reads. A credential restricted to reading only
+an individual file cannot establish the inventory needed for reconciliation.
+
+A missing share or configured root, a permission or transport failure, a failed
+later listing page, or a listed entry disappearing before its properties can be
+read still fails the run. These are not treated as confirmed remote deletions.
+This shared behavior applies to personal, group, and public workspaces through
+both classic and V2 callers; saved sources need no migration.
+
+The Azure Files inventory safety limit is twice `file_sync_max_files_per_run`,
+counting distinct files in the selected scope before filters. Exceeding it now
+fails instead of using a truncated inventory for deletion reconciliation.
+Exactly reaching the limit is allowed if the inventory is complete. Narrow
+selections or increase the administrator's file limit when necessary. The
+per-run ingestion and byte limits are unchanged.
+
 ## Testing and Validation
 
 - Functional coverage: `functional_tests/test_file_sync_azure_files_identity.py`
@@ -97,6 +126,9 @@ Failed listings remain failed runs, not empty successful inventories.
   `functional_tests/test_file_sync_azure_files_runtime.py`
 - Provider classification, safe logging/API responses, partial listing failures,
   and download cleanup: `functional_tests/test_file_sync_azure_files_diagnostics.py`
+- Selected-file/folder disappearance, saved policies, updates, deduplication,
+  inventory limits, and fail-safe run persistence:
+  `functional_tests/test_file_sync_azure_files_selection_lifecycle.py`
 - Endpoint and OneDrive path regression coverage: `functional_tests/test_file_sync_ssrf_validation.py`
 - Existing File Sync capability coverage: `functional_tests/test_file_sync_capability.py`
 - UI coverage updated for source type visibility and Azure Files source modal rendering
