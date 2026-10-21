@@ -1,10 +1,11 @@
 // test_v2_chat_context_request.ts
 //
 // Runtime test for how the V2 composer's context chips become a chat request.
-// Version: 0.261.354
+// Version: 0.261.368
 // Implemented in: 0.261.089
 // Independent context selection implemented in: 0.261.094
 // Shared editor implemented in: 0.261.096
+// Clipboard and dropped chat attachments fixed in: 0.261.368
 //
 // These are the decisions that turn "the user picked a document" into fields the server acts
 // on, and each one fails as a wrong answer rather than an error:
@@ -53,6 +54,7 @@ import {
     interruptComposerDraftUploads,
 } from '../application/v2_ui/src/lib/composerDraft';
 import {
+    chatTransferFiles,
     chatUploadDocumentStatus,
     chatUploadTargets,
     chatUploadValidationError,
@@ -438,6 +440,91 @@ check('upload validation preserves chat format, account and size gates', () => {
     assert.match(chatUploadValidationError(new File(['x'], 'code.exe'), true, 10)!, /file type/);
     assert.match(chatUploadValidationError(new File(['x'.repeat(1025)], 'brief.pdf'), true, 0.0009)!, /limit/);
     assert.equal(chatUploadValidationError(new File(['data'], 'REPORT.XLSX'), true, 10), null);
+});
+
+check('clipboard items preserve file order without duplicating the files fallback', () => {
+    const first = new File(['first'], 'first.txt', { type: 'text/plain' });
+    const second = new File(['second'], 'second.pdf', { type: 'application/pdf' });
+    const result = chatTransferFiles({
+        items: [
+            { kind: 'string', getAsFile: () => { throw new Error('String items are not files'); } },
+            { kind: 'file', getAsFile: () => first },
+            { kind: 'file', getAsFile: () => null },
+            { kind: 'file', getAsFile: () => second },
+        ],
+        files: [first, second],
+    }, 'paste');
+    assert.deepEqual(result, [first, second]);
+    assert.equal(result[0], first);
+    assert.equal(result[1], second);
+});
+
+check('file transfers fall back when item files are absent or unreadable', () => {
+    const file = new File(['notes'], 'notes.txt');
+    const filesOnly = chatTransferFiles({ files: [file] }, 'paste');
+    const nullItem = chatTransferFiles({
+        items: [{ kind: 'file', getAsFile: () => null }], files: [file],
+    }, 'paste');
+    const dropped = chatTransferFiles({ files: [file] }, 'drop');
+    const missing = chatTransferFiles(null, 'paste');
+    const textOnly = chatTransferFiles({ getData: () => 'text' }, 'paste');
+    assert.deepEqual(filesOnly, [file]);
+    assert.deepEqual(nullItem, [file]);
+    assert.deepEqual(dropped, [file]);
+    assert.deepEqual(missing, []);
+    assert.deepEqual(textOnly, []);
+});
+
+check('nameless clipboard images receive distinct MIME-based names without changing bytes', async () => {
+    const png = new File(['PNG bytes'], '', { type: 'image/png', lastModified: 1234 });
+    const jpeg = new File(['JPEG bytes'], ' ', { type: 'image/jpeg', lastModified: 5678 });
+    const result = chatTransferFiles({ files: [png, png, jpeg] }, 'paste');
+    const contents = await Promise.all(result.map((file) => file.text()));
+    assert.match(result[0].name, /^pasted_file_\d+_1\.png$/);
+    assert.match(result[1].name, /^pasted_file_\d+_2\.png$/);
+    assert.match(result[2].name, /^pasted_file_\d+_3\.jpg$/);
+    assert.notEqual(result[0].name, result[1].name);
+    assert.deepEqual(result.map((file) => file.type), ['image/png', 'image/png', 'image/jpeg']);
+    assert.deepEqual(result.map((file) => file.lastModified), [1234, 1234, 5678]);
+    assert.deepEqual(contents, ['PNG bytes', 'PNG bytes', 'JPEG bytes']);
+    for (const file of result) {
+        const error = chatUploadValidationError(file, true, 25);
+        assert.equal(error, null);
+    }
+});
+
+check('text paste ignores unnamed auxiliary images but named files and drops remain files', () => {
+    const unnamed = new File(['image'], '', { type: 'image/png' });
+    const named = new File(['document'], 'report.pdf', { type: 'application/pdf' });
+    for (const text of ['copied text', ' ']) {
+        const itemResult = chatTransferFiles({
+            items: [{ kind: 'file', getAsFile: () => unnamed }],
+            getData: () => text,
+        }, 'paste');
+        const fallbackResult = chatTransferFiles({
+            files: [unnamed], getData: (format) => format === 'Text' ? text : '',
+        }, 'paste');
+        assert.deepEqual(itemResult, []);
+        assert.deepEqual(fallbackResult, []);
+    }
+    const namedResult = chatTransferFiles({ files: [named], getData: () => 'report.pdf' }, 'paste');
+    const dropped = chatTransferFiles({ files: [unnamed], getData: () => 'image' }, 'drop');
+    assert.deepEqual(namedResult, [named]);
+    assert.match(dropped[0].name, /^dropped_file_\d+_1\.png$/);
+});
+
+check('normalizing transfer names never broadens allowed formats or renames real files', () => {
+    const unsupported = new File(['not a PNG'], 'program.exe', { type: 'image/png' });
+    const unknown = new File(['unknown'], '', { type: 'application/octet-stream' });
+    const webp = new File(['unsupported image'], '', { type: 'image/webp' });
+    const result = chatTransferFiles({ files: [unsupported, unknown, webp] }, 'paste');
+    const errors = result.map((file) => chatUploadValidationError(file, true, 25));
+    assert.equal(result[0], unsupported);
+    assert.match(result[1].name, /\.bin$/);
+    assert.match(result[2].name, /\.bin$/);
+    for (const error of errors) {
+        assert.match(error!, /file type/);
+    }
 });
 
 check('group target errors retain eligible and ineligible destinations', () => {
