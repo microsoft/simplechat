@@ -4,14 +4,14 @@ title: "Create an agent"
 description: "Build a reusable assistant with a clear role, model, knowledge, and instructions."
 section: "Guides"
 audience: user
-version: "0.261.365"
+version: "0.261.368"
 ---
 
 ## What this does
 
 An agent is a specialized assistant that keeps the same role, instructions, knowledge choices, and optional tools every time someone uses it. This guide creates a local workspace agent that can be selected from chat.
 
-Since **0.261.365**, a long saved local-agent name does not need to be shortened
+Since **0.261.368**, a long saved local-agent name does not need to be shortened
 to meet a model's 64-character message-author limit. SimpleChat uses a stable
 request-only alias where needed; saved names, visible labels, and agent
 permissions stay unchanged.

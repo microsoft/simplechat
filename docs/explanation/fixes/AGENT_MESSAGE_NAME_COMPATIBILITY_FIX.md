@@ -1,6 +1,6 @@
 # Agent message-name compatibility fix
 
-Fixed in version: **0.261.365**.
+Fixed in version: **0.261.368**.
 
 Application version: `application/single_app/config.py`.
 
@@ -128,10 +128,11 @@ checks:
 & $python .\functional_tests\test_docs_site_quality.py
 ```
 
-An additional run including the unchanged
+An earlier, pre-merge run including the unchanged
 `test_agent_delegation_entrypoints.py` encountered nine AST-fixture
 `NameError` failures. Running that file with the original agent implementation
-from `HEAD` reproduced the same nine failures, with ten tests passing. Those
+from pre-implementation commit `94c1fb0d7` reproduced the same nine failures,
+with ten tests passing. Those
 pre-existing fixture findings were recorded separately; neither the harness nor
 those fixtures were changed, and the passing targeted run above excludes that
 file. This is not a claim that the entire repository test suite passes.

@@ -1,8 +1,8 @@
 # test_agent_message_name_compatibility.py
 """
 Functional regressions for request-only agent message author aliases.
-Version: 0.261.365
-Implemented in: 0.261.365
+Version: 0.261.368
+Implemented in: 0.261.368
 
 Real SimpleChat agents and Semantic Kernel serialize requests through the pinned
 Azure/OpenAI clients to an offline HTTP transport. Agent identities, shared

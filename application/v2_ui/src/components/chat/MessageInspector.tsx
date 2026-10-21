@@ -320,10 +320,23 @@ function SourcesSection({ sources }: { sources: MessageSources }) {
 function ToolCallBody({ tool }: { tool: MessageSources['tools'][number] }) {
     const [rowMode, setRowMode] = useState<RowMode>('preview');
     const args = renderToolValue(tool.function_arguments);
+    const error = renderToolValue(tool.error_message);
     const view = buildToolResultView(tool.function_result, rowMode);
 
     return (
         <>
+            <p className={clsx('mt-1.5', tool.success === false ? 'text-warn' : 'text-text-3')}>
+                {tool.success === false ? 'Tool call failed'
+                    : tool.success === true ? 'Tool call succeeded' : 'Outcome not recorded'}
+            </p>
+            {error && (
+                <div className="mt-1.5">
+                    <span className="text-text-3">Error</span>
+                    <pre className="mt-0.5 max-h-40 overflow-auto rounded bg-surface-2 p-2 font-mono text-[11px] text-text-2">
+                        {error}
+                    </pre>
+                </div>
+            )}
             {args && (
                 <div className="mt-1.5">
                     <span className="text-text-3">Arguments</span>

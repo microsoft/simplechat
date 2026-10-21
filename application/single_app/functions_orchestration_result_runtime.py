@@ -1,7 +1,7 @@
 # functions_orchestration_result_runtime.py
 """Typed runtime handoffs; no clients, model calls, publication, or new storage.
 
-Version: 0.261.138
+Version: 0.261.365
 """
 
 from copy import deepcopy
@@ -123,6 +123,37 @@ def read_complete_input(reader, *, max_bytes=MAX_VALUE_BYTES):
     return values
 
 
+def _search_evidence_citations(reader, prepared):
+    """Associate the selected excerpts with locators from their exact producer sidecar."""
+    if 'search_results' not in prepared:
+        # Older bounded envelopes did not retain the hit-to-excerpt association.
+        return []
+    hits = prepared['search_results']
+    citations = prepared['citations']
+    if type(hits) is not list or len(hits) != len(citations):
+        raise ResultContractError('result_citations_invalid')
+    evidence = read_complete_input(reader)
+    if len(evidence) != len(hits):
+        raise ResultContractError('result_citations_invalid')
+    associated = []
+    for index, (excerpt, hit, citation) in enumerate(zip(evidence, hits, citations)):
+        if (
+            type(hit) is not dict or type(citation) is not dict
+            or excerpt['evidence_id'] != f'excerpt-{index}'
+            or excerpt['source']['document_id'] != hit.get('document_id')
+            or excerpt['text'] != hit.get('chunk_text')
+            or citation.get('document_id') != hit.get('document_id')
+            or citation.get('citation_id') != (hit.get('id') or hit.get('chunk_id'))
+            or any(
+                citation.get(field) != hit.get(field)
+                for field in ('page_number', 'chunk_sequence')
+            )
+        ):
+            raise ResultContractError('result_citations_invalid')
+        associated.append({**citation, 'evidence_id': excerpt['evidence_id']})
+    return associated
+
+
 def read_result_document_citations(context, reference):
     """Project document provenance from the exact final result, never ambient work."""
     service = require_result_service(context)
@@ -133,6 +164,7 @@ def read_result_document_citations(context, reference):
     citation_fields = (
         'citation_id', 'chunk_id', 'file_name', 'title', 'page_number', 'chunk_sequence',
         'sheet_name', 'location_label', 'location_value', 'classification', 'document_classification', 'score',
+        'evidence_id',
     )
 
     def source_key(source):
@@ -178,18 +210,32 @@ def read_result_document_citations(context, reference):
         retained_citations = []
         if (
             producer.capability_id == 'document_search'
-            and current.output_name == 'prepared' and current.kind == 'structured-v1'
+            and (current.output_name, current.kind) in (
+                ('prepared', 'structured-v1'), ('evidence', 'evidence-set-v1'),
+            )
         ):
-            prepared = read_complete_input(reader)
-            if (
-                type(prepared) is not dict
-                or prepared.get('version') != 'orchestration-gathered-content-v1'
-                or prepared.get('capability_id') != 'document_search'
-                or prepared.get('content_scope') != 'returned_excerpts'
-                or type(prepared.get('citations')) is not list
-            ):
-                raise ResultContractError('result_citations_invalid')
-            retained_citations = prepared['citations']
+            descriptor = manifest['outputs'].get('prepared')
+            if descriptor is not None:
+                # Like native coverage, this sidecar belongs to the selected producer
+                # and digest, not an undeclared sibling task or a newer search result.
+                prepared_reader = reader if current.output_name == 'prepared' else service.open_result(
+                    _reference(producer, 'prepared', descriptor, current.manifest_sha256),
+                    allow_partial=True, require_current_sources=True,
+                )
+                prepared = read_complete_input(prepared_reader)
+                if (
+                    prepared_reader.result_kind != 'structured-v1'
+                    or type(prepared) is not dict
+                    or prepared.get('version') != 'orchestration-gathered-content-v1'
+                    or prepared.get('capability_id') != 'document_search'
+                    or prepared.get('content_scope') != 'returned_excerpts'
+                    or type(prepared.get('citations')) is not list
+                ):
+                    raise ResultContractError('result_citations_invalid')
+                retained_citations = (
+                    _search_evidence_citations(reader, prepared)
+                    if current.output_name == 'evidence' else prepared['citations']
+                )
         elif producer.capability_id in ('document_analyze', 'document_compare'):
             # Coverage is this producer's citation sidecar, not an implicit input from
             # another task. Reopen the exact committed digest, including after recovery.
@@ -219,8 +265,9 @@ def read_result_document_citations(context, reference):
             if len(matches) != 1:
                 raise ResultContractError('result_citation_source_invalid')
             projected = project(matches[0], citation)
+            identity = {key: value for key, value in projected.items() if key != 'evidence_id'}
             citations.setdefault(source_key(matches[0]), {}).setdefault(
-                canonical_digest(projected), projected,
+                canonical_digest(identity), projected,
             )
         reader.recheck()
 
