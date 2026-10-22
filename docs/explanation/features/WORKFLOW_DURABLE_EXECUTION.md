@@ -2,7 +2,7 @@
 
 Implemented in version: **0.261.111**
 
-Updated in version: **0.261.362**.
+Updated in version: **0.261.379**.
 
 Application version tracking: `application/single_app/config.py`.
 
@@ -175,7 +175,8 @@ Worker interruption, unclassified operation failures, approval waits, and
 uncertain external effects retain their existing explicit recovery safeguards.
 Correcting the saved workflow and explicitly starting a new run leaves the
 original failed run intact. Existing waiting runs are not migrated automatically.
-See [Workflow budget failure recovery](../fixes/WORKFLOW_BUDGET_FAILURE_RECOVERY_FIX.md).
+See [Workflow budget failure recovery](../fixes/WORKFLOW_BUDGET_FAILURE_RECOVERY_FIX.md)
+and [Workflow tool failure status fix](../fixes/WORKFLOW_TOOL_FAILURE_STATUS_FIX.md).
 
 Cancellation revokes the journal's execution ownership. It cannot undo a
 previously completed email, upload, or third-party action. A delayed worker

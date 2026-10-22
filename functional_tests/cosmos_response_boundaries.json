@@ -17965,7 +17965,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "143b5934ffc7f51c5eea41a536d3e0ee2041a380f8c58ea035ba09f6cbb0927d"
+        "module_sha256": "bb0ccd9213a35e4b05e9190a6fb8b2e1220da7d296b6a157554e281d2ab6df1a"
       },
       "classification": "sdk-compatible",
       "contract": "authorize_workflow_run_read: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
@@ -17986,7 +17986,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "response-unused",
       "contract": "Artifact upsert responses are discarded; compact citation dictionaries returned by the artifact builder are retained. Failed writes use the existing citation fallback without consuming an SDK response. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -18012,7 +18012,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "sdk-compatible",
       "contract": "SDK point messages are read through Mapping access, checked for posted_via=agent_action, and assigned plain nested supersession metadata. Upsert responses are discarded; missing or failed messages retain the existing best-effort path. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -18038,7 +18038,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "sdk-compatible",
       "contract": "The SDK conversation is inspected and mutated through Mapping access for workflow/hidden state. Its upsert response is discarded, and the cache update uses the user_id field; read/write failures retain the existing False result. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -18069,7 +18069,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "sdk-compatible",
       "contract": "SDK conversations use Mapping ownership/group checks and unread/citation updates. Existing SDK messages feed the same Mapping-compatible summary update and are normalized before returning; new authored message upsert responses are discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -18110,7 +18110,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "normalized-strict",
       "contract": "Existing/collision audit point documents are owner-checked and normalized before returning to the workflow runner. New create/upsert responses are unused; run-bound IDs preserve retries and manual titles. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -18132,7 +18132,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "sdk-compatible",
       "contract": "_get_latest_thread_id: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -18158,7 +18158,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "sdk-compatible",
       "contract": "A replayed SDK message is checked through nested metadata/run_id field reads and returned unchanged. Assistant tracking consumes its id and thread metadata through Mapping access; new-message upsert responses are discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -18184,7 +18184,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "response-unused",
       "contract": "Assistant, citation and conversation upsert responses are discarded. The authored assistant dictionary is returned without SDK metadata; unread state is persisted on the Mapping-compatible conversation input. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -18205,7 +18205,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "sdk-compatible",
       "contract": "_query_recent_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -18226,7 +18226,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "sdk-compatible",
       "contract": "_query_merge_candidate_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -18247,7 +18247,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "sdk-compatible",
       "contract": "A resumed SDK user-message point response supplies id and nested thread metadata through Mapping access to assistant tracking. Policy failures add application-owned error/error_code strings to the locally authored run record; no point wrapper enters a new strict sink. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -25872,7 +25872,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "normalized-strict",
       "contract": "Audit ownership and existing target checks use Mapping fields. Retained file/image/chunk point documents are normalized before strict source authorization and reference remapping; returned writes are unused. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -25893,7 +25893,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "normalized-strict",
       "contract": "A copied-image SDK point response is normalized before collaboration mirroring. Other backing and destination messages go through their existing authorized delivery owners. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -25914,7 +25914,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b9e5203e5dd62d2179f804a87ffcb018e3e6cba2956e56feff6228730efc9041"
+        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
       },
       "classification": "response-unused",
       "contract": "The unread/citation summary mutates its Mapping-compatible conversation input; the returned upsert response is discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",

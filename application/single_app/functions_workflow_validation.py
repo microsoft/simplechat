@@ -25,7 +25,7 @@ def workflow_output_contract_instruction(contract):
         "[Workflow output requirements]",
         descriptions[normalized["kind"]],
         "Do not include competing intermediate versions in the final output.",
-        "Never invent records or evidence to satisfy the expected count or coverage.",
+        "Never invent records or evidence to satisfy the expected count, schema, or coverage, including when a tool or source call fails.",
         "The application validates the result; do not claim validation succeeded in place of producing the data.",
     ]
     if "expected_count" in normalized:
@@ -33,8 +33,45 @@ def workflow_output_contract_instruction(contract):
     if "identity_field" in normalized:
         instructions.append(f"Each record requires a unique nonempty identity in: {normalized['identity_field']}.")
     if "schema" in normalized:
-        instructions.extend(["Schema for the complete final value:", json.dumps(normalized["schema"], ensure_ascii=True)])
+        schema = normalized["schema"]
+        if isinstance(schema, Mapping) and schema.get("type") == "object" and schema.get("additionalProperties") is not False:
+            instructions.append(
+                "Include all fields and details requested by the task instructions or returned by tools alongside the required schema properties."
+            )
+        instructions.extend(["Schema for the complete final value:", json.dumps(schema, ensure_ascii=True)])
     return "\n".join(instructions)
+
+
+def failed_workflow_tool_citation_count(citations):
+    """Count tool calls whose latest recorded outcome for that call is a failure."""
+    if not isinstance(citations, list):
+        return 0
+    outcomes = {}
+    anonymous_failures = 0
+    for item in citations:
+        if not isinstance(item, Mapping):
+            continue
+        success = item.get("success")
+        if not isinstance(success, bool):
+            continue
+        plugin_name = str(item.get("plugin_name") or "").strip()
+        function_name = str(item.get("function_name") or "").strip()
+        tool_name = str(item.get("tool_name") or "").strip()
+        arguments_key = ""
+        if "function_arguments" in item and item.get("function_arguments") is not None:
+            try:
+                arguments_key = json.dumps(
+                    item.get("function_arguments"), sort_keys=True, separators=(",", ":"), default=str,
+                )
+            except (TypeError, ValueError):
+                arguments_key = str(item.get("function_arguments"))
+        elif isinstance(item.get("arguments_sha256"), str):
+            arguments_key = item["arguments_sha256"]
+        if plugin_name or function_name or tool_name or arguments_key:
+            outcomes[(plugin_name, function_name, tool_name, arguments_key)] = success
+        elif success is False:
+            anonymous_failures += 1
+    return sum(1 for ok in outcomes.values() if ok is False) + anonymous_failures
 
 
 def workflow_coverage_status(coverage):
@@ -112,6 +149,11 @@ def validate_workflow_task_output(envelope, contract=None):
         incomplete.append("producer_coverage_incomplete")
     elif coverage_state == "pending":
         incomplete.append("producer_pending")
+    agent_citations = ((envelope.get("provenance") or {}).get("citations") or {}).get("agent_citations") or []
+    failed_tool_calls = failed_workflow_tool_citation_count(agent_citations)
+    if failed_tool_calls:
+        reasons.append("tool_invocation_failed")
+        counts["failed_tool_calls"] = failed_tool_calls
     if not isinstance(output, Mapping) or "value" not in output:
         reasons.append("missing_authoritative_output")
         value = None

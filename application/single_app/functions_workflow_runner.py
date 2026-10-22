@@ -12395,10 +12395,17 @@ def _execute_workflow_task_sequence(
                 validation = validate_workflow_task_output(envelope, task.get('output_contract'))
                 envelope['workflow_validation'] = validation
                 task_result['workflow_validation'] = validation
-                task_status = 'succeeded' if validation['eligible'] else validation['status']
+                producer_failed = (envelope.get('execution') or {}).get('status') == 'failed'
+                task_status = 'failed' if producer_failed else ('succeeded' if validation['eligible'] else validation['status'])
                 task_error = (
-                    '' if validation['eligible']
-                    else f"Output requirements were not met: {', '.join(validation['reason_codes'])}."
+                    '' if validation['eligible'] and not producer_failed
+                    else (
+                        'One or more tool calls failed during task execution.'
+                        if 'tool_invocation_failed' in validation.get('reason_codes', ())
+                        else f"Output requirements were not met: {', '.join(validation['reason_codes'])}."
+                        if validation.get('reason_codes')
+                        else 'The task could not complete. Review its input, model availability, and run activity.'
+                    )
                 )
                 persistence_options = {}
                 if analysis_checkpoints is not None:

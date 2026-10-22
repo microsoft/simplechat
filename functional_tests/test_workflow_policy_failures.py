@@ -1,7 +1,7 @@
 # test_workflow_policy_failures.py
 """
 Functional regressions for deterministic workflow policy failures.
-Version: 0.261.363
+Version: 0.261.379
 Implemented in: 0.261.362
 
 Real request budgets, durable controllers, task sequence bodies and runtime projections
@@ -325,6 +325,79 @@ def test_real_semantic_kernel_tool_round_failure_is_terminal_without_replay(inte
     assert effects == ["read"] and original.request_count == 1
     control = make_store(workflow, run_id).read()
     assert control["state"] == "failed"
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_failed_connector_citation_marks_task_and_run_failed_and_recovery_run_succeeds(
+    integration, monkeypatch, structured,
+):
+    workflow, runner, services, make_store = prepare(integration, monkeypatch, structured=structured)
+    workflow["tasks"][0]["output_contract"] = {
+        "kind": "json",
+        "require_complete_coverage": False,
+        "allow_partial": False,
+        "schema": {
+            "type": "object",
+            "properties": {"status": {"type": "string", "enum": ["Evaluation"]}},
+            "required": ["status"],
+        },
+    }
+    services["definitions"].upsert_item(workflow)
+    task_items = []
+    save_item = runner["_save_workflow_run_item_record"]
+
+    def record_item(wf, item):
+        task_items.append(copy.deepcopy(item))
+        return save_item(wf, item)
+
+    runner["_save_workflow_run_item_record"] = record_item
+    runner["_execute_workflow_dispatch"] = lambda *a, **k: {
+        "reply": '{"status":"Evaluation"}',
+        "agent_citations": [
+            {
+                "tool_name": "OpenApiPlugin.getSyntheticAcquisition",
+                "plugin_name": "OpenApiPlugin",
+                "function_name": "getSyntheticAcquisition",
+                "function_arguments": {"kwargs": {"acquisition_id": "DEMO-ACQ-ERROR503"}},
+                "success": False,
+                "error_message": "HTTP 503",
+            }
+        ],
+    }
+    failed_id, failed_record = run_once(workflow, services)
+    failed_control = make_store(workflow, failed_id).read()
+    assert failed_record["status"] == failed_control["state"] == "failed"
+    assert failed_record["success"] is False
+    assert task_items[-1]["status"] == "failed"
+    assert "tool_invocation_failed" in task_items[-1]["workflow_validation"]["reason_codes"]
+    current_workflow = services["load_workflow"]()
+    assert current_workflow["active_run_id"] == ""
+    assert current_workflow["last_run_status"] == "failed"
+
+    current_workflow["tasks"][0]["instructions"] = "Check DEMO-ACQ-001 instead."
+    services["definitions"].upsert_item(current_workflow)
+    runner["_execute_workflow_dispatch"] = lambda *a, **k: {
+        "reply": (
+            '{"id":"DEMO-ACQ-001","status":"Evaluation",'
+            '"proposal_due":"2027-02-15","award_target":"2027-04-01","response_days":15}'
+        ),
+        "agent_citations": [
+            {
+                "tool_name": "OpenApiPlugin.getSyntheticAcquisition",
+                "plugin_name": "OpenApiPlugin",
+                "function_name": "getSyntheticAcquisition",
+                "function_arguments": {"kwargs": {"acquisition_id": "DEMO-ACQ-001"}},
+                "success": True,
+            }
+        ],
+    }
+    recovered_id, recovered_record = run_once(current_workflow, services)
+    assert recovered_id != failed_id
+    assert recovered_record["status"] == "completed", recovered_record.get("error")
+    assert recovered_record["success"] is True
+    assert task_items[-1]["status"] == "succeeded"
+    preserved = services["runs"].read_item(item=failed_id, partition_key=services["partition"])
+    assert preserved["status"] == "failed"
 
 
 @pytest.mark.parametrize("optimized", [False, True])
