@@ -1354,31 +1354,14 @@ def _request_identity(user_id=None, seeded_agent=None):
         # must read as "no roles", never as "unknown, allow anyway".
         roles = []
 
-    # The per-user agent switch. RunContext defaults this to True for the same
-    # backward-compatibility reason the classic path does, but the default is only correct
-    # when nobody asked -- here somebody did, so the stored preference is read rather than
-    # assumed, and a user who turned agents off does not get them back via orchestration.
-    enable_agents = True
-    if user_id:
-        try:
-            enable_agents = bool(
-                (get_user_settings(user_id) or {}).get('settings', {}).get('enable_agents', True)
-            )
-        except Exception as exc:
-            log_event(
-                f"[ORCHESTRATION] Could not read user agent preference: {exc}",
-                level=logging.WARNING,
-            )
-    # Selecting an agent by hand is itself the permission: the classic path sets
-    # force_enable_agents on the same reasoning, so a seeded agent is honoured even when the
-    # general switch is off.
-    if isinstance(seeded_agent, dict) and _text(seeded_agent.get('name')):
-        enable_agents = True
-
+    # The classic /chats composer toolbar button stores its Model-vs-Agent dropdown state
+    # in user_settings.settings.enable_agents. The V2 interface has no such toggle, and
+    # orchestration is a V2-only feature whose agent availability is governed by Semantic
+    # Kernel, the orchestration capability allowlist, and the user's accessible catalog.
     return {
         'user_email': _text(info.get('email')) or None,
         'user_roles': list(roles) if isinstance(roles, (list, tuple, set)) else [],
-        'user_enable_agents': enable_agents,
+        'user_enable_agents': True,
     }
 
 

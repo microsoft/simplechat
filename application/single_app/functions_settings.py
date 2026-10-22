@@ -4157,7 +4157,7 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
                     del agent['default_agent']
 
         if 'enable_agents' not in doc['settings'] or doc['settings']['enable_agents'] is None:
-            doc['settings']['enable_agents'] = False
+            doc['settings']['enable_agents'] = True
 
         # --- Update the timestamp ---
         # Use timezone-aware UTC time

@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for mixed-mode conversation history ordering and superseded saved-memory handling.
-Version: 0.261.378
-Implemented in: 0.261.378
+Version: 0.261.379
+Implemented in: 0.261.379
 
 This test ensures that:
 1. sort_messages_by_thread interleaves unthreaded orchestration turns and threaded manual
@@ -211,7 +211,7 @@ def test_retry_thread_chain_and_legacy_messages_preserved():
 def test_superseded_memory_guidance_across_manual_and_orchestration():
     """Verify superseded-memory non-disclosure guidance in memory, composition, planner, and chat routes."""
     print('Testing superseded-memory guidance and version alignment...')
-    assert_app_version_at_least('0.261.378')
+    assert_app_version_at_least('0.261.379')
 
     fact_memory_source = read_file_text(FACT_MEMORY_CONTEXT_FILE)
     composition_source = read_file_text(ORCHESTRATION_COMPOSITION_FILE)
@@ -223,7 +223,7 @@ def test_superseded_memory_guidance_across_manual_and_orchestration():
     assert 'intentional profile update rather than a note inconsistency' in composition_source
     assert 'quote, contrast, or flag superseded earlier assistant values.' in composition_source
     assert 'never instructing compose to mention, quote, contrast, or flag superseded earlier assistant' in planner_source
-    assert 'Fixed/Implemented in version: **0.261.378**' in fix_doc_source
+    assert 'Fixed/Implemented in version: **0.261.379**' in fix_doc_source
 
     print('Superseded-memory guidance and version alignment passed!')
     return True

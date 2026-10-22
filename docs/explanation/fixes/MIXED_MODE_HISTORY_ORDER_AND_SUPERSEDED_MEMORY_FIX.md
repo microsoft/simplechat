@@ -1,10 +1,10 @@
 # Mixed-Mode Conversation History Ordering and Superseded Saved-Memory Fix
 
-**Version: 0.261.378**
+**Version: 0.261.379**
 
-Fixed/Implemented in version: **0.261.378**
+Fixed/Implemented in version: **0.261.379**
 
-Related `application/single_app/config.py` update: **0.261.377 -> 0.261.378**.
+Related `application/single_app/config.py` update: **0.261.378 -> 0.261.379**.
 
 ## Issue Description and Root Cause
 
@@ -26,7 +26,7 @@ In multi-turn conversations that alternate between manual chat turns and orchest
 | `application/single_app/functions_fact_memory_context.py` | Clarifies in `build_instruction_memory_payload` and `build_fact_memory_recall_payload` that any difference between earlier assistant replies and current saved memory is an intentional profile update rather than a note inconsistency, and forbids repeating, mentioning, quoting, contrasting, or flagging superseded values. |
 | `application/single_app/functions_orchestration_composition.py` | Updates `CONVERSATION_POLICY` so compose treats current saved memory as the consistent baseline and never repeats, mentions, quotes, contrasts, or flags superseded earlier assistant values. |
 | `application/single_app/functions_orchestration_planner.py` | Aligns planner and request-resolution memory instructions so superseded earlier assistant prefixes, names, call signs, or roles are never carried forward or contrasted. |
-| `application/single_app/config.py` | Increments `VERSION` to `0.261.378`. |
+| `application/single_app/config.py` | Increments `VERSION` to `0.261.379`. |
 | `functional_tests/test_mixed_mode_history_and_memory_supersede_fix.py` | Validates mixed manual + orchestration chronological turn ordering, retry chain preservation, and superseded-memory prompt contracts. |
 
 ## Validation

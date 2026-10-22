@@ -459,8 +459,12 @@ Microsoft 365 actions.
 
 Since **0.261.289**, a chosen agent's step also runs while that setting is off. The
 setting is the agents button on the classic chat page (`/chats`). V2 has no control for
-it, and it's saved as off for a user whose settings were saved before they turned agents
-on, so many V2 users have it off. It still applies to agents the user didn't choose.
+it, and before **0.261.378** it was saved as off for a user whose settings were saved
+before they turned agents on, so many V2 users had it off. Since **0.261.378**, V2
+orchestration plans and runs **Ask an agent** steps from the user's accessible agent
+catalog regardless of that classic button state, including when the user names an agent
+in the prompt or combines **Ask an agent** with **Use an action** without picking a
+single agent in **Manual controls**.
 
 Before **0.261.291**, every Ask an agent step was refused just before the agent ran, with
 "This step's agent or action isn't available to you right now". The step's access check
@@ -856,7 +860,7 @@ names the check that failed in `sc_reason`. It shares `sc_run_id_hash` and
 | Every web search, linked-page or deep research step says a required retained result is unavailable or changed | Before 0.261.209, orchestration checked each user's roles through Microsoft Graph, which needs `Directory.Read.All`, and refused research whenever query or linked-page planning was on. | Upgrade to 0.261.209 or later; no Graph permission or settings change is needed. If a step still fails, check `sc_authority_reason` on its failure event in [orchestration failure diagnostics](../reference/logging-tags.md#orchestration-failure-diagnostics). |
 | Every step completed, but the run is partially completed with "A required retained result is unavailable or changed" | Before 0.261.237, settings read from Cosmos DB instead of the shared Redis copy came back as an SDK type that the access recheck refused. That happens while any settings save is in progress, for example the Cosmos throughput autoscale saving its status, and on every read when Redis is off. The failure event logs `sc_authority_reason=result_external_context_unavailable`. | Upgrade to 0.261.237 or later. No setting change is needed. See the [settings document type fix]({{ '/explanation/fixes/ORCHESTRATION_SETTINGS_DOCUMENT_TYPE_FIX/' | relative_url }}). |
 | Plans never propose deep research or reading a link | The user does not hold the required app role, or the capability is disabled in its own settings group. | Confirm the user holds `DeepResearchUser` or `UrlAccessUser` where your deployment requires them, and that the capability is enabled outside this page. |
-| Plans never propose an agent | Semantic Kernel is off, the user's own agents setting is off, or the user has no agent they can reach. | Confirm Semantic Kernel is enabled, then check the user's own agents setting, the agents button on the classic chat page (`/chats`), and that at least one agent is shared with them. An agent the user picks, or tags with @, is always offered to the planner. |
+| Plans never propose an agent | Semantic Kernel is off, **Ask an agent** is excluded in Capabilities, or the user has no agent they can reach. Before 0.261.378, the classic `/chats` agents toolbar button (`enable_agents` in `user_settings`) also hid unpicked agents in V2 orchestration. | Confirm Semantic Kernel is enabled, **Ask an agent** is included in Capabilities, and at least one personal, group or global agent is enabled and accessible to the user. |
 | The planner model shows "not in the current model list" | Its connection or model was removed or disabled, or connections were switched on or off since it was chosen. | Choose a listed model, or **Use the answer model (default)**. Until then planning keeps trying the saved model and fails rather than switching. |
 | Plans never propose Use an action | Action Access is off, Semantic Kernel is off, the capability is excluded, or no eligible action is available to this user. | Check the opt-in and capability selection, then the existing action scope and governance. Call agent actions are not eligible for direct use. |
 | An action step fails after plan approval | The action or its access changed, or its model/tool connection could not run. | Check current action access and configuration. Review the visible step failure; the run does not silently switch to an agent or another action. |

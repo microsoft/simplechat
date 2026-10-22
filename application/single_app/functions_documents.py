@@ -12246,15 +12246,32 @@ def sync_chat_upload_workspace_attachment_status(document_metadata):
 
         message_metadata = message_item.setdefault('metadata', {})
         workspace_attachment = message_metadata.setdefault('workspace_attachment', {})
+        group_id = str(
+            document_metadata.get('group_id')
+            or document_metadata.get('chat_upload_group_id')
+            or workspace_attachment.get('group_id')
+            or ''
+        ).strip()
+        group_name = (
+            document_metadata.get('chat_upload_group_name')
+            or workspace_attachment.get('group_name')
+        )
+        workspace_scope = 'group' if group_id else 'personal'
+        workspace_url = (
+            f"/group_workspaces?document_id={document_id}&group_id={group_id}"
+            if group_id else f"/workspace?document_id={document_id}"
+        )
         workspace_attachment.update({
             'document_id': document_id,
             'file_name': document_metadata.get('file_name'),
             'status': document_metadata.get('status', 'Queued for processing'),
             'percentage_complete': document_metadata.get('percentage_complete', 0),
             'tags': document_metadata.get('tags', []),
-            'workspace_url': f"/workspace?document_id={document_id}",
+            'workspace_url': workspace_url,
             'conversation_url': f"/chats?conversation_id={conversation_id}",
-            'scope': 'personal',
+            'scope': workspace_scope,
+            'group_id': group_id or None,
+            **({'group_name': group_name} if group_name else {}),
             'link_state': document_metadata.get('chat_upload_link_state', 'linked'),
         })
         message_metadata['workspace_attachment'] = workspace_attachment
