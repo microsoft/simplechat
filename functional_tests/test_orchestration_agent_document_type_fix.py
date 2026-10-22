@@ -359,7 +359,7 @@ def test_capability_refusals_name_their_check():
         assert reason == "capability_allowlist_invalid"
 
     with ExternalSourceWorld("agent_invoke") as world:
-        world.user_enable_agents = False
+        world.catalog_override = []
         with patch(LOG_EVENT) as log_event, pytest.raises(ResultUnavailableError):
             world.preflight(world.provider())
         reason = only_refusal(log_event).kwargs["extra"]["reason"]

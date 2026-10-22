@@ -399,6 +399,8 @@ class OrchestrationExternalSourceTests(unittest.TestCase):
                     world.preflight(provider)
         with ExternalSourceWorld("agent_invoke") as world:
             world.user_enable_agents = False
+            world.preflight(world.provider())
+            world.catalog_override = []
             with self.assertRaises(ResultUnavailableError):
                 world.preflight(world.provider())
 
@@ -673,8 +675,14 @@ class OrchestrationExternalSourceTests(unittest.TestCase):
                 )
             _provider, _catalog, reference = world.save()
             world.user_enable_agents = False
+            self.assertEqual(
+                world.service(world.provider()).open_result(reference).read_value(),
+                world.prepared,
+            )
+            world.catalog_override = []
             with self.assertRaises(ResultUnavailableError):
                 world.service(world.provider()).open_result(reference)
+            world.catalog_override = None
             world.user_enable_agents = True
             world.services.records["agents", "group"].clear()
             world.services.add_agent("replacement-agent", scope="group", scope_id="group-a", name="Lookup")

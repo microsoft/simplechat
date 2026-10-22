@@ -168,16 +168,13 @@ def build_external_identity_reader(actor_user_id, actor_conversation_id, *, exec
 
 def current_execution_identity(user_id, conversation_id, *, seeded_agent=None):
     """Use authenticated claims only for their actor; background role gates fail closed."""
+    del seeded_agent
     read_owned_conversation(user_id, conversation_id)
     identity = capture_execution_identity(user_id, conversation_id)
-    preference = (get_user_settings(user_id) or {}).get("settings") or {}
     return {
         "user_roles": list(identity.roles),
         "user_email": identity.email,
-        "user_enable_agents": (
-            True if isinstance(seeded_agent, dict) and seeded_agent.get("name")
-            else preference.get("enable_agents", True) is True
-        ),
+        "user_enable_agents": True,
     }
 
 

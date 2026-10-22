@@ -351,8 +351,12 @@ class OrchestrationExternalSourceProvider:
             identity.user_id,
             {
                 "user_roles": list(identity.roles), "user_email": identity.email,
-                # The catalog is already narrowed to a hand-picked agent, which is its own permission.
-                "user_enable_agents": identity.user_enable_agents or seeded_agent is not None,
+                # An orchestrated agent_invoke step is an explicit V2 invocation; it does not
+                # depend on the classic /chats composer toolbar toggle in user_settings.
+                "user_enable_agents": (
+                    True if source_type == "agent"
+                    else identity.user_enable_agents or seeded_agent is not None
+                ),
             },
             "", catalog if source_type == "agent" else [],
             catalog if source_type == "action" else [],
