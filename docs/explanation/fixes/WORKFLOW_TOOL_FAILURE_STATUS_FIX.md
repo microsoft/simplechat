@@ -1,8 +1,8 @@
-# Workflow Tool Failure Status and Structured Output Resilience Fix (v0.261.378)
+# Workflow Tool Failure Status and Structured Output Resilience Fix (v0.261.379)
 
-Fixed/Implemented in version: **0.261.378**
+Fixed/Implemented in version: **0.261.379**
 
-Related `config.py` update: `VERSION = "0.261.378"` in `application/single_app/config.py`.
+Related `config.py` update: `VERSION = "0.261.379"` in `application/single_app/config.py`.
 
 ## Issue and Root Cause
 

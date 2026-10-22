@@ -2,7 +2,7 @@
 
 Implemented in version: **0.261.111**
 
-Updated in version: **0.261.378**.
+Updated in version: **0.261.379**.
 
 Application version tracking: `application/single_app/config.py`.
 

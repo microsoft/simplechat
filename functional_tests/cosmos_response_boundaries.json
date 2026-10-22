@@ -17965,7 +17965,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "13019a53eceb68eb53f7743e8e8d0419bc277ffa11c7a89eb24381f7122dcb31"
+        "module_sha256": "bb0ccd9213a35e4b05e9190a6fb8b2e1220da7d296b6a157554e281d2ab6df1a"
       },
       "classification": "sdk-compatible",
       "contract": "authorize_workflow_run_read: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",

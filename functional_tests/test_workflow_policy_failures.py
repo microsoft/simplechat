@@ -1,7 +1,7 @@
 # test_workflow_policy_failures.py
 """
 Functional regressions for deterministic workflow policy failures.
-Version: 0.261.378
+Version: 0.261.379
 Implemented in: 0.261.362
 
 Real request budgets, durable controllers, task sequence bodies and runtime projections

@@ -4,7 +4,6 @@
 import hashlib
 import json
 from collections import OrderedDict
-import re
 from collections.abc import Mapping
 
 from functions_analysis_access import (
@@ -63,22 +62,34 @@ def _json_copy(value):
     return json.loads(json.dumps(value, ensure_ascii=True, allow_nan=False))
 
 
+def _extract_single_fenced_json_block(text):
+    if "```" not in text:
+        return None
+    parts = text.split("```")
+    if len(parts) != 3:
+        return None
+    block = parts[1]
+    newline_index = block.find("\n")
+    if newline_index == -1:
+        return None
+    header = block[:newline_index].strip()
+    if header not in {"", "json"}:
+        return None
+    body = block[newline_index + 1:]
+    return body if body.strip() else None
+
+
 def _structured_output(text):
-    fenced = re.fullmatch(r"\s*```(?:json)?\s*\n(.*?)\n```\s*", text, flags=re.DOTALL)
-    candidate = fenced.group(1) if fenced else text
+    if not isinstance(text, str):
+        return None
+    candidate = _extract_single_fenced_json_block(text)
+    if candidate is None:
+        candidate = text
     try:
         value = json.loads(candidate)
-        return value if isinstance(value, (dict, list)) else None
     except json.JSONDecodeError:
-        pass
-    blocks = re.findall(r"```(?:json)?\s*\n(.*?)\n```", text, flags=re.DOTALL)
-    if len(blocks) == 1:
-        try:
-            value = json.loads(blocks[0])
-            return value if isinstance(value, (dict, list)) else None
-        except json.JSONDecodeError:
-            return None
-    return None
+        return None
+    return value if isinstance(value, (dict, list)) else None
 
 
 def get_workflow_analysis_result(result):

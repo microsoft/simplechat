@@ -1,7 +1,7 @@
 # test_workflow_output_validation.py
 """
 Functional tests for deterministic workflow output requirements and outcomes.
-Version: 0.261.378
+Version: 0.261.379
 Implemented in: 0.261.108
 
 Model prose cannot prove completion. Type, schema, identity, coverage and count
@@ -301,6 +301,14 @@ def test_single_fenced_json_block_with_surrounding_prose_is_extracted_while_mult
         task={"id": "task-1"},
     )
     assert competing_blocks["authoritative_output"] == "text"
+
+    unclosed_fence = build_workflow_task_result(
+        {"reply": "```\n" + ("\n " * 5000)},
+        workflow={"id": "wf-1"},
+        run_id="run-1",
+        task={"id": "task-1"},
+    )
+    assert unclosed_fence["authoritative_output"] == "text"
 
 
 def test_object_schema_instruction_requests_all_task_fields_when_additional_properties_allowed():
