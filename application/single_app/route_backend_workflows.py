@@ -91,8 +91,7 @@ from functions_source_review import (
 from functions_workflow_runner import create_workflow_run_id, run_group_workflow, run_personal_workflow
 from route_backend_agents import (
     _build_agent_instruction_api_params,
-    _create_agent_instruction_client,
-    _resolve_agent_instruction_model,
+    _resolve_agent_instruction_client,
 )
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -830,8 +829,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': 'Provide a task brief, workflow name, description, or existing instructions.'}), 400
 
         try:
-            model_name = _resolve_agent_instruction_model(settings)
-            client = _create_agent_instruction_client(settings)
+            client, model_name = _resolve_agent_instruction_client(settings)
             messages = _build_workflow_instruction_messages(
                 name,
                 description,
