@@ -36,6 +36,40 @@ Use SQL Database when the answer depends on exact relational data: joins, filter
 7. Set **Max Rows** and **Timeout (seconds)**.
 8. Use the connection check in **Authentication**, then save.
 
+### Managed identity selection
+
+Since **0.261.372**, parameter-based SQL Server and Azure SQL connections use
+the same managed identity selection for connection checks, queries, and their
+schema-discovery companion.
+
+For a reusable identity, `credentials.auth_type` must be `managed_identity`.
+Leave `credentials.managed_identity_client_id` blank for the host's
+system-assigned identity, or configure the attached user-assigned identity's
+**application/client ID** through the existing identity API. The V2 identity
+editor preserves an existing API-configured client ID but does not expose a new
+field for it.
+
+Inline SQL actions use `auth.type` of `identity` and `auth.identity` of
+`managed_identity`. An optional
+`additionalFields.managed_identity_client_id` selects a user-assigned identity
+on Azure App Service; leave it blank for system-assigned identity. Do not use
+the reusable identity record ID or the identity's principal/object ID in that
+client-ID field.
+
+Inactive SQL username/password fields cannot override an explicit managed
+identity selection. A complete connection string remains authoritative and
+must contain its own intended authentication settings. A malformed nonblank
+client-ID selector fails before connecting rather than silently selecting the
+system-assigned identity.
+
+The host identity must already exist and have database access. SimpleChat does
+not create SQL users or grant permissions. For raw `CREATE USER ... WITH SID`
+setup, applications and managed identities use the application/client ID;
+`FROM EXTERNAL PROVIDER WITH OBJECT_ID` uses the object ID for directory
+resolution instead. These identifiers are not interchangeable. See the
+[Microsoft CREATE USER reference](https://learn.microsoft.com/en-us/sql/t-sql/statements/create-user-transact-sql)
+and [ODBC managed identity guidance](https://learn.microsoft.com/en-us/sql/connect/odbc/using-azure-active-directory).
+
 ## Example prompts
 
 - "How many open support tickets were created last week by product area?"
@@ -59,6 +93,7 @@ Since **0.261.351**, connection testing and SQL action runtime share safe error 
 | `sql_driver_unavailable` | A driver import or driver-manager lookup failed. Ask the administrator to check the deployed database driver and its dependencies. |
 | `sql_connection_timeout` | A timeout was reported. Check database availability and the app's network path; this does not establish a particular firewall problem. |
 | `sql_authentication_failed` | Structured provider evidence reports authentication rejection. Verify the selected authentication configuration and database access for that identity. |
+| `sql_configuration_rejected` | The parameter-based managed identity client-ID selector is not a valid, non-zero GUID. Correct the selector or leave it blank intentionally for system-assigned identity. |
 | `sql_connection_failed` | The available evidence does not support a more specific category. Inspect the server diagnostic before changing authentication, TLS, or permissions. |
 
 Administrators can find `[SQL_CONNECTION]` warnings with validated SQLSTATE and native error numbers when the provider supplies them. See [SQL connection logging]({{ '/reference/logging-tags/' | relative_url }}#sql-connection-diagnostics). A successful login using an operator's own account does not verify the App Service identity, its network path, or its selected authentication mode.

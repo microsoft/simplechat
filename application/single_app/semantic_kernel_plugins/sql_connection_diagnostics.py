@@ -22,6 +22,7 @@ _MESSAGES = {
     "sql_driver_unavailable": "The required database driver is not available on the server. Contact your administrator.",
     "sql_connection_timeout": "SQL connection timed out. Check database availability and network access.",
     "sql_authentication_failed": "SQL authentication was rejected. Verify the selected authentication settings and database access.",
+    "sql_configuration_rejected": "SQL authentication configuration is invalid. Verify the managed identity client ID is a valid, non-zero GUID.",
 }
 SQL_CONTEXT_ENUMS = {
     "sql_operation": frozenset({"sql_connection_test", "sql_query_connect", "sql_schema_connect"}),
@@ -79,10 +80,10 @@ class SqlConnectionContext:
         mode = "unknown"
         if not connection_string_used:
             if engine == "sqlserver":
-                if username_password:
-                    mode = "username_password"
-                elif auth_type == "managed_identity":
+                if auth_type == "managed_identity":
                     mode = "managed_identity"
+                elif username_password:
+                    mode = "username_password"
                 elif auth_type == "integrated" or not auth_type:
                     mode = "integrated"
             elif engine in {"postgresql", "mysql"} and username_password:
@@ -176,6 +177,8 @@ class SqlConnectionError(RuntimeError):
 
 def classify_sql_connection_error(error: Exception, database_type: str) -> SqlConnectionDiagnostic:
     """Classify structured driver evidence without retaining raw exception messages."""
+    if isinstance(error, SqlConnectionError):
+        return error.diagnostic
     engine = database_type if type(database_type) is str else "unknown"
     if engine in {"azure_sql", "azuresql"}:
         engine = "sqlserver"

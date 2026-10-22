@@ -4,9 +4,12 @@ Shared SQL Server ODBC driver utilities.
 """
 
 from typing import Any, Callable, Dict, Optional
+from uuid import UUID
 
 from functions_appinsights import log_event
-from semantic_kernel_plugins.sql_connection_diagnostics import SqlConnectionContext
+from semantic_kernel_plugins.sql_connection_diagnostics import (
+    SqlConnectionContext, SqlConnectionDiagnostic, SqlConnectionError,
+)
 
 
 DEFAULT_SQL_SERVER_ODBC_DRIVER = "ODBC Driver 18 for SQL Server"
@@ -21,6 +24,40 @@ _MISSING_DRIVER_ERROR_MARKERS = (
 )
 
 
+def resolve_sql_auth_type(
+    auth_type: Optional[str] = None,
+    auth: Optional[Dict[str, Any]] = None,
+    database_type: Optional[str] = None,
+) -> str:
+    """Resolve canonical managed identity auth before inactive SQL credential fields."""
+    auth = auth or {}
+    if auth.get("type") == "identity" and auth.get("identity") == "managed_identity":
+        return "managed_identity"
+    selected = auth_type or auth.get("type", "connection_string")
+    if selected == "identity" and database_type in {"azure_sql", "azuresql"}:
+        return "managed_identity"
+    return selected
+
+
+def _managed_identity_client_id(value: Optional[str]) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str) and len(value) <= 128:
+        selected = value.strip()
+        if not selected:
+            return ""
+        try:
+            client_id = UUID(selected)
+        except ValueError:
+            pass
+        else:
+            if client_id.int:
+                return str(client_id)
+    raise SqlConnectionError(SqlConnectionDiagnostic(
+        "sql_configuration_rejected", "sqlserver", "ValueError",
+    )) from None
+
+
 def build_sql_server_odbc_connection_string(
     server: str,
     database: str,
@@ -29,6 +66,7 @@ def build_sql_server_odbc_connection_string(
     username: Optional[str] = None,
     password: Optional[str] = None,
     auth_type: Optional[str] = None,
+    managed_identity_client_id: Optional[str] = None,
 ) -> str:
     """Build a SQL Server ODBC connection string with the current default driver."""
     selected_driver = (driver or DEFAULT_SQL_SERVER_ODBC_DRIVER).strip()
@@ -37,10 +75,13 @@ def build_sql_server_odbc_connection_string(
         conn_str += f",{port}"
     conn_str += f";DATABASE={database}"
 
-    if username and password:
-        conn_str += f";UID={username};PWD={password}"
-    elif auth_type == 'managed_identity':
+    if auth_type == 'managed_identity':
         conn_str += ";Authentication=ActiveDirectoryMsi"
+        client_id = _managed_identity_client_id(managed_identity_client_id)
+        if client_id:
+            conn_str += f";UID={client_id}"
+    elif username and password:
+        conn_str += f";UID={username};PWD={password}"
     elif auth_type == 'integrated' or not auth_type:
         conn_str += ";Trusted_Connection=yes"
 

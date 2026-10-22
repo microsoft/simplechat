@@ -82,6 +82,12 @@ An `InterfaceError` without structured evidence remains `sql_connection_failed`.
 SQLSTATE class `08` alone does not prove a firewall, TLS, or identity problem.
 See the [SQL action troubleshooting categories]({{ '/reference/actions/sql-query/' | relative_url }}#connection-failure-categories).
 
+Since **0.261.372**, an invalid managed identity client-ID selector records
+`sql_configuration_rejected` at the configuration stage, before a connection
+attempt. Parameter-based managed identity connections report
+`sql_auth_mode=managed_identity` even if inactive SQL password fields remain.
+The selector itself is not included in the event.
+
 ### Connection context and diagnostic references
 
 Since **0.261.356**, connection-check failures return

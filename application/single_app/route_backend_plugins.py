@@ -16,6 +16,7 @@ from semantic_kernel_plugins.sql_odbc_utils import (
     DEFAULT_SQL_SERVER_ODBC_DRIVER,
     build_sql_server_odbc_connection_string,
     connect_with_sql_server_odbc_fallback,
+    resolve_sql_auth_type,
 )
 from semantic_kernel_plugins.sql_connection_diagnostics import SqlConnectionContext, classify_sql_connection_error
 from semantic_kernel_plugins.rocksdb_plugin import (
@@ -1040,6 +1041,7 @@ def _hydrate_sql_test_identity(data, existing_plugin, user_id):
             "server": data.get("server", ""),
             "database": data.get("database", ""),
             "driver": data.get("driver", ""),
+            "managed_identity_client_id": data.get("managed_identity_client_id", ""),
         },
     }
     return hydrate_action_identity_reference(
@@ -1092,6 +1094,7 @@ def _prepare_editor_sql_test_data(data, existing_plugin, user_id):
     result = _flatten_editor_test_fields(data, (
         'database_type', 'connection_method', 'connection_string', 'server', 'database',
         'port', 'driver', 'username', 'password', 'auth_type', 'timeout',
+        'managed_identity_client_id',
     ))
     auth = result.get('auth', {})
     if not isinstance(auth, dict):
@@ -1099,8 +1102,12 @@ def _prepare_editor_sql_test_data(data, existing_plugin, user_id):
     identity_manifest = _hydrate_sql_test_identity(result, existing_plugin, user_id)
     if identity_manifest:
         auth = identity_manifest.get('auth') or {}
+        result['auth'] = auth
         fields = identity_manifest.get('additionalFields') or {}
-        for field in ('connection_string', 'username', 'password', 'auth_type', 'identity_auth_type'):
+        for field in (
+            'connection_string', 'username', 'password', 'auth_type', 'identity_auth_type',
+            'managed_identity_client_id',
+        ):
             if field in fields:
                 result[field] = fields[field]
 
@@ -3244,6 +3251,8 @@ def test_sql_connection():
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         return reject_configuration('SQL test configuration must be an object.')
+    if 'auth' in data and not isinstance(data['auth'], dict):
+        return reject_configuration('Authentication must be an object.')
     editor_call = _is_personal_editor_test_request(data) and ('auth' in data or 'additionalFields' in data)
     user_id = get_current_user_id()
 
@@ -3275,6 +3284,7 @@ def test_sql_connection():
     username = data.get('username', '')
     password = data.get('password', '')
     auth_type = data.get('auth_type', 'username_password')
+    managed_identity_client_id = data.get('managed_identity_client_id')
     try:
         timeout = min(int(data.get('timeout', 10)), 15)  # Cap at 15 seconds for test
     except (TypeError, ValueError):
@@ -3314,6 +3324,14 @@ def test_sql_connection():
             auth_type = 'managed_identity'
         elif identity_auth.get('type') == 'user':
             auth_type = 'username_password'
+        managed_identity_client_id = identity_additional_fields.get('managed_identity_client_id', '')
+
+    if database_type in ('sqlserver', 'azure_sql', 'azuresql'):
+        effective_auth = identity_manifest.get('auth') if identity_manifest else data.get('auth')
+        auth_type = resolve_sql_auth_type(auth_type, effective_auth, database_type=database_type)
+        if auth_type == 'managed_identity' and not (connection_method == 'connection_string' and connection_string):
+            username = ''
+            password = ''
 
     unresolved_fields = []
     if connection_string in (ui_trigger_word, "***REDACTED***"):
@@ -3386,6 +3404,7 @@ def test_sql_connection():
                     username=username if auth_type == 'username_password' else None,
                     password=password if auth_type == 'username_password' else None,
                     auth_type=auth_type,
+                    managed_identity_client_id=managed_identity_client_id,
                 )
                 conn = connect_with_sql_server_odbc_fallback(
                     pyodbc.connect,
