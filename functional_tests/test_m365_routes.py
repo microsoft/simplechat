@@ -1,8 +1,9 @@
 # test_m365_routes.py
 """
 Functional tests for Microsoft 365 Profile, approval, and audit routes.
-Version: 0.261.355
+Version: 0.261.374
 Implemented in: 0.261.029
+Workflow authorization names and visibility implemented in: 0.261.374
 
 Imports the real route module with scoped authentication/logging I/O seams.
 Exercises exact subject/object scope, CSRF, safe errors, callback registration,
@@ -21,6 +22,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from azure.cosmos import exceptions
+from azure.cosmos._cosmos_responses import CosmosDict
 from flask import Blueprint, Flask, jsonify, session
 from werkzeug.test import Client
 
@@ -32,7 +34,7 @@ sys.path.insert(0, str(APP_DIR))
 import functions_m365_approvals as approvals
 import functions_m365_connections as connections
 import functions_m365_execution as execution
-from test_support.m365 import Clock, CosmosContainer, Notifications
+from test_support.m365 import Clock, CosmosContainer, Notifications, WORKFLOW_REVIEW
 
 
 def module_stub(name, **values):
@@ -149,6 +151,219 @@ class M365RouteTests(unittest.TestCase):
         with self.assertRaises(approvals.M365ApprovalRequired) as raised:
             self.service.authorize_sources(self.context(**changes), {"email": "always"})
         return raised.exception.approval_id
+
+    def workflow_dependencies(self):
+        self.personal_workflows = CosmosContainer("user_id")
+        self.group_workflows = CosmosContainer()
+        self.workflow_settings = {
+            "allow_user_workflows": True, "allow_group_workflows": True, "enable_group_workspaces": True,
+        }
+        self.group_access = Mock(return_value="User")
+        return {
+            "config": module_stub(
+                "config", cosmos_personal_workflows_container=self.personal_workflows,
+                cosmos_group_workflows_container=self.group_workflows,
+            ),
+            "functions_group": module_stub("functions_group", assert_group_role=self.group_access),
+            "functions_settings": module_stub(
+                "functions_settings", get_settings=lambda: self.workflow_settings,
+                is_user_workflows_enabled_for_user=lambda settings, user_roles: (
+                    settings["allow_user_workflows"]
+                    and (not settings.get("require_member_of_workflow_user") or "WorkflowUser" in user_roles)
+                ),
+                is_group_workflows_enabled_for_group=lambda settings, group_id: (
+                    settings["allow_group_workflows"]
+                    and (not settings.get("require_group_assignment_for_group_workflows")
+                         or group_id in settings.get("group_workflow_allowed_group_ids", []))
+                ),
+            ),
+        }
+
+    def workflow_binding(self, workflow_id="workflow", *, group_id=None, user_id="user-a", revision="revision"):
+        context = self.context(
+            actor_user_id=user_id, data_user_id=user_id, workflow_id=workflow_id,
+            group_id=group_id, request_id=revision, run_id=revision,
+            workflow_fingerprint=revision, connection_id="connection",
+        )
+        return self.service.ensure_workflow_binding(
+            context, ["email"], {
+                "id": "connection", "user_id": user_id, "tenant_id": "tenant-a",
+                "status": "connected", "generation": 1, "sources": ["email"],
+            },
+            review=WORKFLOW_REVIEW, self_authored=True,
+        )
+
+    def test_bindings_project_current_name_from_sdk_document_without_mutating_history(self):
+        dependencies = self.workflow_dependencies()
+        self.personal_workflows.create_item(body={
+            "id": "workflow", "user_id": "user-a", "name": "Morning mail",
+            "task_prompt": "private instructions", "internal_config": {"secret": "not-for-display"},
+        })
+        point = self.personal_workflows.read_item(item="workflow", partition_key="user-a")
+        self.assertIsInstance(point, CosmosDict)
+        binding = self.workflow_binding()
+        before = copy.deepcopy(self.container.items)
+        with patch.dict(sys.modules, dependencies):
+            response = self.client.get("/api/m365/bindings")
+            self.personal_workflows.upsert_item(body={**point, "name": "Renamed mail digest"})
+            renamed = self.client.get("/api/m365/bindings")
+        self.assertEqual(response.status_code, 200)
+        item = response.get_json()["items"][0]
+        self.assertEqual(item["id"], binding["id"])
+        self.assertEqual(item["workflow"], {
+            "id": "workflow", "name": "Morning mail", "scope_type": "personal", "group_id": None,
+        })
+        self.assertNotIn("private instructions", response.get_data(as_text=True))
+        self.assertNotIn("not-for-display", response.get_data(as_text=True))
+        self.assertEqual(renamed.get_json()["items"][0]["workflow"]["name"], "Renamed mail digest")
+        self.assertEqual(self.container.items, before)
+
+    def test_bindings_group_scope_uses_context_not_the_approval_user_partition(self):
+        dependencies = self.workflow_dependencies()
+        self.group_workflows.create_item(body={
+            "id": "workflow", "group_id": "team", "user_id": "other-owner", "name": "Team digest",
+        })
+        self.workflow_binding(group_id="team")
+        with patch.dict(sys.modules, dependencies):
+            response = self.client.get("/api/m365/bindings")
+        self.assertEqual(response.status_code, 200)
+        item = response.get_json()["items"][0]
+        self.assertEqual(item["group_id"], "user-a")
+        self.assertEqual(item["workflow"], {
+            "id": "workflow", "name": "Team digest", "scope_type": "group", "group_id": "team",
+        })
+        self.group_access.assert_called_once_with(
+            "user-a", "team", allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+
+    def test_bindings_omit_missing_deleting_and_non_owned_workflows(self):
+        dependencies = self.workflow_dependencies()
+        for workflow_id, changes in (
+            ("wrong-owner", {"user_id": "other-user"}),
+            ("wrong-scope", {"group_id": "other-team"}),
+            ("deleting-flag", {"deleting": True}),
+            ("deleting-status", {"status": "deleting"}),
+        ):
+            self.personal_workflows.create_item(body={
+                "id": workflow_id, "user_id": "user-a", "name": "Hidden", **changes,
+            })
+            self.workflow_binding(workflow_id)
+        self.workflow_binding("missing")
+        before = copy.deepcopy(self.container.items)
+        with patch.dict(sys.modules, dependencies):
+            response = self.client.get("/api/m365/bindings")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["items"], [])
+        self.assertEqual(self.container.items, before)
+
+    def test_bindings_recheck_removed_group_membership_before_reading_the_workflow(self):
+        dependencies = self.workflow_dependencies()
+        self.group_workflows.create_item(body={"id": "workflow", "group_id": "team", "name": "Team digest"})
+        self.workflow_binding(group_id="team")
+        with patch.dict(sys.modules, dependencies):
+            visible = self.client.get("/api/m365/bindings")
+            self.group_access.side_effect = PermissionError("Membership removed")
+            with patch.object(self.group_workflows, "read_item", wraps=self.group_workflows.read_item) as read:
+                hidden = self.client.get("/api/m365/bindings")
+        self.assertEqual(len(visible.get_json()["items"]), 1)
+        self.assertEqual(hidden.get_json()["items"], [])
+        read.assert_not_called()
+
+    def test_bindings_respect_personal_feature_and_app_role_access(self):
+        dependencies = self.workflow_dependencies()
+        self.personal_workflows.create_item(body={"id": "workflow", "user_id": "user-a", "name": "Digest"})
+        self.workflow_binding()
+        for settings in (
+            {"allow_user_workflows": False},
+            {"allow_user_workflows": True, "require_member_of_workflow_user": True},
+        ):
+            with self.subTest(settings=settings), patch.dict(sys.modules, dependencies):
+                self.workflow_settings.update(settings)
+                response = self.client.get("/api/m365/bindings")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json()["items"], [])
+
+    def test_bindings_respect_group_feature_and_assignment_access(self):
+        dependencies = self.workflow_dependencies()
+        self.group_workflows.create_item(body={"id": "workflow", "group_id": "team", "name": "Digest"})
+        self.workflow_binding(group_id="team")
+        for settings in (
+            {"allow_group_workflows": False},
+            {"enable_group_workspaces": False},
+            {"require_group_assignment_for_group_workflows": True, "group_workflow_allowed_group_ids": []},
+        ):
+            with self.subTest(settings=settings), patch.dict(sys.modules, dependencies):
+                original = self.workflow_settings.copy()
+                self.workflow_settings.update(settings)
+                response = self.client.get("/api/m365/bindings")
+                self.workflow_settings = original
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json()["items"], [])
+        self.group_access.assert_not_called()
+
+    def test_bindings_only_list_the_current_subject_and_tenant(self):
+        dependencies = self.workflow_dependencies()
+        self.personal_workflows.create_item(body={"id": "workflow", "user_id": "user-a", "name": "Digest"})
+        self.workflow_binding()
+        self.workflow_binding(user_id="other-user")
+        with patch.dict(sys.modules, dependencies):
+            own = self.client.get("/api/m365/bindings")
+            stored = next(
+                record for record in self.container.items.values()
+                if record.get("record_kind") == "m365_approval" and record["subject_user_id"] == "user-a"
+            )
+            self.container.upsert_item(body={**stored, "context": {**stored["context"], "tenant_id": "other-tenant"}})
+            wrong_tenant = self.client.get("/api/m365/bindings")
+            self.sign_in("unrelated-admin", roles=["Admin"])
+            other = self.client.get("/api/m365/bindings")
+        self.assertEqual(len(own.get_json()["items"]), 1)
+        self.assertEqual(wrong_tenant.get_json()["items"], [])
+        self.assertEqual(other.get_json()["items"], [])
+
+    def test_bindings_resolve_duplicate_revisions_once_and_keep_them_separate(self):
+        dependencies = self.workflow_dependencies()
+        self.personal_workflows.create_item(body={"id": "workflow", "user_id": "user-a", "name": "Digest"})
+        self.workflow_binding(revision="first")
+        self.workflow_binding(revision="second")
+        with patch.dict(sys.modules, dependencies), \
+             patch.object(self.personal_workflows, "read_item", wraps=self.personal_workflows.read_item) as read:
+            response = self.client.get("/api/m365/bindings")
+        self.assertEqual(len(response.get_json()["items"]), 2)
+        read.assert_called_once_with(item="workflow", partition_key="user-a")
+
+    def test_bindings_keep_continuation_after_a_hidden_only_page(self):
+        dependencies = self.workflow_dependencies()
+        self.personal_workflows.create_item(body={"id": "visible", "user_id": "user-a", "name": "Visible digest"})
+        self.workflow_binding("visible")
+        self.clock.advance(seconds=1)
+        self.workflow_binding("deleted")
+        with patch.dict(sys.modules, dependencies):
+            first = self.client.get("/api/m365/bindings?page_size=1")
+            token = first.get_json()["continuation_token"]
+            second = self.client.get("/api/m365/bindings", query_string={"page_size": 1, "continuation_token": token})
+        self.assertEqual(first.get_json()["items"], [])
+        self.assertTrue(token)
+        self.assertEqual(second.get_json()["items"][0]["workflow"]["name"], "Visible digest")
+        self.assertIsNone(second.get_json()["continuation_token"])
+
+    def test_bindings_storage_outage_is_a_safe_error_not_an_empty_success(self):
+        dependencies = self.workflow_dependencies()
+        self.workflow_binding()
+        error = exceptions.CosmosHttpResponseError(status_code=503, message="private-storage-detail")
+        with patch.dict(sys.modules, dependencies), \
+             patch.object(self.personal_workflows, "read_item", side_effect=error):
+            response = self.client.get("/api/m365/bindings")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["error"], "m365_service_unavailable")
+        self.assertNotIn("private-storage-detail", response.get_data(as_text=True))
+
+    def test_bindings_untitled_workflow_uses_a_label_not_an_identifier(self):
+        dependencies = self.workflow_dependencies()
+        self.personal_workflows.create_item(body={"id": "workflow", "user_id": "user-a", "name": "  "})
+        self.workflow_binding()
+        with patch.dict(sys.modules, dependencies):
+            response = self.client.get("/api/m365/bindings")
+        self.assertEqual(response.get_json()["items"][0]["workflow"]["name"], "Untitled workflow")
 
     def test_every_new_route_requires_login_and_user_with_blueprint_guard(self):
         self.set_session({})
@@ -830,6 +1045,18 @@ class M365RouteTests(unittest.TestCase):
             if item["metadata"]["approval_id"] == cancel_id
         ]
         self.assertEqual(statuses, ["cancelled"])
+
+
+def test_workflow_authorization_sdk_contract():
+    """Expose the SDK-backed unittest cases as a top-level inventory evidence selector."""
+    names = [
+        name for name in unittest.defaultTestLoader.getTestCaseNames(M365RouteTests)
+        if name.startswith("test_bindings_")
+        or name == "test_dependency_errors_do_not_reveal_sdk_or_configuration_text"
+    ]
+    result = unittest.TestResult()
+    unittest.TestSuite(M365RouteTests(name) for name in names).run(result)
+    assert result.wasSuccessful(), result.errors + result.failures
 
 
 if __name__ == "__main__":

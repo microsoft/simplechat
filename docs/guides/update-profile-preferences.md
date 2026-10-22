@@ -128,6 +128,26 @@ For workflows, select each source once; its supported read/write permissions
 are explained before Microsoft's consent step, without extra permission
 checkboxes. Action capability limits and outgoing-delivery review still apply.
 
+### Review workflow authorizations
+
+Since **0.261.374**, **Workflow authorizations** shows the current workflow name
+instead of its identifier in both User Settings and classic Profile. Choose
+**Open** beside an authorization to inspect that workflow's overview in the new
+interface, in a new tab, without leaving your settings. Group workflows open in
+their own group's workspace; opening a workflow does not run it.
+
+Use **Revoke** to withdraw a pending or approved workflow revision's permission
+to use your Microsoft 365 account. Confirmation is still required, and already
+published answers and evidence are not removed. Multiple authorizations for
+different revisions remain separate.
+
+Deleted workflows and workflows you can no longer access are not listed. Their
+authorization audit history is retained, and execution still checks current
+access. If the current page has no accessible workflows but more records exist,
+choose **Load more authorizations** to continue.
+
+### Reconnect Microsoft 365 for chat
+
 Use the separate **Microsoft 365 chat connection** card to reconnect even when
 no chat is waiting or a saved sign-in is already present. Select sources, choose
 **Reconnect Microsoft 365 for chat**, and verify your same-account sign-in with

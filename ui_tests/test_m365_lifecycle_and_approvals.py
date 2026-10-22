@@ -1,12 +1,13 @@
 # test_m365_lifecycle_and_approvals.py
 """
 Azure Playwright-ready UI tests for typed actions, Profile, and saved approvals.
-Version: 0.261.355
+Version: 0.261.374
 Implemented in: 0.261.029
 In-chat onboarding regression coverage implemented in: 0.261.032
 Independent Profile chat reconnect coverage implemented in: 0.261.034
 Shared pending-action renderer coverage implemented in: 0.261.038
 Self-authored Run as binding coverage implemented in: 0.261.229
+Workflow authorization names and navigation implemented in: 0.261.374
 
 Uses the real local templates, Bootstrap, and browser modules with deterministic
 same-origin API fixtures. Set AZURE_PLAYWRIGHT_WS_ENDPOINT, AZURE_SUBSCRIPTION_ID,
@@ -101,6 +102,7 @@ class ApiFixture:
     def __init__(self, catalog):
         self.catalog = catalog
         self.records = {}
+        self.binding_pages = {}
         self.decisions = []
         self.preference_writes = []
         self.revocations = []
@@ -210,7 +212,11 @@ class ApiFixture:
             self.revocations.append((path, body))
             self.respond(route, {"success": True, "revoked": True})
         elif path == "/api/m365/bindings":
-            self.respond(route, {"items": [record for record in self.records.values() if record["request_type"] == "m365_workflow_run_as"], "continuation_token": None})
+            token = parse_qs(urlsplit(route.request.url).query).get("continuation_token", [""])[0]
+            self.respond(route, self.binding_pages.get(token, {
+                "items": [record for record in self.records.values() if record["request_type"] == "m365_workflow_run_as"],
+                "continuation_token": None,
+            }))
         elif path == "/api/m365/requests":
             self.respond(route, {"items": self.waiting_requests, "continuation_token": None, "csrf_token": self.csrf_token})
         elif path == "/api/msgraph/pending-actions":
@@ -1614,6 +1620,7 @@ def test_profile_own_connection_disconnect_and_binding_revoke(ui):
     binding = approval("binding", "m365_workflow_run_as", shared=False)
     binding["status"] = "approved"
     binding["context"]["workflow_id"] = "workflow"
+    binding["workflow"] = {"id": "workflow", "name": "Morning mail digest", "scope_type": "personal", "group_id": None}
     api.records["binding"] = binding
     page.goto(f"{ORIGIN}/profile")
     expect(page.locator("#m365-connection-status")).to_contain_text("connected")
@@ -1644,12 +1651,15 @@ def test_self_authored_binding_reads_as_your_own_save_everywhere(ui):
     })
     record["context"]["workflow_id"] = "own-workflow"
     record = sanitize_m365_approval(record)
+    record["workflow"] = {"id": "own-workflow", "name": "My saved digest", "scope_type": "personal", "group_id": None}
     assert (record["can_approve"], record["can_deny"]) == (False, False)
     api.records[record["id"]] = record
 
     page.goto(f"{ORIGIN}/profile")
     bindings = page.locator("#m365-workflow-bindings")
-    expect(bindings).to_contain_text(f"Workflow own-workflow: {status}")
+    expect(bindings).to_contain_text("My saved digest")
+    expect(bindings).to_contain_text(status)
+    expect(bindings).not_to_contain_text("own-workflow")
     expect(bindings.get_by_role("button", name="Revoke workflow authorization", exact=True)).to_be_visible()
 
     page.goto(f"{ORIGIN}/approvals")
@@ -1667,6 +1677,67 @@ def test_self_authored_binding_reads_as_your_own_save_everywhere(ui):
     expect(page.get_by_role("button", name="Allow this workflow revision", exact=True)).to_have_count(0)
     expect(page.locator("#m365-approvals-apply")).to_be_disabled()
     assert api.decisions == []
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("group_id", [None, "team & ops"])
+def test_profile_named_authorization_opens_the_selected_v2_workflow_in_a_new_tab(ui, width, group_id):
+    page, api = ui
+    page.set_viewport_size({"width": width, "height": 900})
+    name = '<img src=x onerror="window.injected=true"> ' + "Quarterly workflow review " * 8
+    record = approval("named-binding", "m365_workflow_run_as", shared=False)
+    record["workflow"] = {
+        "id": "workflow?with&encoded=#", "name": name,
+        "scope_type": "group" if group_id else "personal", "group_id": group_id,
+    }
+    api.records[record["id"]] = record
+    page.goto(f"{ORIGIN}/profile")
+    bindings = page.locator("#m365-workflow-bindings")
+    expect(bindings.get_by_text(name, exact=True)).to_be_visible()
+    expect(bindings.locator("img")).to_have_count(0)
+    expect(bindings).not_to_contain_text(record["workflow"]["id"])
+    base = f"/v2/groups/{quote(group_id, safe='')}/workflows" if group_id else "/v2/workspace/workflows"
+    href = f"{base}?{urlencode({'workflow_id': record['workflow']['id']})}"
+    link = bindings.get_by_role("link", name=f"Open {name} (opens in a new tab)", exact=True)
+    expect(link).to_have_attribute("href", href)
+    expect(link).to_have_attribute("rel", "noopener noreferrer")
+    expect(link).to_have_attribute("target", "_blank")
+    link.focus()
+    with page.expect_popup() as opened:
+        link.press("Enter")
+    popup = opened.value
+    popup.wait_for_load_state()
+    assert popup.url == ORIGIN + href
+    opener = popup.evaluate("window.opener")
+    assert opener is None
+    assert page.url == f"{ORIGIN}/profile"
+    popup.close()
+    # This harness extracts the Profile section without its surrounding Bootstrap gutter container.
+    dimensions = bindings.evaluate("(element) => ({ width: element.clientWidth, content: element.scrollWidth })")
+    assert dimensions["content"] <= dimensions["width"] + 1
+    artifacts = Path(__file__).resolve().parent / "artifacts" / "workflow-authorizations"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    bindings.screenshot(path=str(artifacts / f"classic-{width}-{'group' if group_id else 'personal'}.png"))
+    assert not api.revocations
+    assert not api.errors
+
+
+@pytest.mark.ui
+def test_profile_authorizations_can_page_past_hidden_workflows(ui):
+    page, api = ui
+    record = approval("visible-binding", "m365_workflow_run_as", shared=False)
+    record["workflow"] = {"id": "workflow", "name": "Visible digest", "scope_type": "personal", "group_id": None}
+    api.binding_pages = {
+        "": {"items": [], "continuation_token": "next"},
+        "next": {"items": [record], "continuation_token": None},
+    }
+    page.goto(f"{ORIGIN}/profile")
+    expect(page.locator("#m365-bindings-status")).to_contain_text("No accessible workflows on this page")
+    page.locator("#m365-bindings-more").click()
+    expect(page.locator("#m365-workflow-bindings")).to_contain_text("Visible digest")
+    expect(page.locator("#m365-bindings-more")).to_be_hidden()
     assert not api.errors
 
 

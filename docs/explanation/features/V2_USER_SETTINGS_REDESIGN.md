@@ -2,7 +2,10 @@
 
 **Implemented in version: 0.261.277** (layout); **0.261.278** (voice, audio and retention);
 **0.261.279** (fact memory and Microsoft 365); **0.261.280** (guided tours and Latest Features);
-**0.261.296** (Open on Groups and Public rows)
+**0.261.296** (Open on Groups and Public rows);
+**0.261.374** (workflow authorization names, visibility, and Open)
+
+Current version: **0.261.374**, tracked in `application/single_app/config.py`.
 
 ## Overview
 
@@ -102,13 +105,19 @@ gated by a capability flag.
 | Microsoft 365 sharing | `GET`/`PATCH /api/m365/preferences`, `POST /api/m365/sources/<source>/revoke` | A sharing duration for Calendar, Email, OneDrive and SPO, and an extended-analysis choice for OneDrive and SPO. An unknown value from the server is refused rather than guessed. Saved with **Save**. Shows the browser timezone, which is not stored. |
 | Chat connection | `GET /api/m365/chat/connection`, `POST /api/m365/chat/connection/connect` | Status and saved sources. Reconnect uses the existing `connectMicrosoft365` popup flow, then re-reads the status. |
 | Workflow connection | `GET /api/m365/connections`, `POST /api/m365/connections/connect`, `POST /api/m365/connections/disconnect` | Account, tenant, cloud, sources and delegated permissions. Connect navigates to the sign-in URL only after `authorizationUrl()` validates it as HTTPS with no credentials. |
-| Workflow authorizations | `GET /api/m365/bindings`, `POST /api/m365/bindings/<id>/revoke` | Paged list using the classic Approvals wording. Pending and approved entries can be revoked. Links to Approvals. |
+| Workflow authorizations | `GET /api/m365/bindings`, `POST /api/m365/bindings/<id>/revoke` | Shows current workflow names, with Open to the selected workflow's overview in a new tab. Deleted or inaccessible workflows are omitted. Pending and approved entries retain confirmed Revoke; distinct revision records remain separate. Links to Approvals. |
 
 - Every write sends `X-M365-CSRF-Token`. The token comes from the GET responses and is
   refreshed and retried once when the server returns `m365_csrf_invalid`, as the classic
   page does.
 - Revocations and disconnect go through one confirmation dialog. It states that history
   already published to conversations is not removed. After a change, all four cards refresh.
+- Since **0.261.374**, the bindings route resolves each workflow in its authorized
+  personal or group scope, returning only its ID, current name, and navigation scope
+  alongside the existing sanitized authorization. Renames appear on the next refresh.
+  Filtering does not delete audit history or grant execution access. A page containing
+  only hidden workflows keeps **Load more authorizations** when another page exists.
+  Classic Profile uses the same projection and opens the same V2 overview.
 
 ### Guided tours and Latest Features
 

@@ -8,6 +8,7 @@ from urllib.parse import urlencode, urlsplit
 
 import requests
 from azure.core.exceptions import AzureError
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from flask import Blueprint, jsonify, make_response, redirect, render_template, request, session
 
 from functions_appinsights import log_event
@@ -31,6 +32,7 @@ from functions_m365_connections import (
     get_m365_connection_service,
     workflow_connection_readiness,
 )
+from functions_m365_context import _identifier
 from swagger_wrapper import swagger_route, get_auth_security
 
 
@@ -104,6 +106,73 @@ def _page_options():
         "page_size": int(request.args.get("page_size", "20")),
         "continuation_token": request.args.get("continuation_token"),
     }
+
+
+def _workflow_binding_summary(workflow_id, group_id, user_id, settings, user_roles):
+    """Resolve only a workflow this subject can currently open, without hiding storage failures."""
+    # Workflow/settings owners depend on config bootstrap; resolve them only during a list read.
+    from functions_settings import is_group_workflows_enabled_for_group, is_user_workflows_enabled_for_user
+
+    if group_id:
+        if not settings.get("enable_group_workspaces") or not is_group_workflows_enabled_for_group(settings, group_id):
+            return None
+        from functions_group import assert_group_role
+        try:
+            assert_group_role(user_id, group_id, allowed_roles=("Owner", "Admin", "DocumentManager", "User"))
+        except (PermissionError, LookupError):
+            return None
+    elif not is_user_workflows_enabled_for_user(settings, user_roles=user_roles):
+        return None
+
+    from config import cosmos_group_workflows_container, cosmos_personal_workflows_container
+
+    container = cosmos_group_workflows_container if group_id else cosmos_personal_workflows_container
+    partition = group_id or user_id
+    try:
+        workflow = container.read_item(item=workflow_id, partition_key=partition)
+    except CosmosResourceNotFoundError:
+        return None
+    if (
+        workflow.get("id") != workflow_id
+        or workflow.get("group_id" if group_id else "user_id") != partition
+        or (not group_id and workflow.get("group_id"))
+        or workflow.get("deleting") is True or workflow.get("status") == "deleting"
+    ):
+        return None
+    name = workflow.get("name")
+    return {
+        "id": workflow_id,
+        "name": name.strip() if isinstance(name, str) and name.strip() else "Untitled workflow",
+        "scope_type": "group" if group_id else "personal",
+        "group_id": group_id,
+    }
+
+
+def _visible_workflow_bindings(page, user_id, tenant_id):
+    """Keep paging over authorization records, projecting each accessible workflow once per page."""
+    if not page["items"]:
+        return page
+    # Settings owns initialized configuration and must not become a route-module import dependency.
+    from functions_settings import get_settings
+
+    settings = get_settings()
+    roles = (session.get("user") or {}).get("roles", [])
+    workflows = {}
+    items = []
+    for approval in page["items"]:
+        context = approval.get("context") or {}
+        if not is_m365_approval_subject(approval, user_id) or context.get("tenant_id") != tenant_id:
+            continue
+        workflow_id = _identifier(context.get("workflow_id"))
+        group_id = context.get("group_id") or None
+        if group_id is not None:
+            _identifier(group_id)
+        key = (group_id, workflow_id)
+        if key not in workflows:
+            workflows[key] = _workflow_binding_summary(workflow_id, group_id, user_id, settings, roles)
+        if workflows[key] is not None:
+            items.append({**approval, "workflow": workflows[key]})
+    return {**page, "items": items}
 
 
 def _error_details(exc):
@@ -624,10 +693,11 @@ def register_route_backend_m365(bp):
     @login_required
     @user_required
     def list_m365_workflow_bindings():
-        user_id, _tenant_id = _subject()
-        return jsonify(get_m365_approval_service().list_records(
+        user_id, tenant_id = _subject()
+        page = get_m365_approval_service().list_records(
             user_id, request_type=TYPE_WORKFLOW_RUN_AS, **_page_options(),
-        ))
+        )
+        return jsonify(_visible_workflow_bindings(page, user_id, tenant_id))
 
     @bp.route("/api/m365/bindings/<binding_id>/revoke", methods=["POST"])
     @swagger_route(security=get_auth_security())

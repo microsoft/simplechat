@@ -310,7 +310,16 @@
                     query.set('continuation_token', bindingContinuation);
                 }
                 const response = await api.requestJson(`/api/m365/bindings?${query}`);
-                if (!Array.isArray(response.items)) {
+                if (!Array.isArray(response.items) || response.items.some(binding => {
+                    const workflow = binding?.workflow;
+                    return typeof binding?.id !== 'string'
+                        || typeof workflow?.id !== 'string' || !workflow.id.trim()
+                        || typeof workflow?.name !== 'string' || !workflow.name.trim()
+                        || !(
+                            (workflow.scope_type === 'personal' && workflow.group_id === null)
+                            || (workflow.scope_type === 'group' && typeof workflow.group_id === 'string' && workflow.group_id.trim())
+                        );
+                })) {
                     throw new Error('Workflow authorizations could not be read.');
                 }
                 const list = document.getElementById('m365-workflow-bindings');
@@ -321,9 +330,30 @@
                     const row = document.createElement('div');
                     row.className = 'border rounded p-3';
                     const title = document.createElement('p');
-                    title.className = 'small text-break mb-1';
-                    title.textContent = `Workflow ${binding.context?.workflow_id || 'authorization'}: ${api.describeStatus(binding)}`;
+                    title.className = 'small fw-semibold text-break mb-1';
+                    title.textContent = binding.workflow.name;
                     row.appendChild(title);
+                    const description = document.createElement('p');
+                    description.className = 'small text-break text-muted mb-2';
+                    description.textContent = api.describeStatus(binding);
+                    row.appendChild(description);
+                    const actions = document.createElement('div');
+                    actions.className = 'd-flex flex-wrap gap-2';
+                    const open = document.createElement('a');
+                    const workflow = binding.workflow;
+                    const base = workflow.scope_type === 'group'
+                        ? `/v2/groups/${encodeURIComponent(workflow.group_id)}/workflows`
+                        : '/v2/workspace/workflows';
+                    open.href = `${base}?${new URLSearchParams({ workflow_id: workflow.id })}`;
+                    open.target = '_blank';
+                    open.rel = 'noopener noreferrer';
+                    open.className = 'btn btn-outline-secondary btn-sm';
+                    open.setAttribute('aria-label', `Open ${workflow.name} (opens in a new tab)`);
+                    const icon = document.createElement('i');
+                    icon.className = 'bi bi-box-arrow-up-right me-1';
+                    icon.setAttribute('aria-hidden', 'true');
+                    open.append(icon, document.createTextNode('Open'));
+                    actions.appendChild(open);
                     if (['pending', 'approved'].includes(binding.status)) {
                         const button = document.createElement('button');
                         button.type = 'button';
@@ -333,13 +363,18 @@
                             'Revoke this workflow revision\'s permission to use your Microsoft 365 account?',
                             () => api.requestJson(`/api/m365/bindings/${encodeURIComponent(binding.id)}/revoke`, { method: 'POST', body: {} })
                         ));
-                        row.appendChild(button);
+                        actions.appendChild(button);
                     }
+                    row.appendChild(actions);
                     list.appendChild(row);
                 });
                 bindingContinuation = response.continuation_token || null;
                 more.classList.toggle('d-none', !bindingContinuation);
-                document.getElementById('m365-bindings-status').textContent = list.childElementCount ? 'Only your own authorizations are shown. Pending requests can be decided from Approvals.' : 'No workflow authorizations.';
+                document.getElementById('m365-bindings-status').textContent = list.childElementCount
+                    ? 'Only your own authorizations are shown. Pending requests can be decided from Approvals.'
+                    : bindingContinuation
+                        ? 'No accessible workflows on this page. Load more authorizations to continue.'
+                        : 'No workflow authorizations.';
             } catch (error) {
                 showStatus('m365-bindings-status', error.message, 'danger');
                 more.classList.add('d-none');
