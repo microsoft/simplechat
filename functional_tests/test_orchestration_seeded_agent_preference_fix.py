@@ -160,12 +160,16 @@ def test_an_agent_the_user_did_not_pick_still_follows_the_preference():
         output = save(world, provider(world))
 
         world.user_enable_agents = False
+        world.preflight(provider(world))
+        assert read(world, provider(world), output) == world.prepared
+        assert all(call.kwargs["user_groups"] is None for call in builder.call_args_list)
+
+        world.catalog_override = []
         with pytest.raises(ResultUnavailableError) as raised:
             world.preflight(provider(world))
         assert raised.value.code == "result_external_capability_unavailable"
         with pytest.raises(ResultUnavailableError):
             read(world, provider(world), output)
-        assert all(call.kwargs["user_groups"] is None for call in builder.call_args_list)
 
 
 def test_the_pick_lifts_the_preference_for_that_agent_only():
@@ -251,11 +255,14 @@ def test_a_malformed_pick_does_not_lift_the_preference(seeds):
         world.preflight(current)
 
         world.user_enable_agents = False
+        world.preflight(current)
+        assert reader.call_count == 2
+        assert all(set(call.kwargs) == {"settings"} for call in reader.call_args_list)
+
+        world.catalog_override = []
         with pytest.raises(ResultUnavailableError) as raised:
             world.preflight(current)
         assert raised.value.code == "result_external_capability_unavailable"
-        assert reader.call_count == 2
-        assert all(set(call.kwargs) == {"settings"} for call in reader.call_args_list)
 
 
 def test_action_sources_never_receive_the_agent_pick():
