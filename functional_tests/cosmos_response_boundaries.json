@@ -12307,7 +12307,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1e29b8483592bf9f26cfabf950fecc8a0343852a2563bdae1d5456ca772a688c"
+        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
       },
       "classification": "sdk-compatible",
       "contract": "Partitioned turn/source point mappings are reauthorized, checked for visibility and converted by normalize_history_message before strict saved-snapshot validation. Full source messages are resolved only after fingerprint checks; history disablement and revoked shared access cannot broaden reads.",
@@ -12330,7 +12330,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1e29b8483592bf9f26cfabf950fecc8a0343852a2563bdae1d5456ca772a688c"
+        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
       },
       "classification": "sdk-compatible",
       "contract": "The previous assistant point mapping is checked for conversation/run ownership; model and reasoning fields are projected into plain dictionaries, without passing the SDK wrapper to an exact-dictionary contract.",
@@ -12353,7 +12353,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1e29b8483592bf9f26cfabf950fecc8a0343852a2563bdae1d5456ca772a688c"
+        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
       },
       "classification": "sdk-compatible",
       "contract": "The question point mapping supplies role and nested plain thread metadata; only a deepcopy of the validated nested thread dictionary is returned.",
@@ -12376,7 +12376,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1e29b8483592bf9f26cfabf950fecc8a0343852a2563bdae1d5456ca772a688c"
+        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
       },
       "classification": "sdk-compatible",
       "contract": "A normalized owned conversation retains its _etag for IfNotModified replacement; the returned SDK mapping is consumed only by the Mapping-compatible cache invalidator. Lost-CAS retries retain current ownership.",
@@ -12399,7 +12399,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1e29b8483592bf9f26cfabf950fecc8a0343852a2563bdae1d5456ca772a688c"
+        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
       },
       "classification": "sdk-compatible",
       "contract": "The published message point mapping is projected with items() into a metadata-free fingerprint and consumed by Mapping-compatible mirroring. Durable outcome telemetry reads only finalized scalar fields; strict task/result descriptors and saved-message confirmation remain unchanged.",
@@ -19190,7 +19190,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "response-unused",
       "contract": "Plain query rows provide chunk IDs; all chunk/artifact delete responses are discarded and rollback failure accounting remains explicit. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19211,7 +19211,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "The user-message point mapping supplies nested plain metadata/thread fields for paired image attribution; only user/thread values escape the boundary. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19234,7 +19234,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "Partitioned assistant query rows remain plain dictionaries through soft-delete filtering and saved-analysis history sanitization. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19257,7 +19257,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "Artifact and chunk discovery returns plain query rows to build_message_artifact_payload_map; it is not a point-response normalization boundary. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19280,7 +19280,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "response-unused",
       "contract": "The local Cosmos delete response is discarded on source-screening rollback; its IfNotModified ETag comes from the persistence owner result. Assistant point normalization remains with persist_chat_reply rather than weakening screening. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19301,7 +19301,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "Workspace lookup consumes plain query rows, rechecks document availability and projects only id/name/title/workspace fields into a plain selection DTO. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19329,7 +19329,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "response-unused",
       "contract": "Both conversation upsert responses are discarded; the constructed plain conversation is logged and cache-invalidated, with existing persistence failures unchanged. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19350,7 +19350,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation point mapping feeds shared-backing and participation authorization using Mapping fields; no raw document reaches an exact-dictionary domain validator or bypasses access checks. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19378,7 +19378,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "response-unused",
       "contract": "Artifact upsert and cancellation-rollback delete responses are discarded; artifact identities are taken from constructed plain documents and cancellation remains visible. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19399,7 +19399,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "The user-message point mapping is read through get() into a plain response-context dictionary; nested thread/user metadata stays JSON and read failures retain existing fallback fields. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19432,7 +19432,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "response-unused",
       "contract": "Safety/user-message upsert and conversation replace responses are discarded; the browser payload is constructed from plain screened documents and explicit public fields. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19453,7 +19453,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "Workspace document discovery consumes plain query rows and builds bounded related-document metadata; no Cosmos point wrapper enters its document catalog. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19476,7 +19476,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "A new-message upsert may return the SDK mapping to Mapping-compatible chat persistence callers; retry metadata is delegated to patch_chat_message_metadata, which owns conditional update/normalization. No strict top-level DTO is synthesized from arbitrary iterables. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19499,7 +19499,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "Chat attachment resolution consumes plain partitioned query rows and emits display-name/context projections; workspace ownership remains with the document resolver. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19522,7 +19522,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "The TOP 1 thread projection is a plain query row; only thread_id is returned, with the existing read-failure fallback unchanged. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19550,7 +19550,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "Existing point mappings are checked for owner/deletion state; newly created SDK conversation mappings feed field-based activity logging and cache invalidation, not exact-dictionary result validation. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19604,7 +19604,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "Retry input point mappings supply authorized role/content/thread fields; history queries are plain, and user/system writes and rollback deletes discard responses. Saved-analysis strict result admission remains with its storage owner. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19647,7 +19647,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "The original Analyze point mapping is checked for role/conversation/content and nested thread metadata; local message writes and cleanup deletes discard responses, while retained analysis contracts remain strict. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19675,7 +19675,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "The source assistant SDK mapping is authorized by conversation/role and used by Mapping-compatible planned-image lookup; conversation replacement discards its response and public image data is projected explicitly. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19698,7 +19698,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "The partitioned point mapping is returned to find_planned_proposal_image, which inspects message fields; a missing message returns None, without an empty-document or strict-type fallback. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19721,7 +19721,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "Proposal status iterates plain query rows, validates nested proposal dictionaries and emits explicit public image status fields. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19815,7 +19815,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "Retry/source point mappings supply role/content and nested model/thread metadata through Mapping access; history queries stay plain. Metadata persistence remains with its existing owner and local write responses are discarded. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19890,7 +19890,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "Retry point mappings are checked for role/conversation and nested metadata through Mapping access; history queries remain plain, and local create/replace/delete return values are discarded. SSE telemetry does not alter storage contracts. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19914,7 +19914,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "response-unused",
       "contract": "Cancellation refreshes the conversation with a discarded replace response; screened message persistence remains with its existing owner and the stream payload is assembled separately. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19946,7 +19946,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "Point message/conversation mappings and plain fallback query rows use field-based ownership and soft-delete checks; nested mask metadata goes to existing persistence, and public JSON projects mask fields only. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19969,7 +19969,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "The point message mapping is checked for conversation identity and passed to Mapping-compatible visual-style/persistence owners; public JSON projects nested visual_styles rather than the SDK document. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -19992,7 +19992,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "The point message mapping is checked against the authorized conversation and passed to Mapping-compatible revision readers/persistence; missing messages retain their 404 contract. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -20015,7 +20015,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "The partitioned prior-user query returns plain rows; only the first row content string is used as the originating request. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -20038,7 +20038,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "A reread SDK message is checked for conversation membership and inspected by Mapping-compatible block revision helpers; conflict/replay JSON consists of explicit revision fields, not the SDK wrapper. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -20061,7 +20061,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "77b2b658c6051699a152a923e40e6436e88b618c33da484465e440f6c1e4de03"
+        "module_sha256": "1ca45491c5fb34f11e1db205e6c8fc202de882a686d0477385e08e7beb28f6da"
       },
       "classification": "sdk-compatible",
       "contract": "The reload callback returns a partitioned SDK message mapping to the Mapping-compatible image revision owner, which rechecks concurrent versions; the route emits only explicit revision/error fields. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
@@ -23327,7 +23327,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "Ledger source revalidation consumes plain projected query rows to check source visibility; failed reads omit the ledger rather than authorizing point documents or widening scope.",
@@ -23348,7 +23348,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation point mapping proves owner/nondeleted state through field access and now rechecks shared-source membership before dependent reads; missing or unauthorized records retain ConversationContextError.",
@@ -23370,7 +23370,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "Historical context discovery consumes plain partitioned query rows, applies retry-prefix/screening rules and builds a bounded plain conversation snapshot.",
@@ -23391,7 +23391,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "Point answer mappings supply conversation/visibility and nested thread fields; metadata patching retains its existing owner and stale or missing answers are not silently restored.",
@@ -23418,7 +23418,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "A cutoff point mapping supplies authorized conversation/role/timestamp; plain bounded query rows pass through screening and saved-analysis sanitization before plain snapshot construction.",
@@ -23439,7 +23439,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "Source revalidation consumes plain bounded query rows through screening and strict saved-snapshot checks; no point wrapper is repaired into a domain context. Selected-history projection uses plain SDK query rows, existing visibility/fingerprint checks and admitted typed result references; new full-text projection and assistant-only result selection are exercised through real planning, execution and editor routes with SDK-default containers.",
@@ -23461,7 +23461,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "The saved turn point mapping is normalized by normalize_history_message before role/conversation/fingerprint validation; history-disabled snapshots fail before reuse and source authorization is rechecked.",
@@ -23493,7 +23493,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "Requested conversation point mappings supply owner/scope/deletion fields; constructed create/upsert bodies are plain and write responses are discarded. Shared ownership is established separately, not inferred from wrapper type.",
@@ -23514,7 +23514,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "response-unused",
       "contract": "The message upsert response is discarded; screening and source-availability checks occur before publication, and persistence errors retain the existing failure path.",
@@ -23538,7 +23538,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "Conversation/message point mappings feed shared-backing ownership checks and Mapping-compatible collaboration mirroring; no strict task/result descriptor consumes the wrappers.",
@@ -23559,7 +23559,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "The saved question point mapping updates nested orchestration metadata through the existing metadata-patch owner; durable returned planning identity is a separate plain scoped DTO.",
@@ -23585,7 +23585,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "Saved turn point mappings are converted through normalize_history_message before identity/fingerprint reuse; nested metadata patches retain conditional ownership, and the returned identity/fingerprint are scalar projections.",
@@ -23611,7 +23611,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation point mapping supplies owner/deletion and mutable index fields; replace response is discarded and the Mapping-compatible cache invalidator consumes the authorized input.",
@@ -23632,7 +23632,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "The assistant point mapping supplies role/deletion/mask metadata to reply_is_retracted; absence is treated as removed, never as an empty valid response.",
@@ -23653,7 +23653,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "Artifact point mappings are checked by field access for conversation/user/visibility and nested content metadata; no top-level exact-dictionary result contract consumes them.",
@@ -23674,7 +23674,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "Artifact point mappings are JSON-encoded by the existing checkpoint fingerprint helper; SDK dictionary subclasses are supported and nested artifact validation is unchanged.",
@@ -23685,7 +23685,7 @@
     },
     "application/single_app/route_backend_orchestration.py::register_route_backend_orchestration.orchestration_plan": {
       "boundary": {
-        "sha256": "f96be6265a76793521fdb18ac548b9dcb912d85eedc5fe5f06f389f3210d0035",
+        "sha256": "d740c1557c0a4a0d12d4e7c8bbf60bdc97cb1a47a2bd13b7e7f0ec65bfa4ca52",
         "points": [
           {
             "method": "read_item",
@@ -23695,7 +23695,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7223db3ab2bad529770123cb10f388e890e4577af838a66ab9b49541a65e2a30"
+        "module_sha256": "fa6c9f270feefe835a5c13f029d3307aea1c06247e4fddedfe2ef8c9f97d233c"
       },
       "classification": "sdk-compatible",
       "contract": "Clarification admission consumes SDK conversation ownership fields. Selected-source preparation uses current authorized manifest DTOs before resolution; only bounded plain identity/schema projections enter model context. Only source revision hashes persist in seeds. Point wrappers never enter strict planner contracts, and approval precedes computation/export. Selected-history projection uses plain SDK query rows, existing visibility/fingerprint checks and admitted typed result references; new full-text projection and assistant-only result selection are exercised through real planning, execution and editor routes with SDK-default containers.",

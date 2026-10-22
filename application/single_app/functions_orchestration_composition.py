@@ -339,19 +339,63 @@ def _answer_memory(context):
     return getattr(context, 'memory_context', None) or {}
 
 
+def _resolve_tabular_source_file_name(context, document_id):
+    if not document_id:
+        return None
+    for attr in ('execution_manifest', 'source_manifest'):
+        for item in getattr(context, attr, None) or ():
+            if isinstance(item, dict) and item.get('document_id') == document_id:
+                name = item.get('file_name') or item.get('display_name')
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+    labels = (getattr(context, 'seeds', None) or {}).get('document_labels') or {}
+    if isinstance(labels, dict):
+        label = labels.get(document_id)
+        if isinstance(label, str) and label.strip():
+            return label.strip()
+    try:
+        from functions_orchestration_adapters import resolve_context_source_manifest
+
+        for item in resolve_context_source_manifest(context, [document_id]) or ():
+            if isinstance(item, dict) and item.get('document_id') == document_id:
+                name = item.get('file_name') or item.get('display_name')
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+    except Exception:
+        pass
+    return None
+
+
 def _input_document_citations(context, reference):
     citations = []
+    is_tabular = getattr(getattr(reference, 'producer', None), 'capability_id', None) == 'tabular_analyze'
     for citation in read_result_document_citations(context, reference):
         location = citation.get('location_value')
         if location is None or location == '':
             location = citation.get('page_number')
-        if not citation.get('citation_id') or location in (None, ''):
+        citation_id = citation.get('citation_id')
+        file_name = citation.get('file_name')
+        location_label = citation.get('location_label') or 'Page'
+        if is_tabular and citation.get('document_id') and (not citation_id or location in (None, '')):
+            doc_id = citation['document_id']
+            citation_id = citation_id or f'{doc_id}_1'
+            location = '1' if location in (None, '') else location
+            file_name = file_name or _resolve_tabular_source_file_name(context, doc_id) or doc_id
+            citation = {
+                **citation,
+                'file_name': file_name,
+                'citation_id': citation_id,
+                'page_number': 1,
+                'location_label': location_label,
+                'location_value': str(location),
+            }
+        if not citation_id or location in (None, ''):
             continue
         citations.append({
             **citation,
             'citation': build_inline_citation_marker(
-                citation.get('file_name'), citation.get('location_label') or 'Page',
-                str(location), citation['citation_id'],
+                file_name, location_label,
+                str(location), citation_id,
             ),
         })
     return citations

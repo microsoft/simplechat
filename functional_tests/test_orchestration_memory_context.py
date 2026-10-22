@@ -107,11 +107,13 @@ class OrchestrationMemoryTests(unittest.TestCase):
         result = self.memory.load_orchestration_memory(
             'user1', self.conversation, 'Turn that into a handover checklist.', settings=self.settings,
             seeds={'doc_scope': 'all', 'active_group_ids': ['group1']},
+            conversation_context={'messages': [{'role': 'user', 'content': 'Working on CB-27-037B92.'}]},
         )
         self.assertEqual(result['scope'], {'type': 'user', 'id': 'user1'})
         self.assertIn('user1', json.dumps(result['context_messages']))
         self.assertEqual(self.fact_calls[0]['scope_type'], 'user')
         self.assertEqual(self.fact_calls[0]['scope_id'], 'user1')
+        self.assertIn('CB-27-037B92', self.fact_calls[0]['context_text'])
         self.group_membership.assert_not_called()
 
     def test_disabled_memory_performs_no_reads_or_embeddings(self):
@@ -192,6 +194,27 @@ class OrchestrationMemoryTests(unittest.TestCase):
         self.assertEqual(calls, ['reload'])
         self.assertIn('NEWLY SAVED MEMORY', json.dumps(result))
         self.assertNotIn('OLD MEMORY', json.dumps(result))
+
+    def test_tabular_analyze_lineage_source_builds_copyable_inline_citation(self):
+        context = types.SimpleNamespace(
+            execution_manifest=[{'document_id': 'doc-csv-1', 'file_name': 'obligations.csv'}],
+            seeds={},
+        )
+        reference = types.SimpleNamespace(
+            producer=types.SimpleNamespace(capability_id='tabular_analyze'),
+        )
+        with patch.object(
+            self.composition, 'read_result_document_citations',
+            return_value=[{'source_type': 'document', 'document_id': 'doc-csv-1'}],
+        ):
+            citations = self.composition._input_document_citations(context, reference)
+        self.assertEqual(len(citations), 1)
+        self.assertEqual(citations[0]['citation_id'], 'doc-csv-1_1')
+        self.assertEqual(citations[0]['file_name'], 'obligations.csv')
+        self.assertEqual(
+            citations[0]['citation'],
+            '(Source: obligations.csv, Page: 1) [#doc-csv-1_1]',
+        )
 
 
 # Route/execution parity ports for the single orchestration contract.

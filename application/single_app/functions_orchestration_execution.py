@@ -631,6 +631,7 @@ class HarnessExecution:
             self.context.user_request, settings=self._bootstrap.get_settings(),
             seeds=self.record.get("seeds") or {},
             expected_audience=self.context.memory_context["audience"],
+            conversation_context=getattr(self.context, "conversation_context", None),
         )
         self.context.memory_context = memory
         for notice in memory["notices"]:
@@ -760,6 +761,7 @@ class HarnessExecution:
             user_id, self._validate_memory(),
             build_elicitation_user_request(self.record.get("resolved_message") or user_message, answers),
             settings=self.settings, seeds=seeds, expected_audience=self.record.get("memory_audience"),
+            conversation_context=snapshot,
         )
         assert_current_request_sources_available(user_id)
 
@@ -1402,6 +1404,11 @@ class HarnessExecution:
             extension = source.get("extension")
             if isinstance(extension, str) and extension.strip():
                 citation["file_type"] = extension.strip().lstrip(".").lower()
+            if source.get("source_kind") == "tabular" and not citation.get("citation_id"):
+                citation["citation_id"] = f"{citation['document_id']}_1"
+                citation.setdefault("page_number", 1)
+                citation.setdefault("location_label", "Page")
+                citation.setdefault("location_value", "1")
         return enriched
 
     def _touch_conversation(self, documents, message=None):

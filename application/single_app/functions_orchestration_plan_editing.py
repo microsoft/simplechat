@@ -597,6 +597,7 @@ def build_plan_edit_outcome(
         user_id, conversation,
         build_elicitation_user_request(changed_request, context.get('answered_questions')),
         settings=settings, seeds=seeds, expected_audience=context.get('memory_audience'),
+        conversation_context=conversation_context,
     )
     context['memory_audience'] = memory_context['audience']
     context['memory_scope'] = memory_context['scope']

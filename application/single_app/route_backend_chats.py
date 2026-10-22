@@ -15291,6 +15291,12 @@ def register_route_backend_chats(bp):
         include_metadata: bool = False,
         inject_context: bool = True,
     ):
+        prior_user_texts = [
+            str(msg.get('content') or '').strip()
+            for msg in (conversation_history or ())
+            if isinstance(msg, dict) and msg.get('role') == 'user' and str(msg.get('content') or '').strip()
+        ]
+        context_text = '\n'.join(prior_user_texts) if len(prior_user_texts) > 1 else None
         prompt_payload = build_fact_memory_prompt_payload(
             scope_id=scope_id,
             scope_type=scope_type,
@@ -15299,6 +15305,7 @@ def register_route_backend_chats(bp):
             agent_id=agent_id,
             enabled=enabled,
             include_metadata=include_metadata,
+            **({'context_text': context_text} if context_text else {}),
         )
         if inject_context == 'fold_latest_user':
             if _fold_fact_memory_notes_into_latest_user_message(conversation_history, prompt_payload):
