@@ -2,6 +2,7 @@
 // A pre-model decision only: never replay a request after model/tool execution.
 
 import { apiUrl, API_BASE } from './apiClient';
+import { v2ApiFetch } from './v2SourcePolicy';
 import type { ChatStreamRequest } from './types';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 
@@ -136,7 +137,7 @@ function readRecovery(value: unknown): ActionRecovery | null {
 }
 
 async function recoveryApi(path: string, body?: unknown, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    const response = await fetch(apiUrl(path), {
+    const response = await v2ApiFetch(apiUrl(path), {
         method: body === undefined ? 'GET' : 'POST', credentials, signal,
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),

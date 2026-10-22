@@ -2,7 +2,7 @@
 # test_workflow_merge_task.py
 """
 Functional test for workflow Merge tasks.
-Version: 0.261.248
+Version: 0.261.373
 Implemented in: 0.261.241
 Scale and formula checks added in: 0.261.245
 Refs: microsoft/simplechat#1619
@@ -81,7 +81,7 @@ EAST = ("east.xlsx", xlsx_bytes([("Sales", [["Region", "Amount", "Rep"], ["East"
 def _seam_modules():
     """The two service-backed modules functions_document_actions imports, without Azure."""
     search_source = run_definitions(
-        "functions_search.py", ("VALID_SEARCH_SCOPES", "normalize_search_scope", "normalize_search_id_list"), {},
+        "search_scope_utils.py", ("VALID_SEARCH_SCOPES", "normalize_search_scope", "normalize_search_id_list"), {},
     )
     search = ModuleType("functions_search")
     search.normalize_search_scope = search_source["normalize_search_scope"]

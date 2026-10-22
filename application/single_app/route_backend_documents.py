@@ -17,7 +17,7 @@ from content_screening.service import prepare_document_upload
 from functions_appinsights import log_event
 from functions_settings import *
 from functions_group import get_user_groups
-from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
+from functions_public_workspaces import get_public_source_workspace_ids
 from functions_file_sync import (
     FILE_SYNC_SCOPE_PERSONAL,
     apply_synced_document_delete_action,
@@ -402,7 +402,7 @@ def _find_accessible_citation_document(user_id, document_id, scope_name):
             return None
 
         try:
-            workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+            workspace_ids = get_public_source_workspace_ids(user_id)
         except Exception:
             return None
 

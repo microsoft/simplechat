@@ -1,10 +1,11 @@
-# Native V2 Aggregate Public Chat (v0.261.315)
+# Native V2 Aggregate Public Chat (v0.261.373)
 
 Implemented in version: **0.261.310**, tracked in
 `application/single_app/config.py`. Addresses row 3 of
 [microsoft/simplechat#1722](https://github.com/microsoft/simplechat/issues/1722).
 Scope picker placement fixed in version: **0.261.315**, tracked in the same
 `application/single_app/config.py`.
+Public-source visibility corrected in version: **0.261.373**.
 
 ## Purpose and dependencies
 
@@ -18,24 +19,22 @@ or browser dependency is introduced.
 Open **Documents**, then use **Search in**. In Orchestrate, Documents stays
 under **Manual controls** when the administrator allows those controls.
 There is no separate scope row above the message editor. The Documents button
-shows an active All or Visible scope when its toolbar is visible.
+shows an active All scope when its toolbar is visible.
 
 | Search in | Retrieval set |
 | --- | --- |
-| Current context | Existing personal/group/public active context and selected references. |
-| All public workspaces | Every existing public workspace whose status permits chat, including hidden workspaces. |
-| Visible public workspaces | Chat-available public workspaces selected by your directory curation. |
+| Current context | Mixed personal/group/public context and selected references; all eligible public sources are discoverable. |
+| All public workspaces | Public-only retrieval across every existing public workspace whose status permits chat. |
 
-Directory **Chat with visible** flushes pending visibility saves and opens a
-fresh V2 conversation with Visible selected. A failed save leaves the directory
-open with an explanation. Neither aggregate mode writes visibility, saved lists
-or the active workspace preference. Configured public-workspace names appear
+Directory **Chat with all public** opens a fresh V2 conversation with All selected.
+V2 has no public visibility switches or saved visibility lists. Existing classic
+preferences are unchanged and do not filter V2 sources. Configured public-workspace names appear
 in the selector and directory.
 
-Both aggregate modes are public-only retrieval. Existing personal/group draft
+All is public-only retrieval. Existing personal/group draft
 references and whole-workspace chips must be cleared, or Current context chosen,
 before sending. Selecting a whole workspace is a Current context operation;
-aggregate modes offer public document and tag references rather than silently
+aggregate mode offers public document and tag references rather than silently
 ignoring a narrower workspace choice. Documents
 and `#` offer public sources only. Ordinary mixed-context chat, restricted editors
 and single-workspace hand-offs keep their existing behavior.
@@ -44,7 +43,7 @@ Normal Manual chat uses Documents relevance search or selected document, tag
 and workspace references; it does not need an aggregate public scope.
 Orchestrate can find relevant documents within the supplied context without
 that selector. Explicit document references replace its candidate probe;
-tags constrain the probe. All and Visible are useful specifically when a
+tags constrain the probe. All is useful specifically when a
 question should retrieve across public collections, not personal or group sources.
 
 ## Continuity and refusal states
@@ -57,9 +56,9 @@ New chat resets to Current context.
 
 Workspace sets are resolved afresh on each turn. `active`, `locked` and
 `upload_disabled` permit chat; inactive, unknown and deleted workspaces do not.
-Visible uses the existing nonempty visibility map, then the legacy visible-ID
-list, then default-all visibility. All-hidden preferences produce no eligible
-Visible workspace. Empty or disabled scopes are refused rather than broadened
+Old V2 Visible links and saved aggregate metadata normalize to All. Classic
+continues applying its existing visibility map/list fallbacks.
+Empty or disabled scopes are refused rather than broadened
 or answered as a successful grounded search.
 
 Conversation ownership, scope locks, action permissions, publication and content
@@ -76,14 +75,18 @@ saved-result context before changing an incompatible scope.
 ## Contract and implementation
 
 `POST /api/chat`, `POST /api/chat/stream` and orchestration plan requests accept
-optional `public_workspace_selection: "all" | "visible"`. The server derives
+optional `public_workspace_selection: "all"`. Legacy `visible` is accepted,
+but normalizes to `all` for V2. The server derives
 the public-only scope and workspace IDs instead of trusting browser IDs.
-Requests without aggregate intent retain their previous scope contract.
+The orthogonal `public_source_policy: "all_available"` is carried through
+admitted V2 execution, worker identity, checkpoints and retry metadata.
+Requests without aggregate intent retain mixed-source scope; they do not become
+public-only merely because public discovery ignores classic curation.
 
 `public_chat_scope.py` binds admitted IDs to request/worker context and
 revalidates availability without widening an admitted turn. The resolver in
 `functions_public_workspaces.py`, shared search services and source readers
-retain hidden sources in All mode without bypassing access checks.
+resolve eligible public sources without bypassing access checks.
 Orchestration carries the selection in seeds and checkpoints and rebinds it
 for execution and source reads, checking the conversation's live ownership and
 scope lock. Delegated-agent request bridges carry the admitted retrieval limits
@@ -110,5 +113,6 @@ streaming restrictions, recovery paths, and desktop/mobile light/dark layouts.
 `ui_tests/test_v2_public_directory.py` exercises native directory navigation
 at desktop/mobile widths in light/dark themes.
 
-The directory's existing bulk-curation limit remains unchanged. This feature
-does not change global React/classic routing or implement other rows of #1722.
+V2 no longer performs bulk curation; classic retains that functionality.
+This change does not change global React/classic routing or implement other rows
+of #1722.

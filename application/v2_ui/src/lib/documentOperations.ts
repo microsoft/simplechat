@@ -1,6 +1,7 @@
 // documentOperations.ts
 
 import { ApiError, apiUrl, CREDENTIALS_MODE, requestWithStatus, uploadFileWithStatus } from './apiClient';
+import { v2ApiFetch } from './v2SourcePolicy';
 import { isScreeningAvailable } from './contentScreening';
 import { readConversationParam } from './conversationUrl';
 import { documentId, generatedArtifactRestriction, normalizeStringList, supportsExtractionModeChange } from './documentExplorer';
@@ -522,7 +523,7 @@ function createOperations(
                     fileName: null,
                 };
             }
-            const response = await fetch(apiUrl(ids.length === 1
+            const response = await v2ApiFetch(apiUrl(ids.length === 1
                 ? `${base}/${encodeURIComponent(ids[0])}/download` : `${base}/download`), {
                 method: ids.length === 1 ? 'GET' : 'POST', credentials: CREDENTIALS_MODE,
                 ...(ids.length > 1 ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ document_ids: ids }) } : {}),

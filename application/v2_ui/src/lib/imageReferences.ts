@@ -10,6 +10,7 @@
  */
 
 import { apiUrl } from './apiClient';
+import { safeV2SourceUrl } from './v2SourcePolicy';
 import { buildChatImagePreviewUrl, type ChatImagePreviewVariant } from './chatImagePreview';
 import type { ImageEditCapability } from './types';
 
@@ -170,7 +171,7 @@ export function buildWorkspaceImagePreviewUrl(
     if (scope !== 'personal' && scopeId) {
         params.set('scope_id', scopeId);
     }
-    return apiUrl(`/api/workspace_documents/image_preview?${params.toString()}`);
+    return safeV2SourceUrl(apiUrl(`/api/workspace_documents/image_preview?${params.toString()}`));
 }
 
 /** The preview URL for a reference: the chat image endpoint or the workspace preview endpoint. */

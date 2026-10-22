@@ -4,6 +4,11 @@ import hashlib
 import logging
 from public_chat_scope_state import aggregate_public_workspace_ids, current_public_chat_scope
 from typing import List, Dict, Any
+from search_scope_utils import (
+    VALID_SEARCH_SCOPES as VALID_SEARCH_SCOPES,
+    normalize_search_id_list,
+    normalize_search_scope,
+)
 from content_screening.access import (
     PROVENANCE_FIELD,
     assert_document_available,
@@ -21,10 +26,7 @@ from functions_embedding_compatibility import (
     read_embedding_settings,
     search_with_embedding_profile,
 )
-from functions_public_workspaces import (
-    get_user_visible_public_workspace_docs,
-    get_user_visible_public_workspace_ids_from_settings,
-)
+from public_source_access import get_public_source_workspace_ids
 from utils_cache import (
     generate_search_cache_key,
     get_cached_search_results,
@@ -51,7 +53,6 @@ def _query_log_context(query):
 
 SEARCH_DEFAULT_TOP_N = 12
 SEARCH_MAX_TOP_N = 500
-VALID_SEARCH_SCOPES = {"all", "personal", "group", "public"}
 BASE_SEARCH_SELECT_FIELDS = [
     "id",
     "document_id",
@@ -89,37 +90,6 @@ def normalize_search_top_n(top_n, default_top_n=SEARCH_DEFAULT_TOP_N, max_top_n=
     return min(normalized_top_n, max_top_n)
 
 
-def normalize_search_scope(doc_scope, default_scope="all"):
-    """Normalize search scope values to the supported set."""
-    normalized_scope = str(doc_scope or default_scope).strip().lower()
-    if normalized_scope not in VALID_SEARCH_SCOPES:
-        return default_scope
-    return normalized_scope
-
-
-def normalize_search_id_list(raw_ids):
-    """Normalize an optional list or comma-separated string of ids."""
-    if raw_ids is None:
-        return []
-
-    if isinstance(raw_ids, str):
-        candidate_ids = [value.strip() for value in raw_ids.split(",") if value.strip()]
-    elif isinstance(raw_ids, list):
-        candidate_ids = [str(value).strip() for value in raw_ids if str(value).strip()]
-    else:
-        candidate_ids = [str(raw_ids).strip()] if str(raw_ids).strip() else []
-
-    normalized_ids = []
-    seen_ids = set()
-    for candidate_id in candidate_ids:
-        if candidate_id in seen_ids:
-            continue
-        seen_ids.add(candidate_id)
-        normalized_ids.append(candidate_id)
-
-    return normalized_ids
-
-
 def _resolve_public_workspace_ids_for_search(
     user_id,
     active_public_workspace_id=None,
@@ -134,7 +104,7 @@ def _resolve_public_workspace_ids_for_search(
         return requested_workspace_ids
 
     visible_workspace_ids = normalize_search_id_list(
-        get_user_visible_public_workspace_ids_from_settings(user_id) or []
+        get_public_source_workspace_ids(user_id) or []
     )
     if requested_workspace_ids:
         visible_workspace_id_set = set(visible_workspace_ids)

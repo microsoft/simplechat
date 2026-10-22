@@ -13,6 +13,7 @@ from jsonschema.exceptions import SchemaError
 from functions_workflow_configuration import (
     WorkflowConfigurationError, normalize_chat_execution, workflow_configuration_for_save,
 )
+from public_source_policy import ALL_AVAILABLE, current_public_source_policy, normalize_public_source_policy
 
 WORKFLOW_DEFINITION_VERSION = 2
 WORKFLOW_BINDABLE_OUTPUTS = frozenset({"authoritative", "text", "records", "json", "documents"})
@@ -28,7 +29,7 @@ WORKFLOW_DEFINITION_FIELDS = (
     "file_sync", "selected_agent", "model_endpoint_id", "model_id", "model_provider",
     "url_access_enabled", "alert_priority", "alert_mode", "alert_rules", "alert_evaluation",
     "definition_version", "reference_inputs", "durable_execution", "flow", "limits",
-    "m365_run_as_user_id",
+    "m365_run_as_user_id", "public_source_policy",
 )
 SCHEMA_KEYWORDS = frozenset({
     "type", "properties", "required", "additionalProperties", "items",
@@ -459,6 +460,12 @@ def _normalize_bindings(values, earlier_tasks):
 def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id="", settings=None, new_defaults=False):
     """Normalize new flow fields after existing task/runner authorization."""
     existing = existing or {}
+    policy = current_public_source_policy(user_id)
+    policy_fields = {}
+    if policy == ALL_AVAILABLE or "public_source_policy" in existing:
+        policy_fields["public_source_policy"] = normalize_public_source_policy(
+            policy if policy == ALL_AVAILABLE else existing["public_source_policy"],
+        )
     version = payload.get("definition_version", 1)
     stored_version = existing.get("definition_version", 1)
     if type(version) is not int or version not in {1, 2, 3}:
@@ -526,7 +533,7 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
     if version == 1:
         if has_flow:
             raise WorkflowDefinitionError("Advanced inputs and output contracts require workflow definition version 2.")
-        return {"definition_version": 1, "tasks": tasks, **configuration}
+        return {"definition_version": 1, "tasks": tasks, **configuration, **policy_fields}
 
     references = normalize_workflow_references(
         payload.get("reference_inputs", existing.get("reference_inputs", [])), user_id=user_id, group_id=group_id,
@@ -566,6 +573,7 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
         earlier[prepared["id"]] = prepared
     result = {
         **configuration,
+        **policy_fields,
         "definition_version": version,
         "reference_inputs": references,
         "durable_execution": durable,

@@ -107,6 +107,7 @@ def document_analysis_runtime(documents):
             'functions_public_workspaces',
             get_user_visible_public_workspace_docs=lambda *args, **kwargs: [],
             get_user_visible_public_workspace_ids_from_settings=lambda user_id: public_ids,
+            get_public_source_workspace_ids=lambda user_id, **kwargs: public_ids,
             find_public_workspace_by_id=lambda workspace_id: {'id': workspace_id} if workspace_id in public_ids else None,
         ),
         'utils_cache': _module(
@@ -135,7 +136,10 @@ def document_analysis_runtime(documents):
     ):
         targets = ('functions_search', 'functions_search_service', 'functions_document_analysis', 'functions_debug')
         originals = {name: sys.modules.get(name) for name in (*stubs, *targets)}
+        access = importlib.import_module("public_source_access")
+        original_resolver = access._resolver
         try:
+            access._resolver = lambda user_id, **kwargs: public_ids
             sys.modules.update(stubs)
             for name in targets:
                 sys.modules.pop(name, None)
@@ -149,6 +153,7 @@ def document_analysis_runtime(documents):
                 screening_reads=screening_reads,
             )
         finally:
+            access._resolver = original_resolver
             # Only restore our app seams. Removing newly imported native SDK modules
             # from sys.modules can make a later test initialize their extension twice.
             for name, module in originals.items():

@@ -40,7 +40,7 @@ from functions_tabular_csv_query import (
     validate_tabular_csv_query_expression,
 )
 from functions_group import assert_group_role, find_group_by_id, get_user_role_in_group
-from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
+from functions_public_workspaces import find_public_workspace_by_id, get_public_source_workspace_ids
 from config import (
     CLIENTS,
     TABULAR_EXTENSIONS,
@@ -370,7 +370,7 @@ class TabularProcessingPlugin:
             return True
 
         visible_public_workspace_ids = set(
-            get_user_visible_public_workspace_ids_from_settings(user_id) or []
+            get_public_source_workspace_ids(user_id) or []
         )
         return normalized_public_workspace_id in visible_public_workspace_ids
 

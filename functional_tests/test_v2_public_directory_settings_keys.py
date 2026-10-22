@@ -2,11 +2,10 @@
 """
 Functional test for the V2 public directory user-settings keys.
 
-Version: 0.261.175
+Version: 0.261.373
 Implemented in: 0.261.175
 
-The V2 public directory reuses the classic interface's per-user visibility state so the two
-read each other's writes. Three keys carry it:
+Classic retains its per-user visibility state. V2 no longer exposes or writes it:
 
   * ``publicDirectorySettings``    -- the ``{ workspaceId: boolean }`` view/hide map.
   * ``publicDirectorySavedLists``  -- named lists, ``{ listName: [id, ...] }``.
@@ -22,11 +21,11 @@ The active pointer is different: the route pops it and routes it to
 NOT be declared writable by the V2 client (writing it through the settings store would make
 the store believe a save had been lost, exactly the reason ``activeGroupOid`` is excluded).
 
-This pin therefore holds:
+Visibility curation was removed from V2 in 0.261.373. This pin therefore holds:
   * the server still accepts all three keys (a regression guard -- the server needs no change);
-  * V2 declares the two visibility keys writable and types all three shapes;
+  * V2 does not declare either visibility key writable or expose its shapes;
   * V2 keeps the active pointer OUT of its writable list;
-  * the V2 shapes match the classic ones so classic and V2 read each other's writes.
+  * classic retains its existing map and saved-list shapes.
 """
 
 import re
@@ -71,7 +70,7 @@ def _writable_keys():
 def test_version_is_at_least_the_implementing_release():
     """Guard against silently shipping this pin under an older application."""
     print("Checking application version floor...")
-    assert_app_version_at_least("0.261.170")
+    assert_app_version_at_least("0.261.373")
     print("  ok  version floor satisfied")
     return True
 
@@ -91,20 +90,20 @@ def test_server_still_accepts_all_three_keys():
     return True
 
 
-def test_visibility_keys_are_declared_writable_by_v2():
-    """A visibility choice written under an unlisted key is dropped silently."""
-    print("Testing the V2 writable list declares the visibility keys...")
+def test_visibility_keys_are_not_writable_by_v2():
+    """V2 cannot rewrite classic curation while searching all public sources."""
+    print("Testing the V2 writable list excludes visibility keys...")
 
     writable = _writable_keys()
     allowed = _allowed_keys()
 
     for key in VISIBILITY_KEYS:
-        assert key in writable, (
-            f"{key} must be declared in WRITABLE_USER_SETTING_KEYS or V2 loses the write"
+        assert key not in writable, (
+            f"{key} is classic-only and must not be writable through V2"
         )
         assert key in allowed, f"{key} must also be whitelisted server-side"
 
-    print(f"  ok  {', '.join(VISIBILITY_KEYS)} are writable on both sides")
+    print("  ok  classic keys remain accepted but are not writable through V2")
     return True
 
 
@@ -128,16 +127,16 @@ def test_active_pointer_is_not_written_through_the_settings_store():
     return True
 
 
-def test_v2_shapes_match_the_classic_ones():
-    """Classic and V2 must agree on the shapes so they read each other's writes."""
-    print("Testing the V2 shapes match the classic directory...")
+def test_classic_shapes_remain_without_v2_visibility_fields():
+    """Retiring V2 curation does not alter classic's stored representation."""
+    print("Testing classic curation remains separate from V2...")
 
     settings = _read(V2_SRC / "lib" / "userSettings.ts")
-    assert "publicDirectorySettings?: Record<string, boolean>;" in settings, (
-        "publicDirectorySettings is the classic { workspaceId: boolean } view/hide map"
+    assert "publicDirectorySettings?:" not in settings, (
+        "V2 must not expose the classic view/hide map"
     )
-    assert "publicDirectorySavedLists?: Record<string, string[]>;" in settings, (
-        "publicDirectorySavedLists is the classic { listName: [id, ...] } shape"
+    assert "publicDirectorySavedLists?:" not in settings, (
+        "V2 must not expose classic saved visibility lists"
     )
 
     classic = _read(APP_DIR / "static" / "js" / "public" / "public_directory.js")
@@ -149,16 +148,16 @@ def test_v2_shapes_match_the_classic_ones():
         r"publicDirectorySavedLists\[\s*listName\s*\]\s*=\s*visibleIds", classic
     ), "Classic stores publicDirectorySavedLists[listName] = <id array>"
 
-    print("  ok  the V2 and classic shapes agree")
+    print("  ok  classic shapes remain; V2 does not expose curation")
     return True
 
 
 TESTS = [
     test_version_is_at_least_the_implementing_release,
     test_server_still_accepts_all_three_keys,
-    test_visibility_keys_are_declared_writable_by_v2,
+    test_visibility_keys_are_not_writable_by_v2,
     test_active_pointer_is_not_written_through_the_settings_store,
-    test_v2_shapes_match_the_classic_ones,
+    test_classic_shapes_remain_without_v2_visibility_fields,
 ]
 
 

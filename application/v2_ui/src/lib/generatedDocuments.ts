@@ -7,6 +7,7 @@
 // a list read from one family is never downloaded through the other.
 
 import { api, apiUrl, CREDENTIALS_MODE } from './apiClient';
+import { v2ApiFetch } from './v2SourcePolicy';
 import {
     collaborationGeneratedDocumentUrl,
     fetchCollaborationGeneratedDocuments,
@@ -52,7 +53,7 @@ export async function fetchGeneratedDocument(
     documentId: string,
     signal?: AbortSignal,
 ): Promise<Blob> {
-    const response = await fetch(generatedDocumentDownloadUrl(conversationId, kind, documentId), {
+    const response = await v2ApiFetch(generatedDocumentDownloadUrl(conversationId, kind, documentId), {
         credentials: CREDENTIALS_MODE,
         signal,
     });

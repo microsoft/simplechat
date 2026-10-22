@@ -1,7 +1,7 @@
 # test_v2_public_chat_scope.py
 """
 Functional regressions for aggregate public chat.
-Version: 0.261.311
+Version: 0.261.373
 Implemented in: 0.261.310
 
 Real scope and workspace modules run over scoped storage doubles. Admission, empty-set
@@ -42,6 +42,8 @@ def load(name, path):
 @pytest.fixture
 def world(monkeypatch):
     monkeypatch.syspath_prepend(str(APP))
+    import public_source_access
+    monkeypatch.setattr(public_source_access, "_resolver", public_source_access._resolver)
     state = load("public_chat_scope_state", APP / "public_chat_scope_state.py")
     monkeypatch.setitem(sys.modules, "public_chat_scope_state", state)
     scope = load("public_chat_scope", APP / "public_chat_scope.py")

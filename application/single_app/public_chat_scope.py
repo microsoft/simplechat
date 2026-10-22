@@ -6,6 +6,7 @@ from functools import wraps
 import logging
 
 from flask import g, has_request_context, jsonify, request
+from public_source_policy import current_public_source_policy, public_source_policy_context, uses_all_public_sources
 
 from public_chat_scope_state import (
     PublicChatScopeError,
@@ -30,6 +31,15 @@ def _intersect_public_scope_lock(workspace_ids, conversation):
 @contextmanager
 def public_chat_execution_scope(context, user_id, settings):
     """Bind persisted, admitted scope in workers that do not inherit Flask request state."""
+    seeds = (context.get("seeds") if isinstance(context, dict) else getattr(context, "seeds", None)) or {}
+    policy = seeds.get("public_source_policy", current_public_source_policy(user_id))
+    with public_source_policy_context(user_id, policy):
+        with _aggregate_public_chat_execution_scope(context, user_id, settings):
+            yield
+
+
+@contextmanager
+def _aggregate_public_chat_execution_scope(context, user_id, settings):
     seeds = (context.get("seeds") if isinstance(context, dict) else getattr(context, "seeds", None)) or {}
     selection = normalize_public_workspace_selection(seeds.get("public_workspace_selection"))
     if not selection:
@@ -71,6 +81,9 @@ def prepare_public_chat_scope(data, user_id, settings, resolve_workspace_ids, co
     selection = normalize_public_workspace_selection(data.get("public_workspace_selection"))
     if not selection:
         return None
+    if selection == "visible" and uses_all_public_sources(user_id):
+        selection = "all"
+        data["public_workspace_selection"] = selection
     if data.get("analysis_result_context") is not None or data.get("workflow_result_context") is not None:
         raise PublicChatScopeError("Return to Current context to ask about a saved result.")
     if data.get("image_generation"):

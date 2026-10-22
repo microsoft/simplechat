@@ -2,6 +2,7 @@
 // Contract published in route_backend_content_screening.py's API docstring.
 
 import { ApiError, api, apiUrl, CREDENTIALS_MODE } from './apiClient';
+import { v2ApiFetch } from './v2SourcePolicy';
 import type { ScreeningState } from './contentScreening';
 import type {
     ScreeningBaselineSummary, ScreeningModelSelection, ScreeningPolicy, ScreeningTemplateCatalog,
@@ -181,7 +182,7 @@ export async function fetchScreeningAttachment(
 ): Promise<{ content: ArrayBuffer; fileName: string }> {
     const attachment = screeningAttachment(review, kind);
     if (!attachment) throw new ApiError('This review attachment is not authorized.', 403, null);
-    const response = await fetch(apiUrl(attachment.url), {
+    const response = await v2ApiFetch(apiUrl(attachment.url), {
         credentials: CREDENTIALS_MODE, cache: 'no-store', redirect: 'manual',
         headers: { Accept: 'application/octet-stream' },
     });

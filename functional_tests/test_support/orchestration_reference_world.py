@@ -395,6 +395,9 @@ class ReferenceWorld:
             ),
             'functions_public_workspaces': module(
                 'functions_public_workspaces',
+                get_public_source_workspace_ids=(
+                    self.get_user_visible_public_workspace_ids_from_settings
+                ),
                 get_user_visible_public_workspace_ids_from_settings=(
                     self.get_user_visible_public_workspace_ids_from_settings
                 ),

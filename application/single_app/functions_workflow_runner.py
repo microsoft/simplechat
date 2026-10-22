@@ -299,7 +299,9 @@ from cosmos_document_utils import normalize_cosmos_document
 from functions_workflow_results_delivery import (
     RESULTS_RECEIPT_KEY, publish_workflow_results, workflow_run_title,
 )
-from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
+from public_source_access import get_public_source_workspace_ids
+from public_source_policy import current_public_source_policy, public_source_policy_context
+from dataclasses import replace
 from functions_search_service import (
     resolve_document_context,
     search_documents,
@@ -7455,7 +7457,7 @@ def _resolve_recent_authorized_public_workspace_ids(user_id, workspace_ids):
         return []
 
     try:
-        visible_workspace_ids = normalize_search_id_list(get_user_visible_public_workspace_ids_from_settings(user_id))
+        visible_workspace_ids = normalize_search_id_list(get_public_source_workspace_ids(user_id))
     except Exception as exc:
         log_event(
             f'[WORKFLOW_RUNNER] Failed to resolve visible public workspace ids for recent workflow documents: {exc}',
@@ -12912,7 +12914,9 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
     resolved_run_id = str(run_id or create_workflow_run_id())
     execution_actor_id = str(actor_user_id or workflow.get('user_id') or '').strip()
     identity = capture_execution_identity(execution_actor_id)
-    with workflow_alert_signal_scope(workflow, resolved_run_id), _workflow_delegation_scope(identity):
+    policy = workflow.get("public_source_policy", current_public_source_policy(execution_actor_id))
+    identity = replace(identity, public_source_policy=policy)
+    with public_source_policy_context(execution_actor_id, policy), workflow_alert_signal_scope(workflow, resolved_run_id), _workflow_delegation_scope(identity):
         try:
             return _run_personal_workflow_impl(
                 workflow,

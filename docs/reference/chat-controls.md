@@ -206,16 +206,20 @@ Cancelling or superseding a query does not replace a newer query's results.
 ### React V2 public document search scope
 
 Implemented in version: **0.261.310** (`application/single_app/config.py`).
+Public discovery corrected in version: **0.261.373**.
 Placement fixed in version: **0.261.315**. Open **Documents → Search in**;
 in Orchestrate, use **Manual controls → Documents** when available.
 The choices appear only inside the picker, not above the message editor:
-**Current context**, **All public workspaces**, and **Visible public workspaces**.
-All includes hidden, chat-available public workspaces; Visible follows your
-directory curation. Neither changes your saved visibility or active workspace.
-Both aggregate choices exclude personal/group retrieval and restrict Documents
+**Current context** and **All public workspaces**.
+V2 searches all eligible public workspaces regardless of classic visibility
+preferences. Current context supports mixed personal, group and public sources;
+explicit document and tag selections still narrow the request.
+All public workspaces excludes personal/group retrieval and restricts Documents
 and `#` browsing to public sources. Clear incompatible references before
 sending, or return to Current context.
-The Documents button indicates All or Visible when its toolbar is visible.
+The Documents button indicates All when its toolbar is visible.
+Old V2 Visible links and saved aggregate selections reopen as All; classic
+visibility preferences are neither changed nor used by V2.
 If manual controls are disabled in Orchestrate, switch to Manual mode to
 change the scope, or start a new chat.
 

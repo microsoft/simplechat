@@ -1,7 +1,7 @@
 # test_prompt_variable_knowledge_fill.py
 """
 Functional tests for scoped, document-grounded prompt variable filling.
-Version: 0.261.169
+Version: 0.261.373
 Implemented in: 0.261.096
 
 Execute the service with mocked retrieval/model/storage boundaries and the real
@@ -188,7 +188,7 @@ def load_service():
         ),
         "functions_public_workspaces": _module(
             "functions_public_workspaces",
-            get_user_visible_public_workspace_ids_from_settings=Mock(return_value=["public-1", "public-2"]),
+            get_public_source_workspace_ids=Mock(return_value=["public-1", "public-2"]),
             find_public_workspace_by_id=Mock(side_effect=lambda workspace_id: {"id": workspace_id}),
         ),
         "functions_search": _module("functions_search", hybrid_search=Mock(return_value=[search_result()])),
@@ -373,6 +373,8 @@ class PromptKnowledgeFillTests(unittest.TestCase):
         namespace = {
             "normalize_search_scope": lambda value: value,
             "normalize_search_id_list": lambda value: value or [],
+            "selected_document_context_validator": lambda user_id, validator=None: validator,
+            "current_public_chat_scope": lambda user_id: None,
             "_resolve_active_group_ids": group_resolver,
             "_resolve_public_workspace_ids": public_resolver,
             "_resolve_personal_document_context": Mock(return_value=None),
@@ -475,6 +477,10 @@ class PromptKnowledgeFillTests(unittest.TestCase):
         namespace = {
             "normalize_search_scope": lambda value: value,
             "normalize_search_id_list": lambda value: value or [],
+            "selected_document_context_validator": lambda user_id, validator=None: validator,
+            "current_public_chat_scope": lambda user_id: None,
+            "strict_source_authority_enabled": lambda: False,
+            "assert_document_available": lambda document, **kwargs: document,
             "_resolve_active_group_ids": lambda _user, active_group_ids=None, **_kwargs: active_group_ids or [],
             "_resolve_public_workspace_ids": lambda _user, **_kwargs: [],
             "_resolve_personal_document_context": Mock(return_value=None),

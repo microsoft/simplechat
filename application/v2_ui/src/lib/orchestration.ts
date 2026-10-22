@@ -22,6 +22,7 @@
 // stream here is reported rather than recovered.
 
 import { api, apiUrl, CREDENTIALS_MODE } from './apiClient';
+import { v2ApiFetch } from './v2SourcePolicy';
 import { readSsePost, resolveStreamContent } from './sse';
 import type { ComposerReference } from './composerDraft';
 import type { PlanReferenceInput, PlanScopeNotice, PlanTurnReference } from './planReferences';
@@ -1202,7 +1203,7 @@ async function openOrchestrationStream(
 ): Promise<Response | null> {
     let response: Response;
     try {
-        response = await fetch(apiUrl(path), {
+        response = await v2ApiFetch(apiUrl(path), {
             method: 'POST',
             credentials: CREDENTIALS_MODE,
             headers: {

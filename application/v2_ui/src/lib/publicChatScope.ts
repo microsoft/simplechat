@@ -1,9 +1,9 @@
 // publicChatScope.ts
 
-export type PublicWorkspaceSelection = 'all' | 'visible';
+export type PublicWorkspaceSelection = 'all';
 
 export function readPublicWorkspaceSelection(value: unknown): PublicWorkspaceSelection | null {
-    return value === 'all' || value === 'visible' ? value : null;
+    return value === 'all' || value === 'visible' ? 'all' : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -926,7 +926,7 @@ def _document_resolver(reader, resolve_document=None):
 
     def resolve_default(arguments):
         # Search initializes application clients, so import it only when a draft resolves a document.
-        from functions_public_workspaces import visible_public_workspace_ids_from_user_settings
+        from functions_public_workspaces import get_public_source_workspace_ids
         from functions_search_service import resolve_document_context
 
         options = {}
@@ -934,7 +934,9 @@ def _document_resolver(reader, resolve_document=None):
             # The resolver's own visibility lookup can repair the settings document; use the snapshot.
             user_id = str(arguments.get('user_id') or '')
             if user_id not in visible_workspaces:
-                visible_workspaces[user_id] = visible_public_workspace_ids_from_user_settings(reader(user_id))
+                visible_workspaces[user_id] = get_public_source_workspace_ids(
+                    user_id, user_settings=reader(user_id),
+                )
             options['visible_public_workspace_ids'] = list(visible_workspaces[user_id])
         return resolve_document_context(**arguments, **options)
 
@@ -951,7 +953,7 @@ def read_only_document_resolver(*, user_settings_reader=None, resolve_document=N
     """Return a memoized document resolver that reads and never writes, for dry runs and creates.
 
     Pass ``resolve_document`` to wrap another resolver; the default resolves shared documents with
-    the search service, taking public workspace visibility from a settings snapshot.
+    the search service, applying V2 eligibility or classic curation from a settings snapshot.
     """
     return _document_resolver(_memoized_user_settings_reader(user_settings_reader), resolve_document)
 

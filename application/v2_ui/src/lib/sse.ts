@@ -9,6 +9,7 @@
 // consumes byte-for-byte the same stream the V1 client does.
 
 import { apiUrl, API_BASE } from './apiClient';
+import { v2ApiFetch } from './v2SourcePolicy';
 import type { ChatStreamEvent, ChatStreamRequest } from './types';
 import { publishCredentialRequest } from './actionCredentialEvents';
 import {
@@ -141,7 +142,7 @@ export async function fetchStreamStatus(
     conversationId: string,
 ): Promise<ChatStreamStatus | null> {
     try {
-        const response = await fetch(
+        const response = await v2ApiFetch(
             apiUrl(`/api/chat/stream/status/${encodeURIComponent(conversationId)}`),
             { credentials: CREDENTIALS_MODE, headers: { Accept: 'application/json' } },
         );
@@ -424,7 +425,7 @@ async function attachToLiveStream(
 
     let response: Response;
     try {
-        response = await fetch(
+        response = await v2ApiFetch(
             apiUrl(`/api/chat/stream/reattach/${encodeURIComponent(conversationId)}`),
             {
                 method: 'GET',
@@ -571,7 +572,7 @@ export async function streamChat(
 
     let response: Response;
     try {
-        response = await fetch(options.url ?? apiUrl('/api/chat/stream'), {
+        response = await v2ApiFetch(options.url ?? apiUrl('/api/chat/stream'), {
             method: 'POST',
             credentials: CREDENTIALS_MODE,
             headers: {
@@ -657,7 +658,7 @@ export async function streamChat(
  * hidden source conversation before reaching the same stream registry.
  */
 export async function cancelStream(conversationId: string, url?: string): Promise<void> {
-    await fetch(
+    await v2ApiFetch(
         url ?? apiUrl(`/api/chat/stream/cancel/${encodeURIComponent(conversationId)}`),
         {
             method: 'POST',

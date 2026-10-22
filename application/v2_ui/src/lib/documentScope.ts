@@ -14,7 +14,7 @@
 // 'all' search with no ids silently covers nothing but personal documents — and a user whose
 // documents live in a group gets no results with no explanation.
 
-import type { PublicWorkspaceSelection } from './publicChatScope';
+import { readPublicWorkspaceSelection, type PublicWorkspaceSelection } from './publicChatScope';
 
 export interface ScopeState {
     publicWorkspaceSelection?: PublicWorkspaceSelection | null;
@@ -74,10 +74,11 @@ function mergeIds(active: unknown, fromContext: readonly string[] | undefined): 
  * constrain the result set directly rather than by omission.
  */
 export function resolveDocumentScope(scope: ScopeState | undefined): DocumentScopeRequest {
-    if (scope?.publicWorkspaceSelection) {
+    const publicSelection = readPublicWorkspaceSelection(scope?.publicWorkspaceSelection);
+    if (publicSelection) {
         return {
             doc_scope: 'public',
-            public_workspace_selection: scope.publicWorkspaceSelection,
+            public_workspace_selection: publicSelection,
             active_group_ids: [],
             active_group_id: null,
             active_public_workspace_ids: [],

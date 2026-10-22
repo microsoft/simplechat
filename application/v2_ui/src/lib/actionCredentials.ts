@@ -1,6 +1,7 @@
 // actionCredentials.ts
 
 import { apiUrl, CREDENTIALS_MODE, request } from './apiClient';
+import { v2ApiFetch } from './v2SourcePolicy';
 import { readCredentialRequest } from './actionCredentialEvents';
 import type { CredentialRequest, CredentialSubmission } from './actionCredentialTypes';
 
@@ -81,7 +82,7 @@ export async function openCredentialContinuation(
     credentialRequest: CredentialRequest, signal?: AbortSignal,
 ): Promise<Response> {
     const headers = await credentialHeaders(credentialRequest, signal);
-    const response = await fetch(apiUrl(`/api/action-credentials/${encodeURIComponent(credentialRequest.id)}/continue`), {
+    const response = await v2ApiFetch(apiUrl(`/api/action-credentials/${encodeURIComponent(credentialRequest.id)}/continue`), {
         method: 'POST', credentials: CREDENTIALS_MODE, cache: 'no-store', signal,
         headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify({ expected_etag: credentialRequest.etag }),

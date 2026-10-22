@@ -136,6 +136,8 @@ import ast
 import csv
 from functools import wraps
 from public_chat_scope import public_chat_scope_required
+from public_source_policy import current_public_source_policy
+from public_source_access import get_public_source_workspace_ids
 import io
 import inspect
 import json
@@ -3662,7 +3664,7 @@ def _get_authorized_chat_scope_context(
         active_public_workspace_id,
     )
     visible_public_workspace_ids = set(
-        _normalize_requested_scope_ids(get_user_visible_public_workspace_ids_from_settings(user_id) or [])
+        _normalize_requested_scope_ids(get_public_source_workspace_ids(user_id) or [])
     )
     allowed_public_workspace_ids = [
         workspace_id
@@ -18816,6 +18818,7 @@ def register_route_backend_chats(bp):
                         'hybrid_search_preference': bool(hybrid_search_enabled),
                         'document_scope': effective_document_scope,
                         'public_workspace_selection': data.get('public_workspace_selection'),
+                        'public_source_policy': current_public_source_policy(user_id),
                         'selected_document_id': effective_selected_document_id,
                         'selected_document_ids': effective_selected_document_ids,
                         'requested_document_ids': requested_selected_document_ids,
@@ -23435,6 +23438,7 @@ def register_route_backend_chats(bp):
                             'hybrid_search_preference': bool(hybrid_search_enabled),
                             'document_scope': effective_document_scope,
                             'public_workspace_selection': data.get('public_workspace_selection'),
+                            'public_source_policy': current_public_source_policy(user_id),
                             'selected_document_id': effective_selected_document_id,
                             'selected_document_ids': effective_selected_document_ids,
                             'requested_document_ids': requested_selected_document_ids,

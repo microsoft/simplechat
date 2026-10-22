@@ -7,8 +7,11 @@ from functions_group import *
 from typing import Iterable
 from public_chat_scope_state import (
     PublicChatScopeError,
+    aggregate_public_workspace_ids,
     normalize_public_workspace_selection,
 )
+from public_source_policy import uses_all_public_sources
+from public_source_access import configure_public_source_resolver
 
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_workspace_branding import (
@@ -490,6 +493,26 @@ def get_user_visible_public_workspace_ids_from_settings(user_id: str) -> list:
     return get_user_visible_public_workspaces(user_id)
 
 
+def get_public_source_workspace_ids(user_id, *, settings=None, user_settings=None):
+    """Resolve discovery policy, not a caller-supplied authorization allowlist.
+
+    V2 reads every currently chat-available public workspace. Classic retains its
+    saved curation, including its original fallback behavior. A snapshot keeps
+    workflow previews and dry runs write-free.
+    """
+    aggregate_ids = aggregate_public_workspace_ids(user_id)
+    if aggregate_ids is not None:
+        return aggregate_ids
+    if uses_all_public_sources(user_id):
+        settings = functions_settings.get_settings() if settings is None else settings
+        if not settings.get("enable_public_workspaces", False):
+            return []
+        return resolve_public_chat_workspace_ids(user_id, "all", settings=settings)
+    if user_settings is not None:
+        return visible_public_workspace_ids_from_user_settings(user_settings)
+    return get_user_visible_public_workspace_ids_from_settings(user_id)
+
+
 def visible_public_workspace_ids_from_user_settings(user_settings, list_public_workspaces=None):
     """Apply the visibility rule above to a settings document the caller already read.
 
@@ -528,7 +551,7 @@ def resolve_public_chat_workspace_ids(user_id, selection, *, settings=None):
         raise PublicChatScopeError("Public workspaces are currently disabled.", "public_chat_disabled", 403)
     workspaces = get_all_public_workspaces()
     visible_ids = None
-    if selection == "visible":
+    if selection == "visible" and not uses_all_public_sources(user_id):
         user_settings = functions_settings.get_user_settings(user_id)
         visible_ids = set(visible_public_workspace_ids_from_user_settings(
             user_settings, list_public_workspaces=lambda: workspaces,
@@ -686,3 +709,6 @@ def check_public_workspace_status_allows_operation(workspace_doc, operation_type
         return False, reason
     
     return True, ""
+
+
+configure_public_source_resolver(get_public_source_workspace_ids)

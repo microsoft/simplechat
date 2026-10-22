@@ -83,7 +83,7 @@ from functions_documents import (
     serialize_chat_upload_workspace_documents_for_conversation,
 )
 from functions_group import get_user_groups
-from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings, resolve_public_chat_workspace_ids
+from functions_public_workspaces import get_public_source_workspace_ids, resolve_public_chat_workspace_ids
 from public_chat_scope_state import PublicChatScopeError
 from functions_azure_maps import refresh_azure_maps_message_citations
 from functions_message_artifacts import (
@@ -359,6 +359,8 @@ def _build_replayed_document_context(original_metadata):
         'selected_document_ids': selected_document_ids,
         'doc_scope': workspace_search.get('document_scope') or workspace_search.get('scope'),
         'public_workspace_selection': workspace_search.get('public_workspace_selection'),
+        **({'public_source_policy': workspace_search['public_source_policy']}
+           if 'public_source_policy' in workspace_search else {}),
         'top_n': workspace_search.get('top_n'),
         'document_filter_mode': workspace_search.get('document_filter_mode') or 'intersection',
         'classifications': (
@@ -425,7 +427,7 @@ def _build_authorized_message_replay_request(user_id, source, options, settings,
         available_public = (
             resolve_public_chat_workspace_ids(user_id, body['public_workspace_selection'], settings=settings)
             if body.get('public_workspace_selection')
-            else get_user_visible_public_workspace_ids_from_settings(user_id) or []
+            else get_public_source_workspace_ids(user_id) or []
         )
         if requested_public - set(available_public):
             raise ChatRetryError('An original public workspace is unavailable. Review the message sources.', code='retry_source_unavailable')

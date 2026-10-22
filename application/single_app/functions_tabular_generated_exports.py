@@ -96,7 +96,7 @@ from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     infer_model_endpoint_protocol,
 )
-from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
+from public_source_access import get_public_source_workspace_ids
 from functions_settings import get_settings
 from functions_simplechat_operations import (
     commit_generated_chat_artifact_publication_for_user,
@@ -3118,7 +3118,7 @@ def _authorize_tabular_export_run_execution(
     elif source == 'public':
         if not scope_id:
             raise PermissionError('Export public workspace scope is missing')
-        visible_workspace_ids = set(get_user_visible_public_workspace_ids_from_settings(user_id) or [])
+        visible_workspace_ids = set(get_public_source_workspace_ids(user_id) or [])
         authorized = scope_id in visible_workspace_ids and (
             not container_name and not blob_path
             or (

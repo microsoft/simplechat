@@ -57,6 +57,12 @@ directory preference and legacy-list fallback. An explicit tags `workspace_ids`
 filter only narrows that set. An empty set returns an empty list, never an
 unrestricted query; a malformed mode is 400 and unavailable scope resolution
 is a safe error. Omitted mode retains the existing endpoint behavior.
+From **0.261.373**, V2 marks first-party API requests with
+`X-SimpleChat-UI: v2`. Its omitted mode searches every chat-available public
+workspace, even when classic preferences omit it or mark it false. V2's legacy
+`visible` mode is normalized to `all`; this does not turn ordinary mixed chat
+into public-only chat. Unmarked classic calls retain their existing curation.
+The UI marker selects discovery semantics, never authorization.
 Pending publication and content-screening projections remain unchanged.
 These optional parameters do not retarget the immutable single-workspace APIs.
 

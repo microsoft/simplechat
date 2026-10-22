@@ -494,9 +494,9 @@ def _read_scope(scope_type, scope_id, user_id):
     """Return the stored name of a group or public workspace a hand-off may search.
 
     The checks a run's workspace query repeats before it searches: membership and status for a
-    group, status for a public workspace. A public workspace must also be one the user keeps
-    visible, so a hand-off never searches a workspace the user did not choose. The user's
-    settings are read from a snapshot, which never writes. Raises ``PermissionError`` or
+    group, status for a public workspace. Public discovery also follows the UI's policy:
+    V2 ignores classic curation without widening the explicitly chosen hand-off scope.
+    Classic settings are read from a snapshot, which never writes. Raises ``PermissionError`` or
     ``LookupError`` for a workspace that cannot be offered.
     """
     from functions_workflow_loop_inputs import _default_authorize_scope
@@ -507,14 +507,14 @@ def _read_scope(scope_type, scope_id, user_id):
     elif scope_type == 'public':
         from functions_public_workspaces import (
             find_public_workspace_by_id,
-            visible_public_workspace_ids_from_user_settings,
+            get_public_source_workspace_ids,
         )
         from functions_settings import read_user_settings_snapshot
-        visible = visible_public_workspace_ids_from_user_settings(
-            read_user_settings_snapshot(user_id), list_public_workspaces=lambda: [{'id': scope_id}],
+        visible = get_public_source_workspace_ids(
+            user_id, user_settings=read_user_settings_snapshot(user_id),
         )
         if scope_id not in (visible or ()):
-            raise PermissionError('The public workspace is not visible to this user.')
+            raise PermissionError('The public workspace is not available to this user.')
         _default_authorize_scope({'scope_type': 'public', 'scope_id': scope_id}, actor_user_id=user_id)
         record = find_public_workspace_by_id(scope_id)
     else:

@@ -26,7 +26,7 @@ from functions_orchestration_planner import resolve_planner_client
 from functions_prompt_metadata import parse_prompt_variable_keys as _declared_variable_keys
 from functions_public_workspaces import (
     find_public_workspace_by_id,
-    get_user_visible_public_workspace_ids_from_settings,
+    get_public_source_workspace_ids,
 )
 from functions_search import hybrid_search
 from functions_search_service import resolve_document_contexts
@@ -415,7 +415,7 @@ def _validate_document_context(context, document_id, user_id, settings):
         if not settings.get("enable_public_workspaces", False):
             raise PromptKnowledgeFillError(ACCESS_ERROR, 403)
         workspace_id = context.get("public_workspace_id")
-        visible_ids = get_user_visible_public_workspace_ids_from_settings(user_id) or []
+        visible_ids = get_public_source_workspace_ids(user_id) or []
         _assert_public_workspace(user_id, workspace_id, visible_ids)
         if document.get("public_workspace_id") != workspace_id:
             raise PromptKnowledgeFillError(ACCESS_ERROR, 403)
@@ -613,7 +613,7 @@ def _build_scope(data, user_id, settings, policy):
     scope = data["doc_scope"]
     groups = list(data["active_group_ids"])
     public = list(data["active_public_workspace_ids"])
-    visible_public = get_user_visible_public_workspace_ids_from_settings(user_id) or []
+    visible_public = get_public_source_workspace_ids(user_id) or []
     for group_id in groups:
         if not settings.get("enable_group_workspaces", False):
             raise PromptKnowledgeFillError(ACCESS_ERROR, 403)

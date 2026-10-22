@@ -11,6 +11,11 @@ Implemented in version **0.261.175**.
 Status compatibility fixed in version: **0.261.355**, tracked in
 `application/single_app/config.py`.
 
+From **0.261.373**, V2 has no public visibility curation: every eligible public
+workspace is searchable. Directory membership actions, status and paging remain
+unchanged. Classic retains its saved visibility map and lists; V2 does not
+modify them. See [V2 Public Directory](V2_PUBLIC_DIRECTORY.md).
+
 ## The route
 
 | Method and path | Purpose |

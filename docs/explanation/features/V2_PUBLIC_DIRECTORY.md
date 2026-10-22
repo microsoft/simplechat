@@ -3,12 +3,12 @@
 ## Overview
 
 The V2 public workspace directory lists every public workspace you can
-discover, lets you open one, and lets you choose which public workspaces appear
-in public chat. It replaces the placeholder that linked to the classic
+discover and lets you open one or chat across available public knowledge.
+It replaces the placeholder that linked to the classic
 directory, and the V2 public workspace picker now reads the same list.
 
 Implemented in version **0.261.175**.
-Updated in version: **0.261.310** (`application/single_app/config.py`).
+Updated in version: **0.261.373** (`application/single_app/config.py`).
 
 Dependencies:
 - the public workspace feature (`enable_public_workspaces`);
@@ -24,8 +24,9 @@ Dependencies:
 - **Paging**, 20 at a time. The view, search and page are kept in the page
   address, so back, forward and a shared link reopen the same list.
 - **Open** a workspace: this goes to its V2 page, `/v2/public/<id>`.
-- **Visible for chat:** a per-workspace switch that decides whether its
-  documents appear in public chat.
+- **Chat with all public:** starts a public-only V2 chat across currently available
+  public workspaces. Ordinary chat can mix selected public sources with personal
+  and group sources.
 
 Unlike the group directory there's nothing to join here; public workspaces are
 readable by every signed-in user. From version **0.261.179** the directory also
@@ -37,41 +38,22 @@ to someone who doesn't manage it yet, then marks it **Requested** with a
 **Cancel request** button until the Owner or an Admin decides in Members. The
 row's `membership` from the server decides which appears, never the browser.
 
-### Visible for chat
+### Public source availability
 
-- The choice is stored in your user settings as `publicDirectorySettings`, a
-  `{workspaceId: true|false}` map, in exactly the shape the classic directory
-  uses. So a workspace shown or hidden in one interface stays that way in the
-  other.
-- With no saved choices, every public workspace is visible. That's the same
-  rule the public chat route applies on the server.
-- A switch writes only that workspace's entry, so it never rewrites another.
-  Opening a workspace doesn't hide the others, unlike classic's **Set active**.
-- A workspace whose status doesn't allow reading is shown as unavailable. Its
-  switch can be turned off, and from version **0.261.187** it can't be turned
-  on.
+From **0.261.373**, V2 does not offer Visible for chat switches, show/hide
+actions or saved visibility lists. Those legacy preferences could otherwise
+hide a processed public document from the picker even when the same reader
+could open its workspace. They remain available in classic and are not erased.
 
-### Visibility tools
+Every public workspace currently eligible for chat can supply sources to V2,
+including one absent from a classic custom list. This applies to ordinary
+mixed-source chat, public-only chat, source references and workflow choices.
+Explicitly selected documents and workspace locks still narrow retrieval.
+Inactive or invalid-status workspaces, unavailable capabilities, screening holds
+and pending publication remain restricted.
 
-From version **0.261.184**, the directory also offers:
-- **Show all in chat** and **Hide all from chat**, which set every workspace in
-  the directory at once;
-- **Saved lists**: **Save current** stores the workspaces visible now, **Use
-  this list** makes exactly a list's workspaces visible and hides the rest, and
-  a list can be deleted. They're stored as `publicDirectorySavedLists`, the
-  classic directory's shape, so either interface can use them;
-- **Chat with visible**, which saves any pending visibility change and starts
-  a fresh native V2 chat over visible, chat-available public workspaces from
-  version **0.261.310**. A failed save keeps you in the directory. The composer
-  also offers **All public workspaces**, ignoring visibility without changing
-  it; see [Aggregate public chat](V2_AGGREGATE_PUBLIC_CHAT.md).
-
-The bulk and saved-list actions cover the whole directory, not the page on
-screen, up to 1,000 workspaces; past that they refuse and say how many there
-are. Each reports how many workspaces it changed. From version **0.261.187**,
-**Show all in chat** and **Use this list** leave an unavailable workspace
-hidden, and say how many they skipped. Native aggregate chat also checks
-workspace availability on the server before retrieval.
+Old V2 links using the Visible aggregate mode open as All. See
+[Aggregate public chat](V2_AGGREGATE_PUBLIC_CHAT.md).
 
 ### Labels
 
@@ -88,7 +70,7 @@ back to the default wording for any label left blank, as classic does.
 | Its rules: the query, the caller's view, the projected rows, search and paging | `application/single_app/functions_public_directory.py` |
 | The page | `application/v2_ui/src/pages/PublicDirectoryPage.tsx`, `components/workspace/PublicDirectoryList.tsx` |
 | The directory client | `application/v2_ui/src/lib/publicDirectory.ts` |
-| Visible for chat | `application/v2_ui/src/lib/publicVisibility.ts` |
+| V2 public-source policy | `application/single_app/public_source_policy.py` |
 | The labels | `application/v2_ui/src/lib/publicWorkspaceLabels.ts` |
 | The picker, now on the directory route | `components/workspace/PublicWorkspacePicker.tsx`, `lib/workspaces.ts` |
 
@@ -123,20 +105,20 @@ to a section public workspaces don't have opens "Section not found".
   route.
 - `test_v2_public_directory_list_route_pin.py` checks the picker reads the
   directory route, never the classic list.
-- `test_v2_public_directory_settings_keys.py` checks the user settings keys
-  against the server's allowlist.
+- `test_v2_public_source_discovery_policy.py` checks the V2/V1 policy boundary,
+  mixed source admission, worker isolation and retained explicit selections.
 - `test_v2_public_workspace_labels_logic.mjs` and
   `test_v2_public_workspace_labels_pin.py` check the label fallbacks and tie
   the defaults to the server's.
 - `test_public_context_fixture_parity.py` covers the section list and the
   Documents section's manager rule.
-- Browser: `ui_tests/test_v2_public_directory.py` (23), with
+- Browser: `ui_tests/test_v2_public_directory.py`, with
   `test_v2_public_documents.py` unchanged in behaviour.
 
 ## Known limitations
 
-- **Chat with visible** opens classic chat (decision 31).
-- The bulk and saved-list actions stop at 1,000 workspaces.
+- Availability is checked again when a request runs; directory discovery is not
+  a permanent permission grant.
 
 ## Related
 

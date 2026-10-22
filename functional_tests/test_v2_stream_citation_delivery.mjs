@@ -1,6 +1,7 @@
 // test_v2_stream_citation_delivery.mjs
-// Version: 0.261.367
+// Version: 0.261.373
 // Implemented in: 0.261.365
+// Source-policy marker asserted across send, edit, retry and recovery in: 0.261.373
 // Real chat-store/SSE regressions with mocked HTTP only; no live model or connector calls.
 
 import assert from 'node:assert/strict';
@@ -51,7 +52,7 @@ async function sendReply(event, check, { mode = 'send', beforeFinal, disconnect 
     }, true);
     globalThis.fetch = async (input, init = {}) => {
         const path = new URL(String(input), 'http://localhost').pathname;
-        requests.push({ path, method: init.method ?? 'GET' });
+        requests.push({ path, method: init.method ?? 'GET', marker: new Headers(init.headers).get('X-SimpleChat-UI') });
         if (path === '/api/message/question/retry' || path === '/api/message/question/edit') {
             return Response.json({
                 success: true, thread_id: 'thread', new_attempt: 2,
@@ -106,6 +107,9 @@ async function sendReply(event, check, { mode = 'send', beforeFinal, disconnect 
             assert.ok(liveReply, 'retry/edit must publish the completed reply before reloading history');
         }
         await check(liveReply ?? reply, requests);
+        for (const request of requests) {
+            assert.equal(request.marker, 'v2', `${mode} request ${request.path} must retain V2 source policy`);
+        }
         assert.equal(requests.filter(({ path }) => path === '/api/chat/stream').length, mode === 'resume' ? 0 : 1);
         assert.equal(requests.filter(({ path }) => path.includes('get_messages')).length, mode === 'send' ? 0 : 1);
         assert.equal(requests.filter(({ path }) => path.includes('/reattach/')).length,
