@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.378)**
+
+#### Bug Fixes
+
+*   **Mixed-Mode Conversation History Ordering And Superseded Saved-Memory Handling**
+    *   Fixed `sort_messages_by_thread` so unthreaded orchestration turns (`user_orchestration_*` and `assistant_orchestration_*`) are interleaved chronologically with threaded manual chat turns based on each thread's earliest timestamp rather than placing all orchestration turns before all manual turns.
+    *   Clarified saved `Instruction Memory`, `Fact Memory`, and orchestration composition/planning prompts so updated profile memories supersede earlier assistant prefixes, names, call signs, and roles without quoting, contrasting, or flagging the earlier values as note inconsistencies during consistency checks.
+    *   (Ref: `functions_chat.py`, `functions_fact_memory_context.py`, `functions_orchestration_composition.py`, `functions_orchestration_planner.py`, [Mixed-Mode History Order and Superseded Memory Fix](fixes/MIXED_MODE_HISTORY_ORDER_AND_SUPERSEDED_MEMORY_FIX.md))
+
 ### **(v0.261.333)**
 
 #### New Features

@@ -101,6 +101,8 @@ def load_tabular_fact_memory_helpers():
         '_build_fact_memory_fact_payload',
         '_cosine_similarity',
         '_backfill_missing_fact_memory_embeddings',
+        '_extract_identifier_tokens',
+        '_select_scoped_memory_candidates',
         'build_instruction_memory_citation',
         'retrieve_relevant_fact_memory_entries',
         'build_fact_memory_citation',

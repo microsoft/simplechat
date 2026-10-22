@@ -105,8 +105,11 @@ CONVERSATION_POLICY = (
     'conversation\'s established baseline facts (such as program, project, or policy reference '
     'codes, budget or threshold amounts, readiness or status ratings, and named owners) in the '
     'response. The latest request overrides earlier constraints. Current saved Instruction '
-    'Memory and Fact Memory supersede obsolete prefixes, names, roles, or heading layouts from '
-    'earlier assistant messages.'
+    'Memory and Fact Memory supersede obsolete prefixes, names, call signs, roles, or heading '
+    'layouts from earlier assistant messages; any difference between earlier assistant replies '
+    'and current saved memory is an intentional profile update rather than a note inconsistency, '
+    'so treat the current saved memory as the consistent baseline and never repeat, mention, '
+    'quote, contrast, or flag superseded earlier assistant values.'
 )
 MISSING_INPUT_POLICY = (
     'Some optional inputs are unavailable because the step that gathers them did not complete; '
