@@ -1,7 +1,7 @@
 # test_workflow_output_validation.py
 """
 Functional tests for deterministic workflow output requirements and outcomes.
-Version: 0.261.111
+Version: 0.261.378
 Implemented in: 0.261.108
 
 Model prose cannot prove completion. Type, schema, identity, coverage and count
@@ -16,7 +16,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "single_app"))
 
 # Import after the worktree module path is established.
+from functions_workflow_results import build_workflow_task_result
 from functions_workflow_validation import (
+    failed_workflow_tool_citation_count,
     validate_workflow_task_output,
     workflow_output_contract_instruction,
     workflow_run_outcome,
@@ -201,3 +203,125 @@ def test_final_run_includes_all_task_outcomes_not_only_last_success():
         {"status": "succeeded", "workflow_validation": {"status": "valid"}},
     ]
     assert workflow_run_outcome(tasks) == {"status": "invalid", "success": False}
+
+
+def test_failed_tool_citation_invalidates_task_even_when_model_fabricates_schema_json():
+    schema_contract = {
+        "kind": "json",
+        "schema": {
+            "type": "object",
+            "properties": {"status": {"type": "string", "enum": ["Evaluation"]}},
+            "required": ["status"],
+        },
+    }
+    task_envelope = build_workflow_task_result(
+        {
+            "reply": '{"status":"Evaluation"}',
+            "agent_citations": [
+                {
+                    "tool_name": "OpenApiPlugin.getSyntheticAcquisition",
+                    "plugin_name": "OpenApiPlugin",
+                    "function_name": "getSyntheticAcquisition",
+                    "function_arguments": {"kwargs": {"acquisition_id": "DEMO-ACQ-ERROR503"}},
+                    "success": False,
+                    "error_message": "HTTP 503",
+                }
+            ],
+        },
+        workflow={"id": "wf-1"},
+        run_id="run-1",
+        task={"id": "task-1"},
+    )
+    assert task_envelope["execution"]["status"] == "failed"
+    report = validate_workflow_task_output(task_envelope, schema_contract)
+    assert report["status"] == "invalid"
+    assert report["eligible"] is False
+    assert "tool_invocation_failed" in report["reason_codes"]
+    assert report["counts"]["failed_tool_calls"] == 1
+
+
+def test_recovered_same_tool_call_in_task_does_not_fail_validation():
+    citations = [
+        {
+            "tool_name": "OpenApiPlugin.getSyntheticAcquisition",
+            "plugin_name": "OpenApiPlugin",
+            "function_name": "getSyntheticAcquisition",
+            "function_arguments": {"kwargs": {"acquisition_id": "DEMO-ACQ-001"}},
+            "success": False,
+            "error_message": "HTTP 503",
+        },
+        {
+            "tool_name": "OpenApiPlugin.getSyntheticAcquisition",
+            "plugin_name": "OpenApiPlugin",
+            "function_name": "getSyntheticAcquisition",
+            "function_arguments": {"kwargs": {"acquisition_id": "DEMO-ACQ-001"}},
+            "success": True,
+        },
+    ]
+    assert failed_workflow_tool_citation_count(citations) == 0
+    task_envelope = build_workflow_task_result(
+        {"reply": '{"id":"DEMO-ACQ-001","status":"Evaluation"}', "agent_citations": citations},
+        workflow={"id": "wf-1"},
+        run_id="run-1",
+        task={"id": "task-1"},
+    )
+    assert task_envelope["execution"]["status"] == "succeeded"
+
+
+def test_single_fenced_json_block_with_surrounding_prose_is_extracted_while_multiple_blocks_stay_text():
+    single_block = build_workflow_task_result(
+        {
+            "reply": (
+                "Here is the acquisition record:\n"
+                "```json\n"
+                '{"id": "DEMO-ACQ-001", "status": "Evaluation", "response_days": 15}\n'
+                "```"
+            )
+        },
+        workflow={"id": "wf-1"},
+        run_id="run-1",
+        task={"id": "task-1"},
+    )
+    assert single_block["authoritative_output"] == "json"
+    assert single_block["outputs"]["json"]["value"] == {
+        "id": "DEMO-ACQ-001",
+        "status": "Evaluation",
+        "response_days": 15,
+    }
+
+    competing_blocks = build_workflow_task_result(
+        {
+            "reply": (
+                "Draft:\n```json\n{\"status\": \"Draft\"}\n```\n"
+                "Final:\n```json\n{\"status\": \"Evaluation\"}\n```"
+            )
+        },
+        workflow={"id": "wf-1"},
+        run_id="run-1",
+        task={"id": "task-1"},
+    )
+    assert competing_blocks["authoritative_output"] == "text"
+
+
+def test_object_schema_instruction_requests_all_task_fields_when_additional_properties_allowed():
+    open_schema_instructions = workflow_output_contract_instruction({
+        "kind": "json",
+        "schema": {
+            "type": "object",
+            "properties": {"status": {"type": "string", "enum": ["Evaluation"]}},
+            "required": ["status"],
+        },
+    })
+    assert "Include all fields and details requested by the task instructions" in open_schema_instructions
+
+    closed_schema_instructions = workflow_output_contract_instruction({
+        "kind": "json",
+        "schema": {
+            "type": "object",
+            "properties": {"status": {"type": "string"}},
+            "required": ["status"],
+            "additionalProperties": False,
+        },
+    })
+    assert "Include all fields and details requested by the task instructions" not in closed_schema_instructions
+

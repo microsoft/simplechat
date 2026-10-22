@@ -1,6 +1,7 @@
 # functions_workflow_results.py
 """Versioned workflow task outputs, distinct from chat presentation."""
 
+import hashlib
 import json
 from collections import OrderedDict
 import re
@@ -19,6 +20,7 @@ from functions_workflow_result_store import (
     save_workflow_node_result,
     save_workflow_task_result,
 )
+from functions_workflow_validation import failed_workflow_tool_citation_count
 
 
 WORKFLOW_RESULT_CONTRACT_VERSION = "workflow-result-v1"
@@ -66,9 +68,17 @@ def _structured_output(text):
     candidate = fenced.group(1) if fenced else text
     try:
         value = json.loads(candidate)
+        return value if isinstance(value, (dict, list)) else None
     except json.JSONDecodeError:
-        return None
-    return value if isinstance(value, (dict, list)) else None
+        pass
+    blocks = re.findall(r"```(?:json)?\s*\n(.*?)\n```", text, flags=re.DOTALL)
+    if len(blocks) == 1:
+        try:
+            value = json.loads(blocks[0])
+            return value if isinstance(value, (dict, list)) else None
+        except json.JSONDecodeError:
+            return None
+    return None
 
 
 def get_workflow_analysis_result(result):
@@ -124,6 +134,8 @@ def _execution_state(result, analysis, artifacts):
             return "pending"
         if status in {"failed", "cancelled", "canceled"}:
             return status
+    if failed_workflow_tool_citation_count(result.get("agent_citations") or analysis.get("agent_citations")):
+        return "failed"
     return "succeeded"
 
 
@@ -152,12 +164,31 @@ def _provenance_references(values):
     fields = {
         "id", "document_id", "document_name", "file_name", "scope", "scope_type", "scope_id",
         "group_id", "public_workspace_id", "version", "source_version", "source_revision", "etag", "_etag",
-        "citation_id", "plugin_name", "function_name", "page_number", "chunk_id",
+        "citation_id", "plugin_name", "function_name", "tool_name", "success", "error_message",
+        "page_number", "chunk_id",
     }
-    return [
-        {key: value for key, value in item.items() if key in fields}
-        for item in values if isinstance(item, Mapping)
-    ]
+    references = []
+    for item in values:
+        if not isinstance(item, Mapping):
+            continue
+        ref = {key: value for key, value in item.items() if key in fields}
+        if "success" in ref and not isinstance(ref["success"], bool):
+            ref.pop("success", None)
+        if "error_message" in ref:
+            if isinstance(ref["error_message"], str) and ref["error_message"].strip():
+                ref["error_message"] = ref["error_message"].strip()[:240]
+            else:
+                ref.pop("error_message", None)
+        if "function_arguments" in item and item.get("function_arguments") is not None:
+            try:
+                serialized_args = json.dumps(
+                    item.get("function_arguments"), sort_keys=True, separators=(",", ":"), default=str,
+                )
+            except (TypeError, ValueError):
+                serialized_args = str(item.get("function_arguments"))
+            ref["arguments_sha256"] = hashlib.sha256(serialized_args.encode("utf-8")).hexdigest()
+        references.append(ref)
+    return references
 
 
 def build_workflow_task_result(result, *, workflow, run_id, task, attempt_count=1):
