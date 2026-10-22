@@ -241,15 +241,38 @@ class MemoryContextTests(unittest.TestCase):
                 value_embedding=[0.95, 0.05],
                 updated_at=f'2026-10-1{index}T00:00:00Z',
             )
+            self.add_fact(
+                index + 50,
+                memory_type='instruction',
+                value=f'For my Civic Bridge review {code}, start each brief with {code}.',
+                updated_at=f'2026-10-1{index}T00:00:00Z',
+            )
+        self.add_fact(
+            98,
+            memory_type='instruction',
+            value='Always use clear, concise sentences.',
+            updated_at='2026-10-10T00:00:00Z',
+        )
         self.add_fact(
             99,
             value='For Civic Bridge review CB-27-E123BE, please address me as Morgan; I am the acquisition reviewer.',
             value_embedding=[0.85, 0.15],
             updated_at='2026-10-22T02:00:00Z',
         )
+        self.add_fact(
+            100,
+            memory_type='instruction',
+            value='For my Civic Bridge review CB-27-E123BE, start each brief with Civic Bridge desk brief (CB-27-E123BE).',
+            updated_at='2026-10-22T02:00:00Z',
+        )
         self.facts.sort(key=lambda item: item['updated_at'], reverse=True)
         with_code = self.payload(query_text='Check readiness for Civic Bridge review CB-27-E123BE.')
-        self.assertEqual(with_code['recall_payload']['matched_facts'][0]['id'], 'memory-99')
+        self.assertEqual([item['id'] for item in with_code['recall_payload']['matched_facts']], ['memory-99'])
+        self.assertEqual(
+            [item['id'] for item in with_code['instruction_payload']['matched_facts']],
+            ['memory-100', 'memory-98'],
+        )
+        self.assertIn('established baseline facts', json.dumps(with_code['context_messages']))
         without_code = self.payload(query_text='What is the main readiness risk in our notes so far?')
         self.assertEqual(without_code['recall_payload']['matched_facts'][0]['id'], 'memory-99')
 

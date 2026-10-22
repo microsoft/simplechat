@@ -631,6 +631,7 @@ class HarnessExecution:
             self.context.user_request, settings=self._bootstrap.get_settings(),
             seeds=self.record.get("seeds") or {},
             expected_audience=self.context.memory_context["audience"],
+            conversation_context=self.context.conversation_context,
         )
         self.context.memory_context = memory
         for notice in memory["notices"]:
@@ -760,6 +761,7 @@ class HarnessExecution:
             user_id, self._validate_memory(),
             build_elicitation_user_request(self.record.get("resolved_message") or user_message, answers),
             settings=self.settings, seeds=seeds, expected_audience=self.record.get("memory_audience"),
+            conversation_context=self.record.get("conversation_context"),
         )
         assert_current_request_sources_available(user_id)
 

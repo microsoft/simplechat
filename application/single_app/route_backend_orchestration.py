@@ -1877,6 +1877,7 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
         user_id, _authorize_context_conversation(conversation_id, user_id),
         build_elicitation_user_request(record.get('resolved_message') or record.get('user_message'), record.get('answered_questions')),
         settings=settings, seeds=seeds, expected_audience=record.get('memory_audience'),
+        conversation_context=snapshot,
     )
     validate_auto_bindings(
         record['plan'], seeds, settings,
@@ -2722,6 +2723,7 @@ def register_route_backend_orchestration(bp):
                     user_id, conversation_document,
                     memory_request, settings=settings, seeds=seeds,
                     expected_audience=turn_context.get('memory_audience'),
+                    conversation_context=snapshot,
                 )
                 turn_context['memory_audience'] = memory_context['audience']
                 turn_context['memory_scope'] = memory_context['scope']
@@ -2788,6 +2790,7 @@ def register_route_backend_orchestration(bp):
                         user_id, _authorize_context_conversation(resolved_conversation_id, user_id),
                         effective_request, settings=settings, seeds=seeds,
                         expected_audience=turn_context['memory_audience'],
+                        conversation_context=snapshot,
                     )
                     turn_context['memory_scope'] = memory_context['scope']
                     for notice in memory_context['notices']:
