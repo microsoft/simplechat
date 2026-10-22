@@ -96,6 +96,25 @@ def validate_memory_context(conversation, user_id, expected_audience=None, scope
         raise OrchestrationMemoryError('Saved memory access could not be checked. Please retry.') from exc
 
 
+def _memory_conversation_context_text(conversation, conversation_context=None):
+    parts = []
+    if isinstance(conversation, dict):
+        title = str(conversation.get('title') or '').strip()
+        if title and title not in ('New Conversation', 'Conversation'):
+            parts.append(title)
+    messages = (
+        conversation_context.get('messages')
+        if isinstance(conversation_context, dict)
+        else conversation_context if isinstance(conversation_context, (list, tuple)) else None
+    )
+    for message in messages or ():
+        if isinstance(message, dict) and message.get('role') == 'user':
+            content = str(message.get('content') or '').strip()
+            if content:
+                parts.append(content)
+    return '\n'.join(parts)
+
+
 def load_orchestration_memory(
     user_id, conversation, query_text, *, settings, seeds=None,
     expected_audience=None, conversation_context=None,
@@ -125,6 +144,7 @@ def load_orchestration_memory(
         )
     scope_type = 'group' if group_id else 'user'
     scope_id = group_id or user_id
+    context_text = _memory_conversation_context_text(conversation, conversation_context)
 
     effective_query_text = str(query_text or '').strip()
     if effective_query_text and conversation_context:
@@ -167,6 +187,7 @@ def load_orchestration_memory(
             scope_id=scope_id, scope_type=scope_type, query_text=effective_query_text or query_text,
             conversation_id=conversation['id'], agent_id=None,
             enabled=True, read_only=True, authorized_user_id=user_id,
+            **({'context_text': context_text} if context_text else {}),
         )
     except PermissionError as exc:
         raise OrchestrationMemoryError(

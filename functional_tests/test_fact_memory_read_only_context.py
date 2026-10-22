@@ -273,6 +273,15 @@ class MemoryContextTests(unittest.TestCase):
             ['memory-100', 'memory-98'],
         )
         self.assertIn('established baseline facts', json.dumps(with_code['context_messages']))
+        with_context = self.payload(
+            query_text='Now check all five records in the obligations ledger I selected.',
+            context_text="I'm working on Civic Bridge review CB-27-OLD003.",
+        )
+        self.assertEqual([item['id'] for item in with_context['recall_payload']['matched_facts']], ['memory-3'])
+        self.assertEqual(
+            [item['id'] for item in with_context['instruction_payload']['matched_facts']],
+            ['memory-52', 'memory-98'],
+        )
         without_code = self.payload(query_text='What is the main readiness risk in our notes so far?')
         self.assertEqual(without_code['recall_payload']['matched_facts'][0]['id'], 'memory-99')
 

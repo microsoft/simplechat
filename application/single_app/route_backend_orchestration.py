@@ -2888,7 +2888,7 @@ def register_route_backend_orchestration(bp):
                     )
                     turn_context['seeds'] = deepcopy(seeds)
                     context['document_transform_references'] = deepcopy(seeds['document_transform_references'])
-                retained_runs = list_conversation_runs(resolved_conversation_id, user_id, limit=10, strict=True)
+                retained_runs = list_conversation_runs(resolved_conversation_id, user_id, limit=50, strict=True)
                 if resolution['requires_retrieval'] is False and resolution['message_ids']:
                     retained_runs = [
                         record for record in retained_runs
@@ -2899,6 +2899,7 @@ def register_route_backend_orchestration(bp):
                         record for record in retained_runs
                         if record.get('user_message_id') in context_ids or record.get('assistant_message_id') in context_ids
                     ]
+                retained_runs = retained_runs[-10:]
                 retained = discover_result_aliases(retained_runs, services.results)
                 if retained['unavailable_count']:
                     yield build_planning_thought(

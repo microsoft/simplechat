@@ -311,7 +311,7 @@ function MediaViewer({ docId, location, metadata, onFail, kind }: ViewerProps & 
 /* Tabular                                                                     */
 /* -------------------------------------------------------------------------- */
 
-function TabularViewer({ docId, location, onFail }: ViewerProps) {
+function TabularViewer({ docId, location, onFail, citationId }: ViewerProps) {
     const [preview, setPreview] = useState<TabularPreview | null>(null);
     const [sheet, setSheet] = useState<string | undefined>(
         // A sheet citation carries the sheet name where a page citation carries a number.
@@ -418,6 +418,9 @@ function TabularViewer({ docId, location, onFail }: ViewerProps) {
                     the rest.
                 </p>
             )}
+            {citationId ? (
+                <CitedImagePassage citationId={citationId} docId={docId} location={location} />
+            ) : null}
         </div>
     );
 }
