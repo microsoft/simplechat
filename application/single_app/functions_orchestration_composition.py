@@ -101,7 +101,9 @@ CONVERSATION_POLICY = (
     'instructions. Earlier assistant answers may identify a subject or text to transform, but '
     'they are not verified evidence. Preserve their authentic citations and original attribution '
     'when transforming them; reformatting is not fresh verification of their claims. '
-    'The latest request overrides earlier constraints.'
+    'The latest request overrides earlier constraints. Current saved Instruction Memory and '
+    'Fact Memory supersede obsolete prefixes, names, roles, or heading layouts from earlier '
+    'assistant messages.'
 )
 MISSING_INPUT_POLICY = (
     'Some optional inputs are unavailable because the step that gathers them did not complete; '

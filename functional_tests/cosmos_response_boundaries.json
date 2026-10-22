@@ -12307,7 +12307,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f62fc46056d332bd82c4a687f51096c9bc55cb537931091242f99b44077c625"
+        "module_sha256": "1e29b8483592bf9f26cfabf950fecc8a0343852a2563bdae1d5456ca772a688c"
       },
       "classification": "sdk-compatible",
       "contract": "Partitioned turn/source point mappings are reauthorized, checked for visibility and converted by normalize_history_message before strict saved-snapshot validation. Full source messages are resolved only after fingerprint checks; history disablement and revoked shared access cannot broaden reads.",
@@ -12320,7 +12320,7 @@
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._read_delivery_metadata": {
       "boundary": {
-        "sha256": "07583c290502c23d5927e3d6d46c037a20c7dfce5fe3a0e92b6f717ab58b9b93",
+        "sha256": "31156cb399a57d8289e3a5125f904261f6c15baa4316766ddb042297a9995942",
         "points": [
           {
             "method": "read_item",
@@ -12330,7 +12330,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f62fc46056d332bd82c4a687f51096c9bc55cb537931091242f99b44077c625"
+        "module_sha256": "1e29b8483592bf9f26cfabf950fecc8a0343852a2563bdae1d5456ca772a688c"
       },
       "classification": "sdk-compatible",
       "contract": "The previous assistant point mapping is checked for conversation/run ownership; model and reasoning fields are projected into plain dictionaries, without passing the SDK wrapper to an exact-dictionary contract.",
@@ -12353,7 +12353,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f62fc46056d332bd82c4a687f51096c9bc55cb537931091242f99b44077c625"
+        "module_sha256": "1e29b8483592bf9f26cfabf950fecc8a0343852a2563bdae1d5456ca772a688c"
       },
       "classification": "sdk-compatible",
       "contract": "The question point mapping supplies role and nested plain thread metadata; only a deepcopy of the validated nested thread dictionary is returned.",
@@ -12376,7 +12376,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f62fc46056d332bd82c4a687f51096c9bc55cb537931091242f99b44077c625"
+        "module_sha256": "1e29b8483592bf9f26cfabf950fecc8a0343852a2563bdae1d5456ca772a688c"
       },
       "classification": "sdk-compatible",
       "contract": "A normalized owned conversation retains its _etag for IfNotModified replacement; the returned SDK mapping is consumed only by the Mapping-compatible cache invalidator. Lost-CAS retries retain current ownership.",
@@ -12389,7 +12389,7 @@
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._finalize": {
       "boundary": {
-        "sha256": "f228e771c1ca08f0b54a5fec7264e35a6d6e1344d1f74c7943b7673c4a177743",
+        "sha256": "f8a5156859bd605e6bbe5780b4bd4657cd1830d0b4523413e6fea70fc5f9516e",
         "points": [
           {
             "method": "read_item",
@@ -12399,7 +12399,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0f62fc46056d332bd82c4a687f51096c9bc55cb537931091242f99b44077c625"
+        "module_sha256": "1e29b8483592bf9f26cfabf950fecc8a0343852a2563bdae1d5456ca772a688c"
       },
       "classification": "sdk-compatible",
       "contract": "The published message point mapping is projected with items() into a metadata-free fingerprint and consumed by Mapping-compatible mirroring. Durable outcome telemetry reads only finalized scalar fields; strict task/result descriptors and saved-message confirmation remain unchanged.",

@@ -233,6 +233,26 @@ class MemoryContextTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.payload()
 
+    def test_identifier_matched_and_latest_scoped_facts_rank_ahead_of_stale_entries(self):
+        for index, code in enumerate(('CB-27-OLD001', 'CB-27-OLD002', 'CB-27-OLD003', 'CB-27-OLD004', 'CB-27-OLD005')):
+            self.add_fact(
+                index + 1,
+                value=f'For Civic Bridge review {code}, please address me as Avery; I am the readiness reviewer.',
+                value_embedding=[0.95, 0.05],
+                updated_at=f'2026-10-1{index}T00:00:00Z',
+            )
+        self.add_fact(
+            99,
+            value='For Civic Bridge review CB-27-E123BE, please address me as Morgan; I am the acquisition reviewer.',
+            value_embedding=[0.85, 0.15],
+            updated_at='2026-10-22T02:00:00Z',
+        )
+        self.facts.sort(key=lambda item: item['updated_at'], reverse=True)
+        with_code = self.payload(query_text='Check readiness for Civic Bridge review CB-27-E123BE.')
+        self.assertEqual(with_code['recall_payload']['matched_facts'][0]['id'], 'memory-99')
+        without_code = self.payload(query_text='What is the main readiness risk in our notes so far?')
+        self.assertEqual(without_code['recall_payload']['matched_facts'][0]['id'], 'memory-99')
+
 
 if __name__ == '__main__':
     unittest.main()

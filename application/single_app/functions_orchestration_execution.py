@@ -483,7 +483,7 @@ def _partition_citations(citations):
             continue
         if citation.get("document_id"):
             documents.append(deepcopy(citation))
-        elif citation.get("tool_name") or citation.get("function_name"):
+        elif citation.get("tool_name") or citation.get("function_name") or citation.get("plugin_name"):
             tools.append(deepcopy(citation))
         else:
             web.append(deepcopy(citation))
@@ -548,6 +548,7 @@ class HarnessExecution:
         self._delivery_context_denied = False
         self._saved_model_metadata = {}
         self._saved_reasoning = {}
+        self._saved_memory_citations = []
         self._execution_lock = threading.Lock()
         self._preparation_stage = "claim_validation"
 
@@ -939,6 +940,11 @@ class HarnessExecution:
             self._saved_reasoning["reasoning_adjustments"] = merge_reasoning_adjustments(
                 previous.get("reasoning_adjustments"), self.record.get("reasoning_adjustments"),
             )
+            self._saved_memory_citations = [
+                deepcopy(citation) for citation in previous.get("agent_citations") or []
+                if isinstance(citation, dict) and citation.get("plugin_name") == "fact_memory"
+                and not citation.get("document_id")
+            ]
 
     def _raise_delivery_infrastructure_failure(self, error, *, storage_required=False):
         if isinstance(error, HarnessExecutionError) and error.retryable:
@@ -1312,6 +1318,54 @@ class HarnessExecution:
             _log_failure("Microsoft 365 citations could not be read for the answer.", self.record, exc)
             return []
 
+    def _gathered_external_citations(self, *, include_memory=False):
+        """Web, tool and saved-memory citations from the run's gather steps and memory context."""
+        collected = []
+        try:
+            for step in (self.record.get("plan") or {}).get("steps") or ():
+                if not step.get("enabled", True):
+                    continue
+                capability_id = step.get("capability_id")
+                if capability_id not in {
+                    "web_search", "url_fetch", "deep_research", "agent_invoke", "action_invoke",
+                }:
+                    continue
+                task = (self.context.task_results if self.context is not None else {}).get(step.get("step_id"))
+                if task is None or getattr(task, "status", None) not in ("complete", "partial"):
+                    continue
+                for reference in getattr(task, "outputs", ()) or ():
+                    completeness = getattr(reference, "completeness", None)
+                    if (
+                        getattr(reference, "output_name", None) != "prepared"
+                        or getattr(completeness, "status", None) not in ("complete", "partial")
+                    ):
+                        continue
+                    value = self._read_gathered_value(reference)
+                    step_citations = value.get("citations") if isinstance(value, dict) else None
+                    if isinstance(step_citations, list):
+                        collected.extend(
+                            deepcopy(citation) for citation in step_citations
+                            if isinstance(citation, dict) and not citation.get("document_id")
+                        )
+        except Exception as exc:
+            self._raise_delivery_infrastructure_failure(exc)
+            _log_failure("External gather citations could not be read for the answer.", self.record, exc)
+        if include_memory:
+            if self._delivery_only:
+                if (
+                    self.settings and self.settings.get("enable_fact_memory_plugin")
+                    and self.record.get("memory_scope")
+                ):
+                    collected.extend(deepcopy(self._saved_memory_citations))
+            elif self.context is not None:
+                memory_citations = (self.context.memory_context or {}).get("citations")
+                if isinstance(memory_citations, list):
+                    collected.extend(
+                        deepcopy(citation) for citation in memory_citations
+                        if isinstance(citation, dict) and not citation.get("document_id")
+                    )
+        return collected
+
     def _validate_citations(self, citations, *, enrich_display=False):
         document_ids = sorted({
             citation["document_id"] for citation in citations
@@ -1458,7 +1512,7 @@ class HarnessExecution:
             error = error or HarnessExecutionError("result_invalid")
         prepared, citations, reader = "", [], None
         assets, charts, workflow_result_contexts = {}, {}, []
-        m365_records = []
+        m365_records, external_citations = [], []
         if error is None:
             try:
                 self._revalidate_context()
@@ -1483,18 +1537,19 @@ class HarnessExecution:
                     assets = generated_image_assets(self.context.task_results, self._read_image_asset)
                     charts = gathered_charts(self.record["plan"], self.context.task_results, self._read_gathered_value)
                     m365_records = self._gathered_m365_records()
+                    external_citations = self._gathered_external_citations(include_memory=bool(prepared))
             except Exception as exc:
                 self._raise_delivery_infrastructure_failure(exc)
                 _log_failure("Execution context could not be reauthorized.", self.record, exc)
                 error, prepared, citations, assets, charts, workflow_result_contexts = exc, "", [], {}, {}, []
-                m365_records = []
+                m365_records, external_citations = [], []
         if error is not None:
             failure = _failure(error)
             status = "cancelled" if failure["code"] == "user_cancelled" else "failed"
             failures.append(failure)
         if status == "cancelled" or current.get("cancellation_requested_at") or current.get("status") == "cancelled":
             status, prepared, citations, assets, charts = "cancelled", "", [], {}, {}
-            m365_records = []
+            m365_records, external_citations = [], []
             if not any(value["code"] == "user_cancelled" for value in failures):
                 failures.append(build_failure("user_cancelled"))
         # Generated images appear in the answer where its content placed them.
@@ -1609,7 +1664,7 @@ class HarnessExecution:
             answer, "chat_output", user_id=self.record["user_id"], settings=self.settings,
         )
         if output_check.blocked:
-            answer, citations, m365_records = output_check.notice, [], []
+            answer, citations, m365_records, external_citations = output_check.notice, [], [], []
         # Every Microsoft 365 item the steps read, marked with whether the published answer cites it.
         m365_citations = finalize_m365_citations(m365_records, answer, data_user_id=self.record["user_id"])
         if self._delivery_only:
@@ -1699,7 +1754,7 @@ class HarnessExecution:
         thread = self._regeneration_thread()
         if thread:
             metadata["thread_info"] = thread
-        documents, web, tools = _partition_citations(citations)
+        documents, web, tools = _partition_citations([*citations, *external_citations])
         document = {
             "id": message_id, "conversation_id": self.record["conversation_id"],
             "role": "assistant", "content": answer, "timestamp": timestamp,
