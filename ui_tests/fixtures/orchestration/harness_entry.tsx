@@ -286,6 +286,7 @@ const roots = new Map<string, Root>();
 
 interface MountOptions {
     initialEntries?: ComponentProps<typeof MemoryRouter>['initialEntries'];
+    basename?: ComponentProps<typeof MemoryRouter>['basename'];
     strictMode?: boolean;
 }
 
@@ -315,7 +316,7 @@ function mount(
     // that context without a browser history, and is harmless for components that never route.
     const tree = createElement(
         MemoryRouter,
-        { initialEntries: options.initialEntries },
+        { initialEntries: options.initialEntries, basename: options.basename },
         createElement(Component, props),
     );
     root.render(options.strictMode ? createElement(StrictMode, null, tree) : tree);

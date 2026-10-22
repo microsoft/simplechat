@@ -15,6 +15,7 @@ import { Link } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
     Cable,
+    ExternalLink,
     KeyRound,
     Loader2,
     MessageSquare,
@@ -31,6 +32,8 @@ import {
     type M365Source,
 } from '../../lib/m365Connect';
 import { M365_APPROVALS_HREF } from '../../lib/m365Links';
+import { workflowListHref } from '../../lib/workflowRunLink';
+import { isRecord } from '../../lib/workspaceAuthoring';
 import { toast } from '../../stores/toastStore';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { SettingsCard } from './SettingsCard';
@@ -188,6 +191,24 @@ export interface M365Binding {
     decisions?: Record<string, { duration?: string }>;
     analysis_choice?: string;
     context?: { workflow_id?: string };
+    workflow: {
+        id: string;
+        name: string;
+    } & (
+        { scope_type: 'personal'; group_id: null }
+        | { scope_type: 'group'; group_id: string }
+    );
+}
+
+function isWorkflowBinding(value: unknown): value is M365Binding {
+    if (!isRecord(value) || typeof value.id !== 'string' || !isRecord(value.workflow)) return false;
+    const workflow = value.workflow;
+    return typeof workflow.id === 'string' && Boolean(workflow.id.trim())
+        && typeof workflow.name === 'string' && Boolean(workflow.name.trim())
+        && (
+            (workflow.scope_type === 'personal' && workflow.group_id === null)
+            || (workflow.scope_type === 'group' && typeof workflow.group_id === 'string' && Boolean(workflow.group_id.trim()))
+        );
 }
 
 /** The classic Approvals wording for an authorization's state. */
@@ -778,10 +799,10 @@ function WorkflowAuthorizationsCard({
             `/api/m365/bindings?${query}`,
             { signal },
         );
-        if (!Array.isArray(response.items)) {
+        if (!Array.isArray(response.items) || !response.items.every(isWorkflowBinding)) {
             throw new Error('Workflow authorizations could not be read.');
         }
-        return { items: response.items as M365Binding[], next: response.continuation_token || null };
+        return { items: response.items, next: response.continuation_token || null };
     }, []);
 
     useEffect(() => {
@@ -829,35 +850,54 @@ function WorkflowAuthorizationsCard({
             ) : items === null ? (
                 <StatusNote>Loading workflow authorizations…</StatusNote>
             ) : items.length === 0 ? (
-                <p className="text-xs text-text-3">No workflow authorizations.</p>
+                <p className="text-xs text-text-3">
+                    {continuation ? 'No accessible workflows on this page. Load more authorizations to continue.' : 'No workflow authorizations.'}
+                </p>
             ) : (
                 <ul className="space-y-2">
                     {items.map((binding) => (
                         <li key={binding.id} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-edge p-3">
                             <div className="min-w-0 flex-1 basis-64">
                                 <p className="text-sm font-medium break-words text-text-1">
-                                    Workflow {binding.context?.workflow_id || 'authorization'}
+                                    {binding.workflow.name}
                                 </p>
                                 <p className="mt-0.5 text-xs break-words text-text-3">{describeBinding(binding)}</p>
                             </div>
-                            {(binding.status === 'pending' || binding.status === 'approved') && (
-                                <button
-                                    type="button"
-                                    className={DANGER_BUTTON}
-                                    onClick={() => onRevoke({
-                                        title: 'Revoke this workflow authorization?',
-                                        description: "This workflow revision can no longer use your Microsoft 365 account.",
-                                        confirmLabel: 'Revoke',
-                                        task: () => m365Request(`/api/m365/bindings/${encodeURIComponent(binding.id)}/revoke`, {
-                                            method: 'POST',
-                                            body: {},
-                                        }),
-                                        done: 'Workflow authorization revoked.',
-                                    })}
+                            <div className="flex flex-wrap items-center gap-2">
+                                <Link
+                                    to={workflowListHref(
+                                        binding.workflow.scope_type === 'group'
+                                            ? { type: 'group', groupId: binding.workflow.group_id }
+                                            : { type: 'personal' },
+                                        binding.workflow.id,
+                                    )}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    aria-label={`Open ${binding.workflow.name} (opens in a new tab)`}
+                                    className={SECONDARY_BUTTON}
                                 >
-                                    Revoke
-                                </button>
-                            )}
+                                    <ExternalLink size={14} aria-hidden="true" />
+                                    Open
+                                </Link>
+                                {(binding.status === 'pending' || binding.status === 'approved') && (
+                                    <button
+                                        type="button"
+                                        className={DANGER_BUTTON}
+                                        onClick={() => onRevoke({
+                                            title: 'Revoke this workflow authorization?',
+                                            description: "This workflow revision can no longer use your Microsoft 365 account.",
+                                            confirmLabel: 'Revoke',
+                                            task: () => m365Request(`/api/m365/bindings/${encodeURIComponent(binding.id)}/revoke`, {
+                                                method: 'POST',
+                                                body: {},
+                                            }),
+                                            done: 'Workflow authorization revoked.',
+                                        })}
+                                    >
+                                        Revoke
+                                    </button>
+                                )}
+                            </div>
                         </li>
                     ))}
                 </ul>

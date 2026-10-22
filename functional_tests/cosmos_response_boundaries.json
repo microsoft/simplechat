@@ -284,7 +284,6 @@
     "functional_tests/test_m365_file_runtime.py::test_final_conflict_exhaustion_is_an_error_not_an_empty_budget::point-seam-1": "4fa4b4f448f1cfdeb1131f4b38a885803a94b98e73c5cf2d1c82ae7c9f07e088",
     "functional_tests/test_m365_file_runtime.py::test_conflict_cannot_switch_to_another_request_budget::point-seam-1": "a5bb3ea2163d0717b7f62bca83119e8cd80bcc7716b12a4d5194d7d8e502b362",
     "functional_tests/test_m365_file_runtime.py::test_non_conflict_storage_failures_are_surfaced_without_retry::point-seam-1": "696797d4e9dd34edf466130805635acf8a713ba90244dd6983f4d54f1329f098",
-    "functional_tests/test_m365_routes.py::M365RouteTests.test_dependency_errors_do_not_reveal_sdk_or_configuration_text::point-seam-1": "e7e922f903b75f695ebd5046b2d8720f215844627c1c0287537920099fd783c4",
     "functional_tests/test_mcp_legacy_stdio_management.py::LegacyMcpManagementTests.test_single_action_lookup_storage_errors_are_not_reported_as_absent_actions::point-seam-1": "7f3bab30dec53ea2102d4450a219a6dc099963d1adc38b66b0f477a8c5361c3b",
     "functional_tests/test_mcp_legacy_stdio_management.py::LegacyMcpManagementTests.test_legacy_list_read_and_validation_failures_remain_visible::point-seam-1": "54a75d4f867eee35ffdacb2313b66c1a3e449cefe80fdaead4374784218b467c",
     "functional_tests/test_mcp_legacy_stdio_management.py::LegacyMcpManagementTests.test_legacy_list_read_and_validation_failures_remain_visible::point-seam-2": "d8cc9e4fd4cc9680faf7432db6389117b933eb85617548cb813c8e48e0455c35",
@@ -23307,10 +23306,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "ffc2adf0045b1eab887ea5d679b270606c9f81eeccfe30bc8643ca156a93a12d"
+        "module_sha256": "ebe71cb7fc78a609d24be25ad5f66850f567d8739728bc8cf5b0df69ce9dd16b"
       },
       "classification": "sdk-compatible",
-      "contract": "Partition-bound query rows are plain SDK JSON and are returned through jsonify with the existing continuation and CSRF fields; no point-response domain validation is entered.",
+      "contract": "Unchanged partition-bound query consumes plain SDK JSON rows through jsonify, continuation and CSRF fields; dependency-light identifier imports introduce no strict point-response sink.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_m365_chat_connection_persistence.py::test_waiting_request_route_consumes_plain_query_rows"
@@ -25971,6 +25970,27 @@
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
       "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/route_backend_m365.py::_workflow_binding_summary": {
+      "boundary": {
+        "sha256": "01654cea9d8defaf48328ad300d37b27aaee5dc9491144930d19009d0a71d2da",
+        "points": [
+          {
+            "method": "read_item",
+            "receiver": "container",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "ebe71cb7fc78a609d24be25ad5f66850f567d8739728bc8cf5b0df69ce9dd16b"
+      },
+      "classification": "sdk-compatible",
+      "contract": "Access-checked personal/group SDK point responses are consumed only via Mapping.get; a new plain dictionary projects id, name and scope for jsonify. No raw workflow, strict domain validator, metadata or ETag crosses the response boundary.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_m365_routes.py::test_workflow_authorization_sdk_contract"
+      ]
     }
   },
   "doubles": {
@@ -29087,12 +29107,12 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "646eac4950eb719a6dac881fff31f2ace8523b5c386eb251003716698250bda7"
+        "imports_sha256": "cf36de4529542b772d9e2fcc20ff53b7f06475c6f1ee37ef0a447d4245a0c452"
       },
-      "classification": "explicit-compatibility",
-      "contract": "Existing test-local point override/fault seam, not the normal shared Cosmos response default. Its containing test supplies the scenario and restores the override.",
+      "classification": "fault-injection",
+      "contract": "Scoped existing read_item error injection verifies that SDK/configuration details do not reach the client. The override is restored and shared CosmosContainer SDK responses remain the normal path.",
       "tests": [
-        "functional_tests/test_m365_routes.py"
+        "functional_tests/test_m365_routes.py::test_workflow_authorization_sdk_contract"
       ]
     },
     "functional_tests/test_m365_runtime_imports.py::embedded-PROBE::Container": {
@@ -32799,6 +32819,51 @@
       "contract": "SDK-default points, conditional ETags, partition routing and failure semantics are inherited unchanged from AtomicMemoryContainer. Only bounded query predicates are added; query rows remain plain dictionaries. Representative real-owner regressions assert SDK point/write types and plain query shapes.",
       "tests": [
         "functional_tests/test_v2_public_source_owner_sdk.py"
+      ]
+    },
+    "functional_tests/test_m365_routes.py::M365RouteTests.test_bindings_recheck_removed_group_membership_before_reading_the_workflow::point-seam-1": {
+      "boundary": {
+        "sha256": "6f8e0e49b9a01b2c27b59739b5948290eac804a2ba0146dd6b9d785ec951738c",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "cf36de4529542b772d9e2fcc20ff53b7f06475c6f1ee37ef0a447d4245a0c452"
+      },
+      "classification": "sdk-default",
+      "contract": "Scoped wraps spy retains the shared CosmosContainer's actual SDK point responses and proves denied group membership prevents any workflow point read.",
+      "tests": [
+        "functional_tests/test_m365_routes.py::test_workflow_authorization_sdk_contract"
+      ]
+    },
+    "functional_tests/test_m365_routes.py::M365RouteTests.test_bindings_resolve_duplicate_revisions_once_and_keep_them_separate::point-seam-1": {
+      "boundary": {
+        "sha256": "3cf321d5508cc7f0c6b91cb83615631bd4aaf9f83d839827eb006ddcc921efbd",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "cf36de4529542b772d9e2fcc20ff53b7f06475c6f1ee37ef0a447d4245a0c452"
+      },
+      "classification": "sdk-default",
+      "contract": "Scoped wraps spy delegates unchanged to SDK-default CosmosContainer.read_item and proves duplicate revision projections share exactly one point read without collapsing authorization rows.",
+      "tests": [
+        "functional_tests/test_m365_routes.py::test_workflow_authorization_sdk_contract"
+      ]
+    },
+    "functional_tests/test_m365_routes.py::M365RouteTests.test_bindings_storage_outage_is_a_safe_error_not_an_empty_success::point-seam-1": {
+      "boundary": {
+        "sha256": "53f954faea243b7a5da24cc366055fa1eeaa97a2da85806af15318aa766676e8",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "cf36de4529542b772d9e2fcc20ff53b7f06475c6f1ee37ef0a447d4245a0c452"
+      },
+      "classification": "fault-injection",
+      "contract": "Scoped read_item override injects an actual Cosmos 503; route regression requires a safe service error rather than an empty authorization list and restores the override afterward.",
+      "tests": [
+        "functional_tests/test_m365_routes.py::test_workflow_authorization_sdk_contract"
       ]
     }
   }

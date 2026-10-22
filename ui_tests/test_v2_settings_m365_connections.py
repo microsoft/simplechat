@@ -1,8 +1,9 @@
 # test_v2_settings_m365_connections.py
 """
 Real-component browser tests for the Microsoft 365 connection cards in V2 Settings.
-Version: 0.261.355
+Version: 0.261.374
 Implemented in: 0.261.302
+Workflow authorization names and navigation implemented in: 0.261.374
 
 The production M365Cards, Toaster and connect flow run in Chromium with the production CSS;
 only HTTP responses are deterministic. The sign-in window ends on the real callback result
@@ -24,7 +25,8 @@ Run: python -m pytest .\\ui_tests\\test_v2_settings_m365_connections.py -q
 """
 
 import copy
-from urllib.parse import urlsplit
+from pathlib import Path
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
 import pytest
 from playwright.sync_api import expect
@@ -73,6 +75,10 @@ class SettingsApi:
         self.sign_in_fails = False
         self.connects = []
         self.chat_disconnects = []
+        self.bindings = []
+        self.binding_pages = {}
+        self.binding_revocations = []
+        self.bindings_error = False
         self.unexpected = []
 
     def handle(self, route):
@@ -103,7 +109,20 @@ class SettingsApi:
                 "workflow_connections": self.readiness, "csrf_token": CSRF_TOKEN,
             })
         elif request.method == "GET" and path == "/api/m365/bindings":
-            route.fulfill(json={"items": [], "continuation_token": None})
+            if self.bindings_error:
+                route.fulfill(status=503, json={"message": "Workflow authorizations are temporarily unavailable."})
+                return
+            token = parse_qs(parsed.query).get("continuation_token", [""])[0]
+            route.fulfill(json=self.binding_pages.get(token, {"items": self.bindings, "continuation_token": None}))
+        elif request.method == "POST" and path.startswith("/api/m365/bindings/") and path.endswith("/revoke"):
+            self.binding_revocations.append({
+                "path": path, "body": request.post_data_json, "csrf": request.headers.get("x-m365-csrf-token"),
+            })
+            binding = next(item for item in self.bindings if item["id"] == unquote(path.split("/")[-2]))
+            binding["status"] = "revoked"
+            route.fulfill(json={"success": True, "binding": binding})
+        elif request.method == "GET" and path.startswith(("/v2/workspace/workflows", "/v2/groups/")):
+            route.fulfill(content_type="text/html", body="<h1>Workflow overview navigation destination</h1>")
         elif request.method == "POST" and path == "/api/m365/connections/connect":
             self.connects.append({"body": request.post_data_json, "csrf": request.headers.get("x-m365-csrf-token")})
             route.fulfill(json={"success": True, "authorization_url": SIGN_IN_URL})
@@ -155,7 +174,7 @@ def mount(page, api):
         """() => {
             const H = window.OrchHarness;
             H.reset();
-            H.mount('mount-a', 'M365Cards', {});
+            H.mount('mount-a', 'M365Cards', {}, { basename: '/v2', initialEntries: ['/v2/settings'] });
             H.mount('mount-b', 'Toaster', {});
         }"""
     )
@@ -286,4 +305,107 @@ def test_open_approvals_stays_in_v2(settings_ui):
     page, api = settings_ui
     mount(page, api)
     authorizations = page.get_by_role("region", name="Workflow authorizations")
-    expect(authorizations.get_by_role("link", name="Open Approvals")).to_have_attribute("href", "/approvals/m365")
+    expect(authorizations.get_by_role("link", name="Open Approvals")).to_have_attribute("href", "/v2/approvals/m365")
+
+
+def workflow_authorization(*, group_id=None, name="Morning mail digest"):
+    return {
+        "id": "authorization", "status": "approved", "self_authored": True,
+        "execution_status": "not_required",
+        "context": {"workflow_id": "workflow?with&encoded=#"},
+        "workflow": {
+            "id": "workflow?with&encoded=#", "name": name,
+            "scope_type": "group" if group_id else "personal", "group_id": group_id,
+        },
+    }
+
+
+@pytest.mark.parametrize("width,theme", [(1440, "light"), (390, "dark")])
+@pytest.mark.parametrize("group_id", [None, "team & ops"])
+def test_authorization_name_and_open_link_are_safe_responsive_and_open_a_new_tab(settings_ui, width, theme, group_id):
+    page, api = settings_ui
+    page.set_viewport_size({"width": width, "height": 900})
+    name = '<img src=x onerror="window.injected=true"> ' + "Quarterly mail and calendar review " * 8
+    binding = workflow_authorization(group_id=group_id, name=name)
+    api.bindings = [binding]
+    mount(page, api)
+    page.evaluate("(theme) => { document.documentElement.classList.toggle('dark', theme === 'dark'); }", theme)
+    authorizations = page.get_by_role("region", name="Workflow authorizations")
+    expect(authorizations.get_by_text(name, exact=True)).to_be_visible()
+    expect(authorizations).not_to_contain_text(binding["context"]["workflow_id"])
+    expect(authorizations.locator("img")).to_have_count(0)
+    link = authorizations.get_by_role("link", name=f"Open {name} (opens in a new tab)", exact=True)
+    base = f"/v2/groups/{quote(group_id, safe='')}/workflows" if group_id else "/v2/workspace/workflows"
+    href = f"{base}?{urlencode({'workflow_id': binding['workflow']['id']})}"
+    expect(link).to_have_attribute("href", href)
+    expect(link).to_have_attribute("target", "_blank")
+    expect(link).to_have_attribute("rel", "noopener noreferrer")
+    expect(authorizations.get_by_role("button", name="Revoke", exact=True)).to_be_visible()
+    original = page.url
+    link.focus()
+    expect(link).to_be_focused()
+    with page.expect_popup() as opened:
+        link.press("Enter")
+    popup = opened.value
+    popup.wait_for_load_state()
+    assert popup.url == ORIGIN + href
+    opener = popup.evaluate("window.opener")
+    assert opener is None
+    assert page.url == original
+    popup.close()
+    dimensions = page.evaluate("({ width: innerWidth, content: document.documentElement.scrollWidth })")
+    assert dimensions["content"] <= dimensions["width"] + 1
+    artifacts = Path(__file__).resolve().parent / "artifacts" / "workflow-authorizations"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    authorizations.screenshot(path=str(artifacts / f"v2-{width}-{theme}-{'group' if group_id else 'personal'}.png"))
+    assert not api.binding_revocations
+
+
+def test_named_authorization_still_requires_confirmation_to_revoke(settings_ui):
+    page, api = settings_ui
+    api.bindings = [workflow_authorization()]
+    mount(page, api)
+    authorizations = page.get_by_role("region", name="Workflow authorizations")
+    authorizations.get_by_role("button", name="Revoke", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog).to_contain_text("This workflow revision can no longer use your Microsoft 365 account")
+    assert not api.binding_revocations
+    dialog.get_by_role("button", name="Cancel", exact=True).click()
+    assert not api.binding_revocations
+    authorizations.get_by_role("button", name="Revoke", exact=True).click()
+    page.get_by_role("dialog").get_by_role("button", name="Revoke", exact=True).click()
+    expect(authorizations).to_contain_text("Decision: revoked.")
+    expect(authorizations.get_by_role("button", name="Revoke", exact=True)).to_have_count(0)
+    expect(authorizations.get_by_role("link", name="Open Morning mail digest", exact=False)).to_be_visible()
+    assert api.binding_revocations == [{
+        "path": "/api/m365/bindings/authorization/revoke", "body": {}, "csrf": CSRF_TOKEN,
+    }]
+
+
+def test_authorizations_can_page_past_hidden_workflows(settings_ui):
+    page, api = settings_ui
+    api.binding_pages = {
+        "": {"items": [], "continuation_token": "next"},
+        "next": {"items": [workflow_authorization()], "continuation_token": None},
+    }
+    mount(page, api)
+    authorizations = page.get_by_role("region", name="Workflow authorizations")
+    expect(authorizations).to_contain_text("No accessible workflows on this page")
+    expect(authorizations).not_to_contain_text("No workflow authorizations.")
+    authorizations.get_by_role("button", name="Load more authorizations").click()
+    expect(authorizations.get_by_text("Morning mail digest", exact=True)).to_be_visible()
+    expect(authorizations.get_by_role("button", name="Load more authorizations")).to_have_count(0)
+
+
+@pytest.mark.parametrize("invalid", [False, True])
+def test_authorization_errors_do_not_turn_into_an_empty_success(settings_ui, invalid):
+    page, api = settings_ui
+    api.bindings_error = not invalid
+    if invalid:
+        api.bindings = [{"id": "invalid", "workflow": {"scope_type": "group", "group_id": None}}]
+    mount(page, api)
+    authorizations = page.get_by_role("region", name="Workflow authorizations")
+    expect(authorizations).to_contain_text(
+        "Workflow authorizations could not be read." if invalid else "Workflow authorizations are temporarily unavailable."
+    )
+    expect(authorizations).not_to_contain_text("No workflow authorizations.")
