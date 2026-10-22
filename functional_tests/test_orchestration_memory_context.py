@@ -107,13 +107,28 @@ class OrchestrationMemoryTests(unittest.TestCase):
         result = self.memory.load_orchestration_memory(
             'user1', self.conversation, 'Turn that into a handover checklist.', settings=self.settings,
             seeds={'doc_scope': 'all', 'active_group_ids': ['group1']},
-            conversation_context={'messages': [{'role': 'user', 'content': 'Working on CB-27-037B92.'}]},
+            conversation_context={
+                'messages': [
+                    {
+                        'id': 'u1',
+                        'role': 'user',
+                        'content': "I'm working on Civic Bridge review CB-27-DB8373 for FED-PROGRAM-027.",
+                    },
+                    {
+                        'id': 'a1',
+                        'role': 'assistant',
+                        'content': 'Civic Bridge desk brief (CB-27-DB8373)',
+                    },
+                ],
+            },
         )
         self.assertEqual(result['scope'], {'type': 'user', 'id': 'user1'})
         self.assertIn('user1', json.dumps(result['context_messages']))
         self.assertEqual(self.fact_calls[0]['scope_type'], 'user')
         self.assertEqual(self.fact_calls[0]['scope_id'], 'user1')
-        self.assertIn('CB-27-037B92', self.fact_calls[0]['context_text'])
+        self.assertIn('CB-27-DB8373', self.fact_calls[0]['query_text'])
+        self.assertIn('Turn that into a handover checklist.', self.fact_calls[0]['query_text'])
+        self.assertIn('CB-27-DB8373', self.fact_calls[0]['context_text'])
         self.group_membership.assert_not_called()
 
     def test_disabled_memory_performs_no_reads_or_embeddings(self):

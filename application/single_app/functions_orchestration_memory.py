@@ -116,8 +116,8 @@ def _memory_conversation_context_text(conversation, conversation_context=None):
 
 
 def load_orchestration_memory(
-    user_id, conversation, query_text, *, settings, seeds=None, expected_audience=None,
-    conversation_context=None,
+    user_id, conversation, query_text, *, settings, seeds=None,
+    expected_audience=None, conversation_context=None,
 ):
     """Recall existing instructions/facts without autosave, backfill, or new privileges."""
     audience = validate_memory_audience(conversation, user_id, expected_audience)
@@ -146,12 +146,45 @@ def load_orchestration_memory(
     scope_id = group_id or user_id
     context_text = _memory_conversation_context_text(conversation, conversation_context)
 
+    effective_query_text = str(query_text or '').strip()
+    if effective_query_text and conversation_context:
+        raw_messages = (
+            conversation_context.get('messages')
+            if isinstance(conversation_context, dict)
+            else conversation_context
+        )
+        if isinstance(raw_messages, list):
+            existing_ids = {
+                word for word in (
+                    token.strip(".,:;!?()[]{}\"'`")
+                    for token in effective_query_text.lower().split()
+                )
+                if word and any(ch.isdigit() for ch in word) and any(ch.isalpha() for ch in word)
+            }
+            prior_ids = []
+            for history_msg in raw_messages:
+                if not isinstance(history_msg, dict) or history_msg.get('role') != 'user':
+                    continue
+                for token in str(history_msg.get('content') or '').split():
+                    cleaned = token.strip(".,:;!?()[]{}\"'`")
+                    lowered = cleaned.lower()
+                    if (
+                        lowered
+                        and any(ch.isdigit() for ch in lowered)
+                        and any(ch.isalpha() for ch in lowered)
+                        and lowered not in existing_ids
+                    ):
+                        existing_ids.add(lowered)
+                        prior_ids.append(cleaned)
+            if prior_ids:
+                effective_query_text = f"{effective_query_text} {' '.join(prior_ids)}"
+
     # The disabled path must not initialize memory storage or embedding dependencies.
     from functions_fact_memory_context import build_fact_memory_prompt_payload
 
     try:
         payload = build_fact_memory_prompt_payload(
-            scope_id=scope_id, scope_type=scope_type, query_text=query_text,
+            scope_id=scope_id, scope_type=scope_type, query_text=effective_query_text or query_text,
             conversation_id=conversation['id'], agent_id=None,
             enabled=True, read_only=True, authorized_user_id=user_id,
             **({'context_text': context_text} if context_text else {}),

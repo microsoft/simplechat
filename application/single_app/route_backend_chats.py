@@ -15297,10 +15297,36 @@ def register_route_backend_chats(bp):
             if isinstance(msg, dict) and msg.get('role') == 'user' and str(msg.get('content') or '').strip()
         ]
         context_text = '\n'.join(prior_user_texts) if len(prior_user_texts) > 1 else None
+        effective_query_text = str(query_text or '').strip()
+        if effective_query_text and isinstance(conversation_history, list):
+            existing_ids = {
+                word for word in (
+                    token.strip(".,:;!?()[]{}\"'`")
+                    for token in effective_query_text.lower().split()
+                )
+                if word and any(ch.isdigit() for ch in word) and any(ch.isalpha() for ch in word)
+            }
+            prior_ids = []
+            for history_msg in conversation_history:
+                if not isinstance(history_msg, dict) or history_msg.get('role') != 'user':
+                    continue
+                for token in str(history_msg.get('content') or '').split():
+                    cleaned = token.strip(".,:;!?()[]{}\"'`")
+                    lowered = cleaned.lower()
+                    if (
+                        lowered
+                        and any(ch.isdigit() for ch in lowered)
+                        and any(ch.isalpha() for ch in lowered)
+                        and lowered not in existing_ids
+                    ):
+                        existing_ids.add(lowered)
+                        prior_ids.append(cleaned)
+            if prior_ids:
+                effective_query_text = f"{effective_query_text} {' '.join(prior_ids)}"
         prompt_payload = build_fact_memory_prompt_payload(
             scope_id=scope_id,
             scope_type=scope_type,
-            query_text=query_text,
+            query_text=effective_query_text or query_text,
             conversation_id=conversation_id,
             agent_id=agent_id,
             enabled=enabled,
@@ -28775,7 +28801,8 @@ def build_conversation_history_segments(
         )
         summary_prompt_older = (
             "Summarize the following conversation history concisely (around 50-100 words), "
-            "focusing on key facts, decisions, or context that might be relevant for future turns. "
+            "focusing on key facts, exact reference codes/identifiers, numerical figures/budgets/thresholds, "
+            "readiness/status values, named owners/roles, decisions, or context that might be relevant for future turns. "
             "Do not add any introductory phrases like 'Here is a summary'.\n\n"
             "Conversation History:\n"
         )
@@ -28807,17 +28834,38 @@ def build_conversation_history_segments(
             try:
                 # Older user and assistant text is conversation content; only this
                 # request's input reads guard the summary model call.
-                summary_response_older = guard_model_callable(
+                summary_callable = guard_model_callable(
                     gpt_client.chat.completions.create, (),
-                )(
-                    model=gpt_model,
-                    messages=[
-                        {"role": "system", "content": "Summarize older conversation context for future chat turns."},
-                        {"role": "user", "content": summary_prompt_older},
-                    ],
-                    max_tokens=150,
-                    temperature=0.3,
                 )
+                summary_messages = [
+                    {"role": "system", "content": "Summarize older conversation context for future chat turns."},
+                    {"role": "user", "content": summary_prompt_older},
+                ]
+                model_lower = str(gpt_model or "").strip().lower()
+                is_reasoning_summary_model = any(
+                    model_lower.startswith(prefix) or f"-{prefix}" in model_lower
+                    for prefix in ("gpt-5", "o1", "o3", "o4")
+                )
+                if is_reasoning_summary_model:
+                    summary_response_older = summary_callable(
+                        model=gpt_model,
+                        messages=summary_messages,
+                        max_completion_tokens=400,
+                    )
+                else:
+                    try:
+                        summary_response_older = summary_callable(
+                            model=gpt_model,
+                            messages=summary_messages,
+                            max_tokens=150,
+                            temperature=0.3,
+                        )
+                    except Exception:
+                        summary_response_older = summary_callable(
+                            model=gpt_model,
+                            messages=summary_messages,
+                            max_completion_tokens=400,
+                        )
                 summary_of_older = summary_response_older.choices[0].message.content.strip()
                 debug_print(f"Generated summary: {summary_of_older}")
             except ScreeningError:
