@@ -28,6 +28,20 @@ from test_support.versioning import assert_app_version_at_least
 
 class OrchestrationMemoryTests(unittest.TestCase):
     def setUp(self):
+        original_memory = sys.modules.get('functions_orchestration_memory')
+        original_composition = sys.modules.get('functions_orchestration_composition')
+
+        def restore_modules():
+            if original_memory is None:
+                sys.modules.pop('functions_orchestration_memory', None)
+            else:
+                sys.modules['functions_orchestration_memory'] = original_memory
+            if original_composition is None:
+                sys.modules.pop('functions_orchestration_composition', None)
+            else:
+                sys.modules['functions_orchestration_composition'] = original_composition
+
+        self.addCleanup(restore_modules)
         with stubbed_config(cognitive_services_scope='https://cognitiveservices.azure.com/.default'):
             sys.modules.pop('functions_orchestration_memory', None)
             sys.modules.pop('functions_orchestration_composition', None)
@@ -88,6 +102,17 @@ class OrchestrationMemoryTests(unittest.TestCase):
         self.assertIn('group1', json.dumps(result['context_messages']))
         self.assertEqual(self.fact_calls[0]['scope_type'], 'group')
         self.assertEqual(self.fact_calls[0]['scope_id'], 'group1')
+
+    def test_personal_all_scope_with_active_group_reads_user_memory(self):
+        result = self.memory.load_orchestration_memory(
+            'user1', self.conversation, 'Turn that into a handover checklist.', settings=self.settings,
+            seeds={'doc_scope': 'all', 'active_group_ids': ['group1']},
+        )
+        self.assertEqual(result['scope'], {'type': 'user', 'id': 'user1'})
+        self.assertIn('user1', json.dumps(result['context_messages']))
+        self.assertEqual(self.fact_calls[0]['scope_type'], 'user')
+        self.assertEqual(self.fact_calls[0]['scope_id'], 'user1')
+        self.group_membership.assert_not_called()
 
     def test_disabled_memory_performs_no_reads_or_embeddings(self):
         result = self.memory.load_orchestration_memory(
@@ -209,6 +234,10 @@ def test_editing_refreshes_memory_without_persisting_raw_prompt_context(harness,
     assert len(calls) == 2
     assert "NEWLY SAVED MEMORY" in json.dumps(harness.model_calls[-1]["messages"])
     assert "NEWLY SAVED MEMORY" not in json.dumps(harness.read())
+    assert done.get("agent_citations") == [{"plugin_name": "fact_memory", "id": "fact-1"}]
+    messages = harness.assistant_messages()
+    assert len(messages) == 1
+    assert messages[0].get("agent_citations") == [{"plugin_name": "fact_memory", "id": "fact-1"}]
 
 
 def test_memory_disabled_during_execution_removes_final_context_and_citations(harness, monkeypatch):

@@ -117,7 +117,7 @@ def load_orchestration_memory(
 
     seeds = seeds or {}
     group_ids = seeds.get('active_group_ids') or []
-    group_id = group_ids[0] if group_ids and seeds.get('doc_scope', 'all') in ('all', 'group') else None
+    group_id = group_ids[0] if group_ids and seeds.get('doc_scope') == 'group' else None
     if group_id and not settings.get('enable_group_workspaces', False):
         raise OrchestrationMemoryError(
             'The selected group memory scope is not enabled.', code='memory_scope_unavailable',
