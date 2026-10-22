@@ -670,7 +670,7 @@ def _agent_profile(agent, runtime_pool, governed_keys):
     }
 
 
-def _agent_entries(user_id, settings, readers, taken):
+def _agent_entries(user_id, settings, readers, taken, *, request_text=None):
     if not (settings.get('enable_semantic_kernel') and settings.get('allow_user_agents')):
         return []
     merge_global = bool(settings.get('merge_global_semantic_kernel_with_workspace'))
@@ -711,11 +711,16 @@ def _agent_entries(user_id, settings, readers, taken):
     personal_pool = [('personal', action) for action in personal_actions]
     global_pool = [('global', action) for action in global_actions]
 
+    named = _named_by(request_text)
     entries = []
     for agent, is_global in sorted(
         candidates,
-        key=lambda item: (item[1], str(item[0].get('display_name') or item[0].get('name') or '').casefold(),
-                          str(item[0].get('id'))),
+        key=lambda item: (
+            not named(item[0]),
+            item[1],
+            str(item[0].get('display_name') or item[0].get('name') or '').casefold(),
+            str(item[0].get('id')),
+        ),
     ):
         runtime_pool = global_pool if is_global else [*personal_pool, *(global_pool if merge_global else ())]
         try:
@@ -758,12 +763,16 @@ def _agent_entries(user_id, settings, readers, taken):
 # File Sync sources, documents and existing workflows
 # ---------------------------------------------------------------------------
 
-def _source_entries(user_id, settings, user_info, readers, taken):
+def _source_entries(user_id, settings, user_info, readers, taken, *, request_text=None):
+    named = _named_by(request_text)
+    sources = [
+        source for source in readers['sources'](user_id, settings, user_info) or ()
+        if isinstance(source, dict) and source.get('enabled') is not False
+    ]
+    sources.sort(key=lambda source: not named(source))
     entries = []
     seen = set()
-    for source in readers['sources'](user_id, settings, user_info) or ():
-        if not isinstance(source, dict) or source.get('enabled') is False:
-            continue
+    for source in sources:
         scope_type = source.get('scope_type')
         scope_id = _record_id(source.get('scope_id'))
         source_id = _record_id(source.get('source_id'))
@@ -874,14 +883,17 @@ def _match_text(value):
 
 
 def _named_by(request_text):
-    """Return whether a workflow's whole name appears in ``request_text``, as a predicate."""
+    """Return whether an entry's whole name appears in ``request_text``, as a predicate."""
     text = _match_text(request_text)
 
-    def named(workflow):
-        name = _match_text(workflow.get('name'))
-        if len(name) < WORKFLOW_NAME_MATCH_MIN_LENGTH or not text:
-            return False
-        return re.search(rf'(?<!\w){re.escape(name)}(?!\w)', text) is not None
+    def named(entry):
+        for field in ('name', 'display_name'):
+            name = _match_text(entry.get(field))
+            if len(name) >= WORKFLOW_NAME_MATCH_MIN_LENGTH and text and (
+                re.search(rf'(?<!\w){re.escape(name)}(?!\w)', text) is not None
+            ):
+                return True
+        return False
 
     return named
 
@@ -1020,6 +1032,7 @@ def build_workflow_planning_context(settings, *, user_id, user_info, conversatio
     return _with_handoff_marker(
         context, settings=settings, user_id=user_id, readers=readers, documents=documents,
         scope_seeds=scope_seeds, conversation=conversation, time_zone=time_zone, now=now,
+        request_text=request_text,
     )
 
 
@@ -1182,8 +1195,10 @@ def _proposal_planning_context(settings, context, *, user_id, user_info, time_zo
         }
         default_model_valid = bool(readers['default_model'](settings))
         groups = {
-            'agents': _agent_entries(user_id, settings, readers, taken),
-            'sources': _source_entries(user_id, settings, user_info, readers, taken),
+            'agents': _agent_entries(user_id, settings, readers, taken, request_text=request_text),
+            'sources': _source_entries(
+                user_id, settings, user_info, readers, taken, request_text=request_text,
+            ),
             'documents': _document_entries(user_id, documents, taken),
             'workflows': _workflow_entries(
                 user_id, readers, taken, rank_for_runs=rank_for_runs, request_text=request_text,
@@ -1300,7 +1315,7 @@ def _shared_agent_readers(readers):
     return {**readers, **{name: shared(name) for name in ('personal_agents', 'global_agents', 'actions')}}
 
 
-def _handoff_agent_entries(user_id, settings, readers, taken):
+def _handoff_agent_entries(user_id, settings, readers, taken, *, request_text=None):
     """The agents a hand-off task may name, each marked with whether a hand-off can run it.
 
     The proposal catalog's agents, listed again from the same reads so the hand-off part stands
@@ -1322,7 +1337,7 @@ def _handoff_agent_entries(user_id, settings, readers, taken):
         'global_agents': lambda: remembered(True, readers['global_agents']()),
     }
     items = []
-    for item in _agent_entries(user_id, settings, agent_readers, taken):
+    for item in _agent_entries(user_id, settings, agent_readers, taken, request_text=request_text):
         record = item['record']
         agent = stored.get((record['is_global'], record['id'])) or {}
         local = str(agent.get('agent_type') or 'local') == 'local' and not item['capabilities']['needs_run_as']
@@ -1350,7 +1365,7 @@ def _bounded_handoff_catalog(groups):
 
 
 def _with_handoff_marker(context, *, settings, user_id, readers, documents, scope_seeds, conversation,
-                         time_zone=None, now=None):
+                         time_zone=None, now=None, request_text=None):
     """Add the self-contained part a hand-off needs: its documents, workspaces, agents and limits.
 
     The documents the user named this turn, the workspaces this chat searches and the agents a
@@ -1367,7 +1382,9 @@ def _with_handoff_marker(context, *, settings, user_id, readers, documents, scop
         groups = {
             'documents': _document_entries(user_id, documents, taken)[:HANDOFF_MAX_DOCUMENTS],
             'scopes': _scope_entries(user_id, settings, readers, scope_seeds, conversation, taken),
-            'agents': _handoff_agent_entries(user_id, settings, readers, taken),
+            'agents': _handoff_agent_entries(
+                user_id, settings, readers, taken, request_text=request_text,
+            ),
         }
     except Exception as exc:
         _log_context(
