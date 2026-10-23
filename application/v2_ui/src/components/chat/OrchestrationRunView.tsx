@@ -25,6 +25,7 @@ import { useMemo } from 'react';
 import { clsx } from 'clsx';
 import { Archive, FileText, RotateCcw, X } from 'lucide-react';
 import { Toggle } from '../ui/primitives';
+import { TaskCompletenessDetails } from '../ui/TaskCompletenessDetails';
 import {
     selectEdits,
     selectCanEditPlan,
@@ -469,6 +470,7 @@ export function OrchestrationRunView({
                         {summary ? (
                             <p className="mt-1 text-xs text-text-2">{summary}</p>
                         ) : null}
+                        <TaskCompletenessDetails value={stepRuntime[step.step_id]?.task_completeness} />
 
                         {isAction ? (
                             <dl className="mt-2 text-xs" data-testid="orchestration-action-input">

@@ -418,6 +418,8 @@ def build_agent_citation_artifact_documents(
 
     for index, citation in enumerate(agent_citations or [], start=1):
         serializable_citation = make_json_serializable(citation)
+        if isinstance(serializable_citation, dict):
+            serializable_citation.pop('_verification_evidence', None)
         artifact_id = f"{assistant_message_id}_artifact_{index}"
 
         compact_citations.append(

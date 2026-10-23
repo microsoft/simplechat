@@ -8,6 +8,7 @@ import {
 } from "../chat/chat-documents.js";
 import { escapeHtml, truncateDescription, setupViewToggle, switchViewContainers } from "./view-utils.js";
 import { createMicrosoft365RunAsControl } from "./workspace-m365-workflows.js";
+import { appendWorkflowCompleteness } from "../workflow/completeness.js";
 
 const workflowWorkspaceConfig = {
     scope: "personal",
@@ -4876,6 +4877,9 @@ function renderRunHistory(runs) {
             </tr>
         `;
     }).join("");
+    for (const [index, run] of runs.entries()) {
+        appendWorkflowCompleteness(workflowHistoryBody.children[index]?.children[3], run.task_results);
+    }
 }
 
 async function resumeFailedWorkflowRun(runId) {

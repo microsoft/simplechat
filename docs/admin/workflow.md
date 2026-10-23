@@ -35,6 +35,22 @@ user has.
   everyone at once.
 - If you plan to require group assignment, know which groups belong on the list.
 
+## Answer completeness
+
+Implemented in version **0.261.382**. Generated task answers are checked against
+their instructions and available evidence before downstream use. Schema validity
+alone does not prove that the requested facts were included.
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Check Workflow Answer Completeness | Independently assess the answer and attempt grounded corrections for omissions. | On | `enable_workflow_completeness_check`; adds model calls and can report uncertain judgments. |
+| Maximum Workflow Answer Corrections | Limit checked answer-only repairs per task without replaying tools. | 2 | `workflow_completeness_max_corrections`; 0-5, with zero meaning check-only. |
+
+Each correction is checked again. After the allowance is exhausted, incomplete
+required output is not eligible for dependent tasks. Disabling the feature restores
+previous behavior. See [model-assisted completeness](../explanation/features/MODEL_ASSISTED_COMPLETENESS.md)
+for failure categories, evidence limits and durable recovery.
+
 ## Workflow {#workflow}
 
 ### Workflow {#workflow-settings-section}

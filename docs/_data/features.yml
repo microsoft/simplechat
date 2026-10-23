@@ -426,6 +426,38 @@ agents:
   reference:
     - title: "Actions reference"
       url: /reference/actions/
+workflow-answer-completeness:
+  name: "Workflow answer completeness"
+  area: "Agents and actions"
+  audience: "End users"
+  summary: "Checks generated workflow answers against requested requirements and repairs omissions from available evidence before downstream use."
+  why: "A schema-valid answer can omit requested facts. Independent checking catches that gap without replaying tools, and makes exhausted or unavailable verification visible."
+  default_state: "Enabled"
+  admin_tab: workflow
+  setting_keys:
+    - enable_workflow_completeness_check
+  guides:
+    - title: "Create a workflow"
+      url: /guides/create-a-workflow/
+  reference:
+    - title: "Workflow settings"
+      url: /admin/workflow/
+orchestration-answer-completeness:
+  name: "Orchestration answer completeness"
+  area: "Chat"
+  audience: "End users"
+  summary: "Checks prepared orchestration content before delivery, with bounded grounded corrections and a check after every correction."
+  why: "Use this to catch requested content missing from otherwise valid compositions before dependent steps or file renderers consume it. The shared allowance prevents format, visual and semantic repair loops from multiplying attempts."
+  default_state: "Enabled"
+  admin_tab: orchestration
+  setting_keys:
+    - enable_chat_orchestration_completeness_check
+  guides:
+    - title: "Use chat orchestration"
+      url: /admin/orchestration/
+  reference:
+    - title: "Orchestration settings"
+      url: /admin/orchestration/
 workflow-ai-assistant:
   name: "AI workflow assistant"
   area: "Agents and actions"

@@ -1907,6 +1907,8 @@ FAILURE_MESSAGES = {
         'saved. Ask again to read the current result.'
     ),
     'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
+    'completeness_incomplete': 'The answer did not satisfy the requested requirements within its correction allowance.',
+    'completeness_unavailable': 'The answer could not be verified. Review model availability, access and context limits.',
     'search_result_too_large': (
         'The full search response exceeds the retained-result storage budget. No shortened result was '
         'accepted. Narrow the search or select fewer sources and create a new plan.'

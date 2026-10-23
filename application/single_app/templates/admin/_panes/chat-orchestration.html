@@ -29,6 +29,16 @@
                 </div>
 
                 <div class="card mb-3 p-3" id="chat-orchestration-approval-section">
+                    <div class="form-check form-switch mb-2">
+                        <input type="checkbox" class="form-check-input" id="enable_chat_orchestration_completeness_check" name="enable_chat_orchestration_completeness_check" aria-describedby="orchestration-completeness-help" {% if settings.get('enable_chat_orchestration_completeness_check', true) %}checked{% endif %} />
+                        <label class="form-check-label" for="enable_chat_orchestration_completeness_check">Check answer completeness</label>
+                    </div>
+                    <p class="form-text" id="orchestration-completeness-help">Check requested content before delivery and correct omissions using available evidence. Model-assisted checking adds model calls and can be uncertain. It does not replay tools.</p>
+                    <div class="mb-4">
+                        <label class="form-label" for="chat_orchestration_completeness_max_corrections">Maximum answer corrections per composition</label>
+                        <input type="number" class="form-control" id="chat_orchestration_completeness_max_corrections" name="chat_orchestration_completeness_max_corrections" min="0" max="5" step="1" value="{{ settings.get('chat_orchestration_completeness_max_corrections', 2) }}" aria-describedby="orchestration-corrections-help" />
+                        <div class="form-text" id="orchestration-corrections-help">Default: 2, shared by format, visual and completeness repairs. Every correction is checked again. Zero checks without repairing; disabling restores the previous single structural/visual correction.</div>
+                    </div>
                     <h5>
                         <i class="bi bi-check2-square me-2"></i>Plan Approval
                     </h5>

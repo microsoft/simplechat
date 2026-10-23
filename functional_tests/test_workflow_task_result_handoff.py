@@ -211,7 +211,7 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
         "DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT": "per_document",
         "normalize_document_action_analysis_mode": lambda value: value or "combined",
         "get_document_action_max_documents": lambda *args, **kwargs: 10,
-        "get_settings": lambda: {},
+        "get_settings": lambda: {"enable_workflow_completeness_check": False},
         "get_document_action_config": lambda source, **kwargs: source.get("document_action") or {"type": "none"},
         "get_document_action_max_documents_by_type": lambda *args, **kwargs: {},
         "get_enabled_document_action_types": lambda **kwargs: ["none", "analyze"],

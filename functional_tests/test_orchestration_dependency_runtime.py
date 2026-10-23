@@ -1,7 +1,7 @@
 # test_orchestration_dependency_runtime.py
 """Real Gather / Reason / Render compiler, executor, composition, retained readers and checkpoints.
 
-Version: 0.261.358
+Version: 0.261.380
 Implemented in: 0.261.127
 Pending-Gather regression implemented in: 0.261.129
 Single orchestration contract updated in: 0.261.139
@@ -27,7 +27,10 @@ from test_support.app_stubs import stubbed_app_imports
 from test_support.orchestration_research import document_action_policy_module
 
 
-SETTINGS = {'enable_user_workspace': True, 'chat_orchestration_max_steps': 8}
+SETTINGS = {
+    'enable_user_workspace': True, 'chat_orchestration_max_steps': 8,
+    'enable_chat_orchestration_completeness_check': False,
+}
 
 
 @pytest.fixture

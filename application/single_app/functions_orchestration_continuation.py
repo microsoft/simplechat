@@ -540,7 +540,7 @@ class ContinuationCheckpoints(ExecutionCheckpoints):
                 status=row["status"], failure=safe_failure(row.get("failure") or build_failure("step_failed")),
                 **({"task_result": TaskResult.from_dict(row["task_result"])}
                    if row.get("task_result") is not None and row["status"] == "failed" else {}),
-            )
+            ) | ({"task_completeness": deepcopy(row["task_completeness"])} if row.get("task_completeness") else {})
             for row in self.records
             if row["step_id"] not in self.reused and row.get("status") in {"failed", "cancelled"}
         }
