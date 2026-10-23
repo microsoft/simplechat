@@ -1,7 +1,7 @@
 # test_logged_core_plugins.py
 """
 Functional test for logged core Semantic Kernel plugins.
-Version: 0.239.153
+Version: 0.261.380
 Implemented in: 0.239.153
 
 This test ensures that the SimpleChat subclasses for Semantic Kernel core plugins
@@ -9,7 +9,8 @@ emit plugin invocation logs for inherited and custom methods and that invocation
 callbacks can be converted into thought records for both success and failure cases.
 """
 
-import asyncio
+from pathlib import Path
+import subprocess
 import sys
 import types
 
@@ -27,47 +28,33 @@ def create_invocation(plugin_name, function_name, parameters, result=None, succe
     )
 
 
-def install_test_stubs():
-    """Install lightweight stubs for application services used by the logger."""
-    functions_appinsights = types.ModuleType('functions_appinsights')
-    functions_appinsights.log_event = lambda *args, **kwargs: None
-    functions_appinsights.get_appinsights_logger = lambda: None
-    sys.modules['functions_appinsights'] = functions_appinsights
-
-    functions_authentication = types.ModuleType('functions_authentication')
-    functions_authentication.get_current_user_id = lambda: None
-    sys.modules['functions_authentication'] = functions_authentication
-
-    functions_debug = types.ModuleType('functions_debug')
-    functions_debug.debug_print = lambda *args, **kwargs: None
-    sys.modules['functions_debug'] = functions_debug
-
-
 class FakeThoughtTracker:
     """Capture thought writes in memory for assertions."""
 
     def __init__(self):
         self.events = []
 
-    def add_thought(self, step_type, content, detail=None):
+    def add_thought(self, step_type, content, detail=None, activity=None):
         self.events.append({
             'step_type': step_type,
             'content': content,
             'detail': detail,
+            'activity': activity,
         })
 
 
 def test_logged_core_plugins():
     """Validate logged core plugin subclasses and thought callback mapping."""
-    repo_root = r'c:\Repos\simplechatmsft\application\single_app'
-    semantic_kernel_repo_root = r'c:\Repos\semantic-kernel\python'
-    if repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
-    if semantic_kernel_repo_root not in sys.path:
-        sys.path.insert(0, semantic_kernel_repo_root)
+    completed = subprocess.run(
+        [sys.executable, "-B", str(Path(__file__).resolve()), "--probe"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
-    install_test_stubs()
 
+def _logged_core_plugins_probe(loop):
+    """Imports are deferred until the fresh-process offline bootstrap is active."""
     from semantic_kernel_plugins.math_plugin import MathPlugin
     from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
     from semantic_kernel_plugins.plugin_invocation_thoughts import (
@@ -98,11 +85,15 @@ def test_logged_core_plugins():
     wait_plugin = WaitPlugin()
 
     print('Testing logged core plugin invocations...')
-    assert math_plugin.add('2', '3') == 5.0
-    assert math_plugin.multiply(4, 5) == 20.0
-    assert text_plugin.trim('  hello  ') == 'hello'
-    assert isinstance(time_plugin.date(), str)
-    asyncio.run(wait_plugin.wait('0'))
+    addition = math_plugin.add('2', '3')
+    multiplication = math_plugin.multiply(4, 5)
+    trimmed = text_plugin.trim('  hello  ')
+    date = time_plugin.date()
+    assert addition == '5'
+    assert multiplication == '20'
+    assert trimmed == 'hello'
+    assert isinstance(date, str)
+    loop.run_until_complete(wait_plugin.wait('0'))
 
     try:
         math_plugin.divide('1', '0')
@@ -134,7 +125,7 @@ def test_logged_core_plugins():
 
     assert any('Invoking MathPlugin.Add' in content for content in thought_contents)
     assert any('Invoking WaitPlugin.wait' in content for content in thought_contents)
-    assert any('Kernel performed math: 2 + 3 = 5.0' in content for content in thought_contents)
+    assert any('Kernel performed math: 2 + 3 = 5' in content for content in thought_contents)
     assert any('Kernel invoked wait for 0 seconds' in content for content in thought_contents)
     assert any('Kernel performed math: 1 / 0' in content for content in thought_contents)
     assert any(
@@ -173,5 +164,13 @@ def test_logged_core_plugins():
 
 
 if __name__ == '__main__':
-    success = test_logged_core_plugins()
-    sys.exit(0 if success else 1)
+    if sys.argv[1:] == ['--probe']:
+        root = Path(__file__).resolve().parents[1]
+        sys.path.insert(0, str(root / 'functional_tests'))
+        sys.path.insert(0, str(root / 'application' / 'single_app'))
+        from test_support.offline_bootstrap import offline_app_imports
+
+        with offline_app_imports() as offline:
+            _logged_core_plugins_probe(offline.loop)
+    else:
+        test_logged_core_plugins()
