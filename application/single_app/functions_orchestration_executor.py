@@ -607,6 +607,8 @@ def _step_record(context, step, index, status, result, started_at, completed_at,
         record['saved_analyses'] = deepcopy(result['saved_analyses'])
     if result.get('model_binding'):
         record['model_binding'] = deepcopy(result['model_binding'])
+    if result.get('task_completeness'):
+        record['task_completeness'] = deepcopy(result['task_completeness'])
     record['role'] = step['role']
     task = result.get('task_result')
     if task is not None:
@@ -1405,6 +1407,14 @@ def _execute_dependency_plan(
         context.durable_checkpoints = True
         checkpoints = checkpoints(context) if callable(checkpoints) else checkpoints
         checkpoints.initialize()
+    context.completeness_store = getattr(checkpoints, 'store', None)
+    context.completeness_binding = getattr(checkpoints, 'binding', None)
+    context.completeness_final_step = (plan.get('final_response') or {}).get('step_id')
+    context.completeness_final_output = (plan.get('final_response') or {}).get('output_name')
+    context.completeness_plan_scope = [
+        {'enabled': step['enabled'], 'instruction': step.get('arguments', {}).get('instruction', step.get('title', ''))}
+        for step in steps
+    ]
     deadline = execution_deadline(context)
     if deadline.tzinfo is None:
         raise ResultContractError('result_deadline_invalid')
@@ -1605,6 +1615,18 @@ def _execute_dependency_plan(
                                 input_fingerprint=input_fingerprint, finished_stop=finished_stop,
                                 execution_control=execution_control,
                             )
+                    if (
+                        settings.get('enable_chat_orchestration_completeness_check', True)
+                        and step_id == context.completeness_final_step
+                        and step['capability_id'] != 'compose'
+                        and result.get('status') in (STEP_STATUS_COMPLETED, STEP_STATUS_PARTIAL)
+                    ):
+                        # Optional final-report verification loads only in the execution path.
+                        from functions_orchestration_composition import check_retained_final_response
+
+                        result = check_retained_final_response(
+                            step, result, context, settings=settings, emit=emit, cancel_requested=step_cancel,
+                        )
                 except (MixedSourceCancellationError, OrchestrationExecutionStopped):
                     step_cancel()
                     result = build_step_result(
@@ -1659,6 +1681,7 @@ def _execute_dependency_plan(
             context.task_results.pop(step_id, None)
             context.pending_results.pop(step_id, None)
         if status in (STEP_STATUS_FAILED, STEP_STATUS_CANCELLED) or result.get('failure'):
+            completeness = result.get('task_completeness')
             delivery = {
                 field: deepcopy(result[field]) for field in ('outputs', 'output_error')
                 if step['role'] == 'render' and field in result
@@ -1672,6 +1695,8 @@ def _execute_dependency_plan(
                 task_result=result.get('task_result') if status == STEP_STATUS_FAILED else None,
             )
             result.update(delivery)
+            if completeness:
+                result['task_completeness'] = completeness
             context.failures.append(failure)
         if result.get('replan_hint') and len(hints) < _setting_int(
             settings, 'chat_orchestration_max_replans', _DEFAULT_MAX_REPLANS,

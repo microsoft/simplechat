@@ -1624,6 +1624,8 @@ def get_settings(use_cosmos=False, include_source=False):
         # This is the plan/approve/execute layer over chat, and an administrator reading
         # the settings document should not have to guess which is which.
         'enable_chat_orchestration': False,
+        'enable_chat_orchestration_completeness_check': True,
+        'chat_orchestration_completeness_max_corrections': 2,
         'enable_chat_orchestration_actions': False,
         'chat_orchestration_default_approval_mode': 'manual',
         'chat_orchestration_timed_approval_seconds': 10,
@@ -1687,6 +1689,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'require_member_of_workflow_user': False,
         # The AI workflow assistant in the V2 editor. It only applies where personal workflows do.
         'enable_workflow_ai_assistant': True,
+        'enable_workflow_completeness_check': True,
+        'workflow_completeness_max_corrections': 2,
         # Ask AI in the V2 agent and action editors. Each scope still needs its own permission.
         'enable_agent_ai_assistant': True,
         'enable_action_ai_assistant': True,

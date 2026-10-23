@@ -1,7 +1,7 @@
 # test_workflow_runtime_integration.py
 """
 Functional tests for durable submission and the actual workflow runner.
-Version: 0.261.343
+Version: 0.261.380
 Implemented in: 0.261.111
 
 Queue, recreated worker, task checkpoint, approval, and projections run through
@@ -101,7 +101,7 @@ def integration(monkeypatch):
     services = {
         "definitions": definitions, "runs": runs, "partition": "owner",
         "load_workflow": lambda: definitions.read_item(item=workflow["id"], partition_key="owner"),
-        "settings": lambda: {"allow_user_workflows": True},
+        "settings": lambda: {"allow_user_workflows": True, "enable_workflow_completeness_check": False},
     }
     make_store = lambda wf, run_id: WorkflowRuntimeStore(controls, wf, run_id, clock=clock)
     monkeypatch.setattr(runtime, "_services", lambda wf: services)
@@ -139,7 +139,7 @@ def integration(monkeypatch):
         "_add_workflow_activity_thought": lambda *args, **kwargs: None,
         "_create_workflow_priority_alert": lambda *args, **kwargs: None,
         "log_workflow_run": lambda **kwargs: None,
-        "get_settings": lambda: {"allow_user_workflows": True},
+        "get_settings": lambda: {"allow_user_workflows": True, "enable_workflow_completeness_check": False},
         "get_personal_workflow_run": lambda user_id, run_id: runs.read_item(item=run_id, partition_key=user_id),
         "get_personal_workflow": lambda user_id, workflow_id: services["load_workflow"](),
         "get_workflow_alert_signals": lambda: [],
@@ -182,6 +182,32 @@ def test_background_runner_completes_and_clears_the_active_pointer(integration):
     assert services["load_workflow"]()["conversation_id"] == "conversation-inventory"
     assert make_store(workflow, run_id).read()["state"] == "completed"
     assert len(requests) == 2
+
+
+def test_semantic_failure_does_not_invalidate_completed_effectful_invocation(integration):
+    workflow, runner, services, make_store, clock, requests = integration
+    settings = {"allow_user_workflows": True, "enable_workflow_completeness_check": True}
+    services["settings"] = lambda: settings
+    runner["get_settings"] = lambda: settings
+
+    def incomplete(result, envelope, **kwargs):
+        return result, {**envelope, "task_completeness": {
+            "version": 1, "status": "incomplete", "reason_code": "completeness_requirements_unmet",
+            "corrections": 2, "checks": 3, "max_corrections": 2, "requirements": [],
+        }}
+
+    runner["_check_workflow_completeness"] = incomplete
+    queued = runtime.queue_durable_workflow_run(workflow, actor_user_id="owner")
+    run_id = queued["run"]["id"]
+    runtime.continue_durable_workflow_run(workflow, run_id)
+    saved = services["runs"].read_item(item=run_id, partition_key="owner")
+    control = make_store(workflow, run_id).read()
+    assert saved["status"] == "incomplete"
+    assert control["units"]["task:extract"]["state"] == "completed"
+    assert saved["task_results"][0]["workflow_result"]["task_completeness"]["status"] == "incomplete"
+    assert len(requests) == 1
+    runtime.continue_durable_workflow_run(workflow, run_id)
+    assert len(requests) == 1
 
 
 def test_structured_submission_and_real_runner_use_genuine_runtime_and_task_identities(integration, monkeypatch):

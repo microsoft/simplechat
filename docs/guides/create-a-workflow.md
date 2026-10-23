@@ -4,7 +4,7 @@ title: "Create a workflow"
 description: "Save a repeatable multi-step task that can run manually or on a schedule."
 section: "Guides"
 audience: user
-version: "0.261.343"
+version: "0.261.382"
 ---
 
 ## What this does
@@ -19,6 +19,18 @@ A workflow is an ordered set of instruction tasks that runs with a selected mode
 ## Why you would use this
 
 Use workflows for repeatable work where sequence matters: weekly document checks, multi-stage summaries, or group processes that should run the same way each time. It replaces copying a checklist into chat; it is not ideal for exploratory conversations that need a human decision after every answer.
+
+## Read answer completeness outcomes
+
+From **0.261.382**, run task details can show **Complete**, **Corrected and
+complete**, **Incomplete** or **Verification unavailable** independently of output
+format validation. Expand **Answer completeness** to review requested requirements
+and the number of answer-only corrections. Older runs have no retroactive assessment.
+
+Admins enable this by default with up to two corrections and can choose check-only
+or opt out. Corrections use existing evidence; they do not rerun connectors. A task
+that cannot verify required content does not supply a successful downstream result.
+See [Workflow settings]({{ '/admin/workflow/' | relative_url }}).
 
 ## Before you start
 

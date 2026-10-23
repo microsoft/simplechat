@@ -1,7 +1,7 @@
 # test_orchestration_cosmos_response_contract.py
 """Real orchestration boundaries accept the pinned Cosmos SDK's mapping responses.
 
-Version: 0.261.140
+Version: 0.261.380
 Implemented in: 0.261.140
 
 Authenticated HTTP routes, claims, result/output stores, publication and scheduler
@@ -47,6 +47,70 @@ STATE_CAPITALS = (
     ("Virginia", "Richmond"), ("Washington", "Olympia"), ("West Virginia", "Charleston"),
     ("Wisconsin", "Madison"), ("Wyoming", "Cheyenne"),
 )
+
+
+def test_run_and_step_owner_metadata_remains_sdk_compatible(storage_runtime):
+    """New public completeness metadata leaves mapping and ETag consumers unchanged."""
+    harness = storage_runtime.harness
+    harness.create()
+    owner = harness.run_store
+    conversation = "conversation-1"
+    record = owner.get_orchestration_run("run-1", "owner", conversation)
+    assert record["id"] == "run-1"
+    latest = owner.get_latest_turn_run(conversation, "owner", record["turn_id"])
+    assert latest["id"] == record["id"]
+    listing = owner.list_conversation_runs(conversation, "owner")
+    assert listing[0]["id"] == record["id"]
+    next_index = owner.next_turn_index(conversation, "owner")
+    assert next_index > record["turn_index"]
+    updated = owner.update_orchestration_run("run-1", "owner", {"probe": True}, conversation)
+    assert updated["probe"] is True
+    previous, decision = owner._update_run_decision(
+        "proposal_decisions", "run-1", "owner", conversation, "probe", lambda old: {"status": "accepted"},
+    )
+    assert previous is None and decision["status"] == "accepted"
+    assessment = {"version": 1, "status": "complete", "corrections": 1, "requirements": []}
+    saved = owner.save_orchestration_step("run-1", {
+        "step_id": "probe", "step_index": 0, "status": "completed", "task_completeness": assessment,
+    })
+    loaded = owner.get_orchestration_step_record("run-1", "probe", "owner", conversation)
+    steps = owner.list_run_steps("run-1", "owner", conversation)
+    assert saved["task_completeness"] == loaded["task_completeness"] == steps[0]["task_completeness"]
+
+
+def test_pending_question_owners_keep_sdk_mapping_and_etags(storage_runtime):
+    owner = storage_runtime.harness.run_store
+    conversation = "conversation-1"
+    owner.save_pending_turn_context(
+        conversation, "owner", "legacy-turn", user_message="Question", snapshot={},
+        answered_questions=[], elicitation={"revision": 0}, planning_token_usage={},
+    )
+    legacy = owner.get_pending_turn_context(conversation, "owner", "legacy-turn")
+    assert legacy["user_message"] == "Question"
+    pending = owner.create_pending_elicitation(
+        {"revision": 0}, {"user_message": "Question"}, "owner", conversation, "new-turn",
+    )
+    reread = owner.get_pending_elicitation("owner", conversation, "new-turn")
+    assert reread["_etag"] == pending["_etag"]
+    replacement = owner._replace_pending(reread, {"status": "completed"})
+    assert replacement["_etag"] != reread["_etag"]
+    assert replacement["status"] == "completed"
+
+
+def test_replanning_owners_keep_sdk_mapping_and_atomic_identity(storage_runtime):
+    harness = storage_runtime.harness
+    harness.create()
+    previous = harness.read()
+    record = deepcopy(dict(previous))
+    record.update(id="run-2", run_id="run-2", revision=1)
+    record.pop("_etag")
+    record["plan"] = {**record["plan"], "run_id": "run-2", "plan_id": "plan-2", "revision": 1}
+    published = harness.run_store._publish_replanned_run(record, previous)
+    superseded = harness.read()
+    replay = harness.run_store._replanned_outcome(record, superseded)
+    assert published["id"] == replay["id"] == "run-2"
+    assert replay["parent_run_id"] == previous["id"]
+    assert superseded["superseded_by_run_id"] == "run-2"
 
 
 @pytest.fixture(params=[False, True], ids=["plain-dict", "cosmos-dict"])

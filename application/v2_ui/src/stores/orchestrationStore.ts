@@ -85,6 +85,7 @@ function coerceStepStatus(value: unknown): StepStatus | null {
 
 /** One step's live runtime, driven by `orchestration_step` frames rather than the plan object. */
 export interface StepRuntime {
+    task_completeness?: unknown;
     model_binding?: OrchestrationStep['model_binding'];
     status: StepStatus;
     summary: string;
@@ -887,7 +888,8 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 summary: patch.summary ?? existing.summary,
             };
             if (merged.status === existing.status && merged.summary === existing.summary
-                && merged.reused === existing.reused && merged.failure === existing.failure) {
+                && merged.reused === existing.reused && merged.failure === existing.failure
+                && merged.task_completeness === existing.task_completeness) {
                 return {};
             }
             return {
@@ -905,6 +907,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             return;
         }
         const patch: Partial<StepRuntime> = {};
+        if (event.task_completeness) patch.task_completeness = event.task_completeness;
         if (event.model_binding) patch.model_binding = normalizeModelBinding(event.model_binding);
         if (typeof event.reused === 'boolean') patch.reused = event.reused;
         if (event.failure) patch.failure = normalizeOrchestrationFailure(event.failure);
@@ -1128,6 +1131,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                     summary: typeof record.summary === 'string' ? record.summary : '',
                     reused: record.reused === true,
                     failure: normalizeOrchestrationFailure(record.failure),
+                    task_completeness: record.task_completeness,
                 };
             }
 

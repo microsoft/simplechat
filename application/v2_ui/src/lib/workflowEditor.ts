@@ -836,6 +836,7 @@ export interface WorkflowRunItem {
         authoritative_output?: string;
         consumed_inputs?: WorkflowConsumedInput[];
         document_action_choice?: unknown;
+        task_completeness?: unknown;
     };
     consumed_inputs?: WorkflowConsumedInput[];
     context_budget?: Record<string, unknown>;
