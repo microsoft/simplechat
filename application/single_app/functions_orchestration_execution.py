@@ -1,10 +1,11 @@
 # functions_orchestration_execution.py
 """Headless preparation and guarded publication for saved orchestration attempts.
 
-Version: 0.261.293
+Version: 0.261.380
 Implemented in: 0.261.127
 Shared conversation answers mirrored into the shared thread in: 0.261.270
 Charts gather steps drew are shown, and chart and diagram delivery is checked, in: 0.261.293
+Saved reply verification tolerates lossless Cosmos numeric round trips in: 0.261.380
 
 Every saved attempt uses the Gather / Reason / Render contract; a run from the removed
 legacy contract is refused before any preparation. The ``Harness*`` names below are the
@@ -104,7 +105,9 @@ from content_screening.access import (
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_appinsights import log_chat_execution_outcome, log_event, workflow_log_context
 from functions_orchestration_adapters import resolve_context_source_manifest
-from functions_orchestration_checkpoints import CheckpointError, fingerprint, orchestration_answer_message_id
+from functions_orchestration_checkpoints import (
+    CheckpointError, fingerprint, orchestration_answer_message_id, publication_documents_match,
+)
 from functions_orchestration_context import (
     HISTORY_MAX_MESSAGES,
     CatalogResolutionError,
@@ -1804,7 +1807,9 @@ class HarnessExecution:
         saved = self.lease.message_container.read_item(
             item=message_id, partition_key=self.record["conversation_id"],
         )
-        if fingerprint({key: value for key, value in saved.items() if not key.startswith("_")}) != fingerprint(document):
+        if not publication_documents_match(
+            document, {key: value for key, value in saved.items() if not key.startswith("_")},
+        ):
             raise HarnessExecutionError("message_not_saved")
         # Publication preserves an administrator's earlier retraction of this reply.
         blocked = document.get("role") == "safety"

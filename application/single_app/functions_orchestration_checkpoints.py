@@ -1,8 +1,9 @@
 # functions_orchestration_checkpoints.py
 """Private, immutable step-boundary checkpoints in the run-steps partition.
 
-Version: 0.261.303
+Version: 0.261.380
 Settings fingerprints ignore storage metadata and runtime state in: 0.261.303
+Publication comparisons tolerate lossless Cosmos numeric round trips in: 0.261.380
 The lifecycle row fences every batch, including uncommitted chunks. It survives
 cleanup, so an old worker cannot recreate payloads after conversation deletion.
 Checkpoints record Gather / Reason / Render state only. A checkpoint written by the
@@ -90,6 +91,24 @@ def json_bytes(value):
 
 def fingerprint(value):
     return hashlib.sha256(json_bytes(value)).hexdigest()
+
+
+def publication_documents_match(expected, saved):
+    """Compare reply JSON without mistaking an integral float round trip for damage."""
+    _check_json(expected)
+    _check_json(saved)
+
+    def canonical_numbers(value):
+        if type(value) is float and value.is_integer():
+            return int(value)
+        if isinstance(value, dict):
+            return {key: canonical_numbers(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [canonical_numbers(item) for item in value]
+        return value
+
+    # Keep all stored fingerprints unchanged; only publication equality uses this form.
+    return json_bytes(canonical_numbers(expected)) == json_bytes(canonical_numbers(saved))
 
 
 def orchestration_answer_message_id(run_id):
