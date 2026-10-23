@@ -157,10 +157,16 @@ def _search_evidence_citations(reader, prepared):
 def read_result_document_citations(context, reference):
     """Project document provenance from the exact final result, never ambient work."""
     service = require_result_service(context)
+    with service.read_operation():
+        return _read_result_document_citations(service, reference)
+
+
+def _read_result_document_citations(service, reference):
     root = service.open_result(reference, allow_partial=True, require_current_sources=True)
     if root.metadata()['source_count'] == 0:
         return []
     sources, citations, visited, expanded = {}, {}, set(), set()
+    coverage_values = {}
     citation_fields = (
         'citation_id', 'chunk_id', 'file_name', 'title', 'page_number', 'chunk_sequence',
         'sheet_name', 'location_label', 'location_value', 'classification', 'document_classification', 'score',
@@ -189,11 +195,8 @@ def read_result_document_citations(context, reference):
         visited.add(current)
         reader = service.open_result(current, allow_partial=True, require_current_sources=True)
         producer = current.producer
-        # This public lookup selects the original digest; the facade owns all authorization.
-        manifest = service.store.load_committed_orchestration_result(
-            producer.user_id, producer.conversation_id, producer.run_id,
-            producer.step_id, current.manifest_sha256,
-        )
+        # Reuse only this operation's verified manifest, still checking each output descriptor.
+        manifest = service._load_manifest(current)
         reader.recheck()
         if manifest['producer'] != producer.to_dict():
             raise ResultContractError('result_reference_mismatch')
@@ -241,11 +244,13 @@ def read_result_document_citations(context, reference):
             # another task. Reopen the exact committed digest, including after recovery.
             descriptor = manifest['outputs'].get('coverage')
             if descriptor is not None:
-                coverage_reader = service.open_result(
-                    _reference(producer, 'coverage', descriptor, current.manifest_sha256),
-                    allow_partial=True, require_current_sources=True,
-                )
-                coverage = read_complete_input(coverage_reader)
+                if key not in coverage_values:
+                    coverage_reader = service.open_result(
+                        _reference(producer, 'coverage', descriptor, current.manifest_sha256),
+                        allow_partial=True, require_current_sources=True,
+                    )
+                    coverage_values[key] = read_complete_input(coverage_reader)
+                coverage = coverage_values[key]
                 if type(coverage) is not dict or type(coverage.get('citations', [])) is not list:
                     raise ResultContractError('result_citations_invalid')
                 retained_citations = coverage.get('citations', [])
