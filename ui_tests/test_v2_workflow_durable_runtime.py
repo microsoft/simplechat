@@ -1,10 +1,11 @@
 # test_v2_workflow_durable_runtime.py
 """
 UI tests for native V2 durable workflow runtime controls.
-Version: 0.261.362
+Version: 0.261.381
 Implemented in: 0.261.111
 Workflow status freshness and readable run labels: 0.261.362
 The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
+All new and durable workflows are durable without a toggle, with legacy upgrade in Execution: 0.261.381
 
 These tests use the real V2 SPA bundle with a closed API fixture. They cover
 durable authoring defaults, pre-task approval payloads, queued run responses,
@@ -90,7 +91,7 @@ def test_durable_default_existing_preservation_and_task_approval_payload(workflo
 
     create_workflow(page)
     expect(workflow_editor(page, "Create workflow")).to_be_visible()
-    expect(durable_toggle(page)).to_be_checked()
+    expect(durable_toggle(page)).to_have_count(0)
     labelled(page, "Workflow name").fill("Durable default workflow")
     labelled(page, "Model").select_option(label="Workspace GPT · aoai")
     labelled(page, "Instructions").first.fill("Run durably by default.")
@@ -100,6 +101,10 @@ def test_durable_default_existing_preservation_and_task_approval_payload(workflo
     assert body["durable_execution"] is True
     assert "approval" not in body["tasks"][0]
 
+    edit_workflow(page, "Durable approval workflow")
+    expect(durable_toggle(page)).to_have_count(0)
+    page.get_by_role("button", name="Cancel", exact=True).click()
+
     edit_workflow(page, "Quarterly review workflow")
     expect(durable_toggle(page)).not_to_be_checked()
     labelled(page, "Description").first.fill("Legacy workflow stays non-durable unless opted in.")
@@ -108,23 +113,24 @@ def test_durable_default_existing_preservation_and_task_approval_payload(workflo
     assert legacy_body["id"] == WORKFLOW_ID
     assert "durable_execution" not in legacy_body
 
-    create_workflow(page)
-    durable_toggle(page).uncheck(force=True)
+    edit_workflow(page, "Quarterly review workflow")
+    expect(durable_toggle(page)).not_to_be_checked()
     open_task_details(page)
-    approval_toggle(page).check(force=True)
+    approval_toggle(page).first.check(force=True)
     expect(durable_toggle(page)).to_be_checked()
-    labelled(page, "Approval message for Task 1").fill("Human approval required before this task.")
-    labelled(page, "Workflow name").fill("Approval workflow")
-    labelled(page, "Model").select_option(label="Workspace GPT · aoai")
-    labelled(page, "Instructions").first.fill("Pause before running.")
+    labelled(page, "Approval message for Collect evidence").fill("Human approval required before this task.")
     page.get_by_role("button", name="Save workflow", exact=True).click()
 
     approval_body = workflow_post(ui).body
+    assert approval_body["id"] == WORKFLOW_ID
     assert approval_body["durable_execution"] is True
     assert approval_body["tasks"][0]["approval"] == {
         "required": True,
         "message": "Human approval required before this task.",
     }
+
+    edit_workflow(page, "Quarterly review workflow")
+    expect(durable_toggle(page)).to_have_count(0)
 
 
 def test_queued_run_response_expands_live_runtime_without_blocking(workflow_ui):

@@ -1836,7 +1836,7 @@ export function workflowForSave(
         task_prompt: draft.tasks[0]?.instructions.trim() || '',
         reference_inputs: draft.reference_inputs,
         ...(draft.definition_version === 3 ? { flow: structuredClone(draft.flow), limits: structuredClone(draft.limits) } : {}),
-        ...(includeDurable ? { durable_execution: draft.durable_execution === true } : {}),
+        ...(includeDurable ? { durable_execution: !original || original.durable_execution === true || draft.durable_execution === true } : {}),
         ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
         ...workflowFileSyncForSave(draft, original),
         ...workflowAlertsForSave(draft, original),

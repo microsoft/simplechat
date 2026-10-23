@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.381)**
+
+#### User Interface Enhancements
+
+*   **Standardized Durable Workflows With Legacy Upgrade Option**
+    *   Removed the **Durable execution** toggle when creating new workflows or editing already-durable workflows in the V2 workflow editor, ensuring all new and durable workflows always save with durable execution enabled.
+    *   Preserved existing legacy non-durable workflows when edited without upgrading, while retaining the **Durable execution** upgrade switch in **Execution** (and automatic upgrade when task approval is enabled) until the legacy workflow is saved as durable.
+    *   (Ref: `WorkflowEditorDialog.tsx`, `workflowEditor.ts`, `functions_workflow_assist_editor.py`, `docs/admin/workflow.md`)
+
 ### **(v0.261.379)**
 
 #### Bug Fixes

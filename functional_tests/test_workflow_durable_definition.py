@@ -1,13 +1,19 @@
 # test_workflow_durable_definition.py
 """
-Functional tests for opt-in durable workflow definitions and task approval.
-Version: 0.261.111
+Functional tests for durable workflow definitions, legacy preservation, and task approval.
+Version: 0.261.381
 Implemented in: 0.261.111
+Updated in: 0.261.381
 """
 
 import pytest
 
 from test_workflow_definition_data_flow import definition, normalize
+from functions_workflow_assist_editor import (
+    new_workflow_definition,
+    normalize_workflow_definition as normalize_editor_workflow,
+    workflow_for_save,
+)
 from functions_workflow_definitions import WorkflowDefinitionError, workflow_definition_revision
 
 
@@ -50,3 +56,25 @@ def test_approval_cannot_supply_permissions_or_executable_conditions():
     workflow["tasks"][0]["approval"] = {"required": True, "is_admin": True}
     with pytest.raises(WorkflowDefinitionError, match="unsupported"):
         normalize(workflow)
+
+
+def test_editor_save_keeps_new_and_durable_workflows_durable_and_preserves_legacy_until_upgraded():
+    draft = new_workflow_definition({"type": "personal"})
+    draft["name"] = "Always durable"
+    draft["tasks"][0]["instructions"] = "Summarize findings."
+
+    created = workflow_for_save({**draft, "durable_execution": False}, None)
+    assert created["durable_execution"] is True
+
+    stored_durable = normalize_editor_workflow({**draft, "id": "wf-durable", "durable_execution": True})
+    saved_durable = workflow_for_save({**stored_durable, "durable_execution": False}, stored_durable)
+    assert saved_durable["durable_execution"] is True
+
+    legacy_raw = {key: value for key, value in draft.items() if key != "durable_execution"}
+    legacy_raw["id"] = "wf-legacy"
+    stored_legacy = normalize_editor_workflow(legacy_raw)
+    saved_legacy = workflow_for_save(dict(stored_legacy), stored_legacy)
+    assert "durable_execution" not in saved_legacy
+
+    upgraded_legacy = workflow_for_save({**stored_legacy, "durable_execution": True}, stored_legacy)
+    assert upgraded_legacy["durable_execution"] is True
