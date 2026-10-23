@@ -212,7 +212,7 @@ def compile_workflow_flow(workflow):
             raise WorkflowDefinitionError("A task catalogue entry must be an object.")
         if task.keys() - {
             "id", "type", "name", "instructions", "order", "runner", "document_action", "inputs",
-            "reference_ids", "output_contract", "approval", "publication", "input_processing", "chat_execution",
+            "reference_ids", "conversation_reference_ids", "conversation_send", "output_contract", "approval", "publication", "input_processing", "chat_execution",
         }:
             raise WorkflowDefinitionError("A catalogue task contains unsupported executable fields.")
         if task.get("type", "instructions") != "instructions":

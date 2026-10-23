@@ -13,10 +13,12 @@ import {
     FileText,
     Globe,
     Loader2,
+    MessageSquare,
     Tags,
     TriangleAlert,
     X,
 } from 'lucide-react';
+import { ConversationReferenceChips } from './ConversationReferences';
 import { fetchMessageMetadata, fetchMessageThoughts } from '../../lib/endpoints';
 import {
     buildDetailGroups,
@@ -170,6 +172,14 @@ function SourcesSection({ sources }: { sources: MessageSources }) {
 
     return (
         <div className="space-y-4">
+            {sources.conversations.length > 0 && (
+                <div>
+                    <h4 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-text-3 uppercase">
+                        <MessageSquare size={12} /> Conversations ({sources.conversations.length})
+                    </h4>
+                    <ConversationReferenceChips references={sources.conversations} />
+                </div>
+            )}
             {sources.documents.length > 0 && (
                 <div>
                     <h4 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-text-3 uppercase">

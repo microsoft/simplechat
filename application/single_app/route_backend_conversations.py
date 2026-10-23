@@ -52,6 +52,11 @@ from functions_conversation_feed import (
     tag_conversation_feed_source,
 )
 from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
+from functions_conversation_references import ConversationReferenceError
+from functions_conversation_reference_runtime import (
+    resolve_conversation_references,
+    search_conversation_references,
+)
 from functions_citation_tracking import rebuild_conversation_used_documents
 from functions_m365_citations import used_m365_items_for_viewer
 from functions_conversation_unread import clear_conversation_unread, normalize_conversation_unread_state
@@ -345,6 +350,26 @@ def _build_replayed_document_context(original_metadata):
             or workspace_search.get('enabled')
             or selected_document_ids
         )
+    raw_conversation_references = metadata.get('conversation_references')
+    conversation_references = [
+        {
+            'kind': 'conversation',
+            'id': str(item.get('id')).strip(),
+            **(
+                {
+                    'message_ids': [
+                        str(message_id).strip()
+                        for message_id in item.get('message_ids')
+                        if str(message_id or '').strip()
+                    ]
+                }
+                if isinstance(item.get('message_ids'), list) and item.get('message_ids')
+                else {}
+            ),
+        }
+        for item in (raw_conversation_references if isinstance(raw_conversation_references, list) else [])
+        if isinstance(item, dict) and item.get('kind') == 'conversation' and str(item.get('id') or '').strip()
+    ]
 
     return {
         'hybrid_search': bool(
@@ -361,6 +386,8 @@ def _build_replayed_document_context(original_metadata):
         'public_workspace_selection': workspace_search.get('public_workspace_selection'),
         **({'public_source_policy': workspace_search['public_source_policy']}
            if 'public_source_policy' in workspace_search else {}),
+        **({'conversation_references': conversation_references}
+           if conversation_references else {}),
         'top_n': workspace_search.get('top_n'),
         'document_filter_mode': workspace_search.get('document_filter_mode') or 'intersection',
         'classifications': (
@@ -1451,6 +1478,55 @@ def _persist_scope_lock_update(conversation_item, conversation_kind, user_id, ne
 
 
 def register_route_backend_conversations(bp):
+    def reference_error_response(error):
+        if isinstance(error, ConversationReferenceError):
+            return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
+        log_event(
+            '[CONVERSATION_METADATA] Conversation reference is unavailable.',
+            extra={'error_type': type(error).__name__}, level=logging.ERROR,
+        )
+        return jsonify({'error': 'Conversation reference is unavailable.', 'code': 'conversation_reference_unavailable'}), 503
+
+    @bp.route('/api/conversation-references', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def conversation_reference_search_api():
+        try:
+            search_content = request.args.get('search_content', 'false')
+            if search_content not in ('true', 'false'):
+                raise ConversationReferenceError()
+            payload = search_conversation_references(
+                get_current_user_id(), request.args.get('query', ''),
+                offset=request.args.get('offset', '0'), limit=request.args.get('limit', '10'),
+                search_content=search_content == 'true',
+                exclude_conversation_id=request.args.get('exclude_conversation_id'),
+            )
+            response = jsonify(payload)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except (ConversationReferenceError, AzureError, TypeError, ScreeningError) as error:
+            return reference_error_response(error)
+
+    @bp.route('/api/conversation-references/resolve', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def conversation_reference_resolve_api():
+        try:
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                raise ConversationReferenceError()
+            payload = resolve_conversation_references(
+                get_current_user_id(), data.get('conversation_references'), data.get('query', ''),
+                destination_id=data.get('destination_conversation_id'),
+            )
+            response = jsonify(payload)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except (ConversationReferenceError, AzureError, TypeError, ScreeningError) as error:
+            return reference_error_response(error)
+
     @bp.after_request
     def public_conversation_json_response(response):
         if response.is_json:

@@ -101,7 +101,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.382"
+VERSION = "0.261.383"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -689,6 +689,12 @@ cosmos_messages_container_name = "messages"
 cosmos_messages_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_messages_container_name,
     partition_key=PartitionKey(path="/conversation_id")
+)
+
+cosmos_conversation_handoffs_container_name = "conversation_handoffs"
+cosmos_conversation_handoffs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_conversation_handoffs_container_name,
+    partition_key=PartitionKey(path="/destination_conversation_id")
 )
 
 cosmos_tabular_export_runs_container_name = "tabular_export_runs"

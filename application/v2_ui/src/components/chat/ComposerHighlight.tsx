@@ -18,6 +18,7 @@
 
 import { useEffect, type CSSProperties, type RefObject } from 'react';
 import { parseContextTokens } from '../../lib/chatContextTokens';
+import { parseConversationTokens } from '../../lib/conversationReferences';
 
 /**
  * The typography and box metrics the textarea and its backdrop share.
@@ -92,7 +93,7 @@ export function ComposerHighlight({
     tokens: ReadonlySet<string>;
     backdropRef: RefObject<HTMLDivElement>;
 }) {
-    const parsed = parseContextTokens(text);
+    const parsed = [...parseContextTokens(text), ...parseConversationTokens(text)].sort((left, right) => left.start - right.start);
     const pieces: Array<{ key: string; value: string; chip: boolean }> = [];
 
     let cursor = 0;

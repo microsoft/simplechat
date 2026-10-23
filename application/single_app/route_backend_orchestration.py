@@ -113,6 +113,8 @@ from functions_orchestration_context import (
     validate_conversation_snapshot,
 )
 from functions_image_references import ImageReferenceError
+import functions_conversation_reference_runtime as _conversation_reference_runtime
+from functions_conversation_references import ConversationReferenceError
 from functions_orchestration_events import (
     build_cancelled_event,
     build_conversation_metadata_event,
@@ -169,6 +171,7 @@ from functions_orchestration_workflow_context import (
 )
 from functions_orchestration_plan_editing import (
     build_plan_edit_outcome,
+    resolve_plan_edit_conversation_references,
     resolve_plan_edit_references,
     revision_allowed_urls,
     validate_edited_plan,
@@ -254,6 +257,14 @@ SSE_HEADERS = {
 # execution stream therefore sends an SSE comment, which every event parser skips.
 SSE_KEEPALIVE_SECONDS = 15
 SSE_KEEPALIVE_FRAME = ': keep-alive\n\n'
+_DEFAULT_CONVERSATION_RESOLVER = _conversation_reference_runtime.resolve_conversation_references
+resolve_conversation_references = _DEFAULT_CONVERSATION_RESOLVER
+
+
+def _conversation_resolver():
+    if resolve_conversation_references is not _DEFAULT_CONVERSATION_RESOLVER:
+        return resolve_conversation_references
+    return _conversation_reference_runtime.resolve_conversation_references
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -743,6 +754,7 @@ def _regeneration_request(record):
         'image_references': deepcopy(seeds.get('image_references') or []),
         'required_capabilities': deepcopy(seeds.get('required_capabilities') or []),
         'elicitation_references': deepcopy(seeds.get('elicitation_references') or []),
+        'conversation_references': deepcopy(seeds.get('conversation_references') or []),
     }
     if seeds.get('agent'):
         body['agent_info'] = deepcopy(seeds['agent'])
@@ -825,6 +837,10 @@ def _authorize_regeneration_request(source, body, user_id, settings, *, override
     if seeds.get('image_references'):
         resolve_image_reference_candidates(
             seeds, user_id, source['conversation_id'], candidates=candidates, settings=settings,
+        )
+    if seeds.get('conversation_references'):
+        _conversation_resolver()(
+            user_id, seeds['conversation_references'], destination_id=source['conversation_id'],
         )
     return result
 
@@ -975,7 +991,7 @@ def _regeneration_error(exc):
         payload, status = {'error': exc.public_message, 'code': exc.code}, exc.status_code
     elif isinstance(exc, SubmissionIdError):
         payload, status = {'error': 'The retry request identifier is invalid.', 'code': 'invalid_request'}, 400
-    elif isinstance(exc, (ModelCatalogError, ImageReferenceError, PublicChatScopeError)):
+    elif isinstance(exc, (ModelCatalogError, ImageReferenceError, PublicChatScopeError, ConversationReferenceError)):
         payload, status = {'error': exc.public_message, 'code': exc.code}, getattr(exc, 'status_code', 400)
     else:
         return _plan_edit_error(exc)
@@ -1966,6 +1982,9 @@ def _plan_edit_error(exc):
         if exc.current_run_id:
             payload['current_run_id'] = exc.current_run_id
         status = exc.status_code
+    elif isinstance(exc, ConversationReferenceError):
+        payload = {'error': exc.public_message, 'code': exc.code}
+        status = exc.status_code
     elif isinstance(exc, OrchestrationMemoryError):
         payload = {'error': exc.message, 'code': exc.code}
         status = 409 if exc.code in ('memory_audience_changed', 'memory_scope_unavailable') else 503
@@ -2312,6 +2331,8 @@ def register_route_backend_orchestration(bp):
             return jsonify({'error': exc.public_message, 'field': exc.field}), 400
         except ImageReferenceError as exc:
             return jsonify({'error': exc.public_message, 'error_code': exc.code}), exc.status_code
+        except ConversationReferenceError as exc:
+            return jsonify({'error': exc.public_message, 'code': exc.code}), exc.status_code
         replan_hint = _text(data.get('replan_hint'), 600)
         answered_record = []
         submission = None
@@ -2684,8 +2705,19 @@ def register_route_backend_orchestration(bp):
                     item['planning_source'] for item in selected_candidates or []
                     if item.get('planning_source')
                 ]
+                resolved_conversations = {'references': []}
+                if seeds.get('conversation_references'):
+                    resolved_conversations = _conversation_resolver()(
+                        user_id, seeds['conversation_references'],
+                        query=message, destination_id=resolved_conversation_id,
+                    ) or {'references': []}
                 seeds['planning_source_revisions'] = {
-                    item['document_id']: item['revision'] for item in selected_sources
+                    **{item['document_id']: item['revision'] for item in selected_sources},
+                    **{
+                        item['id']: item['revision']
+                        for item in (resolved_conversations.get('references') or [])
+                        if isinstance(item, dict) and item.get('id') and item.get('revision')
+                    },
                 }
                 turn_context['seeds'] = deepcopy(seeds)
                 log_event(
@@ -3000,6 +3032,8 @@ def register_route_backend_orchestration(bp):
                 yield build_error_event(exc.message, resolved_conversation_id)
             except SharedOrchestrationError as exc:
                 yield build_error_event(exc.message, conversation_id)
+            except ConversationReferenceError as exc:
+                yield build_error_event(exc.public_message, resolved_conversation_id)
             except Exception as exc:
                 log_event(
                     '[ORCHESTRATION] Planning failed.',
@@ -3080,15 +3114,25 @@ def register_route_backend_orchestration(bp):
             claim = claim_plan_revision(run_id, user_id, conversation_id, data)
             identity = _request_identity(user_id, seeded_agent=(record.get('seeds') or {}).get('agent'))
             references = None
-            if not claim.get('replayed') and claim['request'].get('references'):
+            conversation_references = None
+            if not claim.get('replayed') and (
+                claim['request'].get('references') or claim['request'].get('conversation_references')
+            ):
                 # Checked for this user now, before anything streams, so a stale or
                 # unreadable reference is a plain 4xx that leaves the plan unchanged. A
                 # replay returns its stored turn and is never checked or merged again.
-                references = resolve_plan_edit_references(
-                    claim['record'], claim['request']['references'], user_id, settings,
-                    conversation=_authorize_context_conversation(conversation_id, user_id),
-                )
-        except (PlanRevisionError, ConversationContextError, ElicitationContextError, AzureError) as exc:
+                conversation_doc = _authorize_context_conversation(conversation_id, user_id)
+                if claim['request'].get('references'):
+                    references = resolve_plan_edit_references(
+                        claim['record'], claim['request']['references'], user_id, settings,
+                        conversation=conversation_doc,
+                    )
+                if claim['request'].get('conversation_references'):
+                    conversation_references = resolve_plan_edit_conversation_references(
+                        claim['record'], claim['request']['conversation_references'], user_id,
+                        conversation_id=conversation_id, query=claim['request'].get('instruction') or '',
+                    )
+        except (PlanRevisionError, ConversationContextError, ElicitationContextError, ConversationReferenceError, AzureError) as exc:
             release_plan_revision(claim)
             payload, status = _plan_edit_error(exc)
             return jsonify(payload), status
@@ -3108,6 +3152,7 @@ def register_route_backend_orchestration(bp):
                         conversation=_authorize_context_conversation(conversation_id, user_id),
                         ledger=_load_ledger(conversation_id, user_id, settings),
                         references=references,
+                        conversation_references=conversation_references,
                         **result_options,
                     )
                     _conversation_context_for_run(record, user_id, settings)

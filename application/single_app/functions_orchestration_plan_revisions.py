@@ -35,6 +35,10 @@ from functions_assist_references import (
     sanitize_reference_label,
 )
 from functions_assist_submissions import SUBMISSION_ID_PATTERN
+from functions_conversation_references import (
+    ConversationReferenceError,
+    normalize_conversation_references,
+)
 from functions_orchestration_events import merge_reasoning_adjustments
 from functions_orchestration_registry import (
     required_capability_ids, resolve_admitted_export_catalog,
@@ -92,7 +96,7 @@ _REQUEST_FIELDS = {
     'conversation_id', 'expected_version', 'submission_id', 'action', 'edits',
 }
 _ACTION_FIELDS = {
-    'ask': {'instruction', 'references'},
+    'ask': {'instruction', 'references', 'conversation_references'},
     'restore': {'source_run_id'},
     'answer': {
         'elicitation_id', 'elicitation_revision', 'elicitation_response',
@@ -679,6 +683,15 @@ def _normalize_request(data, conversation_id):
             result['references'] = references
         else:
             result.pop('references', None)
+        if 'conversation_references' in data:
+            try:
+                conversation_references = normalize_conversation_references(data.get('conversation_references'))
+            except ConversationReferenceError as exc:
+                raise PlanRevisionError(exc.public_message, code=exc.code, status_code=exc.status_code) from exc
+            if conversation_references:
+                result['conversation_references'] = conversation_references
+            else:
+                result.pop('conversation_references', None)
     if action == 'restore' and not _valid_id(data.get('source_run_id')):
         raise _invalid('Choose a saved version to restore.')
     if action == 'answer' or any(

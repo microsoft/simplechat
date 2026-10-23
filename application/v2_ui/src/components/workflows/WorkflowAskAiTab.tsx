@@ -324,9 +324,10 @@ export function WorkflowAskAiTab({ assist, inputId, onReload }: {
                 sendLabel="Send"
                 sendAriaLabel="Send to Ask AI"
                 busy={assist.busy}
-                placeholder="Ask for a change or a question. Type # for a document."
+                placeholder="Ask for a change or a question. Type # for a document or ~ for a conversation."
                 describedBy={focus ? focusId : undefined}
                 allowContext
+                allowConversationReferences
                 contextDocumentsOnly
                 emptyState={(
                     <p>

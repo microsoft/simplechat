@@ -1680,7 +1680,15 @@ export async function submitPlanRevision(
             }
             return { ok: false, error };
         }
-        action = { action: 'ask', instruction, ...(references.length ? { references } : {}) };
+        const conversationReferences = Array.isArray(action.conversation_references)
+            ? action.conversation_references.filter((item) => Boolean(item && item.kind === 'conversation' && typeof item.id === 'string' && item.id.trim()))
+            : [];
+        action = {
+            action: 'ask',
+            instruction,
+            ...(references.length ? { references } : {}),
+            ...(conversationReferences.length ? { conversation_references: conversationReferences } : {}),
+        };
     }
     const controller = new AbortController();
     const previousController = editorControllers.get(key);

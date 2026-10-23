@@ -199,7 +199,10 @@ def resolve_seeds(request_data):
         if document_id and label:
             document_labels[document_id] = label
 
+    from functions_conversation_references import normalize_conversation_references
+
     return {
+        'conversation_references': normalize_conversation_references(request_data.get('conversation_references')),
         **({'model_routing': 'auto'} if routing == 'auto' else {}),
         'public_workspace_selection': public_selection,
         'public_source_policy': source_policy,
@@ -2333,6 +2336,7 @@ def build_planner_context(
             candidate['planning_source'] for candidate in candidates or []
             if candidate.get('planning_source')
         ]),
+        'conversation_references': deepcopy(seeds.get('conversation_references') or []),
         'image_reference_documents': deepcopy(seeds.get('image_reference_documents') or []),
         'image_reference_messages': deepcopy(seeds.get('image_reference_messages') or []),
         'document_transform_references': deepcopy(
@@ -2341,6 +2345,7 @@ def build_planner_context(
         ),
         'user_selected': {
             'documents': seeds.get('document_ids') or [],
+            'conversation_references': deepcopy(seeds.get('conversation_references') or []),
             'context_references': deepcopy(seeds.get('elicitation_references') or []),
             'agent': (seeds.get('agent') or {}).get('name') if seeds.get('agent') else None,
             'prompt': _selected_prompt(seeds),

@@ -85,6 +85,9 @@ from functions_mixed_source_orchestration import (
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
     CAPABILITY_AGENT_INVOKE,
+    CAPABILITY_CONVERSATION_READ,
+    CAPABILITY_CONVERSATION_SEARCH,
+    CAPABILITY_CONVERSATION_SEND,
     CAPABILITY_DEEP_RESEARCH,
     CAPABILITY_DOCUMENT_ANALYZE,
     CAPABILITY_DOCUMENT_COMPARE,
@@ -2328,6 +2331,17 @@ def run_workflow_handoff(step, context, *, settings, user_id, emit=None, cancel_
     )
 
 
+def run_conversation_capability(step, context, *, settings, user_id, emit=None, cancel_requested=None):
+    """Execute a private conversation search, bounded read, or approved handoff send."""
+    from functions_orchestration_conversation_capabilities import (
+        run_conversation_capability as execute_conversation_capability,
+    )
+
+    return execute_conversation_capability(
+        step, context, settings=settings, user_id=user_id, emit=emit, cancel_requested=cancel_requested,
+    )
+
+
 # Keyed by capability id, which is also each descriptor's declared ``adapter`` name, so the
 # executor can look an adapter up straight from the step's capability without a second map.
 ADAPTER_REGISTRY = {
@@ -2347,6 +2361,9 @@ ADAPTER_REGISTRY = {
     CAPABILITY_WORKFLOW_RUN: run_workflow_run,
     CAPABILITY_WORKFLOW_RESULTS: run_workflow_results,
     CAPABILITY_WORKFLOW_HANDOFF: run_workflow_handoff,
+    CAPABILITY_CONVERSATION_SEARCH: run_conversation_capability,
+    CAPABILITY_CONVERSATION_READ: run_conversation_capability,
+    CAPABILITY_CONVERSATION_SEND: run_conversation_capability,
 }
 
 

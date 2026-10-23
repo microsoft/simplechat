@@ -14,6 +14,11 @@ from copy import deepcopy
 from datetime import datetime, timezone
 
 from functions_assist_references import REQUEST_REFERENCE_LIMIT
+import functions_conversation_reference_runtime as _conversation_reference_runtime
+from functions_conversation_references import (
+    ConversationReferenceError,
+    normalize_conversation_references,
+)
 from functions_mixed_source_orchestration import resolve_authorized_source_manifest
 from functions_orchestration_context import (
     ELICITATION_REFERENCE_LIMIT,
@@ -198,6 +203,48 @@ _REFERENCE_ERROR_CODES = {
     'verification_failed': ('reference_check_failed', 503),
 }
 _ACTIVE_WORKSPACE_FIELDS = {'group': 'active_group_ids', 'public': 'active_public_workspace_ids'}
+_DEFAULT_CONVERSATION_RESOLVER = _conversation_reference_runtime.resolve_conversation_references
+resolve_conversation_references = _DEFAULT_CONVERSATION_RESOLVER
+
+
+def _conversation_resolver():
+    if resolve_conversation_references is not _DEFAULT_CONVERSATION_RESOLVER:
+        return resolve_conversation_references
+    return _conversation_reference_runtime.resolve_conversation_references
+
+
+def _merge_conversation_references(existing, added):
+    merged = []
+    seen = {}
+    for item in [*(existing or []), *(added or [])]:
+        if isinstance(item, dict) and isinstance(item.get('id'), str):
+            if item['id'] in seen:
+                merged[seen[item['id']]] = deepcopy(item)
+            else:
+                seen[item['id']] = len(merged)
+                merged.append(deepcopy(item))
+        else:
+            merged.append(item)
+    return normalize_conversation_references(merged)
+
+
+def resolve_plan_edit_conversation_references(
+    record, conversation_references, user_id, *, conversation_id=None, query='',
+):
+    """Authorize and merge Ask AI conversation references for a plan revision."""
+    if not conversation_references:
+        return []
+    destination_id = conversation_id or (record or {}).get('conversation_id')
+    existing = ((record or {}).get('seeds') or {}).get('conversation_references') or []
+    try:
+        normalized = normalize_conversation_references(conversation_references)
+        merged = _merge_conversation_references(existing, normalized)
+        _conversation_resolver()(
+            user_id, merged, query=query or '', destination_id=destination_id,
+        )
+    except ConversationReferenceError as exc:
+        raise PlanRevisionError(exc.public_message, code=exc.code, status_code=exc.status_code) from exc
+    return normalized
 
 
 def _reference_key(reference):
@@ -382,6 +429,16 @@ def validate_edited_plan(
         seeds.get('elicitation_references') or [],
         user_id, context['conversation_id'], settings=settings,
     )
+    if seeds.get('conversation_references'):
+        try:
+            seeds['conversation_references'] = normalize_conversation_references(
+                seeds.get('conversation_references')
+            )
+            _conversation_resolver()(
+                user_id, seeds['conversation_references'], destination_id=context['conversation_id'],
+            )
+        except ConversationReferenceError as exc:
+            raise PlanRevisionError(exc.public_message, code=exc.code, status_code=exc.status_code) from exc
     candidates = _available_sources(context, plan, user_id, settings)
     if document_transform_candidate_reader is not None:
         seeds['document_transform_references'] = document_transform_candidate_reader(
@@ -459,7 +516,7 @@ def validate_edited_plan(
 
 def build_plan_edit_outcome(
     record, data, user_id, settings, *, identity, conversation_context, conversation, ledger=None,
-    references=None,
+    references=None, conversation_references=None,
     result_alias_resolver=None, export_catalog=None, composition_profiles=None,
     native_bridge_for_step=None, rendering_service=None,
     external_source_preflight=None,
@@ -582,6 +639,17 @@ def build_plan_edit_outcome(
     validate_clarification_answers(context.get('answered_questions') or [])
     if ask_references:
         context['seeds'] = _merge_ask_references(context, current_plan, ask_references, user_id)
+    ask_conversation_refs = (
+        conversation_references if conversation_references is not None else data.get('conversation_references')
+    ) if action == 'ask' else None
+    if ask_conversation_refs:
+        try:
+            merged_conversation_refs = _merge_conversation_references(
+                (context.get('seeds') or {}).get('conversation_references'), ask_conversation_refs,
+            )
+        except ConversationReferenceError as exc:
+            raise PlanRevisionError(exc.public_message, code=exc.code, status_code=exc.status_code) from exc
+        context['seeds'] = {**(context.get('seeds') or {}), 'conversation_references': merged_conversation_refs}
     seeds = context.get('seeds') or {}
     resolve_elicitation_references(
         seeds.get('elicitation_references') or [],
@@ -613,9 +681,28 @@ def build_plan_edit_outcome(
         candidates, user_id, conversation_id=context['conversation_id'], seeds=seeds,
         selected_source_context_reader=selected_source_context_reader,
     )
+    resolved_conversations = {'references': []}
+    if seeds.get('conversation_references'):
+        try:
+            seeds['conversation_references'] = normalize_conversation_references(
+                seeds.get('conversation_references')
+            )
+            resolved_conversations = _conversation_resolver()(
+                user_id, seeds['conversation_references'], query=changed_request,
+                destination_id=context['conversation_id'],
+            ) or {'references': []}
+        except ConversationReferenceError as exc:
+            raise PlanRevisionError(exc.public_message, code=exc.code, status_code=exc.status_code) from exc
     seeds['planning_source_revisions'] = {
-        item['document_id']: item['planning_source']['revision']
-        for item in candidates if item.get('planning_source')
+        **{
+            item['document_id']: item['planning_source']['revision']
+            for item in candidates if item.get('planning_source')
+        },
+        **{
+            item['id']: item['revision']
+            for item in (resolved_conversations.get('references') or [])
+            if isinstance(item, dict) and item.get('id') and item.get('revision')
+        },
     }
     if document_transform_candidate_reader is not None:
         seeds['document_transform_references'] = document_transform_candidate_reader(

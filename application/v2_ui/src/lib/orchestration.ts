@@ -525,6 +525,7 @@ export interface OrchestrationPlanInputs {
     workflow_results?: OrchestrationPlanWorkflowResult[];
     image_reference_documents?: OrchestrationImageReferenceDocument[];
     image_reference_messages?: OrchestrationImageReferenceMessage[];
+    conversation_references?: Array<{ kind: 'conversation'; id: string; message_ids?: string[] }>;
     web: boolean;
     agent?: Json;
     model?: Json;
@@ -720,6 +721,7 @@ export type PlanRevisionAction =
         instruction: string;
         /** `#` documents and tags. Canonicalized before sending; see planReferences.ts. */
         references?: readonly PlanReferenceInput[];
+        conversation_references?: ReadonlyArray<{ kind: 'conversation'; id: string; message_ids?: string[] }>;
     }
     | { action: 'restore'; source_run_id: string }
     | {

@@ -123,6 +123,47 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
     if (step.capability_id === WORKFLOW_HANDOFF_CAPABILITY) {
         return describeHandoffBlueprint(step.arguments);
     }
+    if (step.capability_id === 'conversation_send') {
+        const args = step.arguments as Json;
+        const entries: Array<[string, string]> = [];
+        if (typeof args.destination_conversation_id === 'string' && args.destination_conversation_id.trim()) {
+            entries.push(['destination', args.destination_conversation_id.trim()]);
+        }
+        if (typeof args.instruction === 'string' && args.instruction.trim()) {
+            entries.push(['instruction', args.instruction.trim()]);
+        }
+        if (Array.isArray(args.conversation_references) && args.conversation_references.length > 0) {
+            const ids = args.conversation_references
+                .map((item) => (item && typeof item === 'object' && 'id' in item ? String((item as { id?: unknown }).id ?? '') : ''))
+                .filter(Boolean);
+            if (ids.length > 0) entries.push(['sources', ids.join(', ')]);
+        }
+        return entries;
+    }
+    if (step.capability_id === 'conversation_read') {
+        const args = step.arguments as Json;
+        const entries: Array<[string, string]> = [];
+        if (Array.isArray(args.conversation_references) && args.conversation_references.length > 0) {
+            const ids = args.conversation_references
+                .map((item) => (item && typeof item === 'object' && 'id' in item ? String((item as { id?: unknown }).id ?? '') : ''))
+                .filter(Boolean);
+            if (ids.length > 0) entries.push(['sources', ids.join(', ')]);
+        }
+        if (typeof args.query === 'string' && args.query.trim()) {
+            entries.push(['query', args.query.trim()]);
+        }
+        return entries;
+    }
+    if (step.capability_id === 'conversation_search') {
+        const args = step.arguments as Json;
+        const entries: Array<[string, string]> = [
+            ['query', typeof args.query === 'string' && args.query.trim() ? args.query.trim() : 'All recent private conversations'],
+        ];
+        if (args.search_content === true) {
+            entries.push(['search content', 'Yes']);
+        }
+        return entries;
+    }
     const hidden = new Set<string>([
         'document_ids',
         'right_document_ids',

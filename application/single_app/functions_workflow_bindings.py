@@ -7,6 +7,10 @@ from collections.abc import Mapping
 
 from functions_workflow_definitions import WorkflowDefinitionError, normalize_workflow_references, workflow_output_kind_matches
 from functions_analysis_access import build_analysis_access
+from functions_workflow_conversation_references import (
+    load_workflow_conversation_reference,
+    resolve_workflow_conversation_inputs,
+)
 
 
 class WorkflowInputError(WorkflowDefinitionError):
@@ -133,7 +137,9 @@ def load_workflow_reference(workflow, reference, *, actor_user_id=None, snapshot
 
 
 def resolve_workflow_task_inputs(workflow, task, completed_results, *, previous_task_id=None,
-                                 load_output, load_reference=None, reference_cache=None):
+                                 load_output, load_reference=None, reference_cache=None,
+                                 load_conversation_reference=None, conversation_reference_cache=None,
+                                 actor_user_id=None, conversation_resolver=None):
     """Bind exact predecessor outputs; loaders retain all object/lineage authorization."""
     bindings = task.get("inputs")
     if bindings is None:
@@ -189,9 +195,37 @@ def resolve_workflow_task_inputs(workflow, task, completed_results, *, previous_
         snapshot = load_reference(reference, snapshot=cache.get(reference["id"]))
         cache[reference["id"]] = snapshot
         reference_data.append(snapshot)
-    return {
+    conversation_resolved = resolve_workflow_conversation_inputs(
+        workflow, task, actor_user_id=actor_user_id,
+        query=(task or {}).get("instructions") or "",
+        load_conversation_reference=load_conversation_reference,
+        conversation_reference_cache=conversation_reference_cache,
+        resolver=conversation_resolver,
+    )
+    conversation_data = conversation_resolved["references"]
+    reference_payload = {}
+    if reference_data:
+        reference_payload["shared_references"] = reference_data
+    if conversation_data:
+        reference_payload["conversation_references"] = [
+            {
+                "reference_id": item["reference_id"],
+                "name": item["name"],
+                "source": item["source"],
+                "excerpts": item.get("excerpts") or [],
+                "partial": bool(item.get("partial")),
+                "text": item["text"],
+            }
+            for item in conversation_data
+        ]
+    result = {
         "task_context": json.dumps({"inputs": inputs}, ensure_ascii=False, sort_keys=True) if inputs else "",
-        "reference_context": json.dumps({"shared_references": reference_data}, ensure_ascii=False, sort_keys=True) if reference_data else "",
+        "reference_context": json.dumps(reference_payload, ensure_ascii=False, sort_keys=True) if reference_payload else "",
         "consumed_inputs": consumed_inputs,
         "reference_sources": [dict(reference["source"]) for reference in reference_data],
     }
+    if conversation_data or workflow.get("conversation_reference_inputs") or "conversation_reference_ids" in (task or {}):
+        result["conversation_references"] = conversation_data
+        result["conversation_reference_sources"] = conversation_resolved["sources"]
+        result["conversation_reference_context"] = conversation_resolved["context"]
+    return result

@@ -27,6 +27,7 @@
 **One progress indicator per phase (Planning label, run progress on the plan card only) fixed in version: 0.261.256**
 **Conversation-first source retention, conversation-mode persistence, and semantic diagnostics fixed in version: 0.261.341**
 **Current-message source interpretation and memory-aware request resolution fixed in version: 0.261.349**
+**Private conversation references (`~`), `conversation_search` / `conversation_read`, and queued `conversation_send` handoffs added in version: 0.261.381**
 
 ## Overview
 

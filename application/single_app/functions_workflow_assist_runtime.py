@@ -304,6 +304,18 @@ def build_workflow_assist_services(settings, *, client_factory, group_id="", use
         except ScopeReferenceError as exc:
             raise reference_error(exc) from exc
 
+    def resolve_conversations(user_id, conversation_references):
+        authorize(user_id)
+        if group_id:
+            raise WorkflowAssistError('group_workflow_unsupported')
+        from functions_conversation_references import ConversationReferenceError
+        from functions_conversation_reference_runtime import resolve_conversation_references
+
+        try:
+            return resolve_conversation_references(user_id, conversation_references)
+        except ConversationReferenceError as exc:
+            raise WorkflowAssistError('reference_unavailable', exc.public_message) from exc
+
     def load_options(user_id):
         authorize(user_id)
         try:
@@ -365,6 +377,7 @@ def build_workflow_assist_services(settings, *, client_factory, group_id="", use
         limiter=WorkflowAssistLimiter(CosmosAssistLimitStore(cosmos_settings_container)),
         read_base=read_base,
         resolve_references=resolve_references,
+        resolve_conversation_references=resolve_conversations,
         load_options=load_options,
         load_excerpt=load_excerpt,
         call_model=WorkflowAssistModel(client_factory, diagnostics=diagnostics),

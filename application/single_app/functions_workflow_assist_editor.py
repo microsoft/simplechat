@@ -82,7 +82,7 @@ WORKFLOW_AUTHORED_FIELDS = (
     'name', 'description', 'runner_type', 'selected_agent', 'model_endpoint_id', 'model_id',
     'chat_capabilities_enabled', 'chat_execution', 'results_delivery',
     'trigger_type', 'schedule', 'is_enabled', 'error_handling', 'm365_run_as_user_id',
-    'tasks', 'reference_inputs', 'durable_execution', 'flow', 'limits', 'file_sync', *WORKFLOW_ALERT_FIELDS,
+    'tasks', 'reference_inputs', 'conversation_reference_inputs', 'durable_execution', 'flow', 'limits', 'file_sync', *WORKFLOW_ALERT_FIELDS,
 )
 
 ASSIST_FORBIDDEN_FIELDS = (
@@ -546,6 +546,13 @@ def _normalize_task(value, index, structured=False):
         result['inputs'] = inputs
     if reference_ids is not UNDEFINED:
         result['reference_ids'] = reference_ids
+    conversation_reference_ids = record.get('conversation_reference_ids')
+    if isinstance(conversation_reference_ids, list):
+        result['conversation_reference_ids'] = [
+            item for item in conversation_reference_ids if isinstance(item, str)
+        ]
+    if isinstance(record.get('conversation_send'), dict):
+        result['conversation_send'] = copy.deepcopy(record['conversation_send'])
     if normalized_contract is not UNDEFINED:
         result['output_contract'] = (
             {**output_contract, **normalized_contract}
@@ -712,6 +719,8 @@ def normalize_workflow_definition(value):
     }
     result['tasks'] = tasks or [_legacy_workflow_task(record) or create_workflow_task(0)]
     result['reference_inputs'] = references
+    if isinstance(record.get('conversation_reference_inputs'), list):
+        result['conversation_reference_inputs'] = copy.deepcopy(record['conversation_reference_inputs'])
     if readonly_reason:
         result['editor_readonly_reason'] = readonly_reason
     if 'durable_execution' in record:
@@ -852,6 +861,8 @@ def workflow_for_save(draft, original, scope=None):
     } for index, task in enumerate(tasks)]
     next_record['task_prompt'] = _js_trim(tasks[0]['instructions']) if tasks else ''
     next_record['reference_inputs'] = draft.get('reference_inputs', UNDEFINED)
+    if 'conversation_reference_inputs' in draft:
+        next_record['conversation_reference_inputs'] = copy.deepcopy(draft['conversation_reference_inputs'])
     if structured:
         next_record['flow'] = copy.deepcopy(draft.get('flow', UNDEFINED))
         next_record['limits'] = copy.deepcopy(draft.get('limits', UNDEFINED))
@@ -943,6 +954,7 @@ _WORKFLOW_KEY_SPECS = (
     ('chat_capabilities_enabled', 'Chat capabilities', ('chat_capabilities_enabled',)),
     ('chat_execution', 'Chat execution', ('chat_execution',)),
     ('results_delivery', 'Results', ('results_delivery',)),
+    ('conversation_reference_inputs', 'Conversation references', ('conversation_reference_inputs',)),
     ('durable_execution', 'Durable execution', ('durable_execution',)),
     ('file_sync', 'File Sync', ('file_sync',)),
     ('limits', 'Flow limits', ('limits',)),
@@ -953,7 +965,9 @@ _WORKFLOW_KEY_LABELS = {key: label for key, label, _fields in _WORKFLOW_KEY_SPEC
 _TRAILING_WORKFLOW_KEYS = ('alerts', 'definition_version')
 _TASK_FIELD_LABELS = {
     'name': 'Task name', 'instructions': 'Instructions', 'runner': 'Task runner',
-    'document_action': 'Document action', 'reference_ids': 'Task references', 'inputs': 'Inputs',
+    'document_action': 'Document action', 'reference_ids': 'Task references',
+    'conversation_reference_ids': 'Task conversation references',
+    'conversation_send': 'Send to conversation', 'inputs': 'Inputs',
     'input_processing': 'Input processing', 'output_contract': 'Output contract', 'approval': 'Approval',
     'publication': 'Publication', 'run_when': 'Run when', 'placement': 'Position in flow',
     'chat_execution': 'Chat execution',

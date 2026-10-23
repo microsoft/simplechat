@@ -169,6 +169,7 @@ export function useWorkflowAssist({
                 baseline: sentBaseline,
                 draft: sentDraft,
                 contextItems: request.draft.contextItems,
+                conversationReferences: request.draft.conversationReferences,
                 conversation: workflowAssistReplay(thread?.exchanges ?? [], (id) => records[id], view,
                     workflowAssistEpoch(sentBaseline), request.submissionId),
                 focus: sent.focus,

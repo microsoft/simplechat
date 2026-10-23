@@ -11,6 +11,7 @@
 // Everything here reads both, so a caller never has to know which it received.
 
 import { readM365Citations } from './m365Citations';
+import { storedConversationReferences, type ConversationSource } from './conversationReferences';
 import type { AgentCitation, ChatMessage, ChatStreamEvent, HybridCitation, Json, M365Citation, WebCitation } from './types';
 
 type Bag = Record<string, unknown>;
@@ -244,6 +245,8 @@ export interface MessageSources {
     tools: AgentCitation[];
     /** Microsoft 365 emails, events and files the answer drew on. */
     m365: M365Citation[];
+    /** Private conversations the answer drew on. */
+    conversations: ConversationSource[];
     total: number;
 }
 
@@ -255,6 +258,7 @@ export interface MessageSources {
  */
 export function readSources(source: Json | ChatMessageLike | null | undefined): MessageSources {
     const root = bag(source);
+    const meta = innerMetadata(source as Json);
     const documents = Array.isArray(root.hybrid_citations)
         ? (root.hybrid_citations as HybridCitation[])
         : [];
@@ -265,13 +269,17 @@ export function readSources(source: Json | ChatMessageLike | null | undefined): 
         ? (root.agent_citations as AgentCitation[])
         : [];
     const m365 = readM365Citations(root.m365_citations);
+    const conversations = storedConversationReferences(
+        root.conversation_references ?? meta.conversation_references,
+    );
 
     return {
         documents,
         web,
         tools,
         m365,
-        total: documents.length + web.length + tools.length + m365.length,
+        conversations,
+        total: documents.length + web.length + tools.length + m365.length + conversations.length,
     };
 }
 
