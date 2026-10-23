@@ -105,6 +105,14 @@ _VALIDATION_CODES = frozenset({
     "output_too_large", "size_limit", "source_limit", "invalid_report", "invalid_deck",
     "layout_overflow", "image_unavailable", "invalid_image", "invalid_structure",
 })
+_OFFICE_ERROR_CODE_MAP = {
+    "access_denied": "output_access_denied",
+    "source_changed": "output_source_changed",
+    "cancelled": "output_cancelled",
+    "limit_exceeded": "size_limit",
+    "invalid_input": "invalid_data",
+    "unsupported_content": "invalid_data",
+}
 _SOURCE_CONFIGURATION_CODES = frozenset({
     "result_source_reader_required", "result_external_authorizer_required",
 })
@@ -289,12 +297,14 @@ def output_failure(exc):
         return "output_access_denied", False
     if isinstance(exc, ResultContractError):
         return "output_invalid_result", False
-    if isinstance(exc, GeneratedFileExportError):
-        if exc.code == "source_changed":
-            # A merged file assembled again from its originals no longer matches the checked bytes.
-            return "output_source_changed", False
-        code = exc.code if exc.code in _VALIDATION_CODES | _TRANSIENT_RENDER_CODES else "render_validation_failed"
-        return code, bool(exc.retryable is True and code in _TRANSIENT_RENDER_CODES)
+    if isinstance(exc, GeneratedFileExportError) or (
+        isinstance(exc, ValueError) and type(exc).__name__ == "OfficeRenderError"
+    ):
+        mapped = _OFFICE_ERROR_CODE_MAP.get(getattr(exc, "code", None), getattr(exc, "code", None))
+        if mapped in {"output_access_denied", "output_source_changed", "output_cancelled"}:
+            return mapped, False
+        code = mapped if mapped in _VALIDATION_CODES | _TRANSIENT_RENDER_CODES else "render_validation_failed"
+        return code, bool(getattr(exc, "retryable", False) is True and code in _TRANSIENT_RENDER_CODES)
     if isinstance(exc, (TimeoutError, ConnectionError)):
         return "output_transport_unavailable", True
     if isinstance(exc, AzureError):
