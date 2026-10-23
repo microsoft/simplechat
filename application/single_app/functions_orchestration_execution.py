@@ -1522,29 +1522,30 @@ class HarnessExecution:
         m365_records, external_citations = [], []
         if error is None:
             try:
-                self._revalidate_context()
-                if result.get("final_response") and not current.get("cancellation_requested_at"):
-                    reference = ResultRef.from_dict(result["final_response"])
-                    reader = self.services.results.open_result(
-                        reference, allow_partial=True, require_current_sources=True,
-                    )
-                    prepared = read_complete_input(reader)
-                    if type(prepared) is not str:
-                        raise HarnessExecutionError("result_invalid")
-                    reader.recheck()
-                    if self._delivery_only:
-                        citations = read_result_document_citations(self.context, reference)
-                if not self._delivery_only:
-                    citations = result.get("citations") or []
-                citations = self._validate_citations(citations, enrich_display=True)
-                if prepared:
-                    # The answer is published only while every result it read is still the user's.
-                    workflow_result_contexts = self._workflow_result_lineage(current)
-                if self.context is not None and not current.get("cancellation_requested_at"):
-                    assets = generated_image_assets(self.context.task_results, self._read_image_asset)
-                    charts = gathered_charts(self.record["plan"], self.context.task_results, self._read_gathered_value)
-                    m365_records = self._gathered_m365_records()
-                    external_citations = self._gathered_external_citations(include_memory=bool(prepared))
+                with self.services.results.read_operation():
+                    self._revalidate_context()
+                    if result.get("final_response") and not current.get("cancellation_requested_at"):
+                        reference = ResultRef.from_dict(result["final_response"])
+                        reader = self.services.results.open_result(
+                            reference, allow_partial=True, require_current_sources=True,
+                        )
+                        prepared = read_complete_input(reader)
+                        if type(prepared) is not str:
+                            raise HarnessExecutionError("result_invalid")
+                        reader.recheck()
+                        if self._delivery_only:
+                            citations = read_result_document_citations(self.context, reference)
+                    if not self._delivery_only:
+                        citations = result.get("citations") or []
+                    citations = self._validate_citations(citations, enrich_display=True)
+                    if prepared:
+                        # The answer is published only while every result it read is still the user's.
+                        workflow_result_contexts = self._workflow_result_lineage(current)
+                    if self.context is not None and not current.get("cancellation_requested_at"):
+                        assets = generated_image_assets(self.context.task_results, self._read_image_asset)
+                        charts = gathered_charts(self.record["plan"], self.context.task_results, self._read_gathered_value)
+                        m365_records = self._gathered_m365_records()
+                        external_citations = self._gathered_external_citations(include_memory=bool(prepared))
             except Exception as exc:
                 self._raise_delivery_infrastructure_failure(exc)
                 _log_failure("Execution context could not be reauthorized.", self.record, exc)

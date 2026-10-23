@@ -12307,10 +12307,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
+        "module_sha256": "1e37651f2830ad26d49676adcbf43e24baea1b2a8aa8e4480b926ec3415b8b14"
       },
       "classification": "sdk-compatible",
-      "contract": "Partitioned turn/source point mappings are reauthorized, checked for visibility and converted by normalize_history_message before strict saved-snapshot validation. Full source messages are resolved only after fingerprint checks; history disablement and revoked shared access cannot broaden reads.",
+      "contract": "Partitioned turn/source point mappings are reauthorized, checked for visibility and converted by normalize_history_message before strict saved-snapshot validation. Full source messages are resolved only after fingerprint checks; history disablement and revoked shared access cannot broaden reads. Result-operation snapshots never replace these message reads.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -12330,10 +12330,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
+        "module_sha256": "1e37651f2830ad26d49676adcbf43e24baea1b2a8aa8e4480b926ec3415b8b14"
       },
       "classification": "sdk-compatible",
-      "contract": "The previous assistant point mapping is checked for conversation/run ownership; model and reasoning fields are projected into plain dictionaries, without passing the SDK wrapper to an exact-dictionary contract.",
+      "contract": "The previous assistant point mapping is checked for conversation/run ownership; model and reasoning fields are projected into plain dictionaries, without passing the SDK wrapper to an exact-dictionary contract. Read-operation reuse does not wrap this metadata lookup.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -12353,10 +12353,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
+        "module_sha256": "1e37651f2830ad26d49676adcbf43e24baea1b2a8aa8e4480b926ec3415b8b14"
       },
       "classification": "sdk-compatible",
-      "contract": "The question point mapping supplies role and nested plain thread metadata; only a deepcopy of the validated nested thread dictionary is returned.",
+      "contract": "The question point mapping supplies role and nested plain thread metadata; only a deepcopy of the validated nested thread dictionary is returned. Regeneration metadata is outside the retained-result read scope.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -12376,10 +12376,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
+        "module_sha256": "1e37651f2830ad26d49676adcbf43e24baea1b2a8aa8e4480b926ec3415b8b14"
       },
       "classification": "sdk-compatible",
-      "contract": "A normalized owned conversation retains its _etag for IfNotModified replacement; the returned SDK mapping is consumed only by the Mapping-compatible cache invalidator. Lost-CAS retries retain current ownership.",
+      "contract": "A normalized owned conversation retains its _etag for IfNotModified replacement; the returned SDK mapping is consumed only by the Mapping-compatible cache invalidator. Lost-CAS retries retain current ownership. This write remains outside read-operation reuse.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -12389,7 +12389,7 @@
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._finalize": {
       "boundary": {
-        "sha256": "f8a5156859bd605e6bbe5780b4bd4657cd1830d0b4523413e6fea70fc5f9516e",
+        "sha256": "6d40eef25cc058ee0cf9852a34c3fbd13e4cd54c19b170849955b1692149c4ac",
         "points": [
           {
             "method": "read_item",
@@ -12399,15 +12399,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
+        "module_sha256": "1e37651f2830ad26d49676adcbf43e24baea1b2a8aa8e4480b926ec3415b8b14"
       },
       "classification": "sdk-compatible",
-      "contract": "The published message point mapping is projected with items() into a metadata-free fingerprint and consumed by Mapping-compatible mirroring. Durable outcome telemetry reads only finalized scalar fields; strict task/result descriptors and saved-message confirmation remain unchanged.",
+      "contract": "Read-only retained-result projection ends before screening and publication. Published Cosmos message mappings still use items() for metadata-free fingerprint checks and Mapping-compatible mirroring; the operation cache never contains message responses or conditional publication state.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_orchestration_harness_execution.py::test_selected_result_citations_reach_headless_message_cache_and_delivery",
+        "functional_tests/test_orchestration_harness_execution.py::test_context_edit_after_composition_does_not_publish_stale_content",
         "functional_tests/test_orchestration_failure_telemetry.py::test_durable_execution_outcome_is_recorded_once_not_on_sse_replay"
       ]
     },
@@ -32864,6 +32865,21 @@
       "contract": "Scoped read_item override injects an actual Cosmos 503; route regression requires a safe service error rather than an empty authorization list and restores the override afterward.",
       "tests": [
         "functional_tests/test_m365_routes.py::test_workflow_authorization_sdk_contract"
+      ]
+    },
+    "functional_tests/test_orchestration_result_read_amplification.py::citation_graph::point-seam-1": {
+      "boundary": {
+        "sha256": "f91bc035edbce0048e8e2e1f530c67961c5281af6214fbbe9db977491c9f4113",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "d755058e74ed4a46ef01cfff893c86b34ce8455d08478b2b290cbcc93d472a42"
+      },
+      "classification": "fault-injection",
+      "contract": "The scoped read_item wrapper only counts calls and forwards all arguments and the unchanged SDK-default CosmosDict response to ResultContainer. The shared transactional fake retains ETags, partition routing, atomic batches and failure injection; scope tests revoke producer/conversation/claim authority without normalizing storage responses.",
+      "tests": [
+        "functional_tests/test_orchestration_result_read_amplification.py"
       ]
     }
   }
