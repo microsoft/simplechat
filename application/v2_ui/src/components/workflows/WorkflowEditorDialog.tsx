@@ -196,7 +196,7 @@ export function WorkflowEditorDialog({
         workflow ? structuredClone(workflow) : null,
     );
     const [baseline, setBaseline] = useState<WorkflowDefinition>(() =>
-        workflow ? structuredClone(workflow) : initialDraft ? structuredClone(initialDraft) : newWorkflowDefinition(scope, options),
+        workflow ? structuredClone(workflow) : initialDraft ? { ...structuredClone(initialDraft), durable_execution: true } : newWorkflowDefinition(scope, options),
     );
     const history = useWorkflowAuthoringHistory(baseline);
     const draft = history.draft;
@@ -1059,21 +1059,20 @@ export function WorkflowEditorDialog({
                         </WorkflowField>
                     </WorkflowFieldList>
                 </WorkflowChangedField>
-                <div className="border-t border-edge-strong pt-1">
-                    <WorkflowSwitchGrid>
-                        <WorkflowChangedField changeKey="durable_execution">
-                            <WorkflowSwitch
-                                label="Durable execution"
-                                checked={draft.durable_execution === true}
-                                disabled={draft.definition_version === 3}
-                                onChange={(checked) => setWorkflow((current) => ({ ...current, durable_execution: checked }))}
-                                description={draft.definition_version === 3
-                                    ? 'Required for structured control flow. Saved decisions and exact execution checkpoints survive waits and restarts.'
-                                    : 'Save checkpoints so queued and interrupted runs can resume instead of depending on this browser tab.'}
-                            />
-                        </WorkflowChangedField>
-                    </WorkflowSwitchGrid>
-                </div>
+                {original !== null && original.durable_execution !== true && draft.definition_version !== 3 ? (
+                    <div className="border-t border-edge-strong pt-1">
+                        <WorkflowSwitchGrid>
+                            <WorkflowChangedField changeKey="durable_execution">
+                                <WorkflowSwitch
+                                    label="Durable execution"
+                                    checked={draft.durable_execution === true}
+                                    onChange={(checked) => setWorkflow((current) => ({ ...current, durable_execution: checked }))}
+                                    description="Save checkpoints so queued and interrupted runs can resume instead of depending on this browser tab."
+                                />
+                            </WorkflowChangedField>
+                        </WorkflowSwitchGrid>
+                    </div>
+                ) : null}
                 <WorkflowChangedField changeKey="chat_execution">
                     <WorkflowChatExecutionFields value={draft.chat_execution} workflow={draft} options={options}
                         onChange={(chatExecution) => setWorkflow((current) => {
