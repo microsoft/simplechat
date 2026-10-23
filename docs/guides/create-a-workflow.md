@@ -65,9 +65,13 @@ can bookmark it.
 
 Choose a runner and manual or interval trigger, then add tasks in execution
 order. Task details separate document-action evidence from shared reference
-documents and prior-task outputs. For a synthesis task, select a specific
-earlier task under **Previous-task inputs** instead of depending on an
-intermediate note's reply. Reordering never silently retargets that binding.
+documents, private conversation references (`~`), and prior-task outputs. For a
+synthesis task, select a specific earlier task under **Previous-task inputs**
+instead of depending on an intermediate note's reply. Reordering never silently
+retargets that binding. Personal workflows can also bind your own private
+conversations as shared references so each run pulls fresh bounded excerpts from
+their latest visible messages; see
+[Reference and send between conversations]({{ '/guides/reference-and-send-conversations/' | relative_url }}).
 
 Use optional output requirements when later work needs a particular JSON
 shape, record identity, count, or complete source coverage. Partial acceptance

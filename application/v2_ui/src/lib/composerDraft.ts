@@ -9,6 +9,7 @@ import {
     type ContextScopeRef,
 } from './chatContext';
 import { reconcileContextItems } from './chatContextTokens';
+import { reconcileConversationReferences, type DraftConversationReference } from './conversationReferences';
 import { insertPromptText } from './promptSlash';
 import {
     attachedPromptContent,
@@ -65,6 +66,7 @@ export interface ComposerUpload {
 export interface ComposerDraft {
     text: string;
     contextItems: ContextItem[];
+    conversationReferences?: DraftConversationReference[];
     attachedPrompt: AttachedPrompt | null;
     promptValues: Record<string, string>;
     promptAiValues?: Record<string, PromptAiValue>;
@@ -77,7 +79,7 @@ export interface ComposerDraft {
 
 export function createComposerDraft(): ComposerDraft {
     return {
-        text: '', contextItems: [], attachedPrompt: null, promptValues: {}, uploads: [], imageReferences: [],
+        text: '', contextItems: [], conversationReferences: [], attachedPrompt: null, promptValues: {}, uploads: [], imageReferences: [],
         mentions: [],
     };
 }
@@ -95,6 +97,7 @@ export function attachPromptToDraft(
     return {
         ...draft,
         text,
+        conversationReferences: reconcileConversationReferences(text, draft.conversationReferences),
         contextItems: reconcileContextItems(text, draft.contextItems),
         attachedPrompt: {
             id: String(prompt.id ?? ''),
@@ -284,7 +287,8 @@ export function composerDraftHasContent(draft: ComposerDraft): boolean {
     return Boolean(
         draft.text.trim()
         || (draft.attachedPrompt && attachedPromptContent(draft.attachedPrompt).trim())
-        || composerDraftReferences(draft).length,
+        || composerDraftReferences(draft).length
+        || (draft.conversationReferences?.length ?? 0) > 0,
     );
 }
 

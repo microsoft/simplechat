@@ -49,6 +49,11 @@ import {
     reconcileContextItems,
 } from '../../lib/chatContextTokens';
 import {
+    addConversationReference,
+    conversationReferenceRequests,
+    reconcileConversationReferences,
+} from '../../lib/conversationReferences';
+import {
     attachPromptToDraft,
     addComposerDraftImageReference,
     buildComposerDraftSubmission,
@@ -188,6 +193,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         analysisResultContext, clearAnalysisResultContext,
         workflowResultContext, workflowResultLaunch, clearWorkflowResultContext,
         composerImageReferences, consumeComposerImageReferences,
+        composerConversationReferences, consumeComposerConversationReferences,
     } = useChatStore();
     const savedAnalysis = analysisResultContext?.conversation_id === activeConversationId
         ? analysisResultContext : null;
@@ -295,7 +301,12 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const imageReferenceConversationRef = useRef<string | null>(activeConversationId);
     const setText: React.Dispatch<React.SetStateAction<string>> = (update) => setDraft((current) => {
         const value = typeof update === 'function' ? update(current.text) : update;
-        return { ...current, text: value, contextItems: reconcileContextItems(value, current.contextItems) };
+        return {
+            ...current,
+            text: value,
+            conversationReferences: reconcileConversationReferences(value, current.conversationReferences),
+            contextItems: reconcileContextItems(value, current.contextItems),
+        };
     });
     const chatWidth = useUiStore((state) => state.chatWidth);
 
@@ -333,24 +344,26 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                 ...current, documentSearch: false, webSearch: false, imageGeneration: false,
                 deepResearch: false, urlAccess: false,
             }));
-            setDraft((current) => ({ ...current, contextItems: [] }));
+            setDraft((current) => ({ ...current, contextItems: [], conversationReferences: [] }));
             setPickerOpen(false);
         }
     }, [storedResult]);
 
     // A new picked/mentioned/uploaded source wins over a response that completes later.
+    const conversationReferenceIds = (draft.conversationReferences ?? []).map((item) => item.id);
     const sourceSelectionKey = JSON.stringify([
         contextItems.map((item) => item.key),
         draft.uploads.map((upload) => upload.id),
+        conversationReferenceIds,
     ]);
     const previousSourceSelection = useRef(sourceSelectionKey);
     useEffect(() => {
         if (sourceSelectionKey !== previousSourceSelection.current &&
-            (contextItems.length > 0 || draft.uploads.length > 0)) {
+            (contextItems.length > 0 || draft.uploads.length > 0 || conversationReferenceIds.length > 0)) {
             clearAnalysisResultContext();
         }
         previousSourceSelection.current = sourceSelectionKey;
-    }, [sourceSelectionKey, contextItems.length, draft.uploads.length, clearAnalysisResultContext]);
+    }, [sourceSelectionKey, contextItems.length, draft.uploads.length, conversationReferenceIds.length, clearAnalysisResultContext]);
 
     /**
      * Orchestration mode.
@@ -537,6 +550,35 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         setOptions((current) => current.imageGeneration ? current : { ...current, imageGeneration: true });
         textareaRef.current?.focus();
     }, [composerImageReferences, consumeComposerImageReferences, shared, referenceLimit]);
+
+    useEffect(() => {
+        if (composerConversationReferences.length === 0) {
+            return;
+        }
+        const references = consumeComposerConversationReferences();
+        if (references.length === 0 || shared || answeringFromStoredResult) {
+            return;
+        }
+        let limitError = '';
+        setDraft((current) => {
+            let next = current.conversationReferences ?? [];
+            for (const source of references) {
+                if (source.id === activeConversationId) {
+                    continue;
+                }
+                try {
+                    next = addConversationReference(next, source, 'selection');
+                } catch (error) {
+                    limitError = error instanceof Error ? error.message : 'Could not attach conversation.';
+                }
+            }
+            return next === (current.conversationReferences ?? []) ? current : { ...current, conversationReferences: next };
+        });
+        if (limitError) {
+            toast.error(limitError);
+        }
+        textareaRef.current?.focus();
+    }, [composerConversationReferences, consumeComposerConversationReferences, shared, answeringFromStoredResult, activeConversationId]);
 
     // No URLs means the draft no longer has a Read URLs selection. A capability losing
     // authorization is different: keep that requirement visible for server validation.
@@ -1125,13 +1167,12 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
      */
     const clearDraft = () => {
         editorActionsRef.current?.cancelKnowledge();
-        const emptyDraft = createComposerDraft();
-        setDraft(emptyDraft);
+        setDraft(createComposerDraft());
         setPickerOpen(false);
         uploadConversationRef.current = null;
         setShowPromptWarning(false);
         setPromptReview({ instance: 0, request: 0 });
-        return emptyDraft;
+        return createComposerDraft();
     };
 
     const dispatch = (outgoing: { message: string; promptInfo: Json | null }) => {
@@ -1159,6 +1200,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             ...options,
             publicWorkspaceSelection,
             contextItems,
+            conversationReferences: draft.conversationReferences ?? [],
             imageReferences: options.imageGeneration && !orchestrating ? draftImageReferences : [],
             promptInfo: outgoing.promptInfo,
         });
@@ -1170,6 +1212,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                     const untouched = current === emptyDraft || (
                         !composerDraftHasContent(current) && !current.text
                         && !current.uploads.length && !current.imageReferences?.length
+                        && !current.conversationReferences?.length
                         && !current.mentions?.length
                     );
                     return untouched ? sentDraft : current;
@@ -1231,6 +1274,10 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         }
         if (options.imageGeneration && draftImageReferences.length > 0) {
             seeds.image_references = draftImageReferences;
+        }
+        const conversationReferences = conversationReferenceRequests(draft.conversationReferences ?? []);
+        if (conversationReferences.length > 0) {
+            seeds.conversation_references = conversationReferences;
         }
         // An explicit @agent or @model tag says who should answer, the way it does in a shared
         // chat: an agent tag seeds that agent, so the plan asks it rather than using its actions
@@ -1735,6 +1782,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                             agentSelection: options.agentSelection,
                         }).agent_info}
                         shared={shared}
+                        allowConversationReferences={!shared && !answeringFromStoredResult}
                         textareaRef={textareaRef}
                         fileInputRef={fileInputRef}
                         showTools={false}

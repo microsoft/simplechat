@@ -39,6 +39,20 @@ import type {
     WorkspaceDocument,
     WorkspaceTag,
 } from './types';
+export {
+    cancelConversationHandoff,
+    createConversationHandoff,
+    listConversationHandoffs,
+    previewConversationHandoffDestination,
+    resolveConversationReferences,
+    searchConversationReferences,
+    type ConversationHandoff,
+    type ConversationHandoffDestinationConfig,
+    type ConversationHandoffStatus,
+    type ConversationReference,
+    type ConversationReferenceResolution,
+    type ConversationSource,
+} from './conversationReferences';
 
 export async function fetchAnalysisRecords(
     descriptor: SavedAnalysisDescriptor,

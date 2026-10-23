@@ -87,6 +87,11 @@ import type { PublicWorkspaceSelection } from '../../lib/publicChatScope';
 import { MentionMenu, useMentionSuggestions } from './MentionMenu';
 import { ComposerMentionChips } from './MentionPills';
 import { PromptSlashMenu } from './PromptSlashMenu';
+import { ConversationReferenceChips, ConversationSuggestionList, useConversationSuggestions } from './ConversationReferences';
+import {
+    addConversationReference, insertConversationToken, readClipboardConversationReference, readConversationQuery,
+    reconcileConversationReferences, removeConversationToken, resolveConversationReferences, type ConversationSource,
+} from '../../lib/conversationReferences';
 
 export interface ComposerEditorProps {
     publicWorkspaceSelection?: PublicWorkspaceSelection | null;
@@ -129,6 +134,8 @@ export interface ComposerEditorProps {
     restricted?: boolean;
     /** Restricted mode only: also offer `#` documents and tags and the Add context control. */
     allowContext?: boolean;
+    /** Opt-in only: chat and private plan/workflow assist, never artifact editors. */
+    allowConversationReferences?: boolean;
     /** With `allowContext`, offer documents only: no tags. Off by default. */
     contextDocumentsOnly?: boolean;
     describedBy?: string;
@@ -204,6 +211,7 @@ export function ComposerEditor({
     onUploadComplete,
     restricted = false,
     allowContext = false,
+    allowConversationReferences,
     contextDocumentsOnly = false,
     describedBy,
     invalid = false,
@@ -223,6 +231,18 @@ export function ComposerEditor({
     const shared = sharedOverride ?? sharedConversation;
     const features = bootstrap?.features ?? {};
     const contextEnabled = !restricted || allowContext;
+    const conversationsEnabled = (allowConversationReferences ?? (contextEnabled && !referenceUploadsOnly)) && !shared;
+    const [conversationQuery, setConversationQuery] = useState<ReturnType<typeof readConversationQuery>>(null);
+    const [conversationIndex, setConversationIndex] = useState(0);
+    const [conversationError, setConversationError] = useState('');
+    const [resolvingConversation, setResolvingConversation] = useState(false);
+    const conversationSuggestions = useConversationSuggestions(conversationsEnabled && !disabled ? conversationQuery?.query ?? null : null, conversationId);
+    const latestDraft = useRef(draft);
+    latestDraft.current = draft;
+    const referenceGeneration = useRef(0);
+    useEffect(() => { referenceGeneration.current += 1; setConversationQuery(null); setConversationError(''); setResolvingConversation(false);
+        return () => { referenceGeneration.current += 1; };
+    }, [id, conversationId, conversationsEnabled]);
     const slashEnabled = !restricted;
     const mentionsActive = mentionsEnabled && !restricted;
     const uploadsEnabled = features.enable_chat_file_uploads === true && !uploadsDisabled && !restricted;
@@ -256,7 +276,7 @@ export function ComposerEditor({
     );
     const slashResults = slash && slashEnabled && !disabled ? filterPromptsForSlash(promptCatalog, slash.query) : [];
     const [menuPlacement, setMenuPlacement] = useState<'up' | 'down'>('up');
-    const menuOpen = Boolean(pickerOpen || contextQuery || slashResults.length || mentionSuggestions.length);
+    const menuOpen = Boolean(conversationQuery || pickerOpen || contextQuery || slashResults.length || mentionSuggestions.length);
     useLayoutEffect(() => {
         if (!menuOpen) {
             return;
@@ -285,8 +305,9 @@ export function ComposerEditor({
     }, [menuOpen]);
     const contextKeys = useMemo(() => new Set(draft.contextItems.map((item) => item.key)), [draft.contextItems]);
     const contextTokens = useMemo(
-        () => new Set(draft.contextItems.filter(hasContextMention).map((item) => item.token)),
-        [draft.contextItems],
+        () => new Set([...draft.contextItems.filter(hasContextMention).map((item) => item.token),
+            ...(draft.conversationReferences ?? []).filter((item) => item.attachment !== 'selection').map((item) => item.token)]),
+        [draft.contextItems, draft.conversationReferences],
     );
     const availableAttachments = useMemo(
         () => restricted ? [] : conversationAttachmentReferences(messages, conversationId),
@@ -399,6 +420,7 @@ export function ComposerEditor({
     }, [id, conversationId]);
     useEffect(() => {
         if (!draft.text || disabled) {
+            setConversationQuery(null);
             setContextQuery(null);
             setSlash(null);
             setMention(null);
@@ -417,6 +439,8 @@ export function ComposerEditor({
             return;
         }
         const caret = element.selectionStart ?? 0;
+        setConversationQuery(conversationsEnabled ? readConversationQuery(element.value, caret) : null);
+        setConversationIndex(0);
         setContextQuery(contextEnabled ? readContextQuery(element.value, caret) : null);
         setContextIndex(0);
         setSlash(slashEnabled ? readSlashQuery(element.value, caret) : null);
@@ -427,6 +451,7 @@ export function ComposerEditor({
     const applyText = (text: string) => onChange((current) => ({
         ...current,
         text,
+        conversationReferences: reconcileConversationReferences(text, current.conversationReferences),
         contextItems: reconcileContextItems(text, current.contextItems),
     }));
     const removeContextChips = (items: ContextItem[]) => onChange((current) => {
@@ -522,14 +547,116 @@ export function ComposerEditor({
         }));
         focusAt();
     };
+    const applyConversationSource = (source: ConversationSource) => {
+        if (!conversationQuery) {
+            return;
+        }
+        try {
+            const currentRefs = latestDraft.current.conversationReferences ?? [];
+            const nextRefs = addConversationReference(currentRefs, source, 'mention');
+            const added = nextRefs.find((item) => item.id === source.id);
+            if (!added) {
+                return;
+            }
+            const next = insertConversationToken(
+                latestDraft.current.text,
+                conversationQuery.start,
+                conversationQuery.end,
+                added.token,
+            );
+            setConversationError('');
+            onChange((current) => {
+                const updated = addConversationReference(current.conversationReferences ?? [], source, 'mention');
+                return {
+                    ...current,
+                    text: next.text,
+                    conversationReferences: reconcileConversationReferences(next.text, updated),
+                    contextItems: reconcileContextItems(next.text, current.contextItems),
+                };
+            });
+            setConversationQuery(null);
+            focusAt(next.caret);
+        } catch (error) {
+            setConversationError(error instanceof Error ? error.message : 'Could not attach conversation.');
+        }
+    };
+    const removeConversationChip = (source: ConversationSource) => {
+        setConversationError('');
+        onChange((current) => {
+            const existing = current.conversationReferences ?? [];
+            const removed = existing.find((item) => item.id === source.id);
+            const remaining = existing.filter((item) => item.id !== source.id);
+            const strip = Boolean(
+                removed
+                && removed.attachment !== 'selection'
+                && !remaining.some((entry) => entry.attachment !== 'selection' && entry.token === removed.token),
+            );
+            const text = strip && removed ? removeConversationToken(current.text, removed.token) : current.text;
+            return {
+                ...current,
+                text,
+                conversationReferences: remaining,
+                contextItems: reconcileContextItems(text, current.contextItems),
+            };
+        });
+    };
+    const pastePortableConversation = async (reference: { kind: 'conversation'; id: string }) => {
+        if (reference.id === conversationId) {
+            setConversationError('Choose a different conversation as a source.');
+            return;
+        }
+        const generation = ++referenceGeneration.current;
+        setResolvingConversation(true);
+        setConversationError('');
+        try {
+            const resolved = await resolveConversationReferences([reference], conversationId);
+            if (generation !== referenceGeneration.current) {
+                return;
+            }
+            const source = resolved.references[0];
+            if (!source) {
+                setConversationError('Conversation source is unavailable.');
+                return;
+            }
+            onChange((current) => ({
+                ...current,
+                conversationReferences: addConversationReference(current.conversationReferences ?? [], source, 'selection'),
+            }));
+        } catch (error) {
+            if (generation === referenceGeneration.current) {
+                setConversationError(error instanceof Error ? error.message : 'Conversation source is unavailable.');
+            }
+        } finally {
+            if (generation === referenceGeneration.current) {
+                setResolvingConversation(false);
+            }
+        }
+    };
     const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (event.nativeEvent.isComposing) {
             return;
         }
-        if (contextQuery && loading && (event.key === 'Enter' || event.key === 'Tab')) {
-            event.preventDefault();
-            event.stopPropagation();
-            return;
+        if ((conversationQuery && conversationSuggestions.loading)
+            || (contextQuery && loading)) {
+            if (event.key === 'Enter' || event.key === 'Tab') {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+        }
+        if (conversationQuery && conversationSuggestions.sources.length) {
+            const count = conversationSuggestions.sources.length;
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                setConversationIndex((conversationIndex + (event.key === 'ArrowDown' ? 1 : -1) + count) % count);
+                return;
+            }
+            if (event.key === 'Enter' || event.key === 'Tab') {
+                event.preventDefault();
+                event.stopPropagation();
+                applyConversationSource(conversationSuggestions.sources[conversationIndex % count]);
+                return;
+            }
         }
         const count = contextQuery && candidates.length ? candidates.length
             : slashResults.length || (mention ? mentionSuggestions.length : 0);
@@ -557,9 +684,10 @@ export function ComposerEditor({
             }
         }
         if (event.key === 'Escape') {
-            if (contextQuery || slash || mention || pickerOpen) {
+            if (conversationQuery || contextQuery || slash || mention || pickerOpen) {
                 event.preventDefault();
                 event.stopPropagation();
+                setConversationQuery(null);
                 setContextQuery(null);
                 setSlash(null);
                 setMention(null);
@@ -879,6 +1007,18 @@ export function ComposerEditor({
                 <PromptSlashMenu prompts={slashResults} activeIndex={slashIndex} onSelect={pickSlashPrompt}
                     placement={menuPlacement} />
             )}
+            {conversationQuery && !pickerOpen && !disabled && (
+                <div className={clsx(
+                    'glass-modal absolute right-0 left-0 z-40 rounded-xl border border-edge shadow-lg',
+                    menuPlacement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
+                )}>
+                    <ConversationSuggestionList
+                        suggestions={conversationSuggestions}
+                        activeIndex={conversationIndex}
+                        onSelect={applyConversationSource}
+                    />
+                </div>
+            )}
             {contextQuery && !pickerOpen && !disabled && (
                 <ContextMenu candidates={candidates} loading={loading} activeIndex={contextIndex}
                     error={contextError} onRetry={retryContext}
@@ -894,6 +1034,17 @@ export function ComposerEditor({
             )}
             <ComposerMentionChips mentions={draft.mentions ?? []} disabled={disabled}
                 onRemove={(chip) => !disabled && removeMentionChip(chip)} />
+            <ConversationReferenceChips
+                references={draft.conversationReferences ?? []}
+                disabled={disabled}
+                onRemove={(source) => !disabled && removeConversationChip(source)}
+            />
+            {resolvingConversation && (
+                <p role="status" className="mb-2 px-1 text-xs text-text-3">Verifying conversation reference…</p>
+            )}
+            {conversationError && (
+                <p role="alert" className="mb-2 px-1 text-xs text-danger">{conversationError}</p>
+            )}
             <ContextChips items={draft.contextItems}
                 onRemove={(item) => !disabled && removeContextChip(item)}
                 onRemoveAll={(items) => !disabled && removeContextChips(items)}
@@ -991,7 +1142,21 @@ export function ComposerEditor({
                     }}
                     onSelect={(event) => syncQueries(event.currentTarget)}
                     onPaste={(event) => {
-                        if (disabled || !uploadsEnabled) {
+                        if (disabled) {
+                            return;
+                        }
+                        if (conversationsEnabled) {
+                            const portable = readClipboardConversationReference(
+                                event.clipboardData,
+                                window.location.origin,
+                            );
+                            if (portable) {
+                                event.preventDefault();
+                                void pastePortableConversation(portable);
+                                return;
+                            }
+                        }
+                        if (!uploadsEnabled) {
                             return;
                         }
                         const pasted = chatTransferFiles(event.clipboardData, 'paste');

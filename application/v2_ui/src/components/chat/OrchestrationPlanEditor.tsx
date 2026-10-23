@@ -27,6 +27,7 @@ import {
     type AssistSend,
 } from '../../lib/assistThread';
 import { planDraftReferences, scopeNoticeText, storedTurnReferences } from '../../lib/planReferences';
+import { conversationReferenceRequests } from '../../lib/conversationReferences';
 import {
     approveAndRunPlan,
     loadPlanEditorHistory,
@@ -83,9 +84,15 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
     const sendInstruction: AssistSend = async ({ text, draft, submissionId, ownSubmissionIds }) => {
         const runBefore = selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId)?.state?.plan.run_id;
         const references = planDraftReferences(draft);
+        const conversationReferences = conversationReferenceRequests(draft.conversationReferences ?? []);
         const result = await submitPlanRevision(
             target,
-            { action: 'ask', instruction: text, ...(references.length ? { references } : {}) },
+            {
+                action: 'ask',
+                instruction: text,
+                ...(references.length ? { references } : {}),
+                ...(conversationReferences.length ? { conversation_references: conversationReferences } : {}),
+            },
             { submissionId, inlineError: true },
         );
         if (result.ok) {
@@ -147,7 +154,7 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
             if (event.key === 'Escape') {
                 // Both listen on the document, and this one was added first: an open `#` picker
                 // closes itself on this Escape, and the editor stays open.
-                const picker = dialogRef.current?.querySelector('[data-context-picker]');
+                const picker = dialogRef.current?.querySelector('[data-context-picker], [data-conversation-picker]');
                 if (picker) {
                     if (picker.contains(document.activeElement)) {
                         // The picker's search box goes with it, so carry on in the input.

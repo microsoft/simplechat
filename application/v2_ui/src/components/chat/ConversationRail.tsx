@@ -19,19 +19,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
+    Copy,
     Download,
     EyeOff,
     Loader2,
     LogOut,
+    MessageSquare,
     MoreHorizontal,
     Pencil,
     Pin,
     PinOff,
     Search,
+    Send,
     Trash2,
     Users,
     X,
 } from 'lucide-react';
+import {
+    isPrivateConversation,
+    portableConversationReference,
+    type ConversationSource,
+} from '../../lib/conversationReferences';
+import { toast } from '../../stores/toastStore';
+import { ConversationHandoffDialog } from './ConversationHandoffDialog';
 import { useChatStore } from '../../stores/chatStore';
 import { useCollaborationStore } from '../../stores/collaborationStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
@@ -188,27 +198,32 @@ function ConversationRow({
     anySelected,
     onExport,
     onRequestDelete,
+    onSendToConversation,
 }: {
     conversation: Conversation;
     selected: boolean;
     anySelected: boolean;
     onExport: (conversationId: string) => void;
     onRequestDelete: (conversation: Conversation) => void;
+    onSendToConversation: (source: ConversationSource) => void;
 }) {
     const {
         activeConversationId,
+        activeConversationKind,
         selectConversation,
         renameConversation,
         togglePinned,
         toggleHidden,
         applyConversationSelection,
         clearConversationSelection,
+        addComposerConversationReference,
     } = useChatStore();
 
     const [menuOpen, setMenuOpen] = useState(false);
     const [renaming, setRenaming] = useState(false);
     const [draftTitle, setDraftTitle] = useState(conversation.title);
     const openPanel = useCollaborationStore((state) => state.openPanel);
+    const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
     const collaborationEnabled = useBootstrapStore((state) =>
         Boolean(state.data?.features?.enable_collaborative_conversations),
     );
@@ -216,6 +231,13 @@ function ConversationRow({
     const isActive = conversation.id === activeConversationId;
     const shareable = collaborationEnabled && canShareConversation(conversation);
     const shared = isCollaborative(conversation);
+    const privateEligible = isPrivateConversation(conversation, currentUserId);
+    const sourceDescriptor: ConversationSource = {
+        kind: 'conversation',
+        id: conversation.id,
+        title: conversation.title || 'Untitled conversation',
+        last_updated: conversation.last_updated,
+    };
     // Once anything is picked, every row shows its box. That is what makes the state
     // legible — and it matters more here than in a table, because a plain click clears the
     // selection, so the user has to be able to see there is one to lose.
@@ -346,7 +368,55 @@ function ConversationRow({
                         aria-hidden="true"
                         onClick={() => setMenuOpen(false)}
                     />
-                    <div className="glass-modal absolute top-8 right-1 z-50 w-44 rounded-xl p-1">
+                    <div className="glass-modal absolute top-8 right-1 z-50 w-56 rounded-xl p-1">
+                        {privateEligible && (
+                            <div className="mb-1 border-b border-edge pb-1">
+                                <button
+                                    type="button"
+                                    onClick={(event) => event.stopPropagation()}
+                                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm font-medium text-text-1 hover:bg-surface-2"
+                                >
+                                    <MessageSquare size={14} /> Reference Conversation
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={isActive || activeConversationKind === 'collaborative'}
+                                    onClick={() => {
+                                        setMenuOpen(false);
+                                        addComposerConversationReference(sourceDescriptor);
+                                    }}
+                                    className="flex w-full items-center gap-2 rounded-lg py-1.5 pr-2.5 pl-6 text-left text-xs text-text-2 hover:bg-surface-2 hover:text-text-1 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                    Use in current conversation
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setMenuOpen(false);
+                                        const text = portableConversationReference(
+                                            { kind: 'conversation', id: conversation.id },
+                                            window.location.origin,
+                                        );
+                                        void navigator.clipboard?.writeText(text)
+                                            .then(() => toast.success('Copied conversation reference'))
+                                            .catch(() => { /* Clipboard access can be denied. */ });
+                                    }}
+                                    className="flex w-full items-center gap-2 rounded-lg py-1.5 pr-2.5 pl-6 text-left text-xs text-text-2 hover:bg-surface-2 hover:text-text-1"
+                                >
+                                    <Copy size={12} /> Copy reference
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setMenuOpen(false);
+                                        onSendToConversation(sourceDescriptor);
+                                    }}
+                                    className="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-text-1 hover:bg-surface-2"
+                                >
+                                    <Send size={14} /> Send To Conversation
+                                </button>
+                            </div>
+                        )}
                         <button
                             type="button"
                             onClick={() => {
@@ -503,6 +573,7 @@ export function ConversationRail({
         ids: string[];
         skipSelection: boolean;
     } | null>(null);
+    const [handoffSource, setHandoffSource] = useState<ConversationSource | null>(null);
 
     /**
      * The removal awaiting confirmation, or null.
@@ -677,7 +748,7 @@ export function ConversationRail({
                 // control that opened it — so without this guard, Escape would dismiss the
                 // dialog *and* clear the selection behind it, losing what the user was
                 // cancelling out of.
-                if (exportRequest || pendingRemoval) {
+                if (exportRequest || pendingRemoval || handoffSource) {
                     return;
                 }
                 if (event.key === 'Escape' && anySelected) {
@@ -842,6 +913,7 @@ export function ConversationRail({
                             onRequestDelete={(target) =>
                                 setPendingRemoval({ conversations: [target], bulk: false })
                             }
+                            onSendToConversation={(source) => setHandoffSource(source)}
                         />
                     ))}
                 </ul>
@@ -888,6 +960,13 @@ export function ConversationRail({
                             : 'You can be invited back, but you will not see what was said while you were away.'}
                     </p>
                 </ConfirmDialog>
+            )}
+
+            {handoffSource && (
+                <ConversationHandoffDialog
+                    source={handoffSource}
+                    onClose={() => setHandoffSource(null)}
+                />
             )}
         </div>
     );

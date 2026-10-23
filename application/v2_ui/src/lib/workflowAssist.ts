@@ -9,6 +9,7 @@
 import { api, apiUrl, ApiError, CREDENTIALS_MODE } from './apiClient';
 import { v2ApiFetch } from './v2SourcePolicy';
 import type { ContextItem } from './chatContext';
+import { conversationReferenceRequests, type ConversationReference } from './conversationReferences';
 import { codePointLength, codePointPrefix } from './codePoints';
 import { canonicalPlanReferences, planDraftReferences, PlanReferenceError, type PlanReference } from './planReferences';
 import { diffWorkflowChanges, type WorkflowChange, type WorkflowChangeTarget } from './workflowChangeTracking';
@@ -85,6 +86,7 @@ export interface WorkflowAssistRequest {
     readonly time_zone?: string;
     readonly draft: WorkflowDefinition;
     readonly references: readonly PlanReference[];
+    readonly conversation_references?: readonly ConversationReference[];
 }
 
 export type WorkflowAssistRequestErrorCode = 'invalid_request' | 'reference_limit' | 'tags_unsupported';
@@ -241,6 +243,7 @@ export interface WorkflowAssistRequestInput {
     /** The session's current draft, the same object the answer is later compared with. */
     readonly draft: WorkflowDefinition;
     readonly contextItems: readonly ContextItem[];
+    readonly conversationReferences?: readonly ConversationReference[];
     readonly conversation: readonly WorkflowAssistReplayTurn[];
     readonly focus: string | null;
     readonly timeZone: string | null;
@@ -261,6 +264,7 @@ export function buildWorkflowAssistRequest(input: WorkflowAssistRequestInput): W
         );
     }
     const references = workflowAssistReferences({ contextItems: input.contextItems });
+    const conversationReferences = conversationReferenceRequests(input.conversationReferences ?? []);
     const workflowId = input.baseline.id;
     let base: WorkflowAssistBase | null = null;
     if (workflowId) {
@@ -284,6 +288,7 @@ export function buildWorkflowAssistRequest(input: WorkflowAssistRequestInput): W
         ...(sendZone && zone ? { time_zone: zone } : {}),
         draft: input.draft,
         references,
+        ...(conversationReferences.length > 0 ? { conversation_references: conversationReferences } : {}),
     };
 }
 

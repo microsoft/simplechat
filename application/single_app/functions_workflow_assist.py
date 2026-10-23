@@ -41,6 +41,7 @@ import traceback
 from functions_assist_references import ReferenceRequestError, canonical_request_references
 from functions_assist_diagnostics import ASSIST_DIAGNOSTIC_LIMIT, AssistDiagnostics, assist_finish_reason
 from functions_assist_submissions import SubmissionIdError, normalize_submission_id
+from functions_conversation_references import ConversationReferenceError, normalize_conversation_references
 from functions_m365_workflow_binding import workflow_execution_fingerprint
 from functions_rate_limit import build_rate_limit_error_payload
 from functions_workflow_assist_editor import (
@@ -113,6 +114,7 @@ ASSIST_WARNING_CODES = ('run_as_reapproval', 'email_requires_m365_agent', 'm365_
 
 _REQUEST_FIELDS = frozenset({
     'submission_id', 'base', 'instruction', 'conversation', 'focus', 'time_zone', 'draft', 'references',
+    'conversation_references',
 })
 _REQUIRED_REQUEST_FIELDS = ('submission_id', 'base', 'instruction', 'draft')
 _BASE_FIELDS = frozenset({'workflow_id', 'definition_revision'})
@@ -211,7 +213,8 @@ def _refuse(code, message=None):
 class AssistRequest:
     """A checked assist request. ``draft`` is the editor draft exactly as sent."""
 
-    def __init__(self, *, submission_id, base, instruction, conversation, focus, time_zone, draft, references):
+    def __init__(self, *, submission_id, base, instruction, conversation, focus, time_zone, draft, references,
+                 conversation_references=None):
         self.submission_id = submission_id
         self.base = base
         self.instruction = instruction
@@ -220,6 +223,7 @@ class AssistRequest:
         self.time_zone = time_zone
         self.draft = draft
         self.references = references
+        self.conversation_references = list(conversation_references or [])
 
 
 def _reject_constant(_name):
@@ -352,6 +356,17 @@ def _checked_references(value):
     return references
 
 
+def _checked_conversation_references(value, *, group_id=""):
+    if value is None:
+        return []
+    if group_id:
+        _refuse('group_workflow_unsupported')
+    try:
+        return normalize_conversation_references(value)
+    except ConversationReferenceError as exc:
+        _refuse('invalid_request', exc.public_message)
+
+
 def _blank(value):
     return value is None or value == ''
 
@@ -410,6 +425,26 @@ def _checked_draft(draft, base, user_id, *, group_id=""):
         if 'scope_type' in reference and not isinstance(reference['scope_type'], str):
             _refuse('draft_invalid')
 
+    conversation_inputs = draft.get('conversation_reference_inputs', [])
+    if not isinstance(conversation_inputs, list) or len(conversation_inputs) > 5:
+        _refuse('draft_invalid', 'The draft may have at most 5 conversation reference inputs.')
+    if conversation_inputs and (group_id or not _blank(draft.get('group_id'))):
+        _refuse('group_workflow_unsupported')
+    conversation_input_ids = set()
+    for entry in conversation_inputs:
+        if not isinstance(entry, dict):
+            _refuse('draft_invalid')
+        ref_id = entry.get('reference_id')
+        if not isinstance(ref_id, str) or not ref_id or ref_id in conversation_input_ids:
+            _refuse('draft_invalid', 'Every conversation reference input needs its own reference_id.')
+        conversation_input_ids.add(ref_id)
+        try:
+            refs = normalize_conversation_references(entry.get('conversation_references'))
+        except ConversationReferenceError:
+            _refuse('draft_invalid')
+        if not refs or not isinstance(entry.get('name'), str):
+            _refuse('draft_invalid')
+
     draft_id = draft.get('id')
     if base is None:
         if not _blank(draft_id):
@@ -461,9 +496,13 @@ def parse_assist_request(body, user_id, *, group_id=""):
     _checked_draft(draft, base, user_id, group_id=group_id)
     focus = _checked_focus(body.get('focus'), draft)
     references = _checked_references(body.get('references'))
+    conversation_references = _checked_conversation_references(
+        body.get('conversation_references'), group_id=group_id,
+    )
     return AssistRequest(
         submission_id=submission_id, base=base, instruction=instruction, conversation=conversation,
         focus=focus, time_zone=time_zone, draft=draft, references=references,
+        conversation_references=conversation_references,
     )
 
 
@@ -801,11 +840,12 @@ class WorkflowAssistServices:
     """
 
     def __init__(self, *, limiter, read_base, resolve_references, load_options, load_excerpt, call_model, dry_run,
-                 agent_email_capable=None, m365_connected=None, log=None, clock=time.monotonic, diagnostics=None,
-                 group_id=""):
+                 resolve_conversation_references=None, agent_email_capable=None, m365_connected=None, log=None,
+                 clock=time.monotonic, diagnostics=None, group_id=""):
         self.limiter = limiter
         self.read_base = read_base
         self.resolve_references = resolve_references
+        self.resolve_conversation_references = resolve_conversation_references
         self.load_options = load_options
         self.load_excerpt = load_excerpt
         self.call_model = call_model
@@ -1235,12 +1275,27 @@ class _AssistRun:
                 or item.get('scope', {}).get('id') != services.group_id for item in documents
             ):
                 raise WorkflowAssistError('reference_unavailable')
+        conversations = []
+        if request.conversation_references:
+            if services.group_id:
+                raise WorkflowAssistError('group_workflow_unsupported')
+            self.stage('conversation_references')
+            if callable(services.resolve_conversation_references):
+                resolved_conv = services.resolve_conversation_references(
+                    user_id, request.conversation_references,
+                ) or {}
+                conversations = list(resolved_conv.get('references') or request.conversation_references)
+            else:
+                conversations = list(request.conversation_references)
         self.stage('options')
         options = services.load_options(user_id)
 
         self.stage('handles')
         try:
-            handles = AssistHandles(request.draft, user_id=user_id, options=options, request_documents=documents)
+            handles = AssistHandles(
+                request.draft, user_id=user_id, options=options,
+                request_documents=documents, request_conversations=conversations,
+            )
         except _DRAFT_SHAPE_ERRORS as exc:
             self.metrics['error_type'] = type(exc).__name__
             raise WorkflowAssistError('draft_invalid') from None

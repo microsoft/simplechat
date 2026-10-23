@@ -564,6 +564,12 @@ export interface WorkflowTask {
     inputs?: (WorkflowInputBinding | WorkflowFlowBinding)[];
     input_processing?: WorkflowInputProcessing;
     reference_ids?: string[];
+    conversation_reference_ids?: string[];
+    conversation_send?: {
+        destination_conversation_id: string;
+        instruction: string;
+        conversation_references?: Array<{ kind: 'conversation'; id: string; message_ids?: string[] }>;
+    };
     output_contract?: WorkflowOutputContract;
     approval?: WorkflowTaskApproval;
     publication?: WorkflowPublication;
@@ -601,6 +607,12 @@ export interface WorkflowReferenceInput {
     scope_id: string;
 }
 
+export interface WorkflowConversationReferenceInput {
+    reference_id: string;
+    name: string;
+    conversation_references: Array<{ kind: 'conversation'; id: string; message_ids?: string[] }>;
+}
+
 export interface WorkflowDefinition {
     id?: string;
     definition_version: number;
@@ -624,6 +636,7 @@ export interface WorkflowDefinition {
     };
     tasks: WorkflowTask[];
     reference_inputs: WorkflowReferenceInput[];
+    conversation_reference_inputs?: WorkflowConversationReferenceInput[];
     durable_execution?: boolean;
     editor_readonly_reason?: string;
     [key: string]: unknown;
@@ -1835,6 +1848,11 @@ export function workflowForSave(
         })),
         task_prompt: draft.tasks[0]?.instructions.trim() || '',
         reference_inputs: draft.reference_inputs,
+        ...((draft.conversation_reference_inputs?.length ?? 0) > 0
+            || Object.hasOwn(draft, 'conversation_reference_inputs')
+            || (original && Object.hasOwn(original, 'conversation_reference_inputs'))
+            ? { conversation_reference_inputs: structuredClone(draft.conversation_reference_inputs ?? []) }
+            : {}),
         ...(draft.definition_version === 3 ? { flow: structuredClone(draft.flow), limits: structuredClone(draft.limits) } : {}),
         ...(includeDurable ? { durable_execution: draft.durable_execution === true } : {}),
         ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
@@ -1854,7 +1872,8 @@ export const WORKFLOW_DEFINITION_FIELDS = [
     'trigger_type', 'is_enabled', 'schedule', 'error_handling', 'document_action', 'analyze',
     'file_sync', 'selected_agent', 'model_endpoint_id', 'model_id', 'model_provider', 'm365_run_as_user_id',
     'url_access_enabled', 'alert_priority', 'alert_mode', 'alert_rules', 'alert_evaluation',
-    'definition_version', 'reference_inputs', 'durable_execution', 'flow', 'limits',
+    'definition_version', 'reference_inputs', 'conversation_reference_inputs', 'durable_execution', 'flow', 'limits',
+    'public_source_policy',
 ] as const;
 
 const flowPreviewFields = new Set<string>([
@@ -1894,6 +1913,7 @@ export function preservedWorkflowFieldLabels(original: WorkflowDefinition | null
         'tasks',
         'task_prompt',
         'reference_inputs',
+        'conversation_reference_inputs',
         'durable_execution',
         'flow',
         'limits',

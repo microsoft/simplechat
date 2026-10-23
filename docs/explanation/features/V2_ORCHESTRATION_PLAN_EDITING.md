@@ -66,8 +66,9 @@ Submission identifiers make a retried completed request reuse its saved outcome.
 
 The planner receives the current effective plan, including Review's narrowing
 changes, the current task, the latest instruction, and a bounded editor
-conversation. The saved original request, selected sources, and conversation
-snapshot retain their identities.
+conversation. The saved original request, selected sources (including `#`
+documents/tags and `~` private conversation references in version **0.261.381**),
+and conversation snapshot retain their identities.
 
 Available capabilities come from server configuration, current access, and resource
 prerequisites. Selected controls and sources are positive requirements; an unchecked

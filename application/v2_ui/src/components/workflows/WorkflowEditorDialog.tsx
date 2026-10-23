@@ -18,6 +18,7 @@ import { SectionCard } from '../ui/SectionCard';
 import { GlassButton } from '../ui/primitives';
 import { Pill } from '../workspace/primitives';
 import { SettingsIndex, type SettingsIndexEntry } from '../admin/SettingsIndex';
+import { ConversationSourcePicker } from '../chat/ConversationReferences';
 import { WorkflowDocumentPicker } from './WorkflowDocumentPicker';
 import { WorkflowAgentPicker, WorkflowModelPicker, WorkflowTaskFields } from './WorkflowTaskFields';
 import {
@@ -82,6 +83,7 @@ import {
     workflowScheduleTimezones,
     workflowScopeKey,
     workflowValidationErrors,
+    safeWorkflowAlias,
     WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_CODE,
     type WorkflowDefinition,
     type WorkflowEditorOptions,
@@ -124,6 +126,7 @@ const WORKFLOW_FIELD_CARDS: Readonly<Partial<Record<string, WorkflowEditorSectio
     chat_capabilities_enabled: 'execution',
     chat_execution: 'execution',
     results_delivery: 'results',
+    conversation_reference_inputs: 'references',
     limits: 'limits',
     alerts: 'alerts',
 };
@@ -205,6 +208,7 @@ export function WorkflowEditorDialog({
     const [errorSequence, setErrorSequence] = useState(0);
     const [confirmClose, setConfirmClose] = useState(false);
     const [confirmStructured, setConfirmStructured] = useState(false);
+    const [addingConversationRef, setAddingConversationRef] = useState(false);
     const [accessLost, setAccessLost] = useState(false);
     const [surface, setSurface] = useState<'list' | 'flow'>('list');
     const authoringRef = useRef<HTMLDivElement>(null);
@@ -1104,6 +1108,85 @@ export function WorkflowEditorDialog({
                     hideTitle
                     onChange={(referenceInputs) => setWorkflow((current) => ({ ...current, reference_inputs: referenceInputs }))}
                 />
+                {scope.type === 'personal' ? (
+                    <WorkflowChangedField changeKey="conversation_reference_inputs" className="mt-4 space-y-2 border-t border-edge pt-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <p className="text-sm font-medium text-text-1">Private conversation references</p>
+                                <p className="text-xs text-text-3">
+                                    Pull fresh bounded excerpts from your own private conversations when this workflow runs.
+                                </p>
+                            </div>
+                            {!readOnly && !saving && (draft.conversation_reference_inputs?.length ?? 0) < 5 ? (
+                                <GlassButton
+                                    type="button"
+                                    size="sm"
+                                    variant="subtle"
+                                    onClick={() => setAddingConversationRef((open) => !open)}
+                                >
+                                    {addingConversationRef ? 'Close conversation picker' : 'Add conversation reference'}
+                                </GlassButton>
+                            ) : null}
+                        </div>
+                        {(draft.conversation_reference_inputs?.length ?? 0) > 0 ? (
+                            <ul aria-label="Selected conversation references" className="space-y-1.5">
+                                {(draft.conversation_reference_inputs ?? []).map((entry) => (
+                                    <li key={entry.reference_id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-edge bg-surface-1 px-3 py-2 text-xs">
+                                        <span className="font-medium text-text-1">{entry.name}</span>
+                                        <span className="font-mono text-text-3">
+                                            {entry.conversation_references.map((ref) => ref.id).join(', ')}
+                                        </span>
+                                        {!readOnly && !saving ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => setWorkflow((current) => ({
+                                                    ...current,
+                                                    conversation_reference_inputs: (current.conversation_reference_inputs ?? [])
+                                                        .filter((item) => item.reference_id !== entry.reference_id),
+                                                }))}
+                                                className="text-danger hover:underline"
+                                            >
+                                                Remove {entry.name}
+                                            </button>
+                                        ) : null}
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : null}
+                        {addingConversationRef && !readOnly && !saving ? (
+                            <ConversationSourcePicker
+                                onSelect={(source) => {
+                                    setWorkflow((current) => {
+                                        const existing = current.conversation_reference_inputs ?? [];
+                                        if (existing.length >= 5) return current;
+                                        const baseName = safeWorkflowAlias(source.title || source.id, 'conversation_ref');
+                                        let name = baseName;
+                                        let suffix = 2;
+                                        while (existing.some((item) => item.name === name)) {
+                                            name = `${baseName.slice(0, 56)}_${suffix++}`;
+                                        }
+                                        const referenceId = `conv_ref_${source.id}`;
+                                        if (existing.some((item) => item.reference_id === referenceId)) {
+                                            return current;
+                                        }
+                                        return {
+                                            ...current,
+                                            conversation_reference_inputs: [
+                                                ...existing,
+                                                {
+                                                    reference_id: referenceId,
+                                                    name,
+                                                    conversation_references: [{ kind: 'conversation', id: source.id }],
+                                                },
+                                            ],
+                                        };
+                                    });
+                                    setAddingConversationRef(false);
+                                }}
+                            />
+                        ) : null}
+                    </WorkflowChangedField>
+                ) : null}
                 <WorkflowReferenceChanges className="mt-3" />
             </SectionCard> : null}
 

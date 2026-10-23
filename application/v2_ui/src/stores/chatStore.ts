@@ -168,6 +168,15 @@ import {
     normalizeImageReferences,
     type ImageReferenceRequest,
 } from '../lib/imageReferences';
+import {
+    cancelConversationHandoff,
+    conversationReferenceRequests,
+    listConversationHandoffs,
+    storedConversationReferences,
+    type ConversationHandoff,
+    type ConversationReference,
+    type ConversationSource,
+} from '../lib/conversationReferences';
 import type {
     AgentOption,
     AnalysisResultContext,
@@ -284,6 +293,7 @@ export interface ComposerOptions {
      * everything downstream that already reads `selected_document_ids` is unchanged.
      */
     contextItems: ContextItem[];
+    conversationReferences?: readonly (ConversationReference | ConversationSource)[];
     imageReferences?: ImageReferenceRequest[];
 }
 
@@ -416,6 +426,8 @@ interface ChatState {
      */
     attemptsByThread: Record<string, number[]>;
     composerImageReferences: ImageReferenceRequest[];
+    composerConversationReferences: ConversationSource[];
+    conversationHandoffs: ConversationHandoff[];
 
     loadConversations: (options?: { reset?: boolean; search?: string }) => Promise<void>;
     loadMore: () => Promise<void>;
@@ -485,6 +497,11 @@ interface ChatState {
     generateImageFromReference: (request: GenerateImageFromReferenceRequest) => Promise<string | null>;
     addComposerImageReference: (reference: ImageReferenceRequest) => void;
     consumeComposerImageReferences: () => ImageReferenceRequest[];
+    addComposerConversationReference: (source: ConversationSource) => void;
+    consumeComposerConversationReferences: () => ConversationSource[];
+    upsertConversationHandoff: (handoff: ConversationHandoff) => void;
+    loadConversationHandoffs: (conversationId: string) => Promise<void>;
+    cancelHandoff: (handoffId: string, destinationConversationId: string) => Promise<ConversationHandoff | null>;
     stopStreaming: () => void;
 
     /**
@@ -1445,6 +1462,10 @@ function buildStreamHandlers(
             const imageSource = !blocked && typeof event.image_url === 'string' && event.image_url.trim()
                 ? event.image_url : null;
             const imageResult = !blocked && (imageSource !== null || event.role === 'image');
+            const finalConversationRefs = storedConversationReferences(
+                event.conversation_references ?? event.metadata?.conversation_references,
+            );
+            const baseMetadata = retryReplyMetadata(completionMetadata(event) ?? {}, streamRetry());
             const finalMessage: ChatMessage = {
                 id: String(event.message_id ?? STREAMING_MESSAGE_ID),
                 conversation_id: conversationId,
@@ -1456,7 +1477,9 @@ function buildStreamHandlers(
                 agent_display_name: event.agent_display_name,
                 augmented: event.augmented,
                 ...completionCitations(event),
-                metadata: retryReplyMetadata(completionMetadata(event) ?? {}, streamRetry()),
+                metadata: finalConversationRefs.length > 0
+                    ? { ...(baseMetadata ?? {}), conversation_references: finalConversationRefs }
+                    : baseMetadata,
                 // Carried onto the finished message so the reasoning steps stay
                 // available after the stream ends instead of disappearing with the
                 // streaming placeholder.
@@ -2377,6 +2400,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     metadataError: null,
     attemptsByThread: {},
     composerImageReferences: [],
+    composerConversationReferences: [],
+    conversationHandoffs: [],
 
     loadConversations: async (options = {}) => {
         const { reset = true, search } = options;
@@ -3103,6 +3128,56 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return references;
     },
 
+    addComposerConversationReference: (source) => set((state) => ({
+        composerConversationReferences: state.composerConversationReferences.some((item) => item.id === source.id)
+            ? state.composerConversationReferences
+            : [...state.composerConversationReferences, source],
+    })),
+
+    consumeComposerConversationReferences: () => {
+        const references = get().composerConversationReferences;
+        if (references.length > 0) {
+            set({ composerConversationReferences: [] });
+        }
+        return references;
+    },
+
+    upsertConversationHandoff: (handoff) => set((state) => {
+        const exists = state.conversationHandoffs.some((item) => item.id === handoff.id);
+        return {
+            conversationHandoffs: exists
+                ? state.conversationHandoffs.map((item) => item.id === handoff.id ? { ...item, ...handoff } : item)
+                : [handoff, ...state.conversationHandoffs],
+        };
+    }),
+
+    loadConversationHandoffs: async (conversationId) => {
+        if (!conversationId) return;
+        try {
+            const { handoffs } = await listConversationHandoffs(conversationId);
+            set((state) => {
+                const byId = new Map(state.conversationHandoffs.map((item) => [item.id, item]));
+                for (const handoff of handoffs) {
+                    byId.set(handoff.id, { ...(byId.get(handoff.id) ?? {}), ...handoff });
+                }
+                return { conversationHandoffs: [...byId.values()] };
+            });
+        } catch {
+            /* Handoff list is supplementary to the active thread. */
+        }
+    },
+
+    cancelHandoff: async (handoffId, destinationConversationId) => {
+        try {
+            const updated = await cancelConversationHandoff(handoffId, destinationConversationId);
+            get().upsertConversationHandoff(updated);
+            return updated;
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Could not cancel the handoff.');
+            return null;
+        }
+    },
+
     sendMessage: async (text, options) => {
         options = {
             ...options,
@@ -3242,6 +3317,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   effectiveReferenceImageLimit(bootstrap?.capabilities?.image_edit),
               )
             : [];
+        const optimisticConversationReferences = !collaborative
+            ? storedConversationReferences(options.conversationReferences)
+            : [];
         const mentionedParticipants = collaborative
             ? extractMentionedParticipants(
                   trimmed,
@@ -3258,7 +3336,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // Carried locally so the bubble can draw the prompt as a collapsed block straight
             // away. Without it the message would render as one blob until the server echo
             // arrived and then silently rearrange itself.
-            ...(options.promptInfo || optimisticImageReferences.length > 0 || workflowContext
+            ...(options.promptInfo || optimisticImageReferences.length > 0 || optimisticConversationReferences.length > 0 || workflowContext
                 || mentionedParticipants.length > 0 || (collaborative && invocationTarget)
                 ? {
                       metadata: {
@@ -3267,6 +3345,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                               : {}),
                           ...(optimisticImageReferences.length > 0
                               ? { image_references: optimisticImageReferences }
+                              : {}),
+                          ...(optimisticConversationReferences.length > 0
+                              ? { conversation_references: optimisticConversationReferences }
                               : {}),
                           // As the server stores it, so the question is recognised as one
                           // about a workflow result before its echo arrives.
@@ -3399,6 +3480,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         if (imageReferences.length > 0) {
             requestBody.image_references = imageReferences;
+        }
+        const conversationReferences = !collaborative && !directImageMode
+            ? conversationReferenceRequests(options.conversationReferences ?? [])
+            : [];
+        if (conversationReferences.length > 0) {
+            requestBody.conversation_references = conversationReferences;
         }
 
         if (contextTagNames.length > 0) {
@@ -3823,6 +3910,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 ? 'This run was stopped. Any available partial results have been kept.'
                 : 'This run could not complete. Review the saved attempt for recovery options.');
         const persistedUserId = String(event.user_message_id ?? '').trim();
+        const finalConversationRefs = storedConversationReferences(
+            event.conversation_references ?? event.metadata?.conversation_references,
+        );
         const finalMessage: ChatMessage = {
             id: String(event.message_id ?? (attempt.run_id ? `orchestration-status-${attempt.run_id}` : STREAMING_MESSAGE_ID)),
             conversation_id: conversationId,
@@ -3836,6 +3926,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...(event.blocked ? {} : { m365_pending_actions: event.m365_pending_actions }),
             metadata: {
                 ...event.metadata,
+                ...(finalConversationRefs.length > 0 ? { conversation_references: finalConversationRefs } : {}),
                 ...reasoningMetadataForEvent(event),
                 orchestration: {
                     // The terminal frame lists the answer's saved images at the top level too,

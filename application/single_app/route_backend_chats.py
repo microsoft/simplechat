@@ -183,11 +183,138 @@ from functions_chat_retry import (
     ChatRetryError, claim_retry_attempt, load_owned_retry_message,
     order_retry_messages, retry_history_prefix, set_retry_attempt_state,
 )
+from copy import deepcopy
 from azure.core import MatchConditions
 from functions_prompt_metadata import build_prompt_selection_metadata
 from functions_settings import *
 from functions_model_catalog import ModelCatalogError
 from public_chat_scope_state import PublicChatScopeError
+from functions_conversation_references import ConversationReferenceError
+from functions_conversation_reference_runtime import (
+    resolve_conversation_references as _default_resolve_conversation_references,
+)
+from functions_conversation_handoffs import ConversationHandoffError
+from functions_conversation_handoff_runtime import (
+    acquire_destination as _default_acquire_destination,
+    dispatch_conversation_handoffs_once as _default_dispatch_conversation_handoffs_once,
+    release_destination as _default_release_destination,
+)
+
+resolve_conversation_references = _default_resolve_conversation_references
+acquire_destination = _default_acquire_destination
+release_destination = _default_release_destination
+dispatch_conversation_handoffs_once = _default_dispatch_conversation_handoffs_once
+
+
+def _handoff_container_is_usable():
+    import config as config_module
+    import functions_conversation_handoff_runtime as handoff_runtime
+
+    if (
+        acquire_destination is not _default_acquire_destination
+        or handoff_runtime.acquire_destination is not _default_acquire_destination
+    ):
+        return True
+    container = globals().get('cosmos_conversation_handoffs_container')
+    if container is None:
+        container = getattr(config_module, 'cosmos_conversation_handoffs_container', None)
+    else:
+        config_module.cosmos_conversation_handoffs_container = container
+    if container is None or type(container).__module__.startswith('unittest.mock'):
+        return False
+    return all(hasattr(container, method) for method in ('read_item', 'create_item', 'replace_item'))
+
+
+def _acquire_chat_destination_lease(user_id, conversation_id, owner_id=None):
+    if not user_id or not conversation_id or not _handoff_container_is_available_for_chat():
+        return None
+    import functions_conversation_handoff_runtime as handoff_runtime
+
+    acquirer = (
+        acquire_destination
+        if acquire_destination is not _default_acquire_destination
+        else handoff_runtime.acquire_destination
+    )
+    lease = acquirer(
+        user_id,
+        conversation_id,
+        owner_id or f"chat-{uuid.uuid4().hex}",
+        kind='chat',
+    )
+    if lease is not None and callable(getattr(lease, 'start', None)):
+        lease.start()
+    return lease
+
+
+def _handoff_container_is_available_for_chat():
+    try:
+        return _handoff_container_is_usable()
+    except Exception:
+        return False
+
+
+def _release_chat_destination_lease(lease, conversation_id=None):
+    import functions_conversation_handoff_runtime as handoff_runtime
+
+    try:
+        if lease is not None:
+            releaser = (
+                release_destination
+                if release_destination is not _default_release_destination
+                else handoff_runtime.release_destination
+            )
+            releaser(lease)
+    finally:
+        if not _handoff_container_is_available_for_chat():
+            return
+        try:
+            dispatcher = (
+                dispatch_conversation_handoffs_once
+                if dispatch_conversation_handoffs_once is not _default_dispatch_conversation_handoffs_once
+                else handoff_runtime.dispatch_conversation_handoffs_once
+            )
+            dispatcher()
+        except Exception as error:
+            log_event(
+                '[CONVERSATION_HANDOFF] Post-chat handoff dispatch could not complete.',
+                extra={'conversation_id': conversation_id, 'error_type': type(error).__name__},
+                level=logging.WARNING,
+            )
+
+
+def _resolve_chat_conversation_references(user_id, data, *, query='', destination_id=None, fallback_references=None):
+    import config as config_module
+    import functions_conversation_reference_runtime as reference_runtime
+
+    raw_references = data.get('conversation_references') if isinstance(data, dict) else None
+    if raw_references is None:
+        raw_references = fallback_references
+    if raw_references is None or raw_references == []:
+        if has_request_context():
+            g.conversation_references = None
+            g.conversation_reference_revision = None
+            g.conversation_reference_prompt = ''
+        return None
+    if globals().get('cosmos_conversations_container') is not None:
+        config_module.cosmos_conversations_container = globals()['cosmos_conversations_container']
+    if globals().get('cosmos_messages_container') is not None:
+        config_module.cosmos_messages_container = globals()['cosmos_messages_container']
+    resolver = (
+        resolve_conversation_references
+        if resolve_conversation_references is not _default_resolve_conversation_references
+        else reference_runtime.resolve_conversation_references
+    )
+    resolved = resolver(
+        user_id,
+        raw_references,
+        query=query or '',
+        destination_id=destination_id,
+    )
+    if has_request_context() and isinstance(resolved, dict):
+        g.conversation_references = deepcopy(resolved.get('references') or [])
+        g.conversation_reference_revision = resolved.get('revision')
+        g.conversation_reference_prompt = str(resolved.get('prompt') or '')
+    return resolved
 from functions_assigned_knowledge import (
     ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
     ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE,
@@ -665,6 +792,12 @@ def _prepare_conversation_context_for_invocation(
     # conversation content and is not rechecked against its sources.
     assert_evidence_available(agent_citations)
     assert_current_request_sources_available()
+    reference_prompt = getattr(g, 'conversation_reference_prompt', '') if has_request_context() else ''
+    if reference_prompt:
+        conversation_history = insert_system_message_after_existing_system_messages(
+            list(conversation_history or []),
+            reference_prompt,
+        )
     agent_fields = _get_conversation_context_agent_fields(selected_agent)
     context_snapshot = build_conversation_context_snapshot(
         user_metadata,
@@ -2685,6 +2818,11 @@ def _analysis_history_metadata():
     workflow_contexts = list(getattr(g, 'workflow_result_contexts', []) or []) if has_request_context() else []
     if workflow_contexts:
         metadata['workflow_result_contexts'] = workflow_contexts
+    conversation_references = list(getattr(g, 'conversation_references', []) or []) if has_request_context() else []
+    if conversation_references:
+        metadata['conversation_references'] = deepcopy(conversation_references)
+        if getattr(g, 'conversation_reference_revision', None):
+            metadata['conversation_reference_revision'] = g.conversation_reference_revision
     return metadata
 
 
@@ -8700,6 +8838,11 @@ def _with_prepared_chat_retry(view):
 
 
 def _save_chat_user_metadata(message, is_retry):
+    if has_request_context() and getattr(g, 'conversation_references', None):
+        metadata = message.setdefault('metadata', {})
+        metadata['conversation_references'] = deepcopy(g.conversation_references)
+        if getattr(g, 'conversation_reference_revision', None):
+            metadata['conversation_reference_revision'] = g.conversation_reference_revision
     if not is_retry:
         return cosmos_messages_container.upsert_item(message)
     return patch_chat_message_metadata(
@@ -15111,6 +15254,13 @@ def register_route_backend_chats(bp):
         content_check_settings = get_settings()
         retry_question = getattr(g, 'chat_retry_question', None)
         retry_terminal_seen = False
+        destination_lease = getattr(g, 'chat_destination_lease', None) if has_request_context() else None
+        if has_request_context():
+            g.chat_destination_lease = None
+        destination_conversation_id = (
+            getattr(stream_session, 'conversation_id', None)
+            or (getattr(g, 'conversation_id', None) if has_request_context() else None)
+        )
 
         def publish_background_event(event_text):
             nonlocal stream_user_message_id, retry_terminal_seen
@@ -15178,6 +15328,7 @@ def register_route_backend_chats(bp):
         @copy_current_request_context
         def stream_worker():
             g.chat_retry_question = retry_question
+            g.chat_destination_lease = destination_lease
             with m365_action_card_events(publish_pending_action):
                 event_iterator = None
                 try:
@@ -15231,6 +15382,7 @@ def register_route_backend_chats(bp):
                             ))
                         if stream_session:
                             stream_session.close()
+                        _release_chat_destination_lease(destination_lease, destination_conversation_id)
                         stream_bridge.finish()
 
         executor = current_app.extensions.get('executor')
@@ -17778,6 +17930,8 @@ def register_route_backend_chats(bp):
             'chat_publish_background_event',
             None,
         )
+        destination_lease = None
+        conversation_reference_resolution = None
         try:
             request_start_time = time.time()
             settings = get_settings()
@@ -17941,6 +18095,17 @@ def register_route_backend_chats(bp):
                 if admitted_conversation is None:
                     admitted_conversation, _ = _resolve_or_create_authorized_personal_conversation(user_id, conversation_id)
                 return jsonify(_reject_chat_submission(admitted_conversation, user_id, input_check)), 200
+
+            if conversation_id and getattr(g, 'chat_destination_lease', None) is None:
+                destination_lease = _acquire_chat_destination_lease(user_id, conversation_id)
+
+            conversation_reference_resolution = _resolve_chat_conversation_references(
+                user_id,
+                data,
+                query=user_message,
+                destination_id=conversation_id if admitted_conversation is not None else None,
+                fallback_references=(retry_input or {}).get('metadata', {}).get('conversation_references') if is_retry else None,
+            )
 
             if is_retry:
                 operation_type = 'Edit' if is_edit else 'Retry'
@@ -18439,6 +18604,15 @@ def register_route_backend_chats(bp):
                 return build_json_error_response('Failed to read conversation')
 
             _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
+            if destination_lease is None and getattr(g, 'chat_destination_lease', None) is None:
+                destination_lease = _acquire_chat_destination_lease(user_id, conversation_id)
+            if conversation_reference_resolution is not None and admitted_conversation is None:
+                conversation_reference_resolution = _resolve_chat_conversation_references(
+                    user_id,
+                    data,
+                    query=user_message,
+                    destination_id=conversation_id,
+                )
 
             input_check = check_chat_content(
                 user_message, "chat_input", user_id=user_id, settings=settings,
@@ -18792,6 +18966,10 @@ def register_route_backend_chats(bp):
                         user_metadata['image_reference_mask'] = prepared_chat_image_references['mask_metadata']
                     elif image_gen_enabled and chat_image_reference_request.get('image_mask') is None:
                         user_metadata.pop('image_reference_mask', None)
+                    if conversation_reference_resolution and conversation_reference_resolution.get('references'):
+                        user_metadata['conversation_references'] = deepcopy(conversation_reference_resolution['references'])
+                        if conversation_reference_resolution.get('revision'):
+                            user_metadata['conversation_reference_revision'] = conversation_reference_resolution['revision']
                     attach_chat_check(user_message_doc, input_check)
                     user_message_doc = _save_chat_user_metadata(user_message_doc, is_retry)
 
@@ -19024,6 +19202,10 @@ def register_route_backend_chats(bp):
                     user_metadata['image_references'] = prepared_chat_image_references['provenance']
                 if prepared_chat_image_references.get('mask_metadata'):
                     user_metadata['image_reference_mask'] = prepared_chat_image_references['mask_metadata']
+                if conversation_reference_resolution and conversation_reference_resolution.get('references'):
+                    user_metadata['conversation_references'] = deepcopy(conversation_reference_resolution['references'])
+                    if conversation_reference_resolution.get('revision'):
+                        user_metadata['conversation_reference_revision'] = conversation_reference_resolution['revision']
 
                 user_message_doc = {
                     'id': user_message_id,
@@ -20808,6 +20990,13 @@ def register_route_backend_chats(bp):
                 conversation_history_for_api.insert(insert_idx, history_grounding_message)
                 final_api_source_refs.insert(insert_idx, 'system:history_grounding')
 
+            if conversation_reference_resolution and conversation_reference_resolution.get('prompt'):
+                insert_system_message_after_existing_system_messages(
+                    conversation_history_for_api,
+                    conversation_reference_resolution['prompt'],
+                )
+                final_api_source_refs.append('system:conversation_references')
+
             history_debug_info = enrich_history_context_debug_info(
                 history_debug_info,
                 conversation_history_for_api,
@@ -22101,6 +22290,8 @@ def register_route_backend_chats(bp):
                 'thoughts_enabled': thought_tracker.enabled
             })), 200
 
+        except (ConversationHandoffError, ConversationReferenceError) as error:
+            return jsonify({"error": error.public_message, "code": error.code}), error.status_code
         except ActionRecoveryRequired as error:
             return jsonify(error.event), 409
         except ActionLoadRequired:
@@ -22141,6 +22332,9 @@ def register_route_backend_chats(bp):
                 exceptionTraceback=True,
             )
             return build_json_error_response()
+        finally:
+            if destination_lease is not None:
+                _release_chat_destination_lease(destination_lease, locals().get('conversation_id'))
 
     @bp.route('/api/chat/stream', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -22235,6 +22429,23 @@ def register_route_backend_chats(bp):
         stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, finalized_conversation_id)
 
         request_message = (data.get('message') or '').strip()
+        try:
+            destination_lease = _acquire_chat_destination_lease(user_id, finalized_conversation_id)
+        except (ConversationHandoffError, ConversationReferenceError) as error:
+            CHAT_STREAM_REGISTRY.finish_session(user_id, finalized_conversation_id, stream_session.session_id)
+            return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
+        try:
+            stream_conversation_reference_resolution = _resolve_chat_conversation_references(
+                user_id,
+                data,
+                query=request_message,
+                destination_id=requested_conversation_id,
+            )
+        except (ConversationHandoffError, ConversationReferenceError) as error:
+            CHAT_STREAM_REGISTRY.finish_session(user_id, finalized_conversation_id, stream_session.session_id)
+            _release_chat_destination_lease(destination_lease, finalized_conversation_id)
+            return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
+        g.chat_destination_lease = destination_lease
         debug_print(
             "[STREAMING] Incoming /api/chat/stream request | "
             f"requested_conversation_id={requested_conversation_id} | "
@@ -23091,6 +23302,13 @@ def register_route_backend_chats(bp):
                         user_id, conversation_id=conversation_id,
                     )
                     debug_print(f"[STREAMING] Created new conversation {conversation_id}")
+                    if stream_conversation_reference_resolution is not None:
+                        stream_conversation_reference_resolution = _resolve_chat_conversation_references(
+                            user_id,
+                            data,
+                            query=user_message,
+                            destination_id=conversation_id,
+                        )
                 else:
                     try:
                         conversation_item = _authorize_personal_conversation_access(user_id, conversation_id)
@@ -23415,6 +23633,18 @@ def register_route_backend_chats(bp):
                         chat_context_metadata = {}
                     chat_context_metadata['conversation_id'] = conversation_id
                     user_metadata['chat_context'] = chat_context_metadata
+                    if stream_conversation_reference_resolution is None and user_metadata.get('conversation_references'):
+                        stream_conversation_reference_resolution = _resolve_chat_conversation_references(
+                            user_id,
+                            data,
+                            query=user_message,
+                            destination_id=conversation_id,
+                            fallback_references=user_metadata.get('conversation_references'),
+                        )
+                    if stream_conversation_reference_resolution and stream_conversation_reference_resolution.get('references'):
+                        user_metadata['conversation_references'] = deepcopy(stream_conversation_reference_resolution['references'])
+                        if stream_conversation_reference_resolution.get('revision'):
+                            user_metadata['conversation_reference_revision'] = stream_conversation_reference_resolution['revision']
                     user_message_doc['metadata'] = user_metadata
 
                     debug_print(
@@ -23608,6 +23838,10 @@ def register_route_backend_chats(bp):
                         'active_thread': True,
                         'thread_attempt': 1
                     }
+                    if stream_conversation_reference_resolution and stream_conversation_reference_resolution.get('references'):
+                        user_metadata['conversation_references'] = deepcopy(stream_conversation_reference_resolution['references'])
+                        if stream_conversation_reference_resolution.get('revision'):
+                            user_metadata['conversation_reference_revision'] = stream_conversation_reference_resolution['revision']
 
                     user_message_doc = {
                         'id': user_message_id,
@@ -25128,6 +25362,13 @@ def register_route_backend_chats(bp):
                     conversation_history_for_api.insert(insert_idx, history_grounding_message)
                     final_api_source_refs.insert(insert_idx, 'system:history_grounding')
 
+                if stream_conversation_reference_resolution and stream_conversation_reference_resolution.get('prompt'):
+                    insert_system_message_after_existing_system_messages(
+                        conversation_history_for_api,
+                        stream_conversation_reference_resolution['prompt'],
+                    )
+                    final_api_source_refs.append('system:conversation_references')
+
                 history_debug_info = enrich_history_context_debug_info(
                     history_debug_info,
                     conversation_history_for_api,
@@ -26439,6 +26680,10 @@ def register_route_backend_chats(bp):
                     )
                     yield f"data: {json.dumps(final_data)}\n\n"
 
+                except (ConversationHandoffError, ConversationReferenceError) as error:
+                    accumulated_content = ""
+                    yield f"data: {json.dumps({'error': error.public_message, 'code': error.code, 'error_code': error.code, 'status_code': error.status_code, 'done': True})}\n\n"
+                    return
                 except ScreeningError as error:
                     accumulated_content = ""
                     yield f"data: {json.dumps({'error': error.public_message, 'error_code': error.code, 'status_code': error.status_code})}\n\n"

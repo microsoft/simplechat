@@ -149,6 +149,7 @@ const WORKFLOW_KEY_SPECS: readonly WorkflowKeySpec[] = [
     keySpec('results_delivery', 'Results'),
     keySpec('durable_execution', 'Durable execution'),
     keySpec('file_sync', 'File Sync'),
+    keySpec('conversation_reference_inputs', 'Shared conversation references'),
     keySpec('limits', 'Flow limits'),
     keySpec('alerts', 'Alerts', WORKFLOW_ALERT_FIELDS),
     keySpec('definition_version', 'Workflow format', ['definition_version'], false),
@@ -657,7 +658,9 @@ const NOT_SET = '(not set)';
 // Maps, not object literals: field names come from stored data and may shadow prototype keys.
 const TASK_FIELD_LABELS = new Map<string, string>([
     ['name', 'Task name'], ['instructions', 'Instructions'], ['runner', 'Task runner'],
-    ['document_action', 'Document action'], ['reference_ids', 'Task references'], ['inputs', 'Inputs'],
+    ['document_action', 'Document action'], ['reference_ids', 'Task references'],
+    ['conversation_reference_ids', 'Conversation references'], ['conversation_send', 'Send to conversation'],
+    ['inputs', 'Inputs'],
     ['input_processing', 'Input processing'], ['output_contract', 'Output contract'], ['approval', 'Approval'],
     ['publication', 'Publication'], ['run_when', 'Run when'], ['placement', 'Position in flow'],
     ['chat_execution', 'Chat execution'],

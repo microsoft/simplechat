@@ -62,6 +62,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_content_screening": ("login_required", "user_required"),
     "backend_control_center": ("login_required",),
     "backend_conversation_export": ("login_required", "user_required"),
+    "backend_conversation_handoffs": ("login_required", "user_required"),
     "backend_conversations": ("login_required", "user_required"),
     "backend_data_management": ("login_required", "admin_required"),
     "backend_documents": ("login_required", "user_required"),

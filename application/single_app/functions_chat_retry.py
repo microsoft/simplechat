@@ -194,6 +194,28 @@ def build_replay_request(source, overrides, *, document_context, models, agents,
         request_body['prompt_info'] = deepcopy(metadata['prompt_selection'])
     if metadata.get('time_zone'):
         request_body['time_zone'] = metadata['time_zone']
+    if isinstance(metadata.get('conversation_references'), list) and 'conversation_references' not in request_body:
+        replay_references = [
+            {
+                'kind': 'conversation',
+                'id': str(item.get('id')).strip(),
+                **(
+                    {
+                        'message_ids': [
+                            str(message_id).strip()
+                            for message_id in item.get('message_ids')
+                            if str(message_id or '').strip()
+                        ]
+                    }
+                    if isinstance(item.get('message_ids'), list) and item.get('message_ids')
+                    else {}
+                ),
+            }
+            for item in metadata['conversation_references']
+            if isinstance(item, dict) and item.get('kind') == 'conversation' and str(item.get('id') or '').strip()
+        ]
+        if replay_references:
+            request_body['conversation_references'] = replay_references
     return request_body
 
 
@@ -202,7 +224,10 @@ def build_replay_metadata(source_metadata, request_body):
     source_metadata = _mapping(source_metadata)
     metadata = {
         key: deepcopy(source_metadata[key])
-        for key in ('user_info', 'prompt_selection', 'image_references', 'image_generation', 'time_zone')
+        for key in (
+            'user_info', 'prompt_selection', 'image_references', 'image_generation',
+            'time_zone', 'conversation_references', 'conversation_reference_revision',
+        )
         if key in source_metadata
     }
     metadata['chat_context'] = {

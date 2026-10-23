@@ -13,6 +13,8 @@ from jsonschema.exceptions import SchemaError
 from functions_workflow_configuration import (
     WorkflowConfigurationError, normalize_chat_execution, workflow_configuration_for_save,
 )
+from functions_conversation_references import ConversationReferenceError, normalize_conversation_references
+from functions_orchestration_conversation_capabilities import normalize_conversation_send
 from public_source_policy import ALL_AVAILABLE, current_public_source_policy, normalize_public_source_policy
 
 WORKFLOW_DEFINITION_VERSION = 2
@@ -21,14 +23,14 @@ WORKFLOW_OUTPUT_KINDS = frozenset({"any", "text", "records", "json", "document_r
 WORKFLOW_INPUT_PROCESSING_MODES = frozenset({"full", "saved_record_report"})
 WORKFLOW_PUBLICATION_COMPLETION_POLICIES = ("submitted", "approved", "indexed_ready")
 WORKFLOW_PUBLICATION_SOURCE_KINDS = ("native_analysis", "saved_output")
-WORKFLOW_FLOW_TASK_FIELDS = frozenset({"inputs", "reference_ids", "output_contract", "approval", "input_processing"})
+WORKFLOW_FLOW_TASK_FIELDS = frozenset({"inputs", "reference_ids", "conversation_reference_ids", "conversation_send", "output_contract", "approval", "input_processing"})
 WORKFLOW_DEFINITION_FIELDS = (
     "name", "description", "task_prompt", "tasks", "runner_type", "chat_capabilities_enabled",
     "chat_execution", "results_delivery",
     "trigger_type", "is_enabled", "schedule", "error_handling", "document_action", "analyze",
     "file_sync", "selected_agent", "model_endpoint_id", "model_id", "model_provider",
     "url_access_enabled", "alert_priority", "alert_mode", "alert_rules", "alert_evaluation",
-    "definition_version", "reference_inputs", "durable_execution", "flow", "limits",
+    "definition_version", "reference_inputs", "conversation_reference_inputs", "durable_execution", "flow", "limits",
     "m365_run_as_user_id", "public_source_policy",
 )
 SCHEMA_KEYWORDS = frozenset({
@@ -129,7 +131,7 @@ WORKFLOW_ORIGIN_MATERIAL_FIELDS = (
     "name", "description", "alert_priority", "alert_mode", "alert_rules", "alert_evaluation", "error_handling",
     "task_prompt", "tasks", "runner_type", "selected_agent", "schedule", "trigger_type", "document_action",
     "file_sync", "chat_capabilities_enabled", "chat_execution", "results_delivery", "url_access_enabled", "model_endpoint_id", "model_id",
-    "definition_version", "reference_inputs", "durable_execution", "flow", "limits", "m365_run_as_user_id",
+    "definition_version", "reference_inputs", "conversation_reference_inputs", "durable_execution", "flow", "limits", "m365_run_as_user_id",
 )
 
 
@@ -423,6 +425,44 @@ def normalize_workflow_references(values, *, user_id, group_id=""):
     return result
 
 
+def normalize_workflow_conversation_references(values, *, user_id, group_id=""):
+    if not isinstance(values, list) or len(values) > 5:
+        raise WorkflowDefinitionError("Choose at most five conversation reference inputs.")
+    if values and (group_id or not user_id):
+        raise WorkflowDefinitionError("Conversation references are available only in private personal workflows.")
+    result, identifiers, names, conversations = [], set(), set(), set()
+    for value in values:
+        entry = _object(value, {"reference_id", "name", "conversation_references"}, "Conversation reference input")
+        identifier = _text(entry.get("reference_id"), "Conversation reference input id")
+        name = _name(entry.get("name"), "Conversation reference name")
+        try:
+            references = normalize_conversation_references(entry.get("conversation_references"))
+        except ConversationReferenceError as exc:
+            raise WorkflowDefinitionError(exc.public_message) from exc
+        if not references or identifier in identifiers or name in names:
+            raise WorkflowDefinitionError("Conversation inputs need unique ids and names and a selected conversation.")
+        identifiers.add(identifier)
+        names.add(name)
+        conversations.update(reference["id"] for reference in references)
+        result.append({"reference_id": identifier, "name": name, "conversation_references": references})
+    if len(conversations) > 5:
+        raise WorkflowDefinitionError("Choose at most five conversations across all inputs.")
+    return result
+
+
+def validate_private_workflow_conversations(workflow):
+    has_sources = bool(workflow.get("conversation_reference_inputs"))
+    has_sends = any(task.get("conversation_send") for task in workflow.get("tasks") or [])
+    if not (has_sources or has_sends):
+        return
+    delivery = workflow.get("results_delivery") or {}
+    if (workflow.get("group_id") or workflow.get("public_workspace_id")
+            or workflow.get("is_shared") or workflow.get("shared_with")
+            or delivery.get("conversation_type", "personal") != "personal"
+            or delivery.get("recipient_ids") or delivery.get("all_group_members")):
+        raise WorkflowDefinitionError("Private conversation evidence cannot be published by a shared workflow.")
+
+
 def _normalize_bindings(values, earlier_tasks):
     if not isinstance(values, list) or len(values) > MAX_TASK_BINDINGS:
         raise WorkflowDefinitionError(f"Task inputs must be a list of at most {MAX_TASK_BINDINGS} bindings.")
@@ -527,7 +567,7 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
     actions = [payload.get("document_action"), *(task.get("document_action") for task in raw_tasks)]
     if version != 3 and any(isinstance(action, dict) and action.get("target_mode") == "current_item" for action in actions):
         raise WorkflowDefinitionError("Current-item Analyze requires workflow definition version 3.")
-    has_flow = "reference_inputs" in payload or "flow" in payload or payload.get("durable_execution") is True or any(
+    has_flow = "reference_inputs" in payload or "conversation_reference_inputs" in payload or "flow" in payload or payload.get("durable_execution") is True or any(
         WORKFLOW_FLOW_TASK_FIELDS.intersection(task) for task in raw_tasks
     )
     if version == 1:
@@ -538,6 +578,11 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
     references = normalize_workflow_references(
         payload.get("reference_inputs", existing.get("reference_inputs", [])), user_id=user_id, group_id=group_id,
     )
+    conversation_references = normalize_workflow_conversation_references(
+        payload.get("conversation_reference_inputs", existing.get("conversation_reference_inputs", [])),
+        user_id=user_id, group_id=group_id,
+    )
+    conversation_ids = {reference["reference_id"] for reference in conversation_references}
     reference_ids = {reference["id"] for reference in references}
     durable = _boolean(payload.get("durable_execution", existing.get("durable_execution", False)), "Durable execution")
     normalized_tasks = []
@@ -560,6 +605,18 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
             if set(selected_ids) - reference_ids:
                 raise WorkflowDefinitionError("A task references a shared document which is not in this workflow.")
             prepared["reference_ids"] = selected_ids
+        if "conversation_reference_ids" in raw:
+            selected = _unique_identifiers(raw["conversation_reference_ids"], "Task conversation reference ids")
+            if set(selected) - conversation_ids:
+                raise WorkflowDefinitionError("A selected conversation input is missing from this workflow.")
+            prepared["conversation_reference_ids"] = selected
+        if raw.get("conversation_send") is not None:
+            if group_id or not durable:
+                raise WorkflowDefinitionError("Conversation sends require a durable personal workflow and task approval.")
+            try:
+                prepared["conversation_send"] = normalize_conversation_send(raw["conversation_send"])
+            except ConversationReferenceError as exc:
+                raise WorkflowDefinitionError(exc.public_message) from exc
         if raw.get("approval") is not None:
             approval = _object(raw["approval"], {"required", "message"}, "Task approval")
             required = _boolean(approval.get("required", False), "Task approval requirement")
@@ -569,6 +626,8 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
             if not isinstance(message, str) or len(message) > 1000:
                 raise WorkflowDefinitionError("Task approval message must be text of at most 1000 characters.")
             prepared["approval"] = {"required": required, "message": message.strip()}
+        if prepared.get("conversation_send"):
+            prepared["approval"] = {"required": True, "message": "Approve starting AI work in the selected private conversation."}
         normalized_tasks.append(prepared)
         earlier[prepared["id"]] = prepared
     result = {
@@ -576,9 +635,11 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
         **policy_fields,
         "definition_version": version,
         "reference_inputs": references,
+        **({"conversation_reference_inputs": conversation_references} if conversation_references or "conversation_reference_inputs" in payload or "conversation_reference_inputs" in existing else {}),
         "durable_execution": durable,
         "tasks": normalized_tasks,
     }
+    validate_private_workflow_conversations({**payload, **result, "group_id": group_id})
     if version == 3:
         # The compiler shares definition helpers, so import at the normalization boundary.
         from functions_workflow_flow import compile_workflow_flow

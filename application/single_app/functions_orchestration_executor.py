@@ -373,6 +373,8 @@ class RunContext:
         time_zone=None,
         attempt_root_run_id=None,
         signed_in_session=False,
+        conversation_send_plan_revision=0,
+        conversation_reference_snapshots=None,
     ):
         self.run_id = run_id
         self.plan_id = plan_id
@@ -388,6 +390,10 @@ class RunContext:
         # Whether the user's signed-in request is running this attempt. A saved workflow is started
         # only then, never while a run continues in the background.
         self.signed_in_session = signed_in_session is True
+        self.conversation_send_plan_revision = (
+            0 if conversation_send_plan_revision is None else conversation_send_plan_revision
+        )
+        self.conversation_reference_snapshots = dict(conversation_reference_snapshots or {})
         if type(plan_contract_version) is not int or plan_contract_version != DEPENDENCY_PLAN_CONTRACT_VERSION:
             raise ResultContractError('result_version_unsupported')
         self.plan_contract_version = plan_contract_version
@@ -1383,6 +1389,9 @@ def _execute_dependency_plan(
         seeds=getattr(context, 'seeds', None),
     )
     steps = plan['steps']
+    context.conversation_send_plan_revision = plan.get(
+        'revision', getattr(context, 'conversation_send_plan_revision', 0),
+    )
     # The server-computed run-step waits, and what a waited run step re-checks when it starts.
     context.workflow_run_waits = deepcopy(plan.get('workflow_run_waits') or {})
     context.plan_steps = deepcopy(steps) if context.workflow_run_waits else []

@@ -23,6 +23,24 @@ Use this page when you can see a control in Chat but are not sure what it does o
 | `export-selected-btn` | Opens the export flow for selected conversations. | Use it when you need an offline copy for handoff, records, review, or migration. | Always available |
 | `new-conversation-btn` | Creates a fresh chat thread and resets the active conversation context. | Use it when a new task should not inherit previous context, documents, or agent state. | Always available |
 
+### React V2 conversation references and queued handoffs
+
+Implemented in version: **0.261.381** (`application/single_app/config.py`, Refs #1835).
+In the V2 interface, your own private conversations can be referenced as bounded
+evidence with `~` or delegated a follow-up AI turn with **Send To Conversation**.
+Shared and group conversations are excluded so private thread content is not
+implicitly widened across audiences.
+
+| V2 control | Purpose | Availability |
+| --- | --- | --- |
+| `~` conversation shortcut | Opens the private conversation picker in the V2 composer, plan editor Ask AI, and workflow Ask AI, inserting a `~[Title]` token backed by a conversation ID. | V2 chat composer and Ask AI editors |
+| Reference Conversation (`Use in current conversation` / `Copy reference`) | Attaches the selected private conversation to the active composer or copies a portable reference token for pasting into another composer. | Private conversation row menu in V2 |
+| Send To Conversation | Opens a review dialog that sends an instruction and bounded source reference to another private conversation and starts AI work there, queueing in FIFO order when the destination is busy. | Private conversation row menu in V2 |
+| Cancel handoff | Stops a queued or in-flight handoff from its outgoing status card without removing existing destination history. | Outgoing handoff status card |
+
+See [Reference and send between conversations]({{ '/guides/reference-and-send-conversations/' | relative_url }})
+and [Conversation references and queued AI handoffs]({{ '/explanation/features/CONVERSATION_REFERENCES_AND_HANDOFFS/' | relative_url }}).
+
 ## Conversation header and status
 
 ### React V2 sign-in recovery

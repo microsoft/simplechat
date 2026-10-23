@@ -79,6 +79,7 @@ from functions_action_credential_runtime import configure_action_credential_runt
 from config import cosmos_action_credential_state_container
 from route_backend_search import *
 from route_backend_conversations import *
+from route_backend_conversation_handoffs import register_route_backend_conversation_handoffs
 from route_backend_documents import *
 from route_backend_groups import *
 from route_backend_users import *
@@ -1472,6 +1473,7 @@ register_route_blueprint('backend_content_screening', register_route_backend_con
 
 # ------------------- API Conversation Routes ------------
 register_route_blueprint('backend_conversations', register_route_backend_conversations, user_required_blueprint)
+register_route_blueprint('backend_conversation_handoffs', register_route_backend_conversation_handoffs, user_required_blueprint)
 
 # ------------------- API Collaboration Routes -----------
 register_route_blueprint('backend_collaboration', register_route_backend_collaboration, user_required_blueprint)

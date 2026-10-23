@@ -40,6 +40,7 @@ import {
     isPlanRunnable,
     isPlanTerminal,
     planBindingIssues,
+    planConversationSends,
     planHasApprovalFloor,
     planRequiresApproval,
     summarizePlan,
@@ -358,6 +359,11 @@ export function OrchestrationPlanCard({
 
             <OrchestrationWorkflowRunNotice plan={editedPlan ?? plan} />
             <OrchestrationWorkflowHandoffNotice plan={editedPlan ?? plan} />
+            {planConversationSends(editedPlan ?? plan).length > 0 ? (
+                <p role="status" className="mt-2 rounded-xl bg-surface-2 px-2.5 py-2 text-xs text-text-2">
+                    This plan will send a task to another private conversation and start AI work there, so it waits for your approval.
+                </p>
+            ) : null}
 
             {held ? (
                 <p className="mt-2 text-xs text-text-3" role="status">

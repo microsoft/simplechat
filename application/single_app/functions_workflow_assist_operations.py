@@ -119,7 +119,7 @@ _HANDLE_PATTERNS = frozenset({
 })
 
 # A user's reference alias that looks like a server handle is shown under a server handle instead.
-_RESERVED_HANDLE = re.compile(r'(?:task|new|node|ref|doc|agent|model|alert|shared|recipient)_[0-9]+|default_model', re.IGNORECASE)
+_RESERVED_HANDLE = re.compile(r'(?:task|new|node|ref|doc|conv|conv_ref|agent|model|alert|shared|recipient)_[0-9]+|default_model', re.IGNORECASE)
 # C0 controls other than tab, line feed and carriage return, plus DEL.
 _CONTROL_CHARACTERS = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 _LINE_BREAKS = re.compile(r'[\r\n\u0085\u2028\u2029]')
@@ -383,12 +383,15 @@ class AssistHandles:
     only meaningful within one request.
     """
 
-    def __init__(self, draft, *, user_id, options=None, request_documents=()):
+    def __init__(self, draft, *, user_id, options=None, request_documents=(), request_conversations=()):
         self.user_id = user_id
         self.options = options if isinstance(options, dict) else {}
         self.structured = is_structured_draft(draft)
         request_documents = [item for item in request_documents if isinstance(item, dict)]
-        self.matcher = IdMatcher(collect_known_ids(draft, self.options, request_documents) | {user_id})
+        request_conversations = [item for item in request_conversations if isinstance(item, dict)]
+        self.matcher = IdMatcher(
+            collect_known_ids(draft, self.options, request_documents, request_conversations) | {user_id}
+        )
         self._by_handle = {}
         self.recipients = []
         delivery_options = self.options.get('results_delivery') or {}
@@ -514,6 +517,67 @@ class AssistHandles:
             entry = self.documents[handle]
             if not entry['label']:
                 entry['label'] = entry.get('file_label') or f'Attached document {self.request_handles.index(handle) + 1}'
+
+        self.conversation_reference_handles = {}
+        self.conversation_reference_names = {}
+        self.conversations = {}
+        self.conversation_id_handles = {}
+        conv_inputs = _rows(draft.get('conversation_reference_inputs'))
+        for position, entry in enumerate(conv_inputs, start=1):
+            ref_id = _string(entry.get('reference_id'))
+            if not ref_id:
+                continue
+            name = entry.get('name')
+            safe = (
+                isinstance(name, str) and WORKFLOW_ALIAS_PATTERN.fullmatch(name)
+                and not _RESERVED_HANDLE.fullmatch(name) and name.casefold() not in _RESERVED_WORDS
+                and not self.matcher.contains_id(name) and name.casefold() not in self._by_handle
+            )
+            handle = name if safe else f'conv_ref_{position}'
+            if handle.casefold() in self._by_handle:
+                handle = f'conv_ref_{position}'
+            self.conversation_reference_handles[ref_id] = handle
+            self.conversation_reference_names[ref_id] = name if safe else f'Conversation reference {position}'
+            self._register(handle, ('conversation_reference', ref_id))
+            conv_refs = _rows(entry.get('conversation_references'))
+            first_id = _string(conv_refs[0].get('id')) if conv_refs else ''
+            self.conversations[handle] = {
+                'reference_id': ref_id, 'conversation_id': first_id,
+                'label': self.conversation_reference_names[ref_id],
+            }
+            if first_id:
+                self.conversation_id_handles.setdefault(first_id, handle)
+
+        self.request_conversation_handles = []
+        conv_position = 0
+        for conv in request_conversations:
+            conv_id = _string(conv.get('id'))
+            if not conv_id:
+                continue
+            label = sanitize_label(conv.get('title') or conv.get('label'))
+            handle = self.conversation_id_handles.get(conv_id)
+            if handle is None:
+                conv_position += 1
+                handle = f'conv_{conv_position}'
+                self._register(handle, ('conversation', conv_id))
+                self.conversations[handle] = {
+                    'conversation_id': conv_id,
+                    'message_ids': list(conv.get('message_ids') or []),
+                    'label': '',
+                }
+                self.conversation_id_handles[conv_id] = handle
+            entry = self.conversations[handle]
+            entry['requested'] = True
+            if label and not self.matcher.contains_id(label):
+                entry['title_label'] = label
+            if handle not in self.request_conversation_handles:
+                self.request_conversation_handles.append(handle)
+        for handle in self.request_conversation_handles:
+            entry = self.conversations[handle]
+            if not entry.get('label'):
+                entry['label'] = entry.get('title_label') or (
+                    f'Attached conversation {self.request_conversation_handles.index(handle) + 1}'
+                )
 
     def _register(self, handle, target):
         self._by_handle[handle.casefold()] = target
@@ -716,6 +780,15 @@ def _task_view(task, handles, draft, changed_files):
             handles.reference_handles[item] for item in reference_ids
             if isinstance(item, str) and item in handles.reference_handles
         ]
+    if 'conversation_reference_ids' in task:
+        conv_ids = task.get('conversation_reference_ids')
+        if isinstance(conv_ids, list) and not conv_ids:
+            view['conversation_references'] = 'none'
+        elif isinstance(conv_ids, list):
+            view['conversation_references'] = [
+                handles.conversation_reference_handles[item] for item in conv_ids
+                if isinstance(item, str) and item in handles.conversation_reference_handles
+            ]
     if not publication:
         view['document_target'] = _document_target_view(task, handles, user_id, changed_files)
     approval = task.get('approval')
@@ -810,6 +883,22 @@ def build_draft_view(draft, handles):
         {'document': handle, 'label': handles.documents[handle].get('file_label') or handles.documents[handle]['label']}
         for handle in handles.request_handles
     ]
+    if draft.get('conversation_reference_inputs') or handles.request_conversation_handles:
+        view['conversation_references'] = [
+            {
+                'reference': handles.conversation_reference_handles[entry['reference_id']],
+                'name': handles.conversation_reference_names[entry['reference_id']],
+            }
+            for entry in _rows(draft.get('conversation_reference_inputs'))
+            if entry.get('reference_id') in handles.conversation_reference_handles
+        ]
+        view['attached_conversations'] = [
+            {
+                'conversation': handle,
+                'label': handles.conversations[handle].get('title_label') or handles.conversations[handle]['label'],
+            }
+            for handle in handles.request_conversation_handles
+        ]
     return view
 
 
@@ -1043,6 +1132,19 @@ OPERATION_SCHEMAS = {
         {'if': {'required': ['mode'], 'properties': {'mode': {'not': {'const': 'selected'}}}}, 'then': _forbid('references')},
     ]),
     'unbind_reference': _operation('unbind_reference', {'reference': _handle()}, ['reference']),
+    'bind_conversation_reference': _operation('bind_conversation_reference', {
+        'conversation': _handle(),
+        'tasks': {'oneOf': [{'const': 'all'}, _handles(ASSIST_MAX_TASKS, TASK_HANDLE_PATTERN)]},
+    }, ['conversation', 'tasks']),
+    'set_task_conversation_references': _operation('set_task_conversation_references', {
+        'task': _TASK,
+        'mode': {'enum': ['all', 'none', 'selected']},
+        'references': _handles(5),
+    }, ['task', 'mode'], [
+        _when('mode', 'selected', {'required': ['references']}),
+        {'if': {'required': ['mode'], 'properties': {'mode': {'not': {'const': 'selected'}}}}, 'then': _forbid('references')},
+    ]),
+    'unbind_conversation_reference': _operation('unbind_conversation_reference', {'reference': _handle()}, ['reference']),
     'set_task_document_target': _operation('set_task_document_target', {
         'task': _TASK,
         'action': {'enum': ['analyze', 'search', 'comparison', 'merge', 'choose']},
@@ -1927,6 +2029,139 @@ class _Applier:
             if isinstance(reference_ids, list) and reference['id'] in reference_ids:
                 task['reference_ids'] = [item for item in reference_ids if item != reference['id']]
         self.removed_references.append(reference['id'])
+
+    def _conversation_references(self):
+        if self.candidate.get('group_id'):
+            raise _OperationError('Conversation references are available only in private personal workflows.', 'protected_workflow')
+        references = self.candidate.get('conversation_reference_inputs')
+        if not isinstance(references, list):
+            references = []
+            self.candidate['conversation_reference_inputs'] = references
+        return references
+
+    def _conversation_reference_by_id(self, reference_id):
+        return next(
+            (item for item in _rows(self.candidate.get('conversation_reference_inputs'))
+             if item.get('reference_id') == reference_id),
+            None,
+        )
+
+    def _conversation_reference_for_conversation(self, conversation_id):
+        return next(
+            (item for item in _rows(self.candidate.get('conversation_reference_inputs'))
+             if any(ref.get('id') == conversation_id for ref in _rows(item.get('conversation_references')))),
+            None,
+        )
+
+    def _conversation_target(self, handle):
+        target = self.handles.resolve(handle)
+        if target is None or target[0] not in ('conversation_reference', 'conversation'):
+            raise _OperationError('It names a conversation that is not in the draft or the request.', 'handle_invalid')
+        if target[0] == 'conversation_reference':
+            reference = self._conversation_reference_by_id(target[1])
+            if reference is None:
+                raise _OperationError('It names a conversation reference that an earlier operation removed.', 'handle_invalid')
+            conv_refs = _rows(reference.get('conversation_references'))
+            conv_id = _string(conv_refs[0].get('id')) if conv_refs else ''
+            return conv_id, reference, ''
+        conv_id = target[1]
+        entry = self.handles.conversations.get(self.handles.conversation_id_handles.get(conv_id)) or {}
+        return conv_id, self._conversation_reference_for_conversation(conv_id), entry.get('title_label') or ''
+
+    def _new_conversation_reference(self, conversation_id, label, message_ids=None):
+        references = self._conversation_references()
+        if len(references) >= 5:
+            raise _OperationError('A workflow can have at most 5 conversation reference inputs.')
+        name = _unique_name(
+            safe_workflow_alias(label, 'conversation'),
+            [item.get('name') for item in _rows(references)],
+        )
+        taken = {item.get('reference_id') for item in _rows(references)}
+        reference_id = f'conv:{conversation_id}'
+        if len(reference_id) > ASSIST_REFERENCE_ID_MAX_LENGTH or reference_id in taken:
+            reference_id = _new_uuid()
+        conv_entry = {'kind': 'conversation', 'id': conversation_id}
+        if message_ids:
+            conv_entry['message_ids'] = list(message_ids)
+        reference = {
+            'reference_id': reference_id, 'name': name,
+            'conversation_references': [conv_entry],
+        }
+        references.append(reference)
+        return reference
+
+    def op_bind_conversation_reference(self, op):
+        if self.candidate.get('group_id'):
+            raise _OperationError('Conversation references are available only in private personal workflows.', 'protected_workflow')
+        conversation_id, reference, label = self._conversation_target(op['conversation'])
+        created = reference is None
+        if created:
+            entry = self.handles.conversations.get(self.handles.conversation_id_handles.get(conversation_id)) or {}
+            reference = self._new_conversation_reference(
+                conversation_id, label, message_ids=entry.get('message_ids'),
+            )
+        reference_id = reference['reference_id']
+        if op['tasks'] == 'all':
+            listed = None
+        else:
+            listed = {self._task_id(handle) for handle in op['tasks']}
+        others = [
+            item.get('reference_id') for item in _rows(self.candidate.get('conversation_reference_inputs'))
+            if item is not reference
+        ]
+        for task in self._tasks():
+            conv_ids = task.get('conversation_reference_ids')
+            if listed is None:
+                if isinstance(conv_ids, list) and reference_id not in conv_ids:
+                    task['conversation_reference_ids'] = [*conv_ids, reference_id]
+            elif task['id'] in listed:
+                if conv_ids is None:
+                    task['conversation_reference_ids'] = [*others, reference_id]
+                elif isinstance(conv_ids, list) and reference_id not in conv_ids:
+                    task['conversation_reference_ids'] = [*conv_ids, reference_id]
+            elif created and conv_ids is None:
+                task['conversation_reference_ids'] = list(others)
+
+    def op_set_task_conversation_references(self, op):
+        if self.candidate.get('group_id'):
+            raise _OperationError('Conversation references are available only in private personal workflows.', 'protected_workflow')
+        _index, task = self._task(op['task'])
+        current = task.get('conversation_reference_ids')
+        mode = op['mode']
+        if mode == 'all':
+            if 'conversation_reference_ids' in task and current is not None:
+                del task['conversation_reference_ids']
+            return
+        if mode == 'none':
+            if not (isinstance(current, list) and not current):
+                task['conversation_reference_ids'] = []
+            return
+        selected = []
+        for handle in op['references']:
+            _conv_id, reference, _label = self._conversation_target(handle)
+            if reference is None:
+                raise _OperationError(
+                    'It names a conversation that is not a shared conversation reference. Use bind_conversation_reference first.',
+                    'reference_not_bound',
+                )
+            if reference['reference_id'] not in selected:
+                selected.append(reference['reference_id'])
+        if not (isinstance(current, list) and same_editor_value(current, selected)):
+            task['conversation_reference_ids'] = selected
+
+    def op_unbind_conversation_reference(self, op):
+        _conv_id, reference, _label = self._conversation_target(op['reference'])
+        if reference is None:
+            raise _OperationError('It names a conversation that is not a shared conversation reference.', 'reference_not_bound')
+        references = self._conversation_references()
+        for position, item in enumerate(references):
+            if item is reference:
+                del references[position]
+                break
+        for task in self._tasks():
+            conv_ids = task.get('conversation_reference_ids')
+            if isinstance(conv_ids, list) and reference['reference_id'] in conv_ids:
+                task['conversation_reference_ids'] = [item for item in conv_ids if item != reference['reference_id']]
 
     def _check_document_target(self, task):
         if js_truthy(task.get('publication')):

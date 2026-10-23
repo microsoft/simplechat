@@ -72,6 +72,7 @@ export interface AssistThreadProps {
      * the references with its request, and the server must authorise them for the acting user.
      */
     allowContext?: boolean;
+    allowConversationReferences?: boolean;
     /** With `allowContext`, offer `#` documents only: no tags and no workspaces. Off by default. */
     contextDocumentsOnly?: boolean;
     counterHint?: string;
@@ -145,6 +146,7 @@ export function AssistThread({
     describedBy,
     composerNote,
     allowContext = false,
+    allowConversationReferences,
     contextDocumentsOnly = false,
     counterHint,
     density = 'compact',
@@ -332,6 +334,7 @@ export function AssistThread({
                             textareaRef={thread.inputRef}
                             restricted
                             allowContext={allowContext}
+                            allowConversationReferences={allowConversationReferences}
                             contextDocumentsOnly={contextDocumentsOnly}
                             describedBy={[describedBy, counterId, thread.overLimit ? limitId : null]
                                 .filter(Boolean).join(' ')}

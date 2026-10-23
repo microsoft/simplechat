@@ -1020,6 +1020,37 @@ def validate_dependency_plan(
                 arguments = prepare_workflow_handoff_arguments(
                     raw, arguments, settings=settings, workflow_planning=workflow_planning,
                 )
+            if capability_id == 'conversation_read':
+                from functions_conversation_references import (
+                    ConversationReferenceError, normalize_conversation_references,
+                )
+
+                try:
+                    references = normalize_conversation_references(arguments.get('conversation_references'))
+                except ConversationReferenceError as exc:
+                    raise PlanValidationError(exc.public_message) from exc
+                if not references:
+                    raise PlanValidationError('Select at least one conversation reference.')
+                if plan.get('conversation_id') and any(
+                    reference['id'] == plan['conversation_id'] for reference in references
+                ):
+                    raise PlanValidationError('Choose a different conversation as a source.')
+                arguments['conversation_references'] = references
+            if capability_id == 'conversation_send':
+                from functions_conversation_references import ConversationReferenceError
+                from functions_orchestration_conversation_capabilities import normalize_conversation_send
+
+                try:
+                    arguments = normalize_conversation_send(arguments)
+                except ConversationReferenceError as exc:
+                    raise PlanValidationError(exc.public_message) from exc
+                if plan.get('conversation_id') and arguments['destination_conversation_id'] == plan['conversation_id']:
+                    raise PlanValidationError('Choose a different destination conversation.')
+                if any(
+                    reference['id'] == arguments['destination_conversation_id']
+                    for reference in arguments.get('conversation_references') or []
+                ):
+                    raise PlanValidationError('A destination conversation cannot reference itself as a source.')
             if any(isinstance(value, str) and not value.strip() for value in arguments.values()):
                 raise PlanValidationError('String arguments must not be empty or whitespace.')
             for name, rule in capability['inputs']['properties'].items():
@@ -1515,6 +1546,7 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None, work
             }
             for document_id in document_ids
         ],
+        'conversation_references': deepcopy(seeds.get('conversation_references') or []),
         'image_reference_documents': deepcopy(seeds.get('image_reference_documents') or []),
         'image_reference_messages': deepcopy(seeds.get('image_reference_messages') or []),
         'web': uses_web,

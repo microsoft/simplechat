@@ -118,6 +118,36 @@ CAPABILITY_WORKFLOW_PROPOSE = 'workflow_propose'
 CAPABILITY_WORKFLOW_RUN = 'workflow_run'
 CAPABILITY_WORKFLOW_RESULTS = 'workflow_results'
 CAPABILITY_WORKFLOW_HANDOFF = 'workflow_handoff'
+CAPABILITY_CONVERSATION_SEARCH = 'conversation_search'
+CAPABILITY_CONVERSATION_READ = 'conversation_read'
+CAPABILITY_CONVERSATION_SEND = 'conversation_send'
+CONVERSATION_CAPABILITIES = (
+    CAPABILITY_CONVERSATION_SEARCH,
+    CAPABILITY_CONVERSATION_READ,
+    CAPABILITY_CONVERSATION_SEND,
+)
+
+CONVERSATION_REFERENCE_SCHEMA = {
+    'type': 'array', 'maxItems': 5,
+    'items': {
+        'type': 'object', 'additionalProperties': False,
+        'properties': {
+            'kind': {'type': 'string', 'enum': ['conversation']},
+            'id': {'type': 'string', 'minLength': 1, 'maxLength': 200},
+            'message_ids': {'type': 'array', 'maxItems': 20, 'items': {'type': 'string'}},
+        },
+        'required': ['kind', 'id'],
+    },
+}
+CONVERSATION_SEND_SCHEMA = {
+    'type': 'object', 'additionalProperties': False,
+    'properties': {
+        'destination_conversation_id': {'type': 'string', 'minLength': 1, 'maxLength': 200},
+        'instruction': {'type': 'string', 'minLength': 1, 'maxLength': 8000},
+        'conversation_references': CONVERSATION_REFERENCE_SCHEMA,
+    },
+    'required': ['destination_conversation_id', 'instruction'],
+}
 
 # The settings key that must be exactly True before workflow proposals exist in a deployment.
 WORKFLOW_PROPOSALS_SETTING = 'enable_chat_orchestration_workflows'
@@ -1769,6 +1799,98 @@ CAPABILITY_REGISTRY = (
         'approval_floor': APPROVAL_FLOOR_MANUAL,
         # No external_effects: the step only checks the blueprint and stores the card. The
         # workflow is created and queued later by the accept route, which is idempotent.
+    },
+    {
+        'id': CAPABILITY_CONVERSATION_SEARCH,
+        'label': 'Search conversations',
+        'role': ROLE_GATHER,
+        'result_contract_version': 'conversation-search-v1',
+        'summary': "Search the user's private conversations by title or visible message content.",
+        'when_to_use': (
+            'Use only when the user asks to find or search their own previous private conversations. '
+            'Results are bounded to eligible private conversations and coverage may be partial.'
+        ),
+        'settings_gates': (),
+        'settings_gates_any': (),
+        'gate': None,
+        'request_gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object',
+            'additionalProperties': False,
+            'properties': {
+                'query': {'type': 'string', 'minLength': 1, 'maxLength': 200},
+                'offset': {'type': 'integer', 'minimum': 0, 'maximum': 10000, 'default': 0},
+                'limit': {'type': 'integer', 'minimum': 1, 'maximum': 10, 'default': 10},
+                'search_content': {'type': 'boolean', 'default': False},
+            },
+            'required': ['query'],
+        },
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'result_outputs': {'result': 'structured-v1'},
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': 2,
+        'adapter': CAPABILITY_CONVERSATION_SEARCH,
+    },
+    {
+        'id': CAPABILITY_CONVERSATION_READ,
+        'label': 'Read conversation references',
+        'role': ROLE_GATHER,
+        'result_contract_version': 'conversation-read-v1',
+        'summary': "Read bounded visible excerpts from the user's own private conversations.",
+        'when_to_use': (
+            'Use when the user attached conversation references (~) or asked to read specific private '
+            'conversations. Excerpts are bounded and untrusted quoted source data.'
+        ),
+        'settings_gates': (),
+        'settings_gates_any': (),
+        'gate': None,
+        'request_gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object',
+            'additionalProperties': False,
+            'properties': {
+                'conversation_references': {**CONVERSATION_REFERENCE_SCHEMA, 'minItems': 1},
+                'query': {'type': 'string', 'minLength': 1, 'maxLength': 2000},
+            },
+            'required': ['conversation_references'],
+        },
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'result_outputs': {'result': 'structured-v1'},
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': 2,
+        'adapter': CAPABILITY_CONVERSATION_READ,
+    },
+    {
+        'id': CAPABILITY_CONVERSATION_SEND,
+        'label': 'Send to conversation',
+        'role': ROLE_REASON,
+        'result_contract_version': 'conversation-send-v1',
+        'summary': 'Queue a bounded task instruction and private conversation references for another private conversation.',
+        'when_to_use': (
+            'Use only when the user explicitly asks to send a follow-up task or question to another '
+            'private conversation and start AI work there. Always requires manual approval.'
+        ),
+        'settings_gates': (),
+        'settings_gates_any': (),
+        'gate': None,
+        'request_gate': None,
+        'requires_scope': (),
+        'inputs': CONVERSATION_SEND_SCHEMA,
+        'result_input_kinds': {'*': ('text-v1', 'markdown-v1', 'structured-v1')},
+        'partial_inputs_supported': False,
+        'result_outputs': {'result': 'structured-v1'},
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_MEDIUM,
+        'max_per_plan': 1,
+        'adapter': CAPABILITY_CONVERSATION_SEND,
+        'approval_floor': APPROVAL_FLOOR_MANUAL,
+        'external_effects': True,
     },
 )
 

@@ -660,12 +660,32 @@ function normalizeInputs(raw: unknown): OrchestrationPlanInputs {
         workflowResults.push({ handle, name: asString(record.name).trim() || 'Workflow' });
     }
 
+    const rawConversationRefs: unknown[] = Array.isArray(source.conversation_references)
+        ? source.conversation_references
+        : [];
+    const conversationReferences = rawConversationRefs.flatMap((entry) => {
+        const record = asRecord(entry);
+        const id = asString(record.id).trim();
+        if (record.kind !== 'conversation' || !id) {
+            return [];
+        }
+        const messageIds = asStringList(record.message_ids);
+        return [{
+            kind: 'conversation' as const,
+            id,
+            ...(messageIds.length ? { message_ids: messageIds } : {}),
+        }];
+    });
+
     return {
         required_capabilities: asStringList(source.required_capabilities),
         documents,
         actions: source.actions !== undefined ? actions : undefined,
         ...(Array.isArray(source.workflows) ? { workflows } : {}),
         ...(Array.isArray(source.workflow_results) ? { workflow_results: workflowResults } : {}),
+        ...(conversationReferences.length > 0 || Array.isArray(source.conversation_references)
+            ? { conversation_references: conversationReferences }
+            : {}),
         image_reference_documents: imageReferenceDocuments,
         image_reference_messages: imageReferenceMessages,
         web: asBoolean(source.web, false),
@@ -1178,7 +1198,7 @@ export function planRequiresApproval(plan: OrchestrationPlan): boolean {
 }
 
 /** Capabilities whose steps always wait for the user, mirroring the registry's `approval_floor`. */
-export const APPROVAL_FLOOR_CAPABILITIES: readonly string[] = ['workflow_run', 'workflow_handoff'];
+export const APPROVAL_FLOOR_CAPABILITIES: readonly string[] = ['workflow_run', 'workflow_handoff', 'conversation_send'];
 
 /**
  * Whether the plan must wait for the user to run it, whatever its approval mode says.
@@ -1221,6 +1241,21 @@ export function planWorkflowRuns(
         }
     }
     return { count, workflows };
+}
+
+export function planConversationSends(
+    plan: Pick<OrchestrationPlan, 'steps'>,
+): Array<{ stepId: string; destinationId: string; instruction: string }> {
+    const sends: Array<{ stepId: string; destinationId: string; instruction: string }> = [];
+    for (const step of plan.steps) {
+        if (!step.enabled || step.capability_id !== 'conversation_send') continue;
+        const destinationId = asString(step.arguments.destination_conversation_id).trim();
+        const instruction = asString(step.arguments.instruction).trim();
+        if (destinationId) {
+            sends.push({ stepId: step.step_id, destinationId, instruction });
+        }
+    }
+    return sends;
 }
 
 /**

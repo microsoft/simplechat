@@ -129,6 +129,9 @@ import {
     readImageReferenceProvenance,
     type ImageReferenceRequest,
 } from '../../lib/imageReferences';
+import { storedConversationReferences } from '../../lib/conversationReferences';
+import { ConversationReferenceChips } from './ConversationReferences';
+import { ConversationHandoffCards } from './ConversationHandoffDialog';
 import type { ChatMessage, CollaborationMessage, ThoughtEntry } from '../../lib/types';
 import type { ReactNode } from 'react';
 import type { ChatWidth } from '../../stores/uiStore';
@@ -982,6 +985,10 @@ function MessageBubbleInner({
         () => (isUser ? readImageReferenceProvenance(message.metadata) : []),
         [isUser, message.metadata],
     );
+    const conversationReferences = useMemo(
+        () => storedConversationReferences(message.metadata?.conversation_references),
+        [message.metadata?.conversation_references],
+    );
 
     if (message.role === 'image') {
         return <ImageMessage message={message} />;
@@ -1075,6 +1082,9 @@ function MessageBubbleInner({
                 {replyContext && <ReplyQuote context={replyContext} />}
                 {isUser && !masks.fullyMasked && (
                     <MessageMentionPills pills={mentionPills} onAccent={alignRight && !agentPosted} />
+                )}
+                {isUser && !masks.fullyMasked && conversationReferences.length > 0 && (
+                    <ConversationReferenceChips references={conversationReferences} />
                 )}
                 {masks.fullyMasked ? (
                     // The whole message is masked, so none of it is rendered. The server
@@ -1745,6 +1755,9 @@ export function MessageList() {
                         )}
                         {activeConversationId ? <CredentialRequestCards conversationId={activeConversationId}
                             conversationKind={activeConversationKind} /> : null}
+                        {activeConversationKind !== 'collaborative' && (
+                            <ConversationHandoffCards conversationId={activeConversationId} />
+                        )}
                         <AgentActivityIndicator />
                         <TypingIndicator />
                     </div>

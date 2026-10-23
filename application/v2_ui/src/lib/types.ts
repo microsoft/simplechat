@@ -1426,6 +1426,7 @@ export interface ChatStreamRequest {
      * `prompt_selection` metadata and by `resolve_seeds` when orchestration is planning.
      */
     prompt_info?: Json;
+    conversation_references?: Array<{ kind: 'conversation'; id: string; message_ids?: string[] }>;
     [key: string]: unknown;
 }
 
