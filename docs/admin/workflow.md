@@ -37,7 +37,7 @@ user has.
 
 ## Answer completeness
 
-Implemented in version **0.261.380**. Generated task answers are checked against
+Implemented in version **0.261.382**. Generated task answers are checked against
 their instructions and available evidence before downstream use. Schema validity
 alone does not prove that the requested facts were included.
 
@@ -176,11 +176,14 @@ for the request contract, the changes it can propose, and its security model.
 
 ## Durable runs
 
-In **0.261.111**, durability is a workflow-definition option, not another global
-capability toggle. New native V2 workflows enable it; existing definitions do not
-change automatically. The existing background scheduler must run for queued
-work to progress. Each application process uses at most two durable workers,
-with renewable Cosmos leases preventing simultaneous ownership of one run.
+In **0.261.111**, durability is a workflow-definition property, not another global
+capability toggle. All new and already-durable native V2 workflows are durable
+without a toggle to turn durability off; existing legacy non-durable definitions
+do not change automatically, and the V2 editor shows the **Durable execution**
+option in **Execution** only on those legacy workflows so they can be upgraded.
+The existing background scheduler must run for queued work to progress. Each
+application process uses at most two durable workers, with renewable Cosmos
+leases preventing simultaneous ownership of one run.
 
 Approval, pending-output, and recovery gates keep a run active without holding
 a worker. A scheduled trigger does not start a second run while that run waits.

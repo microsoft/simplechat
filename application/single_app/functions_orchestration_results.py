@@ -8,8 +8,11 @@ settings owner, model, artifact publisher, or global result catalog is imported.
 import hashlib
 import json
 from collections.abc import Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import get_ident
 
 from functions_analysis_access import analysis_source_snapshot
 from functions_orchestration_result_contracts import (
@@ -97,6 +100,24 @@ class ResultUnavailableError(PermissionError):
         super().__init__("This retained result is unavailable under the current access or producer state.")
 
 
+@dataclass
+class _ResultReadOperation:
+    thread_id: int = field(default_factory=get_ident)
+    active: bool = True
+    documents: dict = field(default_factory=dict)
+    producers: set = field(default_factory=set)
+    manifests: dict = field(default_factory=dict)
+    references: dict = field(default_factory=dict)
+    lineages: dict = field(default_factory=dict)
+
+
+def _current_read_operation(variable):
+    operation = variable.get()
+    if operation is not None and operation.active and operation.thread_id == get_ident():
+        return operation
+    return None
+
+
 @dataclass(frozen=True)
 class NamedOutput:
     name: str
@@ -151,6 +172,19 @@ class OrchestrationResultAccess:
                 raise ResultContractError("result_external_reference_untrusted")
         self.external_source_catalog = dict(catalog)
         self.external_source_authorizer = external_source_authorizer
+        self._read_operation = ContextVar("orchestration_result_authority", default=None)
+
+    def _authority_document(self, kind, item_id, *, current=False):
+        operation = None if current else _current_read_operation(self._read_operation)
+        key = kind, item_id
+        if operation is None or key not in operation.documents:
+            document = (
+                self.read_conversation(item_id) if kind == "conversation" else self.read_run(item_id)
+            )
+            if operation is None:
+                return document
+            operation.documents[key] = deepcopy(document)
+        return operation.documents[key]
 
     def authorize_producer(self, producer, *, for_write=False):
         if (
@@ -158,13 +192,13 @@ class OrchestrationResultAccess:
             or producer.conversation_id != self.conversation_id
         ):
             raise ResultUnavailableError("result_owner_mismatch")
-        conversation = self.read_conversation(self.conversation_id)
+        conversation = self._authority_document("conversation", self.conversation_id, current=for_write)
         if (
             type(conversation) is not dict or conversation.get("id") != self.conversation_id
             or conversation.get("user_id") != self.user_id or conversation.get("orchestration_deleted")
         ):
             raise ResultUnavailableError("result_conversation_unavailable")
-        run = self.read_run(producer.run_id)
+        run = self._authority_document("run", producer.run_id, current=for_write)
         if (
             type(run) is not dict or run.get("id") != producer.run_id
             or run.get("user_id") != self.user_id or run.get("conversation_id") != self.conversation_id
@@ -190,6 +224,9 @@ class OrchestrationResultAccess:
             or run.get("latest_attempt_run_id")
         ):
             raise ResultUnavailableError("result_attempt_stopped")
+        operation = _current_read_operation(self._read_operation)
+        if operation is not None and not for_write:
+            operation.producers.add(producer)
 
     def authorize_input_sources(self, sources, *, require_snapshot):
         """Input reads only: check uploaded documents a step is about to read itself.
@@ -463,15 +500,61 @@ class OrchestrationResults:
         self.access = access
         self.max_result_bytes = store.max_size_bytes if max_result_bytes is None else max_result_bytes
         integer(self.max_result_bytes, minimum=1)
+        self._read_operation = ContextVar("orchestration_result_read", default=None)
+
+    @contextmanager
+    def read_operation(self):
+        """Bound one synchronous projection, with fresh authority and commits before return.
+
+        Coalesce immutable manifests, lineage work and initial authority reads. Final
+        validation uses live authority, without positive-authority reuse. Never span
+        a provider call, wait, write or publication. Nested projections share the
+        boundary; escaped readers and copied contexts cannot retain its authority.
+        """
+        if _current_read_operation(self._read_operation) is not None:
+            yield
+            return
+        operation = _ResultReadOperation()
+        token = self._read_operation.set(operation)
+        authority_token = self.access._read_operation.set(operation)
+        fresh = None
+        try:
+            yield
+            # Discard every authority snapshot before checking the complete read set again.
+            fresh = _ResultReadOperation()
+            self._read_operation.set(fresh)
+            self.access._read_operation.set(None)
+            for reference in operation.references.values():
+                self._load_manifest(reference)
+            for (producer, _, current), (lineage, _) in operation.lineages.items():
+                self._authorize_lineage(producer, lineage, force_current=current)
+            for producer in operation.producers:
+                self.access.authorize_producer(producer)
+        finally:
+            operation.active = False
+            if fresh is not None:
+                fresh.active = False
+            self.access._read_operation.reset(authority_token)
+            self._read_operation.reset(token)
 
     def _load_manifest(self, reference):
         self.access.authorize_producer(reference.producer)
-        manifest = self.store.load_committed_orchestration_result(
-            *_producer_arguments(reference.producer), reference.manifest_sha256,
-        )
+        operation = _current_read_operation(self._read_operation)
+        key = reference.producer, reference.manifest_sha256
+        if operation is not None and key in operation.manifests:
+            manifest = operation.manifests[key]
+        else:
+            manifest = self.store.load_committed_orchestration_result(
+                *_producer_arguments(reference.producer), reference.manifest_sha256,
+            )
         task = _task_result(manifest, reference.manifest_sha256)
         if task.producer != reference.producer or task.output(reference.output_name) != reference:
             raise ResultContractError("result_reference_mismatch")
+        if operation is not None:
+            if key not in operation.manifests and len(operation.manifests) >= MAX_LINEAGE_RESULTS:
+                raise ResultContractError("result_lineage_limit")
+            operation.manifests[key] = deepcopy(manifest)
+            operation.references[key] = reference
         return manifest
 
     def _authorize_lineage(self, producer, lineage, *, for_write=False, force_current=False, active=None, visited=None):
@@ -485,6 +568,10 @@ class OrchestrationResults:
         self.access.authorize_producer(producer, for_write=for_write)
         parents = _lineage(lineage)
         current = force_current or lineage["source_policy"] == "current"
+        operation = None if for_write else _current_read_operation(self._read_operation)
+        lineage_key = producer, canonical_bytes(lineage), current
+        if operation is not None and lineage_key in operation.lineages:
+            return deepcopy(operation.lineages[lineage_key][1])
         source_snapshots = {
             _source_key(source): {canonical_bytes(source)} for source in lineage["sources"]
         }
@@ -518,7 +605,10 @@ class OrchestrationResults:
             external_sources.update(parent_external)
             if len(external_sources) > MAX_LINEAGE_RESULTS:
                 raise ResultContractError("result_lineage_limit")
-        return changed, source_snapshots, external_sources
+        result = changed, source_snapshots, external_sources
+        if operation is not None:
+            operation.lineages[lineage_key] = deepcopy((lineage, result))
+        return result
 
     def persist_task_result(
         self, *, producer, role, status, outputs, sources, origin, guard_token,
@@ -531,6 +621,8 @@ class OrchestrationResults:
         fenced; only the last, immutable server commit makes a descriptor readable.
         A pending/invalid descriptor is retained honestly but is not consumable.
         """
+        if _current_read_operation(self._read_operation) is not None:
+            raise ResultContractError("result_read_only")
         if type(producer) is not ProducerIdentity:
             raise ResultContractError("result_producer_invalid")
         validate_result_role(producer, role)

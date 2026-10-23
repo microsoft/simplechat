@@ -95,6 +95,7 @@ from functions_export_visuals import (
 
 
 _XML_INVALID = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+_SLIDE_WRAP_TOKENS = re.compile(r"[^\s/\-]+[/\-]*|[/\-]+|[^\S\n]+")
 _SHEET_INVALID = re.compile(r"[\[\]:*?/\\]")
 _XLSX_FONT = Font(name="Arial", size=11)
 _XLSX_HEADER_FONT = Font(name="Arial", size=11, bold=True)
@@ -1438,7 +1439,7 @@ def _slide_text_height(text, width, font_size, level=0, list_kind="none"):
     for line in _normalize_slide_text(text).expandtabs(4).split("\n"):
         used = 0
         lines += 1
-        for token in re.findall(r"\S+|[^\S\n]+", line):
+        for token in _SLIDE_WRAP_TOKENS.findall(line):
             measured = sum(
                 font.glyph_advance(ord(character)) if font.has_glyph(ord(character)) else 1.1
                 for character in token
@@ -1449,6 +1450,21 @@ def _slide_text_height(text, width, font_size, level=0, list_kind="none"):
                 used = 0
             used += measured
     return lines * font_size * 1.4 + 6
+
+
+def _slide_title_font_size(title, title_box):
+    normalized = _normalize_slide_text(title)
+    candidates = (30,) if "\n" in normalized else tuple(range(30, 13, -1))
+    for font_size in candidates:
+        try:
+            title_height = _slide_text_height(title, title_box.width, font_size) + 9
+        except OfficeRenderError as exc:
+            if exc.code != "layout_overflow" or font_size == candidates[-1]:
+                raise
+            continue
+        if title_height <= 72 * title_box.height:
+            return font_size
+    raise OfficeRenderError("layout_overflow")
 
 
 def _normalize_slide_text(text):
@@ -1616,14 +1632,13 @@ def render_prepared_pptx(
                     PREPARED_SLIDE_TITLE_LEFT, PREPARED_SLIDE_TITLE_TOP,
                     width - 2 * PREPARED_SLIDE_TITLE_LEFT, PREPARED_SLIDE_TITLE_HEIGHT,
                 )
-                title_height = _slide_text_height(spec.title, title_box.width, 30) + 9
-                _require(title_height <= 72 * title_box.height, "layout_overflow")
+                title_font_size = _slide_title_font_size(spec.title, title_box)
                 occupied.append(title_box)
                 slide = presentation.slides.add_slide(presentation.slide_layouts[5])
                 title = slide.shapes.title
                 title.left, title.top = PptxInches(title_box.left), PptxInches(title_box.top)
                 title.width, title.height = PptxInches(title_box.width), PptxInches(title_box.height)
-                _write_slide_paragraphs(title.text_frame, [SlideParagraph(spec.title, bold=True)], 30)
+                _write_slide_paragraphs(title.text_frame, [SlideParagraph(spec.title, bold=True)], title_font_size)
             else:
                 _require(spec.title == "", "unsupported_content")
                 slide = presentation.slides.add_slide(presentation.slide_layouts[6])

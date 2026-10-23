@@ -11,6 +11,7 @@ import time
 import logging
 import functools
 import inspect
+import math
 import re
 import threading
 import uuid
@@ -21,6 +22,7 @@ from agent_execution_context import current_agent_execution
 from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime
 from dataclasses import dataclass, asdict
+from decimal import Decimal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_authentication import get_current_user_id
@@ -115,6 +117,24 @@ def report_plugin_invocation_failure(error_message: str) -> None:
     outcome = _plugin_invocation_outcome.get()
     if outcome is not None and outcome.error_message is None:
         outcome.error_message = error_message
+
+
+def _validate_numeric_plugin_result(value: Any) -> None:
+    """Reject raw non-finite numbers, without interpreting strings or business fields."""
+    pending = [value]
+    visited = set()
+    while pending:
+        item = pending.pop()
+        if (
+            isinstance(item, float) and not math.isfinite(item)
+            or isinstance(item, Decimal) and not item.is_finite()
+        ):
+            raise ValueError("Tool returned an invalid non-finite numeric result. No valid numeric result was produced.")
+        if isinstance(item, (dict, list, tuple, set, frozenset)):
+            identity = id(item)
+            if identity not in visited:
+                visited.add(identity)
+                pending.extend(item.values() if isinstance(item, dict) else item)
 
 
 def _normalize_sensitive_key(key: Any) -> str:
@@ -946,6 +966,7 @@ def plugin_function_logger(plugin_name: str):
             )
 
         def _log_completion(function_name, result, parameters, start_time, invocation_id, outcome):
+            _validate_numeric_plugin_result(result)
             end_time = time.time()
             duration_ms = (end_time - start_time) * 1000
             error_message = sanitize_plugin_invocation_value(outcome.error_message)

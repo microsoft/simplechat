@@ -1,10 +1,11 @@
 # functions_orchestration_execution.py
 """Headless preparation and guarded publication for saved orchestration attempts.
 
-Version: 0.261.293
+Version: 0.261.380
 Implemented in: 0.261.127
 Shared conversation answers mirrored into the shared thread in: 0.261.270
 Charts gather steps drew are shown, and chart and diagram delivery is checked, in: 0.261.293
+Saved reply verification tolerates lossless Cosmos numeric round trips in: 0.261.380
 
 Every saved attempt uses the Gather / Reason / Render contract; a run from the removed
 legacy contract is refused before any preparation. The ``Harness*`` names below are the
@@ -104,7 +105,9 @@ from content_screening.access import (
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_appinsights import log_chat_execution_outcome, log_event, workflow_log_context
 from functions_orchestration_adapters import resolve_context_source_manifest
-from functions_orchestration_checkpoints import CheckpointError, fingerprint, orchestration_answer_message_id
+from functions_orchestration_checkpoints import (
+    CheckpointError, fingerprint, orchestration_answer_message_id, publication_documents_match,
+)
 from functions_orchestration_context import (
     HISTORY_MAX_MESSAGES,
     CatalogResolutionError,
@@ -1523,29 +1526,30 @@ class HarnessExecution:
         m365_records, external_citations = [], []
         if error is None:
             try:
-                self._revalidate_context()
-                if result.get("final_response") and not current.get("cancellation_requested_at"):
-                    reference = ResultRef.from_dict(result["final_response"])
-                    reader = self.services.results.open_result(
-                        reference, allow_partial=True, require_current_sources=True,
-                    )
-                    prepared = read_complete_input(reader)
-                    if type(prepared) is not str:
-                        raise HarnessExecutionError("result_invalid")
-                    reader.recheck()
-                    if self._delivery_only:
-                        citations = read_result_document_citations(self.context, reference)
-                if not self._delivery_only:
-                    citations = result.get("citations") or []
-                citations = self._validate_citations(citations, enrich_display=True)
-                if prepared:
-                    # The answer is published only while every result it read is still the user's.
-                    workflow_result_contexts = self._workflow_result_lineage(current)
-                if self.context is not None and not current.get("cancellation_requested_at"):
-                    assets = generated_image_assets(self.context.task_results, self._read_image_asset)
-                    charts = gathered_charts(self.record["plan"], self.context.task_results, self._read_gathered_value)
-                    m365_records = self._gathered_m365_records()
-                    external_citations = self._gathered_external_citations(include_memory=bool(prepared))
+                with self.services.results.read_operation():
+                    self._revalidate_context()
+                    if result.get("final_response") and not current.get("cancellation_requested_at"):
+                        reference = ResultRef.from_dict(result["final_response"])
+                        reader = self.services.results.open_result(
+                            reference, allow_partial=True, require_current_sources=True,
+                        )
+                        prepared = read_complete_input(reader)
+                        if type(prepared) is not str:
+                            raise HarnessExecutionError("result_invalid")
+                        reader.recheck()
+                        if self._delivery_only:
+                            citations = read_result_document_citations(self.context, reference)
+                    if not self._delivery_only:
+                        citations = result.get("citations") or []
+                    citations = self._validate_citations(citations, enrich_display=True)
+                    if prepared:
+                        # The answer is published only while every result it read is still the user's.
+                        workflow_result_contexts = self._workflow_result_lineage(current)
+                    if self.context is not None and not current.get("cancellation_requested_at"):
+                        assets = generated_image_assets(self.context.task_results, self._read_image_asset)
+                        charts = gathered_charts(self.record["plan"], self.context.task_results, self._read_gathered_value)
+                        m365_records = self._gathered_m365_records()
+                        external_citations = self._gathered_external_citations(include_memory=bool(prepared))
             except Exception as exc:
                 self._raise_delivery_infrastructure_failure(exc)
                 _log_failure("Execution context could not be reauthorized.", self.record, exc)
@@ -1804,7 +1808,9 @@ class HarnessExecution:
         saved = self.lease.message_container.read_item(
             item=message_id, partition_key=self.record["conversation_id"],
         )
-        if fingerprint({key: value for key, value in saved.items() if not key.startswith("_")}) != fingerprint(document):
+        if not publication_documents_match(
+            document, {key: value for key, value in saved.items() if not key.startswith("_")},
+        ):
             raise HarnessExecutionError("message_not_saved")
         # Publication preserves an administrator's earlier retraction of this reply.
         blocked = document.get("role") == "safety"

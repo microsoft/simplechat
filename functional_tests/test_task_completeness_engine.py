@@ -1,8 +1,8 @@
 # test_task_completeness_engine.py
 """Grounded, bounded task checking and recovery.
 
-Version: 0.261.380
-Implemented in: 0.261.380
+Version: 0.261.382
+Implemented in: 0.261.382
 """
 
 import json

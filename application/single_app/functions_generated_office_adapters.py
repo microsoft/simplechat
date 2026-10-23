@@ -146,6 +146,96 @@ def _validate_slide_geometry(box, occupied, width, height):
     occupied.append(box)
 
 
+def _font_size_candidates(requested, minimum=8):
+    candidates = [requested]
+    start = int(math.floor(requested))
+    for size in range(start, minimum - 1, -1):
+        if size not in candidates:
+            candidates.append(size)
+    return tuple(candidates)
+
+
+def _horizontally_overlaps(left, right):
+    return min(left.left + left.width, right.left + right.width) > max(left.left, right.left) + 0.001
+
+
+def _max_available_box_height(box, occupied, slide_height):
+    if box.height < 0.5:
+        return box.height
+    limit_bottom = max(box.top + box.height, slide_height - 0.25)
+    for other in occupied:
+        if other is box:
+            continue
+        if _horizontally_overlaps(box, other) and other.top >= box.top + box.height - 0.001:
+            limit_bottom = min(limit_bottom, other.top - 0.05)
+    return max(box.height, limit_bottom - box.top)
+
+
+def _fit_slide_text_box(box, paragraphs, requested_font, occupied, slide_height):
+    candidates = _font_size_candidates(requested_font, minimum=8)
+    max_height = _max_available_box_height(box, occupied, slide_height)
+    for target_height in (
+        (box.height,) if max_height <= box.height + 0.001 else (box.height, max_height)
+    ):
+        floor = 16 if target_height == box.height and max_height > box.height + 0.001 else 8
+        for font_size in candidates:
+            if font_size < floor:
+                continue
+            try:
+                needed_height = 9
+                for paragraph in paragraphs:
+                    needed_height += office._slide_text_height(
+                        paragraph.text, box.width, font_size, paragraph.level, paragraph.list_kind,
+                    )
+            except office.OfficeRenderError as exc:
+                if exc.code != 'layout_overflow':
+                    raise
+                continue
+            if needed_height <= target_height * 72:
+                fitted_height = box.height if needed_height <= box.height * 72 else min(
+                    target_height, math.ceil(needed_height) / 72.0,
+                )
+                return office.SlideBox(box.left, box.top, box.width, fitted_height), font_size
+    raise office.OfficeRenderError('layout_overflow')
+
+
+def _fit_slide_table(box, rows, columns, requested_font, occupied, slide_height):
+    candidates = _font_size_candidates(requested_font, minimum=8)
+    max_height = _max_available_box_height(box, occupied, slide_height)
+    for target_height in (
+        (box.height,) if max_height <= box.height + 0.001 else (box.height, max_height)
+    ):
+        floor = 10 if target_height == box.height and max_height > box.height + 0.001 else 8
+        row_height_limit = target_height * 72 / len(rows)
+        for font_size in candidates:
+            if font_size < floor:
+                continue
+            max_cell_needed = 0
+            fits = True
+            for row in rows:
+                for cell in row:
+                    try:
+                        needed_height = office._slide_text_height(cell, box.width / columns, font_size) + 9
+                    except office.OfficeRenderError as exc:
+                        if exc.code != 'layout_overflow':
+                            raise
+                        fits = False
+                        break
+                    max_cell_needed = max(max_cell_needed, needed_height)
+                    if needed_height > row_height_limit:
+                        fits = False
+                        break
+                if not fits:
+                    break
+            if fits:
+                needed_total = max_cell_needed * len(rows)
+                fitted_height = box.height if needed_total <= box.height * 72 else min(
+                    target_height, math.ceil(needed_total) / 72.0,
+                )
+                return office.SlideBox(box.left, box.top, box.width, fitted_height), font_size
+    raise office.OfficeRenderError('layout_overflow')
+
+
 def prepare_generated_slide_deck(
     value: Any, *, limits: Optional[GeneratedFileExportLimits] = None,
     office_limits: Optional[office.OfficeRenderLimits] = None,
@@ -153,9 +243,8 @@ def prepare_generated_slide_deck(
 ) -> office.PreparedDeck:
     """Validate composition JSON before persistence; never compose or render slides.
 
-    Structural, count, geometry and configured-size validation happens here.
-    The headless renderer additionally validates physical text fit and image
-    content. Image references remain opaque server-resolved asset identifiers.
+    Structural, count, geometry, physical text-fit and configured-size validation
+    happens here. Image references remain opaque server-resolved asset identifiers.
     """
     limits = GeneratedFileExportLimits() if limits is None else limits
     _validate_export_limits(limits, 1)
@@ -179,25 +268,42 @@ def prepare_generated_slide_deck(
     image_count = 0
     for slide in value['slides']:
         checks.run()
-        occupied = [office.SlideBox(
-            PREPARED_SLIDE_TITLE_LEFT, PREPARED_SLIDE_TITLE_TOP,
-            width - 2 * PREPARED_SLIDE_TITLE_LEFT, PREPARED_SLIDE_TITLE_HEIGHT,
-        )] if slide['layout'] == 'title_and_content' else []
+        slide_title = _deck_text(slide['title'])
+        slide_notes = _deck_text(slide.get('notes', ''))
+        if slide['layout'] == 'title_and_content':
+            title_box = office.SlideBox(
+                PREPARED_SLIDE_TITLE_LEFT, PREPARED_SLIDE_TITLE_TOP,
+                width - 2 * PREPARED_SLIDE_TITLE_LEFT, PREPARED_SLIDE_TITLE_HEIGHT,
+            )
+            office._slide_title_font_size(slide_title, title_box)
+            occupied = [title_box]
+        else:
+            occupied = []
         shapes = []
         shape_count += len(slide['shapes'])
         if shape_count > renderer_limits.max_shapes:
             raise office.OfficeRenderError('limit_exceeded')
+        shape_boxes = []
         for shape in slide['shapes']:
             box = office.SlideBox(**shape['box'])
             _validate_slide_geometry(box, occupied, width, height)
+            shape_boxes.append(box)
+        for index, shape in enumerate(slide['shapes']):
+            box = shape_boxes[index]
             if shape['type'] == 'text_box':
                 paragraphs = []
                 for paragraph in shape['paragraphs']:
                     _deck_text(paragraph['text'])
                     if paragraph.get('url') is not None:
                         _deck_text(paragraph['url'])
+                        office._safe_link(paragraph['url'], allow_fragment=False)
                     paragraphs.append(office.SlideParagraph(**paragraph))
-                prepared = office.SlideTextBox(box, tuple(paragraphs), shape.get('font_size', 18))
+                paragraphs_tuple = tuple(paragraphs)
+                fitted_box, fitted_font = _fit_slide_text_box(
+                    box, paragraphs_tuple, shape.get('font_size', 18), occupied, height,
+                )
+                occupied[occupied.index(box)] = fitted_box
+                prepared = office.SlideTextBox(fitted_box, paragraphs_tuple, fitted_font)
             elif shape['type'] == 'table':
                 columns = len(shape['rows'][0])
                 if any(len(row) != columns for row in shape['rows']):
@@ -206,7 +312,11 @@ def prepare_generated_slide_deck(
                 if cell_count > renderer_limits.max_cells or columns > renderer_limits.max_columns:
                     raise office.OfficeRenderError('limit_exceeded')
                 rows = tuple(tuple(_deck_text(cell) for cell in row) for row in shape['rows'])
-                prepared = office.SlideTable(box, rows, shape.get('header', True), shape.get('font_size', 12))
+                fitted_box, fitted_font = _fit_slide_table(
+                    box, rows, columns, shape.get('font_size', 12), occupied, height,
+                )
+                occupied[occupied.index(box)] = fitted_box
+                prepared = office.SlideTable(fitted_box, rows, shape.get('header', True), fitted_font)
             else:
                 image_count += 1
                 if image_count > renderer_limits.max_images:
@@ -217,7 +327,7 @@ def prepare_generated_slide_deck(
             shapes.append(prepared)
             checks.run()
         slides.append(office.PreparedSlide(
-            _deck_text(slide['title']), tuple(shapes), _deck_text(slide.get('notes', '')), slide['layout'],
+            slide_title, tuple(shapes), slide_notes, slide['layout'],
         ))
     checks.run()
     return office.PreparedDeck(

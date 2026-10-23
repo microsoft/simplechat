@@ -13,6 +13,7 @@ import os
 import re
 import socket
 import time
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -682,13 +683,19 @@ def should_auto_enable_source_review(
     return False
 
 
+def _strip_invisible_url_characters(value: Any) -> str:
+    """Remove invisible Unicode format characters (such as ZWNJ/ZWSP/BOM) from URL text."""
+    return "".join(ch for ch in str(value or "") if unicodedata.category(ch) != "Cf")
+
+
 def extract_urls_from_text(text: str) -> List[str]:
     """Extract HTTP(S) URLs from user text or model search citations."""
     if not text:
         return []
     urls = []
     seen_urls = set()
-    for match in re.finditer(r"https?://[^\s<>'\"]+", str(text)):
+    cleaned_text = _strip_invisible_url_characters(text)
+    for match in re.finditer(r"https?://[^\s<>'\"]+", cleaned_text):
         raw_url = match.group(0).strip().rstrip(".,);]}>")
         normalized_url, _ = normalize_review_url(raw_url)
         if not normalized_url:
@@ -743,11 +750,11 @@ def collect_source_review_seed_urls(
 
 def normalize_review_url(url: Any, base_url: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
     """Normalize an HTTP(S) URL and remove fragments."""
-    raw_url = str(url or "").strip()
+    raw_url = _strip_invisible_url_characters(url).strip().rstrip(".,);]}>")
     if not raw_url:
         return None, "empty_url"
     if base_url:
-        raw_url = urljoin(base_url, raw_url)
+        raw_url = urljoin(_strip_invisible_url_characters(base_url).strip(), raw_url)
     raw_url, _fragment = urldefrag(raw_url)
     parsed_url = urlparse(raw_url)
     if parsed_url.scheme.lower() not in ("http", "https"):

@@ -4,7 +4,7 @@ title: "Create a workflow"
 description: "Save a repeatable multi-step task that can run manually or on a schedule."
 section: "Guides"
 audience: user
-version: "0.261.380"
+version: "0.261.382"
 ---
 
 ## What this does
@@ -22,7 +22,7 @@ Use workflows for repeatable work where sequence matters: weekly document checks
 
 ## Read answer completeness outcomes
 
-From **0.261.380**, run task details can show **Complete**, **Corrected and
+From **0.261.382**, run task details can show **Complete**, **Corrected and
 complete**, **Incomplete** or **Verification unavailable** independently of output
 format validation. Expand **Answer completeness** to review requested requirements
 and the number of answer-only corrections. Older runs have no retroactive assessment.

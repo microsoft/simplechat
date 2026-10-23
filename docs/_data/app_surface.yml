@@ -1006,7 +1006,7 @@ actions:
 - slug: math
   module: math_plugin.py
   class_name: MathPlugin
-  summary: 'Description: MathPlugin provides a set of functions to make Math calculations.'
+  summary: Bounded real-number decimal calculations with JSON-safe textual results.
 - slug: mcp
   module: mcp_plugin.py
   class_name: McpPlugin

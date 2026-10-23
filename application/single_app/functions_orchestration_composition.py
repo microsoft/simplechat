@@ -1,7 +1,7 @@
 # functions_orchestration_composition.py
 """Explicit content preparation from named authorized result readers.
 
-Version: 0.261.380
+Version: 0.261.382
 Refusals for a missing signed-in session reported as their own failure in: 0.261.209
 Charts drawn upstream reach the model as their placement tokens in: 0.261.293
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
@@ -158,8 +158,10 @@ _OUTPUT_PROBLEMS = {
     'result_json_invalid': 'contained a value that is not plain JSON',
     'result_count_mismatch': 'did not match its declared item count',
     'result_layout_invalid': (
-        'placed content outside the slide or overlapped another shape or the reserved title rectangle. '
-        'Follow the supplied profile dimensions and title bounds; keep every requested item'
+        'placed content outside the slide, overlapped another shape or the reserved title rectangle, '
+        'or overflowed a title, text box, or table cell. Follow the supplied profile dimensions and '
+        'title bounds, keep slide titles to a single concise line, and size boxes and fonts so every '
+        'requested item fits'
     ),
 }
 
@@ -537,7 +539,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
     ):
         raise ResultContractError('result_profile_unavailable')
     profiles = {name: context.composition_profiles[name] for name in sorted(profile_names)}
-    readers = resolve_step_inputs(step, context)
+    readers = {}
     # Provider budget machinery is an execution dependency, not a registry/bootstrap dependency.
     from functions_workflow_context import WorkflowContextBudgetError, calculate_workflow_context_budget
 
@@ -553,24 +555,26 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
     workflow_results_error = ()
     completeness_report = None
     try:
-        recheck()
-        if sum(reader.reference.size_bytes for reader in readers.values()) > MAX_VALUE_BYTES:
-            raise ResultContractError('result_requires_streaming')
-        # Generated images are placed by token; their descriptors are not source material.
-        image_names = [name for name, reader in readers.items() if reader.result_kind == IMAGE_ASSET_KIND]
-        images = []
-        for name in image_names:
-            asset = read_complete_input(readers[name])
-            images.append({'asset_id': asset['asset_id'], 'title': asset['title']})
-        inputs = {
-            name: {
-                'kind': reader.result_kind, 'completeness': reader.completeness.to_dict(),
-                'columns': [column.to_dict() for column in reader.columns],
-                'value': read_complete_input(reader),
-                'document_citations': _input_document_citations(context, reader.reference),
+        with service.read_operation():
+            readers = resolve_step_inputs(step, context)
+            recheck()
+            if sum(reader.reference.size_bytes for reader in readers.values()) > MAX_VALUE_BYTES:
+                raise ResultContractError('result_requires_streaming')
+            # Generated images are placed by token; their descriptors are not source material.
+            image_names = [name for name, reader in readers.items() if reader.result_kind == IMAGE_ASSET_KIND]
+            images = []
+            for name in image_names:
+                asset = read_complete_input(readers[name])
+                images.append({'asset_id': asset['asset_id'], 'title': asset['title']})
+            inputs = {
+                name: {
+                    'kind': reader.result_kind, 'completeness': reader.completeness.to_dict(),
+                    'columns': [column.to_dict() for column in reader.columns],
+                    'value': read_complete_input(reader),
+                    'document_citations': _input_document_citations(context, reader.reference),
+                }
+                for name, reader in readers.items() if name not in image_names
             }
-            for name, reader in readers.items() if name not in image_names
-        }
         # A saved workflow's result reaches the model only as fenced, untrusted notes, read again
         # for this call; the retained value it replaces never does. That includes a run the plan
         # waited for, which only a setting-gated plan can have compose read.

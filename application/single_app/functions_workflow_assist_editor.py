@@ -856,7 +856,11 @@ def workflow_for_save(draft, original, scope=None):
         next_record['flow'] = copy.deepcopy(draft.get('flow', UNDEFINED))
         next_record['limits'] = copy.deepcopy(draft.get('limits', UNDEFINED))
     if include_durable:
-        next_record['durable_execution'] = draft.get('durable_execution') is True
+        next_record['durable_execution'] = (
+            original is None
+            or original.get('durable_execution') is True
+            or draft.get('durable_execution') is True
+        )
     if scope['type'] == 'group':
         next_record['group_id'] = scope['groupId']
     next_record.update(workflow_file_sync_for_save(draft, original))

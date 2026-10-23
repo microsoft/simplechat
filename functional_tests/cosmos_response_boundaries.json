@@ -301,17 +301,6 @@
     "functional_tests/test_orchestration_external_bootstrap.py::external_root::point-seam-2": "f30b7c58e415c93458a496a7dd33f3908bf5d8da9a1298445b1c78201e8d0da2",
     "functional_tests/test_orchestration_external_bootstrap.py::test_default_root_current_authority_storage_failures_are_operational::point-seam-1": "5c295f01095171c162144621364ac8ae5511df0408b6419e6ec3eedf01bc5546",
     "functional_tests/test_orchestration_external_bootstrap.py::test_identity_does_not_coerce_non_mapping_settings_into_authority::point-seam-1": "de3dc806cf455361d5108d594d3436415f2278e5d473829dad261c70b7fa89c5",
-    "functional_tests/test_orchestration_harness_execution.py::test_harness_strict_source_io_failures_remain_fenced_at_the_real_model_boundary::point-seam-1": "b08c02aa0a58372e103a5e704426a24007217e964562325870a93979699faced",
-    "functional_tests/test_orchestration_harness_execution.py::test_initial_result_binding_outage_does_not_publish_a_terminal_outcome::point-seam-1": "1358e236ff8d70450b9082a6adddbf2a99da494c6602c9e14733bea8daa843e8",
-    "functional_tests/test_orchestration_harness_execution.py::test_continuation_io_preserves_saved_work_for_retry::point-seam-1": "ba3bf0eb6547ec906df6bd483e7c4946b5cf78e431ba2910bd9e0baef0d8e109",
-    "functional_tests/test_orchestration_harness_execution.py::test_external_runtime_callbacks_keep_signature_return_and_shared_service_identity::point-seam-1": "ed1bd5dc1e19a4737b7b0f477901784da7d8213a1781bd82838afa0bfb808be3",
-    "functional_tests/test_orchestration_harness_execution.py::test_external_runtime_callbacks_preserve_typed_failures_and_recheck_the_live_lease::point-seam-1": "ed1bd5dc1e19a4737b7b0f477901784da7d8213a1781bd82838afa0bfb808be3",
-    "functional_tests/test_orchestration_harness_execution.py::test_actual_preflight_preserves_current_metadata_failure_identity::point-seam-1": "ed1bd5dc1e19a4737b7b0f477901784da7d8213a1781bd82838afa0bfb808be3",
-    "functional_tests/test_orchestration_harness_execution.py::test_citation_delivery_rechecks_exact_sources_and_preserves_storage_uncertainty.recheck_source::point-seam-1": "c194c26b928acd87733d18298236eada76d23f24ca004b0e17d77cc7edca3ef4",
-    "functional_tests/test_orchestration_harness_execution.py::test_authority_infrastructure_never_becomes_a_headless_denial::point-seam-1": "7208dcd8b308ea7e87a1d4c53dc26c1613035b31642d582d2aaa51d83fbf3c59",
-    "functional_tests/test_orchestration_harness_execution.py::test_checkpoint_read_outage_preserves_the_committed_file_before_publication::point-seam-1": "1c2d4f2b39ac0e39deb6dc37ad78d6c9af39ef364b52939892997e4e356c58ad",
-    "functional_tests/test_orchestration_harness_execution.py::test_real_native_checkpoint_read_outage_does_not_poll_or_finalize::point-seam-1": "3ea9485b02cf329612e57b476d0321bb979c26ca217dbc313df20891cef260fb",
-    "functional_tests/test_orchestration_harness_execution.py::test_execution_publication_authority_failure_closes_without_a_success_frame::point-seam-1": "e9c7730eb62a242ad43c9f5b43e99ad86171347b5a91dd62a85cb60890b6d138",
     "functional_tests/test_orchestration_harness_routes.py::test_bootstrap_metadata_reader_rechecks_real_owner_and_preserves_storage_failure::point-seam-1": "dce3543080cad52c7eac9fc48b230015efea63ac41770cd686299a84c6694ee0",
     "functional_tests/test_orchestration_harness_scheduler.py::test_scheduler_preserves_real_headless_authority_uncertainty::point-seam-1": "9b5b4037195795f9d56902d2df0134ebce10267538547876b8bfb33cc19927d0",
     "functional_tests/test_orchestration_harness_scheduler.py::test_uncertain_admitted_output_preserves_minimal_step_wait_without_a_task::point-seam-1": "67105095ec2ffc34fcd1cb66014dd8356d51680ecc8d42733847a267c224bd83",
@@ -11925,7 +11914,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
+        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
       },
       "classification": "sdk-compatible",
       "contract": "Checkpoint _verify accepts dict subclasses; nested manifests/state are plain SDK JSON and publication/control values use mapping fields. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
@@ -11946,7 +11935,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
+        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
       },
       "classification": "response-unused",
       "contract": "CheckpointStore.initialize: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
@@ -11965,7 +11954,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
+        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
       },
       "classification": "response-unused",
       "contract": "CheckpointStore.adopt_claim: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
@@ -11984,7 +11973,7 @@
             "response": "unused"
           }
         ],
-        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
+        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
       },
       "classification": "response-unused",
       "contract": "CheckpointStore._write: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
@@ -12003,7 +11992,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
+        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
       },
       "classification": "response-unused",
       "contract": "CheckpointStore.has_manifest: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
@@ -12032,7 +12021,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
+        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
       },
       "classification": "sdk-compatible",
       "contract": "Checkpoint _verify accepts dict subclasses; nested manifests/state are plain SDK JSON and publication/control values use mapping fields. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
@@ -12059,7 +12048,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
+        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
       },
       "classification": "response-unused",
       "contract": "CheckpointStore.delete_payloads: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
@@ -12292,16 +12281,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "021d8fac7870ec753170073b819ad33c7149c0f8c30291f9882745fa5931998d"
+        "module_sha256": "68560f6567ae4bd8ca47716f8ace235484b43e3c73304457be56bb0070486d2e"
       },
       "classification": "sdk-compatible",
-      "contract": "Partitioned turn/source point mappings are reauthorized, checked for visibility and converted by normalize_history_message before strict saved-snapshot validation. Full source messages are resolved only after fingerprint checks; history disablement and revoked shared access cannot broaden reads. Review 0.261.380: Module-only SSE metadata allowlist extension; this storage owner AST and response consumer are unchanged.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Partitioned turn/source point mappings are reauthorized, checked for visibility and converted by normalize_history_message before strict saved-snapshot validation. Full source messages are resolved only after fingerprint checks; history disablement and revoked shared access cannot broaden reads. Result-operation snapshots never replace these message reads.",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_orchestration_conversation_sources.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._read_delivery_metadata": {
       "boundary": {
@@ -12315,16 +12304,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "021d8fac7870ec753170073b819ad33c7149c0f8c30291f9882745fa5931998d"
+        "module_sha256": "68560f6567ae4bd8ca47716f8ace235484b43e3c73304457be56bb0070486d2e"
       },
       "classification": "sdk-compatible",
-      "contract": "The previous assistant point mapping is checked for conversation/run ownership; model and reasoning fields are projected into plain dictionaries, without passing the SDK wrapper to an exact-dictionary contract. Review 0.261.380: Module-only SSE metadata allowlist extension; this storage owner AST and response consumer are unchanged.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The previous assistant point mapping is checked for conversation/run ownership; model and reasoning fields are projected into plain dictionaries, without passing the SDK wrapper to an exact-dictionary contract. Read-operation reuse does not wrap this metadata lookup.",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_orchestration_harness_execution.py::test_delivery_refresh_reuses_real_saved_results_without_any_execution"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._regeneration_thread": {
       "boundary": {
@@ -12338,16 +12327,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "021d8fac7870ec753170073b819ad33c7149c0f8c30291f9882745fa5931998d"
+        "module_sha256": "68560f6567ae4bd8ca47716f8ace235484b43e3c73304457be56bb0070486d2e"
       },
       "classification": "sdk-compatible",
-      "contract": "The question point mapping supplies role and nested plain thread metadata; only a deepcopy of the validated nested thread dictionary is returned. Review 0.261.380: Module-only SSE metadata allowlist extension; this storage owner AST and response consumer are unchanged.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The question point mapping supplies role and nested plain thread metadata; only a deepcopy of the validated nested thread dictionary is returned. Regeneration metadata is outside the retained-result read scope.",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_orchestration_message_regeneration.py::test_regeneration_forces_review_despite_auto_and_disabled_approval_override"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._touch_conversation": {
       "boundary": {
@@ -12361,20 +12350,20 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "021d8fac7870ec753170073b819ad33c7149c0f8c30291f9882745fa5931998d"
+        "module_sha256": "68560f6567ae4bd8ca47716f8ace235484b43e3c73304457be56bb0070486d2e"
       },
       "classification": "sdk-compatible",
-      "contract": "A normalized owned conversation retains its _etag for IfNotModified replacement; the returned SDK mapping is consumed only by the Mapping-compatible cache invalidator. Lost-CAS retries retain current ownership. Review 0.261.380: Module-only SSE metadata allowlist extension; this storage owner AST and response consumer are unchanged.",
-      "evidence_scope": "owner-runtime",
+      "contract": "A normalized owned conversation retains its _etag for IfNotModified replacement; the returned SDK mapping is consumed only by the Mapping-compatible cache invalidator. Lost-CAS retries retain current ownership. This write remains outside read-operation reuse.",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_orchestration_harness_execution.py::test_selected_result_citations_reach_headless_message_cache_and_delivery"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._finalize": {
       "boundary": {
-        "sha256": "f8a5156859bd605e6bbe5780b4bd4657cd1830d0b4523413e6fea70fc5f9516e",
+        "sha256": "9922bce825817836c08d5d1a86d0bd77b493a2d0a9caac435bbf94ce49d2bbe5",
         "points": [
           {
             "method": "read_item",
@@ -12384,17 +12373,20 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "021d8fac7870ec753170073b819ad33c7149c0f8c30291f9882745fa5931998d"
+        "module_sha256": "68560f6567ae4bd8ca47716f8ace235484b43e3c73304457be56bb0070486d2e"
       },
       "classification": "sdk-compatible",
-      "contract": "The published message point mapping is projected with items() into a metadata-free fingerprint and consumed by Mapping-compatible mirroring. Durable outcome telemetry reads only finalized scalar fields; strict task/result descriptors and saved-message confirmation remain unchanged. Review 0.261.380: Module-only SSE metadata allowlist extension; this storage owner AST and response consumer are unchanged.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Read-only retained-result projection ends before screening and publication; its operation cache never contains message responses or conditional publication state. The published SDK point mapping is projected with items() into plain message JSON and compared with publication_documents_match, accepting only lossless integral-float/integer round trips. Stored guard fingerprints, all domain fields and Mapping-compatible mirroring remain unchanged; durable outcome telemetry reads finalized scalar fields.",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_orchestration_harness_execution.py::test_selected_result_citations_reach_headless_message_cache_and_delivery",
-        "functional_tests/test_orchestration_failure_telemetry.py::test_durable_execution_outcome_is_recorded_once_not_on_sse_replay"
-      ]
+        "functional_tests/test_orchestration_harness_execution.py::test_context_edit_after_composition_does_not_publish_stale_content",
+        "functional_tests/test_orchestration_failure_telemetry.py::test_durable_execution_outcome_is_recorded_once_not_on_sse_replay",
+        "functional_tests/test_orchestration_harness_execution.py::test_publication_numeric_roundtrip_completes_without_reexecution",
+        "functional_tests/test_orchestration_harness_execution.py::test_publication_numeric_roundtrip_still_rejects_durable_damage"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_operations.py::OperationJournal._change": {
       "boundary": {
@@ -12628,7 +12620,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
+        "module_sha256": "17a244cb5d37b09378aae4d0574b62b61cd36cb1f5ce5d7a1b95d633593b70f8"
       },
       "classification": "normalized-strict",
       "contract": "The run replacement preserves the input _etag with IfNotModified, rejects non-document responses through CheckpointError and normalizes the returned SDK document before lease/checkpoint strict contracts; domain values are not recursively repaired. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
@@ -12659,7 +12651,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
+        "module_sha256": "17a244cb5d37b09378aae4d0574b62b61cd36cb1f5ce5d7a1b95d633593b70f8"
       },
       "classification": "sdk-compatible",
       "contract": "The guard point mapping supplies run/user ownership and _etag; a plain metadata-stripped tombstone is conditionally replaced, with create/replace responses discarded and conflicts retried without borrowing another owner. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
@@ -12696,7 +12688,7 @@
             "response": "unused"
           }
         ],
-        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
+        "module_sha256": "17a244cb5d37b09378aae4d0574b62b61cd36cb1f5ce5d7a1b95d633593b70f8"
       },
       "classification": "sdk-compatible",
       "contract": "Guard/current-message point mappings feed ownership and retraction checks; metadata is stripped into plain batch bodies while original ETags fence atomic publication. Batch status/body responses remain separate from point documents. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
@@ -12707,7 +12699,7 @@
     },
     "application/single_app/functions_orchestration_recovery.py::ExecutionLease._published_message_matches": {
       "boundary": {
-        "sha256": "8663b4f845f6ab2e7cfb286a388f08a318514e05975717c955785b9025d4653f",
+        "sha256": "4609d59057d566547a1c6a28c20ea46a44e45a44667980aeebbff2c949f84062",
         "points": [
           {
             "method": "read_item",
@@ -12722,13 +12714,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
+        "module_sha256": "17a244cb5d37b09378aae4d0574b62b61cd36cb1f5ce5d7a1b95d633593b70f8"
       },
       "classification": "sdk-compatible",
-      "contract": "Guard and published-message point mappings supply owner/token/digest fields; publication equality fingerprints a metadata-stripped plain projection, preserving lease ownership rather than treating normalization as authority. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
+      "contract": "Guard and message SDK point mappings supply owner/token/claim/digest fields. The guard digest still exactly binds the expected publication; metadata-stripped plain projections use strict publication-only numeric equivalence without coercing booleans, strings or changed values. Lease ownership is checked before and after the probe.",
       "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
+        "functional_tests/test_orchestration_cosmos_response_contract.py",
+        "functional_tests/test_orchestration_harness_execution.py::test_publication_numeric_roundtrip_completes_without_reexecution",
+        "functional_tests/test_orchestration_harness_execution.py::test_publication_numeric_roundtrip_still_rejects_durable_damage"
       ]
     },
     "application/single_app/functions_orchestration_recovery.py::ExecutionLease.ensure_publication_guard": {
@@ -12753,7 +12747,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
+        "module_sha256": "17a244cb5d37b09378aae4d0574b62b61cd36cb1f5ce5d7a1b95d633593b70f8"
       },
       "classification": "sdk-compatible",
       "contract": "Guard-create and conditional-replace responses are discarded; a conflicting guard is read through mapping fields and its original _etag is used with IfNotModified before ownership is rechecked. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
@@ -12774,7 +12768,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
+        "module_sha256": "17a244cb5d37b09378aae4d0574b62b61cd36cb1f5ce5d7a1b95d633593b70f8"
       },
       "classification": "sdk-compatible",
       "contract": "The publication-guard point mapping is checked for user/conversation/run identity before a plain claim descriptor is retained; run claims keep their normalized storage-owner boundary and conditional ETags. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
@@ -12795,7 +12789,7 @@
             "response": "unused"
           }
         ],
-        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
+        "module_sha256": "17a244cb5d37b09378aae4d0574b62b61cd36cb1f5ce5d7a1b95d633593b70f8"
       },
       "classification": "response-unused",
       "contract": "Atomic replace/create batch responses are discarded, never normalized as point documents; original parent _etag fences the batch and ambiguous failures reread the authoritative parent/submission through the normalized run owner. Partial-search recovery cannot grant external-effect replay authority. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
@@ -12828,7 +12822,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
+        "module_sha256": "17a244cb5d37b09378aae4d0574b62b61cd36cb1f5ce5d7a1b95d633593b70f8"
       },
       "classification": "sdk-compatible",
       "contract": "Conversation point mappings provide owner and _etag for a conditional deletion fence; replacements are plain metadata-stripped projections and responses are discarded. Run discovery consumes plain partitioned query rows. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
@@ -29540,12 +29534,12 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "7857eff202ead2d7d99709d4cbf86dc6fa434973b1610766dd332fe926a72794"
+        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
       },
-      "classification": "explicit-compatibility",
-      "contract": "Existing test-local point override/fault seam, not the normal shared Cosmos response default. Its containing test supplies the scenario and restores the override.",
+      "classification": "fault-injection",
+      "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
       "tests": [
-        "functional_tests/test_orchestration_harness_execution.py"
+        "functional_tests/test_orchestration_harness_execution.py::test_harness_strict_source_io_failures_remain_fenced_at_the_real_model_boundary"
       ]
     },
     "functional_tests/test_orchestration_harness_execution.py::test_initial_result_binding_outage_does_not_publish_a_terminal_outcome::point-seam-1": {
@@ -29555,12 +29549,12 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "7857eff202ead2d7d99709d4cbf86dc6fa434973b1610766dd332fe926a72794"
+        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
       },
-      "classification": "explicit-compatibility",
-      "contract": "Existing test-local point override/fault seam, not the normal shared Cosmos response default. Its containing test supplies the scenario and restores the override.",
+      "classification": "fault-injection",
+      "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
       "tests": [
-        "functional_tests/test_orchestration_harness_execution.py"
+        "functional_tests/test_orchestration_harness_execution.py::test_initial_result_binding_outage_does_not_publish_a_terminal_outcome"
       ]
     },
     "functional_tests/test_orchestration_harness_execution.py::test_continuation_io_preserves_saved_work_for_retry::point-seam-1": {
@@ -29570,12 +29564,12 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "7857eff202ead2d7d99709d4cbf86dc6fa434973b1610766dd332fe926a72794"
+        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
       },
-      "classification": "explicit-compatibility",
-      "contract": "Existing test-local point override/fault seam, not the normal shared Cosmos response default. Its containing test supplies the scenario and restores the override.",
+      "classification": "fault-injection",
+      "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
       "tests": [
-        "functional_tests/test_orchestration_harness_execution.py"
+        "functional_tests/test_orchestration_harness_execution.py::test_continuation_io_preserves_saved_work_for_retry"
       ]
     },
     "functional_tests/test_orchestration_harness_execution.py::test_external_runtime_callbacks_keep_signature_return_and_shared_service_identity::point-seam-1": {
@@ -29585,12 +29579,12 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "7857eff202ead2d7d99709d4cbf86dc6fa434973b1610766dd332fe926a72794"
+        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
       },
-      "classification": "explicit-compatibility",
-      "contract": "Existing test-local point override/fault seam, not the normal shared Cosmos response default. Its containing test supplies the scenario and restores the override.",
+      "classification": "fault-injection",
+      "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
       "tests": [
-        "functional_tests/test_orchestration_harness_execution.py"
+        "functional_tests/test_orchestration_harness_execution.py::test_external_runtime_callbacks_keep_signature_return_and_shared_service_identity"
       ]
     },
     "functional_tests/test_orchestration_harness_execution.py::test_external_runtime_callbacks_preserve_typed_failures_and_recheck_the_live_lease::point-seam-1": {
@@ -29600,12 +29594,12 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "7857eff202ead2d7d99709d4cbf86dc6fa434973b1610766dd332fe926a72794"
+        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
       },
-      "classification": "explicit-compatibility",
-      "contract": "Existing test-local point override/fault seam, not the normal shared Cosmos response default. Its containing test supplies the scenario and restores the override.",
+      "classification": "fault-injection",
+      "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
       "tests": [
-        "functional_tests/test_orchestration_harness_execution.py"
+        "functional_tests/test_orchestration_harness_execution.py::test_external_runtime_callbacks_preserve_typed_failures_and_recheck_the_live_lease"
       ]
     },
     "functional_tests/test_orchestration_harness_execution.py::test_actual_preflight_preserves_current_metadata_failure_identity::point-seam-1": {
@@ -29615,12 +29609,12 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "7857eff202ead2d7d99709d4cbf86dc6fa434973b1610766dd332fe926a72794"
+        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
       },
-      "classification": "explicit-compatibility",
-      "contract": "Existing test-local point override/fault seam, not the normal shared Cosmos response default. Its containing test supplies the scenario and restores the override.",
+      "classification": "fault-injection",
+      "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
       "tests": [
-        "functional_tests/test_orchestration_harness_execution.py"
+        "functional_tests/test_orchestration_harness_execution.py::test_actual_preflight_preserves_current_metadata_failure_identity"
       ]
     },
     "functional_tests/test_orchestration_harness_execution.py::test_citation_delivery_rechecks_exact_sources_and_preserves_storage_uncertainty.recheck_source::point-seam-1": {
@@ -29630,12 +29624,12 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "7857eff202ead2d7d99709d4cbf86dc6fa434973b1610766dd332fe926a72794"
+        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
       },
-      "classification": "explicit-compatibility",
-      "contract": "Existing test-local point override/fault seam, not the normal shared Cosmos response default. Its containing test supplies the scenario and restores the override.",
+      "classification": "fault-injection",
+      "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
       "tests": [
-        "functional_tests/test_orchestration_harness_execution.py"
+        "functional_tests/test_orchestration_harness_execution.py::test_citation_delivery_rechecks_exact_sources_and_preserves_storage_uncertainty"
       ]
     },
     "functional_tests/test_orchestration_harness_execution.py::test_authority_infrastructure_never_becomes_a_headless_denial::point-seam-1": {
@@ -29645,12 +29639,12 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "7857eff202ead2d7d99709d4cbf86dc6fa434973b1610766dd332fe926a72794"
+        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
       },
-      "classification": "explicit-compatibility",
-      "contract": "Existing test-local point override/fault seam, not the normal shared Cosmos response default. Its containing test supplies the scenario and restores the override.",
+      "classification": "fault-injection",
+      "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
       "tests": [
-        "functional_tests/test_orchestration_harness_execution.py"
+        "functional_tests/test_orchestration_harness_execution.py::test_authority_infrastructure_never_becomes_a_headless_denial"
       ]
     },
     "functional_tests/test_orchestration_harness_execution.py::test_checkpoint_read_outage_preserves_the_committed_file_before_publication::point-seam-1": {
@@ -29660,12 +29654,12 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "7857eff202ead2d7d99709d4cbf86dc6fa434973b1610766dd332fe926a72794"
+        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
       },
-      "classification": "explicit-compatibility",
-      "contract": "Existing test-local point override/fault seam, not the normal shared Cosmos response default. Its containing test supplies the scenario and restores the override.",
+      "classification": "fault-injection",
+      "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
       "tests": [
-        "functional_tests/test_orchestration_harness_execution.py"
+        "functional_tests/test_orchestration_harness_execution.py::test_checkpoint_read_outage_preserves_the_committed_file_before_publication"
       ]
     },
     "functional_tests/test_orchestration_harness_execution.py::test_real_native_checkpoint_read_outage_does_not_poll_or_finalize::point-seam-1": {
@@ -29675,12 +29669,12 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "7857eff202ead2d7d99709d4cbf86dc6fa434973b1610766dd332fe926a72794"
+        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
       },
-      "classification": "explicit-compatibility",
-      "contract": "Existing test-local point override/fault seam, not the normal shared Cosmos response default. Its containing test supplies the scenario and restores the override.",
+      "classification": "fault-injection",
+      "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
       "tests": [
-        "functional_tests/test_orchestration_harness_execution.py"
+        "functional_tests/test_orchestration_harness_execution.py::test_real_native_checkpoint_read_outage_does_not_poll_or_finalize"
       ]
     },
     "functional_tests/test_orchestration_harness_execution.py::test_execution_publication_authority_failure_closes_without_a_success_frame::point-seam-1": {
@@ -29690,12 +29684,12 @@
           "execute_item_batch"
         ],
         "kind": "seam",
-        "imports_sha256": "7857eff202ead2d7d99709d4cbf86dc6fa434973b1610766dd332fe926a72794"
+        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
       },
-      "classification": "explicit-compatibility",
-      "contract": "Existing test-local point override/fault seam, not the normal shared Cosmos response default. Its containing test supplies the scenario and restores the override.",
+      "classification": "fault-injection",
+      "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
       "tests": [
-        "functional_tests/test_orchestration_harness_execution.py"
+        "functional_tests/test_orchestration_harness_execution.py::test_execution_publication_authority_failure_closes_without_a_success_frame"
       ]
     },
     "functional_tests/test_orchestration_harness_routes.py::test_bootstrap_metadata_reader_rechecks_real_owner_and_preserves_storage_failure::point-seam-1": {
@@ -32849,6 +32843,21 @@
       "contract": "Scoped read_item override injects an actual Cosmos 503; route regression requires a safe service error rather than an empty authorization list and restores the override afterward.",
       "tests": [
         "functional_tests/test_m365_routes.py::test_workflow_authorization_sdk_contract"
+      ]
+    },
+    "functional_tests/test_orchestration_result_read_amplification.py::citation_graph::point-seam-1": {
+      "boundary": {
+        "sha256": "f91bc035edbce0048e8e2e1f530c67961c5281af6214fbbe9db977491c9f4113",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "d755058e74ed4a46ef01cfff893c86b34ce8455d08478b2b290cbcc93d472a42"
+      },
+      "classification": "fault-injection",
+      "contract": "The scoped read_item wrapper only counts calls and forwards all arguments and the unchanged SDK-default CosmosDict response to ResultContainer. The shared transactional fake retains ETags, partition routing, atomic batches and failure injection; scope tests revoke producer/conversation/claim authority without normalizing storage responses.",
+      "tests": [
+        "functional_tests/test_orchestration_result_read_amplification.py"
       ]
     }
   }

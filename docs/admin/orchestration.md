@@ -58,7 +58,7 @@ outgoing-message review. See the [action access contract](../explanation/feature
 
 ## Answer completeness
 
-Implemented in version **0.261.380**. Prepared content and the designated final
+Implemented in version **0.261.382**. Prepared content and the designated final
 composition are assessed against their scoped instructions before publication or
 file rendering. This catches requested information that a schema does not require.
 

@@ -1,6 +1,6 @@
 # Model-assisted answer completeness
 
-Implemented in version: **0.261.380** (`application/single_app/config.py`).
+Implemented in version: **0.261.382** (`application/single_app/config.py`).
 
 ## Purpose
 
