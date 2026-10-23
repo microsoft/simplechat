@@ -1,7 +1,7 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.327
+Version: 0.261.380
 Implemented in: 0.261.127
 Invocation, catalog, and citation regressions implemented in: 0.261.129
 Direct initial-binding scope coverage implemented in: 0.261.130
@@ -21,6 +21,7 @@ legitimate step-start/input-checkpoint writes, without normalizing missing field
 Selected-answer citations retain their exact lineage during initial publication
 and model-free delivery, without adopting ambient or stale citation metadata.
 Readable source titles, filenames and file types survive publication in: 0.261.327
+Cosmos numeric publication round trips covered in: 0.261.380
 CSV/JSON delivery reopens authorized committed bytes and checks complete records,
 including the final row, rather than relying only on file-card counts.
 The four private external bindings include the actual invocation preflight.
@@ -62,7 +63,9 @@ from content_screening.contracts import (
     DocumentHeldError, ScreeningConfigurationError, ScreeningError,
     SourceAuthorityUnavailableError, SourceAuthorityUnverifiedError,
 )
-from functions_orchestration_checkpoints import CheckpointError
+from functions_orchestration_checkpoints import (
+    CheckpointError, fingerprint, json_bytes, publication_documents_match,
+)
 from functions_orchestration_execution import (
     HarnessExecutionError, _delivery_summary, build_harness_invoke_prompt, finalize_harness_failure,
     prepare_harness_execution, refresh_harness_delivery,
@@ -3283,6 +3286,172 @@ def test_lost_publication_acknowledgement_requires_exact_guard_commit(harness):
     assert done["message_saved"] is True and record["message_saved"] is True
     assert len(messages) == 1 and messages[0]["content"] == "Durable answer."
     assert "SECRET_PROVIDER_ACK" not in json.dumps(done)
+
+
+@pytest.mark.parametrize("phase", ["execute", "refresh"])
+@pytest.mark.parametrize("lost_ack", [False, True])
+@pytest.mark.parametrize("score", [0.0, 0.9])
+def test_publication_numeric_roundtrip_completes_without_reexecution(
+    harness, citation_execution, monkeypatch, phase, lost_ack, score,
+):
+    search = importlib.import_module("functions_search")
+    hybrid_search = search.hybrid_search
+
+    def scored_search(*args, **kwargs):
+        hits = hybrid_search(*args, **kwargs)
+        for hit in hits:
+            hit["score"] = score
+        return hits
+
+    monkeypatch.setattr(search, "hybrid_search", scored_search)
+    execution = citation_execution.prepare("prepared")
+    if phase == "refresh":
+        result = harness.run_engine(execution)
+        assert result["status"] == "completed"
+        record = execution.lease.read()
+        services = harness.services()
+        producer_rows = deepcopy(harness.results.container.items)
+        checkpoints = deepcopy(harness.steps.items)
+    batches_before = len(harness.messages.batch_calls)
+    roundtrips = []
+    original_digests = []
+
+    def cosmos_numeric_roundtrip():
+        for document in harness.messages.items.values():
+            if document.get("role") != "assistant":
+                continue
+            roundtrips.append(document["id"])
+            original_digests.append(fingerprint({
+                key: value for key, value in document.items() if not key.startswith("_")
+            }))
+            for citation in document["hybrid_citations"]:
+                value = citation.get("score")
+                if type(value) is float and value.is_integer():
+                    citation["score"] = int(value)
+        if lost_ack:
+            raise ConnectionError("PRIVATE_NUMERIC_PUBLICATION_ACK")
+
+    harness.messages.after_batch = cosmos_numeric_roundtrip
+    try:
+        if phase == "execute":
+            frames = execution.execute()
+        else:
+            with harness.publication_only(services):
+                frames = refresh_harness_delivery(
+                    record, services=services, settings=harness.settings, lease=execution.lease,
+                )
+            assert harness.results.container.items == producer_rows
+            assert harness.steps.items == checkpoints
+    finally:
+        execution.close()
+    done = decoded_frames(frames)[-1]
+    saved = harness.read()
+    messages = harness.assistant_messages()
+    assert done["type"] == "orchestration_done"
+    assert done["status"] == saved["status"] == "completed"
+    assert done["message_saved"] is saved["message_saved"] is True
+    assert done["finalization_status"] == saved["finalization_status"] == "saved"
+    assert len(messages) == 1 and roundtrips == [messages[0]["id"]]
+    assert done["message_id"] == saved["assistant_message_id"] == messages[0]["id"]
+    assert done["full_content"] == messages[0]["content"] == "Prepared from exactly the selected input."
+    assert len(harness.messages.batch_calls) == batches_before + 1
+    assert len(harness.model_calls) == 1 and len(citation_execution.queries) == 2
+    assert len(messages[0]["hybrid_citations"]) == 2
+    assert all(type(citation["score"]) is (int if score == 0.0 else float)
+               for citation in messages[0]["hybrid_citations"])
+    guard = harness.messages.items[("conversation-1", harness.recovery._publication_id("run-1"))]
+    assert original_digests == [guard["document_digest"]]
+    assert "PRIVATE_" not in json.dumps(done)
+    assert saved["execution_lease"] is None and execution.lease.stopped.is_set()
+    assert all(client.closed for client in harness.clients)
+
+
+@pytest.mark.parametrize("expected,saved,equivalent", [
+    (0.0, 0, True),
+    (-0.0, 0, True),
+    (1.0, 1, True),
+    (-42.0, -42, True),
+    (1, 1.0, True),
+    (0.125, 0.125, True),
+    (2 ** 53, float(2 ** 53), True),
+    (int(1e100), 1e100, True),
+    (2 ** 53 + 1, float(2 ** 53 + 1), False),
+    (0.1, 0.10000000000000002, False),
+    (1.5, 1, False),
+    (0, False, False),
+    (1, True, False),
+    (False, 0.0, False),
+    (None, 0, False),
+    ("0.0", 0.0, False),
+    ({"score": 0.0}, {}, False),
+    ({"score": 0.0}, {"score": 0, "extra": None}, False),
+    ([0.0, 1.0], [1, 0], False),
+    ({"_domain_value": 0.0}, {"_domain_value": 1}, False),
+])
+def test_publication_numeric_roundtrip_equivalence_is_lossless(expected, saved, equivalent):
+    expected_document = {"content": "Unchanged answer.", "nested": [{"value": expected}]}
+    saved_document = {"content": "Unchanged answer.", "nested": [{"value": saved}]}
+    expected_before, saved_before = json_bytes(expected_document), json_bytes(saved_document)
+    matches = publication_documents_match(expected_document, saved_document)
+    assert matches is equivalent
+    assert json_bytes(expected_document) == expected_before
+    assert json_bytes(saved_document) == saved_before
+    assert fingerprint({"score": 0.0}) != fingerprint({"score": 0})
+
+
+@pytest.mark.parametrize("invalid", [
+    float("nan"), float("inf"), float("-inf"), (0.0,), {1: 0.0}, object(), "\ud800",
+])
+@pytest.mark.parametrize("side", ["expected", "saved"])
+def test_publication_numeric_roundtrip_does_not_repair_invalid_json(invalid, side):
+    documents = {"expected": {"value": 0}, "saved": {"value": 0}}
+    documents[side]["value"] = invalid
+    with pytest.raises(CheckpointError) as failure:
+        publication_documents_match(documents["expected"], documents["saved"])
+    assert failure.value.code == "checkpoint_invalid"
+
+
+@pytest.mark.parametrize("damage,lost_ack", [
+    ("content", False), ("content", True),
+    ("number", False), ("number", True),
+    ("boolean", False), ("boolean", True),
+    ("missing_field", False), ("missing_field", True),
+    ("guard_digest", True), ("guard_claim", True),
+])
+def test_publication_numeric_roundtrip_still_rejects_durable_damage(harness, damage, lost_ack):
+    harness.create(replies=["Prepared answer."], final_response=input_binding("prepare"))
+    execution = harness.prepare()
+
+    def damage_publication():
+        guard = harness.messages.items[("conversation-1", harness.recovery._publication_id("run-1"))]
+        message = harness.messages.items[("conversation-1", guard["published_message_id"])]
+        if damage == "content":
+            message["content"] = "Different answer."
+        elif damage == "number":
+            message["metadata"]["token_usage"]["completion_tokens"] += 1
+        elif damage == "boolean":
+            message["metadata"]["orchestration"]["attempt_index"] = True
+        elif damage == "missing_field":
+            del message["generated_artifacts"]
+        elif damage == "guard_digest":
+            guard["document_digest"] = "different-digest"
+        elif damage == "guard_claim":
+            guard["claim_id"] = "different-claim"
+        if lost_ack:
+            raise ConnectionError("PRIVATE_DAMAGED_PUBLICATION_ACK")
+
+    harness.messages.after_batch = damage_publication
+    try:
+        frames = execution.execute()
+    finally:
+        execution.close()
+    done = decoded_frames(frames)[-1]
+    saved = harness.read()
+    assert done["status"] == saved["status"] == "failed"
+    assert done["message_saved"] is saved["message_saved"] is False
+    assert saved["failure"]["code"] == "message_not_saved"
+    assert len(harness.messages.batch_calls) == 1 and len(harness.model_calls) == 1
+    assert "PRIVATE_" not in json.dumps(done)
 
 
 def test_delivery_refresh_reuses_real_saved_results_without_any_execution(harness):

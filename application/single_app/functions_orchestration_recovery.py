@@ -1,7 +1,7 @@
 # functions_orchestration_recovery.py
 """Execution leases and explicitly requested, checkpoint-only retry attempts.
 
-Version: 0.261.306
+Version: 0.261.380
 Retry publication is one transactional parent CAS + child create. It never
 replans, invokes an adapter, or changes plan-revision lineage.
 Terminal publication preserves an administrator's reply retraction; its probe
@@ -20,6 +20,7 @@ A run from the removed legacy contract is never retried, resumed or continued; o
 conversation deletion still reads it, to remove its saved data.
 Conversation cleanup reports safe failure stages and hashed correlations without
 logging provider text or changing the fail-closed deletion policy (0.261.306).
+Lost-acknowledgement probes tolerate lossless Cosmos numeric round trips (0.261.380).
 """
 
 import logging
@@ -41,7 +42,8 @@ from functions_appinsights import log_event, workflow_log_context
 from functions_orchestration_checkpoints import (
     CHECKPOINT_VERSION, DEPENDENCY_STATE_FIELDS, LIFECYCLE_ID, OPTIONAL_STATE_FIELDS, STATE_FIELDS,
     CheckpointError, CheckpointStore, context_binding, context_state,
-    effective_plan, fingerprint, orchestration_answer_message_id, restore_context, step_input_fingerprint,
+    effective_plan, fingerprint, orchestration_answer_message_id, publication_documents_match,
+    restore_context, step_input_fingerprint,
 )
 from functions_orchestration_plan_revisions import PlanRevisionError, read_revision_run
 from functions_orchestration_output_store import OutputError, build_output_cleanup_intent
@@ -806,7 +808,9 @@ class ExecutionLease:
             self._owns_publication_guard(guard)
             and guard.get('published_message_id') == document['id']
             and guard.get('document_digest') == digest
-            and fingerprint(run_store._strip_cosmos_metadata(saved)) == digest
+            and publication_documents_match(
+                run_store._strip_cosmos_metadata(document), run_store._strip_cosmos_metadata(saved),
+            )
         )
         self.read()
         return matches
