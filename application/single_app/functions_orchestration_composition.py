@@ -155,8 +155,10 @@ _OUTPUT_PROBLEMS = {
     'result_json_invalid': 'contained a value that is not plain JSON',
     'result_count_mismatch': 'did not match its declared item count',
     'result_layout_invalid': (
-        'placed content outside the slide or overlapped another shape or the reserved title rectangle. '
-        'Follow the supplied profile dimensions and title bounds; keep every requested item'
+        'placed content outside the slide, overlapped another shape or the reserved title rectangle, '
+        'or overflowed a title, text box, or table cell. Follow the supplied profile dimensions and '
+        'title bounds, keep slide titles to a single concise line, and size boxes and fonts so every '
+        'requested item fits'
     ),
 }
 
