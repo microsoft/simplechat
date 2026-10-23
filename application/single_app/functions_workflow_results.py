@@ -990,6 +990,7 @@ def workflow_result_summary(envelope, reference):
         "validation_status": public_analysis_validation(envelope.get("validation"))["status"],
         "consumed_inputs": _json_copy(envelope.get("consumed_inputs") or []),
         "workflow_validation": _json_copy(envelope.get("workflow_validation") or {}),
+        "task_completeness": _json_copy(envelope.get("task_completeness") or {}),
         **({"document_selection": _json_copy(envelope["document_selection"])} if envelope.get("document_selection") else {}),
         **({"document_action_choice": _json_copy(envelope["document_action_choice"])} if envelope.get("document_action_choice") else {}),
     }

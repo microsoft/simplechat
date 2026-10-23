@@ -561,21 +561,6 @@
     "application/single_app/functions_mcp_server_tools.py::_load_legacy_messages": "0113be12ba7f24aade864c0929ea46be0727d4039d1bb68b0f0d59423ba2feee",
     "application/single_app/functions_mcp_server_tools.py::_load_personal_prompt_page": "05845d307473e30980aafde342c9bedd4fd4b10b7427e34ef49e023bf90ee1a8",
     "application/single_app/functions_mcp_tool_pinning.py::persist_mcp_tool_drift": "d4973e7c62d1e6987b4070fb3c404cc7b11413bbe7dbd20954dea0f028eb4fe4",
-    "application/single_app/functions_orchestration_runs.py::get_pending_turn_context": "ea9e8ea9d5c26b68abeaffd369cdeaad0df0a5bc5748d1d4df014de740479b4b",
-    "application/single_app/functions_orchestration_runs.py::_replanned_outcome": "7c8dfe316d74c544b48b4ca595151386be1a3331c36be18c06a62158e39bb5b7",
-    "application/single_app/functions_orchestration_runs.py::_publish_replanned_run": "c79252d36d79df63ffdc38628206de5496eb0cac7c4f0b0f7296281d699ff4c1",
-    "application/single_app/functions_orchestration_runs.py::get_orchestration_run": "908e76b2988685816197019f3e0a4aea0d32ebc992c0198ed4ac430e6a68e4d0",
-    "application/single_app/functions_orchestration_runs.py::get_latest_turn_run": "aab405d0b7fc15a56308f3545dcd781c0f3fa53a96cae86c3774acc81a089364",
-    "application/single_app/functions_orchestration_runs.py::update_orchestration_run": "a85de870093af5ccc3a0d77d32711faedeb677de3eb6465e7b616c63eec4b17b",
-    "application/single_app/functions_orchestration_runs.py::_update_run_decision": "c15b64341648bbf0241209dfd1ca33f47d8b8b6b327d0e7d024e9bbd26d565f0",
-    "application/single_app/functions_orchestration_runs.py::list_conversation_runs": "58f954eec6ce821c582d49e4e4d102cc83f17fcc7c7aac45c55be2454613fd9b",
-    "application/single_app/functions_orchestration_runs.py::next_turn_index": "7b6a267a5ab8f78d9c2520fad1c08cbc8c1ae008d3aa8f5138e04f6b5415fcfc",
-    "application/single_app/functions_orchestration_runs.py::get_pending_elicitation": "e7554ae30d1f0087714b0e1340d52fd8b7f860fe2418fa7e3b081d81738933cc",
-    "application/single_app/functions_orchestration_runs.py::create_pending_elicitation": "9d1cf8d1f74db8625814c77f711677d91de5bdc6f4eb8c30bdb1a11daa092b98",
-    "application/single_app/functions_orchestration_runs.py::_replace_pending": "115d7e78aef1c002a3bf95d1aab87c09b112e0ac0d6cf09bb2e3f9cccc870f52",
-    "application/single_app/functions_orchestration_runs.py::save_orchestration_step": "73eb814415222ab91add82c86cf9fb7bce32e68241d68013225909cca583bf71",
-    "application/single_app/functions_orchestration_runs.py::get_orchestration_step_record": "d2d2acb89ed64a68e561ef8c8096bf6f9045060bdd2cf2894abe036151ce01f9",
-    "application/single_app/functions_orchestration_runs.py::list_run_steps": "ab9d6e26de5970720e6bcd4b74c8374f1ae5b53aa9c966f4042aad6993f355ed",
     "application/single_app/functions_orchestration_workflow_handoff_decisions.py::_read_workflow": "22cc82878b1df27322b3bb4a529f07ab3d4451cc5aa70ba0d2daa5bb7b25dcae",
     "application/single_app/functions_orchestration_workflow_handoff_decisions.py::_read_workflow_run": "8fb41cefbc1cead5c2ffb73bc63b1cc9075993afab480e50205e47fb4eb4fdd3",
     "application/single_app/functions_orchestration_workflow_proposals.py::_read_workflow": "04f5f464541540a451389a3e23a63ddf75c485e2ca6fbb21d1856fa3e551222c",
@@ -11940,10 +11925,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "bddf12373d403a9f48b999de16fe3dc42f0db550603924d9cc14e17b0c07abe4"
+        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
       },
       "classification": "sdk-compatible",
-      "contract": "Checkpoint _verify accepts dict subclasses; nested manifests/state are plain SDK JSON and publication/control values use mapping fields.",
+      "contract": "Checkpoint _verify accepts dict subclasses; nested manifests/state are plain SDK JSON and publication/control values use mapping fields. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
@@ -11961,10 +11946,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "bddf12373d403a9f48b999de16fe3dc42f0db550603924d9cc14e17b0c07abe4"
+        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
       },
       "classification": "response-unused",
-      "contract": "CheckpointStore.initialize: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "CheckpointStore.initialize: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "source-review",
       "tests": []
     },
@@ -11980,10 +11965,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "bddf12373d403a9f48b999de16fe3dc42f0db550603924d9cc14e17b0c07abe4"
+        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
       },
       "classification": "response-unused",
-      "contract": "CheckpointStore.adopt_claim: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "CheckpointStore.adopt_claim: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "source-review",
       "tests": []
     },
@@ -11999,10 +11984,10 @@
             "response": "unused"
           }
         ],
-        "module_sha256": "bddf12373d403a9f48b999de16fe3dc42f0db550603924d9cc14e17b0c07abe4"
+        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
       },
       "classification": "response-unused",
-      "contract": "CheckpointStore._write: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "CheckpointStore._write: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "source-review",
       "tests": []
     },
@@ -12018,10 +12003,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "bddf12373d403a9f48b999de16fe3dc42f0db550603924d9cc14e17b0c07abe4"
+        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
       },
       "classification": "response-unused",
-      "contract": "CheckpointStore.has_manifest: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "CheckpointStore.has_manifest: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "source-review",
       "tests": []
     },
@@ -12047,10 +12032,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "bddf12373d403a9f48b999de16fe3dc42f0db550603924d9cc14e17b0c07abe4"
+        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
       },
       "classification": "sdk-compatible",
-      "contract": "Checkpoint _verify accepts dict subclasses; nested manifests/state are plain SDK JSON and publication/control values use mapping fields.",
+      "contract": "Checkpoint _verify accepts dict subclasses; nested manifests/state are plain SDK JSON and publication/control values use mapping fields. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
@@ -12074,10 +12059,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "bddf12373d403a9f48b999de16fe3dc42f0db550603924d9cc14e17b0c07abe4"
+        "module_sha256": "babde8d11ab82d3a6e2778f81da06b9b4ae32739d064b39f9f0527272e8af648"
       },
       "classification": "response-unused",
-      "contract": "CheckpointStore.delete_payloads: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "CheckpointStore.delete_payloads: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "source-review",
       "tests": []
     },
@@ -12238,10 +12223,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e9b999f01ad4c7aa7c795f92372db7fcd47488d26ceaae800f6bcf353fdc2e30"
+        "module_sha256": "f358cb141cdaceca2d63039ecad7f5ee9e09aa11a0318c8d5c902ff0f7acbd18"
       },
       "classification": "sdk-compatible",
-      "contract": "Point guards use mapping fields and plain metadata-stripping projections; inherited lease reads already normalize before strict continuation state.",
+      "contract": "Point guards use mapping fields and plain metadata-stripping projections; inherited lease reads already normalize before strict continuation state. Review 0.261.380: Module-only addition retaining safe assessment metadata in terminal results; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -12280,10 +12265,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e9b999f01ad4c7aa7c795f92372db7fcd47488d26ceaae800f6bcf353fdc2e30"
+        "module_sha256": "f358cb141cdaceca2d63039ecad7f5ee9e09aa11a0318c8d5c902ff0f7acbd18"
       },
       "classification": "sdk-compatible",
-      "contract": "Point guards use mapping fields and plain metadata-stripping projections; inherited lease reads already normalize before strict continuation state.",
+      "contract": "Point guards use mapping fields and plain metadata-stripping projections; inherited lease reads already normalize before strict continuation state. Review 0.261.380: Module-only addition retaining safe assessment metadata in terminal results; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -12307,10 +12292,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
+        "module_sha256": "021d8fac7870ec753170073b819ad33c7149c0f8c30291f9882745fa5931998d"
       },
       "classification": "sdk-compatible",
-      "contract": "Partitioned turn/source point mappings are reauthorized, checked for visibility and converted by normalize_history_message before strict saved-snapshot validation. Full source messages are resolved only after fingerprint checks; history disablement and revoked shared access cannot broaden reads.",
+      "contract": "Partitioned turn/source point mappings are reauthorized, checked for visibility and converted by normalize_history_message before strict saved-snapshot validation. Full source messages are resolved only after fingerprint checks; history disablement and revoked shared access cannot broaden reads. Review 0.261.380: Module-only SSE metadata allowlist extension; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -12330,10 +12315,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
+        "module_sha256": "021d8fac7870ec753170073b819ad33c7149c0f8c30291f9882745fa5931998d"
       },
       "classification": "sdk-compatible",
-      "contract": "The previous assistant point mapping is checked for conversation/run ownership; model and reasoning fields are projected into plain dictionaries, without passing the SDK wrapper to an exact-dictionary contract.",
+      "contract": "The previous assistant point mapping is checked for conversation/run ownership; model and reasoning fields are projected into plain dictionaries, without passing the SDK wrapper to an exact-dictionary contract. Review 0.261.380: Module-only SSE metadata allowlist extension; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -12353,10 +12338,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
+        "module_sha256": "021d8fac7870ec753170073b819ad33c7149c0f8c30291f9882745fa5931998d"
       },
       "classification": "sdk-compatible",
-      "contract": "The question point mapping supplies role and nested plain thread metadata; only a deepcopy of the validated nested thread dictionary is returned.",
+      "contract": "The question point mapping supplies role and nested plain thread metadata; only a deepcopy of the validated nested thread dictionary is returned. Review 0.261.380: Module-only SSE metadata allowlist extension; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -12376,10 +12361,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
+        "module_sha256": "021d8fac7870ec753170073b819ad33c7149c0f8c30291f9882745fa5931998d"
       },
       "classification": "sdk-compatible",
-      "contract": "A normalized owned conversation retains its _etag for IfNotModified replacement; the returned SDK mapping is consumed only by the Mapping-compatible cache invalidator. Lost-CAS retries retain current ownership.",
+      "contract": "A normalized owned conversation retains its _etag for IfNotModified replacement; the returned SDK mapping is consumed only by the Mapping-compatible cache invalidator. Lost-CAS retries retain current ownership. Review 0.261.380: Module-only SSE metadata allowlist extension; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -12399,10 +12384,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "904429b2e13ed3c27c8efaac6049ca6f529a8ce9cdb48f0a732c716e3294423a"
+        "module_sha256": "021d8fac7870ec753170073b819ad33c7149c0f8c30291f9882745fa5931998d"
       },
       "classification": "sdk-compatible",
-      "contract": "The published message point mapping is projected with items() into a metadata-free fingerprint and consumed by Mapping-compatible mirroring. Durable outcome telemetry reads only finalized scalar fields; strict task/result descriptors and saved-message confirmation remain unchanged.",
+      "contract": "The published message point mapping is projected with items() into a metadata-free fingerprint and consumed by Mapping-compatible mirroring. Durable outcome telemetry reads only finalized scalar fields; strict task/result descriptors and saved-message confirmation remain unchanged. Review 0.261.380: Module-only SSE metadata allowlist extension; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -12643,10 +12628,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "9c8c8ecccd44a39e6e1b18d1a358a5f9c8b0cad5337faf75405fc4456c247197"
+        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
       },
       "classification": "normalized-strict",
-      "contract": "The run replacement preserves the input _etag with IfNotModified, rejects non-document responses through CheckpointError and normalizes the returned SDK document before lease/checkpoint strict contracts; domain values are not recursively repaired.",
+      "contract": "The run replacement preserves the input _etag with IfNotModified, rejects non-document responses through CheckpointError and normalizes the returned SDK document before lease/checkpoint strict contracts; domain values are not recursively repaired. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
@@ -12674,10 +12659,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "9c8c8ecccd44a39e6e1b18d1a358a5f9c8b0cad5337faf75405fc4456c247197"
+        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
       },
       "classification": "sdk-compatible",
-      "contract": "The guard point mapping supplies run/user ownership and _etag; a plain metadata-stripped tombstone is conditionally replaced, with create/replace responses discarded and conflicts retried without borrowing another owner.",
+      "contract": "The guard point mapping supplies run/user ownership and _etag; a plain metadata-stripped tombstone is conditionally replaced, with create/replace responses discarded and conflicts retried without borrowing another owner. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
@@ -12711,10 +12696,10 @@
             "response": "unused"
           }
         ],
-        "module_sha256": "9c8c8ecccd44a39e6e1b18d1a358a5f9c8b0cad5337faf75405fc4456c247197"
+        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
       },
       "classification": "sdk-compatible",
-      "contract": "Guard/current-message point mappings feed ownership and retraction checks; metadata is stripped into plain batch bodies while original ETags fence atomic publication. Batch status/body responses remain separate from point documents.",
+      "contract": "Guard/current-message point mappings feed ownership and retraction checks; metadata is stripped into plain batch bodies while original ETags fence atomic publication. Batch status/body responses remain separate from point documents. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
@@ -12737,10 +12722,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "9c8c8ecccd44a39e6e1b18d1a358a5f9c8b0cad5337faf75405fc4456c247197"
+        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
       },
       "classification": "sdk-compatible",
-      "contract": "Guard and published-message point mappings supply owner/token/digest fields; publication equality fingerprints a metadata-stripped plain projection, preserving lease ownership rather than treating normalization as authority.",
+      "contract": "Guard and published-message point mappings supply owner/token/digest fields; publication equality fingerprints a metadata-stripped plain projection, preserving lease ownership rather than treating normalization as authority. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
@@ -12768,10 +12753,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "9c8c8ecccd44a39e6e1b18d1a358a5f9c8b0cad5337faf75405fc4456c247197"
+        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
       },
       "classification": "sdk-compatible",
-      "contract": "Guard-create and conditional-replace responses are discarded; a conflicting guard is read through mapping fields and its original _etag is used with IfNotModified before ownership is rechecked.",
+      "contract": "Guard-create and conditional-replace responses are discarded; a conflicting guard is read through mapping fields and its original _etag is used with IfNotModified before ownership is rechecked. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
@@ -12789,10 +12774,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "9c8c8ecccd44a39e6e1b18d1a358a5f9c8b0cad5337faf75405fc4456c247197"
+        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
       },
       "classification": "sdk-compatible",
-      "contract": "The publication-guard point mapping is checked for user/conversation/run identity before a plain claim descriptor is retained; run claims keep their normalized storage-owner boundary and conditional ETags.",
+      "contract": "The publication-guard point mapping is checked for user/conversation/run identity before a plain claim descriptor is retained; run claims keep their normalized storage-owner boundary and conditional ETags. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
@@ -12810,10 +12795,10 @@
             "response": "unused"
           }
         ],
-        "module_sha256": "9c8c8ecccd44a39e6e1b18d1a358a5f9c8b0cad5337faf75405fc4456c247197"
+        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
       },
       "classification": "response-unused",
-      "contract": "Atomic replace/create batch responses are discarded, never normalized as point documents; original parent _etag fences the batch and ambiguous failures reread the authoritative parent/submission through the normalized run owner. Partial-search recovery cannot grant external-effect replay authority.",
+      "contract": "Atomic replace/create batch responses are discarded, never normalized as point documents; original parent _etag fences the batch and ambiguous failures reread the authoritative parent/submission through the normalized run owner. Partial-search recovery cannot grant external-effect replay authority. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py",
@@ -12843,10 +12828,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "9c8c8ecccd44a39e6e1b18d1a358a5f9c8b0cad5337faf75405fc4456c247197"
+        "module_sha256": "8fbe5a8a230d129b5e2dfd89e002aa2af8a6a26ce843a0b063937a0c52b952b3"
       },
       "classification": "sdk-compatible",
-      "contract": "Conversation point mappings provide owner and _etag for a conditional deletion fence; replacements are plain metadata-stripped projections and responses are discarded. Run discovery consumes plain partitioned query rows.",
+      "contract": "Conversation point mappings provide owner and _etag for a conditional deletion fence; replacements are plain metadata-stripped projections and responses are discarded. Run discovery consumes plain partitioned query rows. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
@@ -12864,13 +12849,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "get_pending_turn_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_pending_turn_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_pending_question_owners_keep_sdk_mapping_and_etags"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::save_pending_turn_context": {
@@ -12890,10 +12875,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "response-unused",
-      "contract": "save_pending_turn_context: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "save_pending_turn_context: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
       "evidence_scope": "source-review",
       "tests": []
     },
@@ -12909,10 +12894,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "response-unused",
-      "contract": "clear_pending_turn_context: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "clear_pending_turn_context: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
       "evidence_scope": "source-review",
       "tests": []
     },
@@ -12933,10 +12918,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "response-unused",
-      "contract": "create_orchestration_run: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "create_orchestration_run: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
       "evidence_scope": "source-review",
       "tests": []
     },
@@ -12952,13 +12937,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "_replanned_outcome: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_replanned_outcome: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_replanning_owners_keep_sdk_mapping_and_atomic_identity"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::_publish_replanned_run": {
@@ -12984,13 +12969,13 @@
             "response": "unused"
           }
         ],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "_publish_replanned_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_publish_replanned_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_replanning_owners_keep_sdk_mapping_and_atomic_identity"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::get_orchestration_run": {
@@ -13011,13 +12996,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "get_orchestration_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_orchestration_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_run_and_step_owner_metadata_remains_sdk_compatible"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::get_latest_turn_run": {
@@ -13032,13 +13017,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "get_latest_turn_run: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_latest_turn_run: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_run_and_step_owner_metadata_remains_sdk_compatible"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::update_orchestration_run": {
@@ -13058,13 +13043,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "update_orchestration_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "update_orchestration_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_run_and_step_owner_metadata_remains_sdk_compatible"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::_update_run_decision": {
@@ -13084,13 +13069,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "_update_run_decision: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_update_run_decision: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_run_and_step_owner_metadata_remains_sdk_compatible"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::list_conversation_runs": {
@@ -13105,13 +13090,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "list_conversation_runs: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "list_conversation_runs: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_run_and_step_owner_metadata_remains_sdk_compatible"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::next_turn_index": {
@@ -13126,13 +13111,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "next_turn_index: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "next_turn_index: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_run_and_step_owner_metadata_remains_sdk_compatible"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::get_pending_elicitation": {
@@ -13147,13 +13132,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "get_pending_elicitation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_pending_elicitation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_pending_question_owners_keep_sdk_mapping_and_etags"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::create_pending_elicitation": {
@@ -13168,13 +13153,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "create_pending_elicitation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "create_pending_elicitation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_pending_question_owners_keep_sdk_mapping_and_etags"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::_replace_pending": {
@@ -13189,13 +13174,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "_replace_pending: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_replace_pending: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_pending_question_owners_keep_sdk_mapping_and_etags"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::save_orchestration_step": {
@@ -13210,13 +13195,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "save_orchestration_step: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "save_orchestration_step: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_run_and_step_owner_metadata_remains_sdk_compatible"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::get_orchestration_step_record": {
@@ -13231,13 +13216,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "get_orchestration_step_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "get_orchestration_step_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_run_and_step_owner_metadata_remains_sdk_compatible"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::list_run_steps": {
@@ -13252,13 +13237,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4cfb13e9f5a7dd3ad33370e77465d8871379e4c10a791ac449143e1ffdcd83f1"
+        "module_sha256": "35c21893df6d9283bae90a67752a6b28ecebb4fb650671017568aaea5c807039"
       },
       "classification": "sdk-compatible",
-      "contract": "list_run_steps: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "list_run_steps: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Review 0.261.380: Module-only public step metadata allowlist extension; this storage owner AST, ownership guards and conditional ETag semantics are unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_orchestration_cosmos_response_contract.py::test_run_and_step_owner_metadata_remains_sdk_compatible"
       ]
     },
     "application/single_app/functions_orchestration_scheduler.py::enumerate_due_runs": {
@@ -15692,10 +15677,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f7d2ef7d879fa01256d95cae9816026d55b402fb3d4d495841ecf7e6034082c9"
+        "module_sha256": "064ae3bd16ff550a6b48aa224aabf5c4a0a8ead526e4809359b89fc4117d959d"
       },
       "classification": "sdk-compatible",
-      "contract": "_get_app_settings_store: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
+      "contract": "_get_app_settings_store: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
@@ -15723,10 +15708,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f7d2ef7d879fa01256d95cae9816026d55b402fb3d4d495841ecf7e6034082c9"
+        "module_sha256": "064ae3bd16ff550a6b48aa224aabf5c4a0a8ead526e4809359b89fc4117d959d"
       },
       "classification": "sdk-compatible",
-      "contract": "get_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
+      "contract": "get_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
@@ -15744,10 +15729,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f7d2ef7d879fa01256d95cae9816026d55b402fb3d4d495841ecf7e6034082c9"
+        "module_sha256": "064ae3bd16ff550a6b48aa224aabf5c4a0a8ead526e4809359b89fc4117d959d"
       },
       "classification": "sdk-compatible",
-      "contract": "read_user_settings_snapshot: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
+      "contract": "read_user_settings_snapshot: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
@@ -15780,10 +15765,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f7d2ef7d879fa01256d95cae9816026d55b402fb3d4d495841ecf7e6034082c9"
+        "module_sha256": "064ae3bd16ff550a6b48aa224aabf5c4a0a8ead526e4809359b89fc4117d959d"
       },
       "classification": "sdk-compatible",
-      "contract": "update_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
+      "contract": "update_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
@@ -15801,10 +15786,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f7d2ef7d879fa01256d95cae9816026d55b402fb3d4d495841ecf7e6034082c9"
+        "module_sha256": "064ae3bd16ff550a6b48aa224aabf5c4a0a8ead526e4809359b89fc4117d959d"
       },
       "classification": "sdk-compatible",
-      "contract": "get_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
+      "contract": "get_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
@@ -15827,10 +15812,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f7d2ef7d879fa01256d95cae9816026d55b402fb3d4d495841ecf7e6034082c9"
+        "module_sha256": "064ae3bd16ff550a6b48aa224aabf5c4a0a8ead526e4809359b89fc4117d959d"
       },
       "classification": "sdk-compatible",
-      "contract": "add_search_to_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
+      "contract": "add_search_to_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
@@ -15853,10 +15838,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f7d2ef7d879fa01256d95cae9816026d55b402fb3d4d495841ecf7e6034082c9"
+        "module_sha256": "064ae3bd16ff550a6b48aa224aabf5c4a0a8ead526e4809359b89fc4117d959d"
       },
       "classification": "sdk-compatible",
-      "contract": "clear_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function.",
+      "contract": "clear_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
@@ -17965,10 +17950,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "bb0ccd9213a35e4b05e9190a6fb8b2e1220da7d296b6a157554e281d2ab6df1a"
+        "module_sha256": "e526ab344055c783779b65807af1225294697dce7b626834e41a2f4bebcd5354"
       },
       "classification": "sdk-compatible",
-      "contract": "authorize_workflow_run_read: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
+      "contract": "authorize_workflow_run_read: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Review 0.261.380: Module-only safe result-summary metadata extension; this storage owner AST and response consumer are unchanged.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_history_owner_consumes_real_query_rows"
@@ -17986,10 +17971,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "response-unused",
-      "contract": "Artifact upsert responses are discarded; compact citation dictionaries returned by the artifact builder are retained. Failed writes use the existing citation fallback without consuming an SDK response. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "Artifact upsert responses are discarded; compact citation dictionaries returned by the artifact builder are retained. Failed writes use the existing citation fallback without consuming an SDK response. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_assistant_and_citation_owners_discard_sdk_write_responses"
       ],
@@ -18012,10 +17997,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "sdk-compatible",
-      "contract": "SDK point messages are read through Mapping access, checked for posted_via=agent_action, and assigned plain nested supersession metadata. Upsert responses are discarded; missing or failed messages retain the existing best-effort path. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "SDK point messages are read through Mapping access, checked for posted_via=agent_action, and assigned plain nested supersession metadata. Upsert responses are discarded; missing or failed messages retain the existing best-effort path. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_delivery_owners_mutate_sdk_points_and_mirror_a_reply"
       ],
@@ -18038,10 +18023,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "sdk-compatible",
-      "contract": "The SDK conversation is inspected and mutated through Mapping access for workflow/hidden state. Its upsert response is discarded, and the cache update uses the user_id field; read/write failures retain the existing False result. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "The SDK conversation is inspected and mutated through Mapping access for workflow/hidden state. Its upsert response is discarded, and the cache update uses the user_id field; read/write failures retain the existing False result. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_delivery_owners_mutate_sdk_points_and_mirror_a_reply"
       ],
@@ -18069,10 +18054,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "sdk-compatible",
-      "contract": "SDK conversations use Mapping ownership/group checks and unread/citation updates. Existing SDK messages feed the same Mapping-compatible summary update and are normalized before returning; new authored message upsert responses are discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "SDK conversations use Mapping ownership/group checks and unread/citation updates. Existing SDK messages feed the same Mapping-compatible summary update and are normalized before returning; new authored message upsert responses are discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_delivery_owners_mutate_sdk_points_and_mirror_a_reply"
       ],
@@ -18110,10 +18095,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "normalized-strict",
-      "contract": "Existing/collision audit point documents are owner-checked and normalized before returning to the workflow runner. New create/upsert responses are unused; run-bound IDs preserve retries and manual titles. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "Existing/collision audit point documents are owner-checked and normalized before returning to the workflow runner. New create/upsert responses are unused; run-bound IDs preserve retries and manual titles. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_conversation_and_replayed_user_message_accept_sdk_points",
         "functional_tests/test_workflow_results_delivery.py"
@@ -18132,10 +18117,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "sdk-compatible",
-      "contract": "_get_latest_thread_id: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "_get_latest_thread_id: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_query_owners_consume_plain_query_rows"
       ],
@@ -18158,10 +18143,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "sdk-compatible",
-      "contract": "A replayed SDK message is checked through nested metadata/run_id field reads and returned unchanged. Assistant tracking consumes its id and thread metadata through Mapping access; new-message upsert responses are discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "A replayed SDK message is checked through nested metadata/run_id field reads and returned unchanged. Assistant tracking consumes its id and thread metadata through Mapping access; new-message upsert responses are discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_conversation_and_replayed_user_message_accept_sdk_points"
       ],
@@ -18184,10 +18169,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "response-unused",
-      "contract": "Assistant, citation and conversation upsert responses are discarded. The authored assistant dictionary is returned without SDK metadata; unread state is persisted on the Mapping-compatible conversation input. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "Assistant, citation and conversation upsert responses are discarded. The authored assistant dictionary is returned without SDK metadata; unread state is persisted on the Mapping-compatible conversation input. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_assistant_and_citation_owners_discard_sdk_write_responses"
       ],
@@ -18205,10 +18190,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_recent_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "_query_recent_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_query_owners_consume_plain_query_rows"
       ],
@@ -18226,10 +18211,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_merge_candidate_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "_query_merge_candidate_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_query_owners_consume_plain_query_rows"
       ],
@@ -18247,10 +18232,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "sdk-compatible",
-      "contract": "A resumed SDK user-message point response supplies id and nested thread metadata through Mapping access to assistant tracking. Policy failures add application-owned error/error_code strings to the locally authored run record; no point wrapper enters a new strict sink. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "A resumed SDK user-message point response supplies id and nested thread metadata through Mapping access to assistant tracking. Policy failures add application-owned error/error_code strings to the locally authored run record; no point wrapper enters a new strict sink. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_run_owner_consumes_sdk_replayed_message_before_model_processing",
         "functional_tests/test_workflow_policy_failures.py::test_refused_first_request_is_a_terminal_diagnosable_failure"
@@ -25872,10 +25857,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "normalized-strict",
-      "contract": "Audit ownership and existing target checks use Mapping fields. Retained file/image/chunk point documents are normalized before strict source authorization and reference remapping; returned writes are unused. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "Audit ownership and existing target checks use Mapping fields. Retained file/image/chunk point documents are normalized before strict source authorization and reference remapping; returned writes are unused. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_results_delivery.py"
       ],
@@ -25893,10 +25878,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "normalized-strict",
-      "contract": "A copied-image SDK point response is normalized before collaboration mirroring. Other backing and destination messages go through their existing authorized delivery owners. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "A copied-image SDK point response is normalized before collaboration mirroring. Other backing and destination messages go through their existing authorized delivery owners. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_results_delivery.py"
       ],
@@ -25914,10 +25899,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "67b697426afed28e47189cac8006cf301f9b0e4407e598355ee29719d9a46f6a"
+        "module_sha256": "818f8a902819defeb81cbf42b6bfab8f2b14d918561eec2ab459a922279dae22"
       },
       "classification": "response-unused",
-      "contract": "The unread/citation summary mutates its Mapping-compatible conversation input; the returned upsert response is discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained.",
+      "contract": "The unread/citation summary mutates its Mapping-compatible conversation input; the returned upsert response is discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_workflow_results_delivery.py"
       ],
@@ -25962,10 +25947,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f7d2ef7d879fa01256d95cae9816026d55b402fb3d4d495841ecf7e6034082c9"
+        "module_sha256": "064ae3bd16ff550a6b48aa224aabf5c4a0a8ead526e4809359b89fc4117d959d"
       },
       "classification": "sdk-compatible",
-      "contract": "Fresh SDK mappings are consumed via get/item access; nested settings remain plain JSON, ETags are preserved for conditional replace, and the returned SDK mapping refreshes the request cache with the committed ETag. Real-owner recovery tests cover persisted null, request/UI caches and matching ETags, SDK representation, missing ETags, authorization, conflicts and concurrent selections.",
+      "contract": "Fresh SDK mappings are consumed via get/item access; nested settings remain plain JSON, ETags are preserved for conditional replace, and the returned SDK mapping refreshes the request cache with the committed ETag. Real-owner recovery tests cover persisted null, request/UI caches and matching ETags, SDK representation, missing ETags, authorization, conflicts and concurrent selections. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged.",
       "tests": [
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],

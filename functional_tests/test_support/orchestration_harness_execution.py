@@ -202,6 +202,9 @@ class HarnessEnvironment:
         self.planner = importlib.import_module("functions_orchestration_planner")
         self.settings = {
             "enable_chat_orchestration": True,
+            # Legacy scripted replies exercise composition without a verification model.
+            # Completeness integration tests explicitly opt into the new default-on path.
+            "enable_chat_orchestration_completeness_check": False,
             "enable_user_workspace": True,
             "enable_fact_memory_plugin": False,
             "enable_semantic_kernel": False,

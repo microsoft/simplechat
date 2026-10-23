@@ -1146,6 +1146,7 @@ class HarnessExecution:
         extra = {
             key: event[key] for key in (
                 "failure", "reused", "reused_from_run_id", "checkpoint_available", "role", "model_binding",
+                "task_completeness",
             ) if key in event
         }
         if event.get("role") == "render":

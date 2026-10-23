@@ -503,6 +503,10 @@ def normalize_chat_orchestration_settings(form_data, settings=None):
 
     return {
         'enable_chat_orchestration': form_data.get('enable_chat_orchestration') == 'on',
+        'enable_chat_orchestration_completeness_check': form_data.get('enable_chat_orchestration_completeness_check') == 'on',
+        'chat_orchestration_completeness_max_corrections': _clamped(
+            'chat_orchestration_completeness_max_corrections', 2, 0, 5,
+        ),
         'enable_chat_orchestration_actions': (
             form_data.get('enable_chat_orchestration_actions') == 'on'
         ),
@@ -928,6 +932,9 @@ def register_route_frontend_admin_settings(bp):
             settings['require_member_of_workflow_user'] = False
         if 'enable_workflow_ai_assistant' not in settings:
             settings['enable_workflow_ai_assistant'] = True
+        for scope in ('workflow', 'chat_orchestration'):
+            settings.setdefault(f'enable_{scope}_completeness_check', True)
+            settings.setdefault(f'{scope}_completeness_max_corrections', 2)
         if 'enable_agent_ai_assistant' not in settings:
             settings['enable_agent_ai_assistant'] = True
         if 'enable_action_ai_assistant' not in settings:
@@ -2566,6 +2573,11 @@ def register_route_frontend_admin_settings(bp):
                 'allow_user_workflows': form_data.get('allow_user_workflows') == 'on',
                 'require_member_of_workflow_user': require_member_of_workflow_user,
                 'enable_workflow_ai_assistant': form_data.get('enable_workflow_ai_assistant') == 'on',
+                'enable_workflow_completeness_check': form_data.get('enable_workflow_completeness_check') == 'on',
+                'workflow_completeness_max_corrections': min(5, max(0, safe_int_with_source(
+                    form_data.get('workflow_completeness_max_corrections'),
+                    settings.get('workflow_completeness_max_corrections', 2), 2,
+                )[0])),
                 'enable_chat_workflow_results': form_data.get('enable_chat_workflow_results') == 'on',
                 'enable_workflow_alert_sounds': form_data.get('enable_workflow_alert_sounds') == 'on',
                 'allow_group_workflows': form_data.get('allow_group_workflows') == 'on',

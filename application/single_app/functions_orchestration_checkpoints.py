@@ -490,6 +490,25 @@ class CheckpointStore:
             'record_type': 'step',
         }, immutable=False)
 
+    def save_completeness(self, step_id, state, *, binding):
+        """Use chunked, lifecycle-fenced private storage for each checked candidate."""
+        key = f'completeness:{step_id}'
+        return self._commit_payload(key, {
+            'schema_version': CHECKPOINT_VERSION, 'binding': binding,
+            'input_fingerprint': state['identity'], 'step_id': key,
+            'state': {'plan_contract_version': 2},
+            'result': {'status': 'waiting'}, 'completeness': deepcopy(state),
+        }, waiting=True)
+
+    def load_completeness(self, step_id, *, binding):
+        key = f'completeness:{step_id}'
+        if not self.has_manifest(key, waiting=True):
+            return None
+        payload = self.load(key, waiting=True)
+        if payload['binding'] != binding:
+            raise CheckpointError('recovery_changed')
+        return payload['completeness']
+
     def commit(self, step, result, context, *, input_fingerprint, binding, provenance=None, artifact_versions=None):
         if (
             getattr(context, 'plan_contract_version', None) != 2

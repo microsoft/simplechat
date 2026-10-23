@@ -357,6 +357,9 @@ from semantic_kernel_loader import (
     load_user_semantic_kernel,
 )
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger, sanitize_plugin_invocation_value
+from functions_task_completeness import (
+    CompletenessError, MAX_PAYLOAD_BYTES, check_and_correct, completeness_policy, public_completeness_report,
+)
 from semantic_kernel_plugins.plugin_invocation_thoughts import register_plugin_invocation_thought_callback
 
 
@@ -2287,6 +2290,7 @@ def _build_agent_citations_from_plugin_invocations(plugin_invocations):
     for invocation in plugin_invocations or []:
         sanitized_parameters = sanitize_plugin_invocation_value(invocation.parameters)
         sanitized_result = sanitize_plugin_invocation_value(invocation.result)
+        verification_evidence = sanitize_plugin_invocation_value(invocation.result, max_string_length=None)
         sanitized_error = sanitize_plugin_invocation_value(invocation.error_message)
         tool_name = build_agent_citation_tool_label(
             invocation.plugin_name,
@@ -2300,6 +2304,8 @@ def _build_agent_citations_from_plugin_invocations(plugin_invocations):
             'plugin_name': invocation.plugin_name,
             'function_arguments': make_json_serializable(sanitized_parameters),
             'function_result': make_json_serializable(sanitized_result),
+            '_verification_evidence': make_json_serializable(verification_evidence),
+            'evidence_truncated': '[truncated' in json.dumps(verification_evidence).lower(),
             'duration_ms': invocation.duration_ms,
             'timestamp': _normalize_invocation_timestamp(invocation.timestamp),
             'success': invocation.success,
@@ -7316,10 +7322,151 @@ def _resolve_model_workflow_client(workflow, settings):
     default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
     default_model_id = str(default_selection.get('model_id') or '').strip()
     if default_endpoint_id and default_model_id:
-        return _build_multi_endpoint_client(user_id, default_endpoint_id, default_model_id, settings)
+        return _build_multi_endpoint_client(user_id, default_endpoint_id, default_model_id, settings, group_id=group_id)
 
     client, deployment_name, provider = _build_legacy_default_client(settings, identity_context={'user_id': user_id})
     return wrap_workflow_model_client(client, deployment_name, provider), deployment_name, provider
+
+
+def _check_workflow_completeness(result, envelope, *, workflow, task, settings, run_id, durable, unit_key, progress=None):
+    """Verify generated answers outside the effectful invocation retry boundary."""
+    saved = durable.snapshot(f'{unit_key}:completeness') if durable is not None else None
+    policy = saved['policy'] if saved else completeness_policy(settings, 'workflow')
+    if not policy['enabled'] or (envelope.get('execution') or {}).get('status') != 'succeeded':
+        return result, envelope
+    if task.get('type') in ('publication', 'plan_replay') or not result.get('reply'):
+        return result, envelope
+    original_kind = envelope['authoritative_output']
+    expected_kind = (task.get('output_contract') or {}).get('kind')
+    immutable = original_kind == 'documents' or bool(envelope.get('analysis_access'))
+    output_kind = expected_kind if expected_kind in ('text', 'json', 'records') and not immutable else original_kind
+    output_value = envelope['outputs'][original_kind]['value']
+    if immutable:
+        # Source-analysis outputs may already be published; verify, never rewrite their identity.
+        policy = {**policy, 'max_corrections': 0}
+    candidate = saved['original'] if saved else (
+        output_value if isinstance(output_value, str) else json.dumps(output_value, ensure_ascii=False)
+    )
+    evidence = {
+        f'tool:{index}': {
+            'value': citation.get('_verification_evidence', citation.get('function_result')),
+            'complete': not citation.get('evidence_truncated', True),
+            'success': citation.get('success'),
+        }
+        for index, citation in enumerate(result.get('agent_citations') or [])
+        if isinstance(citation, dict)
+    }
+    for field in ('hybrid_citations', 'web_search_citations', 'workflow_reference_sources'):
+        for index, source in enumerate(result.get(field) or []):
+            evidence[f'{field}:{index}'] = sanitize_plugin_invocation_value(source, max_string_length=None)
+    if envelope.get('outputs', {}).get('evidence'):
+        evidence['analysis:evidence'] = envelope['outputs']['evidence']['value']
+    if workflow.get('task_prompt'):
+        evidence['submitted_task_context'] = sanitize_plugin_invocation_value(workflow['task_prompt'], max_string_length=None)
+    for index, source in enumerate(workflow.get('workflow_reference_sources') or []):
+        evidence[f'reference:{index}'] = sanitize_plugin_invocation_value(source, max_string_length=None)
+    saved_inputs = workflow.get('_saved_analysis_inputs') or []
+    evidence_bytes = 0
+    evidence_overflow = False
+    for input_index, saved_input in enumerate(saved_inputs):
+        saved_input.recheck()
+        for row_index, unit in enumerate(saved_input.iter_units()):
+            value = sanitize_plugin_invocation_value(unit, max_string_length=None)
+            evidence_bytes += len(json.dumps(value, ensure_ascii=False).encode('utf-8'))
+            if evidence_bytes > MAX_PAYLOAD_BYTES:
+                evidence_overflow = True
+                break
+            evidence[f'saved:{input_index}:{row_index}'] = value
+        if evidence_overflow:
+            break
+    client_binding = []
+
+    def recheck():
+        assert_workflow_execution_owned()
+        _raise_if_workflow_run_cancelled(workflow, run_id)
+        group_id = _get_workflow_group_id(workflow)
+        if group_id:
+            assert_group_role(workflow['user_id'], group_id, allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'))
+        for saved_input in saved_inputs:
+            saved_input.recheck()
+
+    def checkpoint(state):
+        if client_binding:
+            state['model_binding'] = {'model_id': client_binding[1], 'provider': client_binding[2]}
+        if durable is not None:
+            key = f'{unit_key}:completeness'
+            if durable.snapshot(key) is None:
+                durable.prepared(key, lambda: state)
+            else:
+                durable.replace_unit_result(key, state)
+        if callable(progress):
+            progress(public_completeness_report(state))
+        log_event(
+            '[WORKFLOW_RUNNER] Task completeness progress.',
+            debug_only=True,
+            extra={'run_id': run_id, 'task_id': task['id'], 'status': state['status'],
+                   'corrections': state['corrections'], 'checks': state['checks']},
+        )
+
+    def invoke(messages, stage):
+        recheck()
+        if evidence_overflow:
+            raise CompletenessError('completeness_context_limit')
+        if not client_binding:
+            client_binding.extend(_resolve_model_workflow_client(workflow, settings))
+        client, deployment, provider = client_binding
+        completion = client.chat.completions.create(
+            model=deployment, messages=messages, timeout=120,
+        )
+        recheck()
+        if not completion.choices or getattr(completion.choices[0].message, 'refusal', None):
+            raise ValueError('completeness_model_unavailable')
+        usage = _extract_token_usage(completion)
+        if usage:
+            result['token_usage'] = _merge_token_usage_summaries([
+                {'token_usage': result.get('token_usage') or {}}, {'token_usage': usage},
+            ])
+        return _extract_message_text(completion.choices[0].message.content)
+
+    def validate(candidate_text):
+        if immutable:
+            validation = validate_workflow_task_output(envelope, task.get('output_contract'))
+            return validation['reason_codes'] if not validation['eligible'] else []
+        trial = dict(result, reply=candidate_text)
+        try:
+            trial['authoritative_result'] = {
+                'kind': output_kind, 'value': candidate_text if output_kind == 'text' else json.loads(candidate_text),
+            }
+            trial_envelope = build_workflow_task_result(
+                trial, workflow=workflow, run_id=run_id, task=task,
+                attempt_count=envelope['identity']['attempt'],
+            )
+        except ValueError:
+            return ['output_value_invalid']
+        validation = validate_workflow_task_output(trial_envelope, task.get('output_contract'))
+        return validation['reason_codes'] if not validation['eligible'] else []
+
+    with workflow_context_budget_scope(workflow):
+        corrected, state = check_and_correct(
+            candidate, instruction=task.get('instructions') or workflow.get('task_prompt') or '',
+            contract=task.get('output_contract') or {}, evidence=evidence, policy=policy,
+            invoke=invoke, validate=validate, checkpoint=checkpoint, saved_state=saved, recheck=recheck,
+            on_error=lambda error_type: log_event(
+                '[WORKFLOW_RUNNER] Task completeness verification unavailable.',
+                level=logging.WARNING, extra={'run_id': run_id, 'task_id': task['id'], 'error_type': error_type},
+            ),
+        )
+    if state['status'] == 'complete' and not immutable:
+        result['reply'] = corrected
+        result['authoritative_result'] = {
+            'kind': output_kind, 'value': corrected if output_kind == 'text' else json.loads(corrected),
+        }
+    envelope = build_workflow_task_result(
+        result, workflow=workflow, run_id=run_id, task=task, attempt_count=envelope['identity']['attempt'],
+    )
+    envelope['task_completeness'] = public_completeness_report(state)
+    envelope['diagnostics']['task_completeness'] = state
+    return result, envelope
 
 
 def _chain_activity_callbacks(*callbacks):
@@ -12392,7 +12539,28 @@ def _execute_workflow_task_sequence(
                 envelope['context_budget'] = context_budget
                 envelope['consumed_inputs'] = consumed_inputs
                 envelope['definition_revision'] = workflow.get('definition_revision')
+                if settings.get('enable_workflow_completeness_check', True) or (
+                    durable is not None and durable.unit(f'{task_unit_key}:completeness')
+                ):
+                    task_result, checked_envelope = _check_workflow_completeness(
+                        task_result, envelope, workflow=attempt_workflow or workflow, task=task,
+                        settings=settings, run_id=run_id, durable=durable, unit_key=task_unit_key,
+                        progress=lambda report: _save_workflow_task_run_item(
+                            workflow, run_id, task, 'running', attempt_count=attempt_count,
+                            created_at=created_at, runner_audit=runner_audit,
+                            result_summary={'task_completeness': report}, context_budget=context_budget,
+                            consumed_inputs=consumed_inputs,
+                        ),
+                    )
+                    envelope.update(checked_envelope)
                 validation = validate_workflow_task_output(envelope, task.get('output_contract'))
+                completeness = envelope.get('task_completeness') or {}
+                if completeness and completeness.get('status') != 'complete':
+                    validation = dict(validation, eligible=False, status='incomplete')
+                    validation['reason_codes'] = [
+                        *validation.get('reason_codes', []),
+                        completeness.get('reason_code') or 'completeness_requirements_unmet',
+                    ]
                 envelope['workflow_validation'] = validation
                 task_result['workflow_validation'] = validation
                 producer_failed = (envelope.get('execution') or {}).get('status') == 'failed'
@@ -12545,7 +12713,7 @@ def _execute_workflow_task_sequence(
             else:
                 if flow_runner:
                     flow_runner.note_item_failure(task_status)
-                if durable is not None:
+                if durable is not None and not completeness:
                     durable.invalidate_task(task_unit_key)
                 if error_strategy != 'continue':
                     break

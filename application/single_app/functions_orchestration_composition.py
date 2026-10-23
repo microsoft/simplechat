@@ -1,7 +1,7 @@
 # functions_orchestration_composition.py
 """Explicit content preparation from named authorized result readers.
 
-Version: 0.261.341
+Version: 0.261.380
 Refusals for a missing signed-in session reported as their own failure in: 0.261.209
 Charts drawn upstream reach the model as their placement tokens in: 0.261.293
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
@@ -13,9 +13,9 @@ proposal cards). In a turn that may propose a workflow they also receive the use
 time, worded as the workflow's scheduled runs will receive theirs.
 
 JSON preparation states each declared output's exact shape and asks for a JSON object.
-Preparation makes at most one corrective call for a broken output rule or an omitted
-explicit chart/diagram. Continued visual omission keeps usable content for finalization's
-partial-delivery report. Neither reply is logged; logs contain codes and hashed identifiers.
+Preparation checks completeness and shares a bounded correction allowance across format,
+visual and semantic deficiencies. Disabling completeness preserves the legacy single
+format/visual repair. Neither reply is logged; logs contain safe outcome metadata.
 
 When an input carries citation values, such as the Microsoft 365 sources an action step lists,
 the step is told to copy them verbatim after the claims they support (0.261.303).
@@ -63,6 +63,9 @@ from functions_orchestration_visuals import (
     image_proposals_available, place_chart_blocks,
 )
 from functions_orchestration_workflow_context import resolve_turn_time_zone, workflow_answer_time_line
+from functions_task_completeness import (
+    check_and_correct, completeness_policy, public_completeness_report,
+)
 
 
 COMPOSE_POLICY = (
@@ -416,8 +419,104 @@ def _carries_citation_values(inputs):
     return _CITATION_VALUE_RE.search(serialized) is not None
 
 
+def check_retained_final_response(step, result, context, *, settings, emit=None, cancel_requested=None):
+    """Check an immutable non-Compose final report without repeating its producer."""
+    policy = {**completeness_policy(settings, 'chat_orchestration'), 'max_corrections': 0}
+    if not policy['enabled']:
+        return result
+    state = {
+        'version': 1, 'policy': policy, 'status': 'verification_unavailable',
+        'reason_code': 'completeness_verification_unavailable', 'corrections': 0, 'checks': 0,
+    }
+    try:
+        service = require_result_service(context)
+        task = result['task_result']
+        reference = task.output(context.completeness_final_output)
+        readers = {item.output_name: service.open_result(item) for item in task.outputs}
+        guard = context.result_guard_token_for_step(step['step_id'])
+
+        def recheck():
+            if callable(cancel_requested) and cancel_requested():
+                raise MixedSourceCancellationError('orchestration_completeness')
+            service.access.authorize_producer(task.producer, for_write=True)
+            if context.result_guard_token_for_step(step['step_id']) != guard:
+                raise ResultUnavailableError('result_attempt_stopped')
+            for reader in readers.values():
+                reader.recheck()
+
+        recheck()
+        if sum(item.size_bytes for item in task.outputs) > MAX_VALUE_BYTES:
+            raise ResultContractError('result_requires_streaming')
+        candidate = read_complete_input(readers[reference.output_name])
+        evidence = {
+            name: {'kind': reader.result_kind, 'completeness': reader.completeness.to_dict(),
+                   'value': read_complete_input(reader)}
+            for name, reader in readers.items() if name != reference.output_name
+        }
+        store = getattr(context, 'completeness_store', None)
+        binding = getattr(context, 'completeness_binding', None)
+        saved = store.load_completeness(step['step_id'], binding=binding) if store is not None else None
+        invoke = context.invoke_prompt
+        # Context budgeting is an execution dependency, not a bootstrap dependency.
+        from functions_workflow_context import WorkflowContextBudgetError, calculate_workflow_context_budget
+
+        def invoke_check(messages, stage):
+            recheck()
+            audit = calculate_workflow_context_budget(
+                messages, getattr(invoke, 'model_metadata', None) or context.gpt_model or '',
+                provider=getattr(invoke, 'provider', None), output_tokens=getattr(invoke, 'output_tokens', None),
+            )
+            if audit['decision'] != 'full_input':
+                raise WorkflowContextBudgetError(audit)
+            reply = invoke(messages, stage=stage, metadata={
+                'run_id': context.run_id, 'step_id': step['step_id'], 'json_output': True,
+            })
+            recheck()
+            return reply
+
+        def checkpoint(value):
+            value['model_binding'] = step.get('model_binding') or {'model_id': str(context.gpt_model or '')}
+            if store is not None:
+                store.save_completeness(step['step_id'], value, binding=binding)
+            if callable(emit):
+                emit({'type': 'step', 'step_id': step['step_id'], 'phase': 'running',
+                      'summary': 'Checking the retained final answer.',
+                      'task_completeness': public_completeness_report(value)})
+
+        _, state = check_and_correct(
+            candidate, instruction={
+                'approved_request': context.user_request,
+                'approved_plan_scope': context.completeness_plan_scope,
+                'scope_rule': 'Only enabled approved work is required. Do not restore disabled work.',
+            },
+            contract={'kind': reference.kind, 'knowledge_basis': 'sources_only',
+                      'immutable_report': True},
+            evidence=evidence, policy=policy, invoke=invoke_check,
+            validate=lambda value: [], checkpoint=checkpoint, saved_state=saved, recheck=recheck,
+            on_error=lambda error_type: log_event(
+                '[ORCHESTRATION_EXECUTOR] Retained final-answer verification unavailable.',
+                level=logging.WARNING, extra={'error_type': error_type, 'step_id': step['step_id']},
+            ),
+        )
+    except MixedSourceCancellationError:
+        raise
+    except Exception as error:
+        log_event(
+            '[ORCHESTRATION_EXECUTOR] Retained final-answer verification could not complete.',
+            level=logging.WARNING, extra={'error_type': type(error).__name__, 'step_id': step['step_id']},
+        )
+    checked = {**result, 'task_completeness': public_completeness_report(state)}
+    if state['status'] != 'complete':
+        failure = build_failure(
+            'completeness_incomplete' if state['status'] == 'incomplete' else 'completeness_unavailable',
+        )
+        checked.update(status=STEP_STATUS_FAILED, failure=failure, summary=failure['message'], error=failure['message'])
+        checked.pop('task_result', None)
+    return checked
+
+
 def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_requested=None):
-    """Prepare all declared outputs, with at most one corrective content-generation call.
+    """Prepare declared outputs with bounded, rechecked content-generation corrections.
 
     Output-contract errors and omitted explicit visuals share that allowance. An unusable
     correction fails; usable content still missing its visual reaches final delivery checks.
@@ -452,6 +551,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             reader.recheck()
 
     workflow_results_error = ()
+    completeness_report = None
     try:
         recheck()
         if sum(reader.reference.size_bytes for reader in readers.values()) > MAX_VALUE_BYTES:
@@ -632,9 +732,101 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     raise
             return values
 
+        check_policy = completeness_policy(settings, 'chat_orchestration')
+        completeness_store = getattr(context, 'completeness_store', None)
+        completeness_binding = getattr(context, 'completeness_binding', None)
+        saved_completeness = (
+            completeness_store.load_completeness(step['step_id'], binding=completeness_binding)
+            if check_policy['enabled'] and completeness_store is not None else None
+        )
         recheck()
-        response = invoke(messages, stage='orchestration_compose', metadata=metadata)
+        response = (
+            saved_completeness['original'] if saved_completeness
+            else invoke(messages, stage='orchestration_compose', metadata=metadata)
+        )
         recheck()
+        if check_policy['enabled']:
+            def normalized_candidate(candidate):
+                try:
+                    prepared = prepared_values(candidate)
+                except ValueError:
+                    return candidate
+                return prepared[outputs[0]['name']] if plain_text else json.dumps(prepared, ensure_ascii=False)
+
+            response = normalized_candidate(response)
+
+            def validate_candidate(candidate):
+                try:
+                    prepared = prepared_values(candidate)
+                except ValueError as error:
+                    return [_compose_correction(error, outputs) or 'The declared output format is invalid.']
+                visual_rules = _compose_visual_rules(step, prepared)
+                return [visual_rules] if visual_rules else []
+
+            def invoke_check(check_messages, stage):
+                recheck()
+                check_audit = calculate_workflow_context_budget(
+                    check_messages, getattr(invoke, 'model_metadata', None) or context.gpt_model or '',
+                    provider=getattr(invoke, 'provider', None),
+                    output_tokens=getattr(invoke, 'output_tokens', None),
+                )
+                if check_audit['decision'] != 'full_input':
+                    raise WorkflowContextBudgetError(check_audit)
+                reply = invoke(check_messages, stage=stage, metadata={
+                    **metadata, 'json_output': stage == 'completeness_check' or not plain_text,
+                })
+                recheck()
+                return normalized_candidate(reply) if stage == 'completeness_correct' else reply
+
+            def save_completeness(state):
+                state['model_binding'] = step.get('model_binding') or {'model_id': str(context.gpt_model or '')}
+                if completeness_store is not None:
+                    completeness_store.save_completeness(
+                        step['step_id'], state, binding=completeness_binding,
+                    )
+                if callable(emit):
+                    emit({
+                        'type': 'step', 'step_id': step['step_id'], 'phase': 'running',
+                        'summary': 'Checking answer completeness.' if state['status'] != 'correcting' else 'Correcting the answer from available evidence.',
+                        'task_completeness': public_completeness_report(state),
+                    })
+
+            response, completeness_state = check_and_correct(
+                response,
+                instruction={
+                    'instruction': step['arguments']['instruction'],
+                    **({
+                        'approved_request': context.user_request,
+                        'approved_plan_scope': getattr(context, 'completeness_plan_scope', []),
+                        'scope_rule': 'Only enabled approved work is required. Do not restore disabled work.',
+                    } if getattr(context, 'completeness_final_step', None) == step['step_id'] else {}),
+                },
+                contract={
+                    'outputs': outputs, 'profiles': profiles, 'knowledge_basis': basis,
+                    'generation_policy': policy,
+                    'visual_requirements': _compose_visual_rules(step, {}),
+                },
+                evidence={**_model_inputs(inputs, charts), **({'images': images} if images else {}),
+                          **({'unavailable_inputs': missing} if missing else {})},
+                policy=check_policy, invoke=invoke_check, validate=validate_candidate,
+                checkpoint=save_completeness, saved_state=saved_completeness, recheck=recheck,
+                on_error=lambda error_type: log_event(
+                    '[ORCHESTRATION_EXECUTOR] Task completeness verification unavailable.',
+                    level=logging.WARNING, extra={'error_type': error_type, 'step_id': step['step_id']},
+                ),
+            )
+            completeness_report = public_completeness_report(completeness_state)
+            if completeness_state['status'] != 'complete':
+                failure = build_failure(
+                    'completeness_incomplete' if completeness_state['status'] == 'incomplete'
+                    else 'completeness_unavailable',
+                )
+                result = build_step_result(
+                    status=STEP_STATUS_FAILED, failure=failure, summary=failure['message'], error=failure['message'],
+                )
+                result['task_completeness'] = completeness_report
+                return result
+            values = prepared_values(response)
         reply_error = None
         try:
             values = prepared_values(response)
@@ -653,6 +845,8 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     JSON_OUTPUT_POLICY, *(_output_shape(output) for output in outputs),
                 )),
             )) if visual_rules else None
+        if check_policy['enabled']:
+            correction = None
         if correction:
             # One corrective call, told which declared rule the reply broke. The reply itself
             # stays in the model conversation only; it is never logged.
@@ -728,11 +922,14 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             allow_partial_inputs=partial,
             input_fingerprint=input_fingerprint,
         )
-        return build_step_result(
+        result = build_step_result(
             status=STEP_STATUS_PARTIAL if partial else STEP_STATUS_COMPLETED,
             summary='Prepared the declared content.' if not partial else 'Prepared content from explicitly partial inputs.',
             task_result=task,
         )
+        if completeness_report:
+            result['task_completeness'] = completeness_report
+        return result
     except MixedSourceCancellationError:
         raise
     except Exception as exc:

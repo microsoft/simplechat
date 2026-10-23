@@ -56,6 +56,22 @@ steps remain read-only; operation steps use only configured writes. Manual, dela
 and automatic delivery behavior is unchanged, and plan approval does not replace
 outgoing-message review. See the [action access contract](../explanation/features/CHAT_ORCHESTRATION_ACTIONS.md).
 
+## Answer completeness
+
+Implemented in version **0.261.380**. Prepared content and the designated final
+composition are assessed against their scoped instructions before publication or
+file rendering. This catches requested information that a schema does not require.
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Check Answer Completeness | Assess requested content and attempt grounded corrections using authorized inputs. | On | `enable_chat_orchestration_completeness_check`; model-assisted, not a deterministic guarantee. |
+| Maximum Answer Corrections | Bound the shared format, visual and completeness repair allowance per composition. | 2 | `chat_orchestration_completeness_max_corrections`; 0-5, zero means check-only. |
+
+Every correction is checked again; no separate repair loop can multiply the
+allowance. Disabling restores the previous single format/visual correction.
+This adds model calls but never authorizes connector replay. See
+[model-assisted completeness](../explanation/features/MODEL_ASSISTED_COMPLETENESS.md).
+
 ## Before you change anything
 
 - Confirm which knowledge capabilities are already enabled. Orchestration can only plan

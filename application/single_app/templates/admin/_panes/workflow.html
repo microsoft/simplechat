@@ -80,6 +80,17 @@
                         <div class="form-text">
                             Maximum automatic tool or action calls an agent can make during one workflow run. Default is 60; increase for large document sets.
                         </div>
+
+                        <div class="form-check form-switch mt-3 mb-2">
+                            <input type="checkbox" class="form-check-input" id="enable_workflow_completeness_check" name="enable_workflow_completeness_check" aria-describedby="workflow-completeness-help" {% if settings.get('enable_workflow_completeness_check', true) %}checked{% endif %} />
+                            <label class="form-check-label" for="enable_workflow_completeness_check">Check workflow answer completeness</label>
+                        </div>
+                        <p class="form-text" id="workflow-completeness-help">Check generated task answers against their instructions and available evidence before downstream use. Model-assisted checking adds model calls and can be uncertain; it never replays tools to repair an answer.</p>
+                        <div class="mb-3">
+                            <label class="form-label" for="workflow_completeness_max_corrections">Maximum answer corrections per task</label>
+                            <input type="number" class="form-control" id="workflow_completeness_max_corrections" name="workflow_completeness_max_corrections" min="0" max="5" step="1" value="{{ settings.get('workflow_completeness_max_corrections', 2) }}" aria-describedby="workflow-corrections-help" />
+                            <div class="form-text" id="workflow-corrections-help">Default: 2. Every correction is checked again. Zero checks without correcting. Turning checking off restores the previous behavior.</div>
+                        </div>
                         <div class="alert alert-warning small mb-0 mt-2" role="alert">
                             Values above 100 are capacity-sensitive. Enable Cosmos DB Throughput automation in SimpleChat so the app can monitor RU pressure and scale up Cosmos when needed, and also monitor Azure OpenAI throttling, App Service CPU and memory, and downstream service latency.
                         </div>

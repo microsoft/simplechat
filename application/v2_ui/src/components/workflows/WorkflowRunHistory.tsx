@@ -9,6 +9,7 @@ import { WorkflowRuntimePanel } from './WorkflowRuntimePanel';
 import { WorkflowFlowView } from './WorkflowFlowView';
 import { WorkflowRunAskInChat } from './WorkflowRunAskInChat';
 import { GlassButton, GlassPanel } from '../ui/primitives';
+import { TaskCompletenessDetails } from '../ui/TaskCompletenessDetails';
 import { Pill, RowAction } from '../workspace/primitives';
 import { useWorkflowResource } from './useWorkflowResource';
 import { workflowRunIsActive, workflowStatusLabel } from '../../lib/workflowWorkbench';
@@ -354,6 +355,7 @@ function RunItems({
                             {outputs ? <p className="text-xs text-text-3">Outputs: {Object.keys(outputs).join(', ')}</p> : null}
                             {authoritative ? <p className="text-xs text-text-3">Authoritative output: {authoritative}</p> : null}
                             <WorkflowDocumentChoiceDetails choice={item.workflow_result?.document_action_choice} />
+                            <TaskCompletenessDetails value={item.workflow_result?.task_completeness} />
                             {audit ? <p className="text-xs text-text-3">Context budget: {audit}</p> : null}
                             {planReplayResult ? <PlanReplayRunBlock result={planReplayResult} /> : null}
                             <ResultExcerpt scope={scope} workflowId={workflowId} runId={runId} item={item} />
