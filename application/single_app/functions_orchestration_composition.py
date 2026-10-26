@@ -51,7 +51,7 @@ from functions_orchestration_result_contracts import (
 )
 from functions_orchestration_result_runtime import (
     raise_source_service_failure, read_complete_input, read_result_document_citations,
-    require_result_service, resolve_step_inputs,
+    read_result_source_coverage, require_result_service, resolve_step_inputs,
 )
 from functions_orchestration_results import MAX_VALUE_BYTES, NamedOutput, ResultUnavailableError
 from functions_orchestration_schema import (
@@ -88,7 +88,8 @@ KNOWLEDGE_POLICIES = {
     KNOWLEDGE_BASIS_SOURCES: (
         'Knowledge basis: sources. Every factual claim must come from the named inputs or the '
         "user's own words. Do not add outside facts. When the inputs do not cover something, "
-        'say what is unknown instead of guessing.'
+        'say what is unknown instead of guessing; state that the searched content does not '
+        'contain it, report the inspected page or source coverage, and summarize what it covers.'
     ),
     KNOWLEDGE_BASIS_MIXED: (
         'Knowledge basis: sources and general knowledge. Ground claims in the named inputs '
@@ -96,7 +97,8 @@ KNOWLEDGE_POLICIES = {
         'historical dates or geography, may come from general knowledge. Never use general '
         'knowledge for time-sensitive, local, private or source-specific facts such as current '
         "events, prices, schedules, opening hours or the contents of the user's documents; say "
-        'what is unknown instead. Do not invent citations or links.'
+        'what is unknown, report the inspected source/page coverage, and summarize what it '
+        'covers instead. Do not invent citations or links.'
     ),
 }
 CONVERSATION_POLICY = (
@@ -566,15 +568,22 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             for name in image_names:
                 asset = read_complete_input(readers[name])
                 images.append({'asset_id': asset['asset_id'], 'title': asset['title']})
-            inputs = {
-                name: {
+            inputs = {}
+            for name, reader in readers.items():
+                if name in image_names:
+                    continue
+                value = read_complete_input(reader)
+                entry = {
                     'kind': reader.result_kind, 'completeness': reader.completeness.to_dict(),
                     'columns': [column.to_dict() for column in reader.columns],
-                    'value': read_complete_input(reader),
+                    'value': value,
                     'document_citations': _input_document_citations(context, reader.reference),
                 }
-                for name, reader in readers.items() if name not in image_names
-            }
+                if not value:
+                    source_cov = read_result_source_coverage(context, reader.reference)
+                    if source_cov is not None:
+                        entry['source_coverage'] = source_cov
+                inputs[name] = entry
         # A saved workflow's result reaches the model only as fenced, untrusted notes, read again
         # for this call; the retained value it replaces never does. That includes a run the plan
         # waited for, which only a setting-gated plan can have compose read.
