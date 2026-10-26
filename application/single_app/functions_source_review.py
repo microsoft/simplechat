@@ -1434,7 +1434,8 @@ async def perform_source_review_async(
         for page in result["pages"]
     )
     pdf_pages_total = sum(int(page.get("pdf_page_count") or 0) for page in result["pages"])
-    pdf_pages_inspected = sum(int(page.get("pdf_pages_inspected") or 0) for page in result["pages"])
+    pdf_pages_inspected = sum(int(page.get("pdf_pages_inspected") or page.get("pdf_pages_reviewed") or 0) for page in result["pages"])
+    pdf_pages_reviewed = sum(int(page.get("pdf_pages_reviewed") or page.get("pdf_pages_inspected") or 0) for page in result["pages"])
     max_depth_reviewed = max([int(page.get("depth") or 0) for page in result["pages"]] or [0])
     planner_result = result.get("planner", {}) if isinstance(result.get("planner"), dict) else {}
     result["coverage"] = {
@@ -1464,6 +1465,7 @@ async def perform_source_review_async(
             {
                 "pdf_pages_total": pdf_pages_total,
                 "pdf_pages_inspected": pdf_pages_inspected,
+                "pdf_pages_reviewed": pdf_pages_reviewed,
             }
             if pdf_pages_total > 0
             else {}
@@ -1584,6 +1586,9 @@ async def _fetch_source_page(
                     )
 
                 content_type = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+                is_pdf_url = urlparse(current_url).path.lower().endswith(".pdf")
+                if content_type in ("application/octet-stream", "binary/octet-stream") and is_pdf_url:
+                    content_type = "application/pdf"
                 if not _is_supported_content_type(content_type, url=current_url):
                     return _skipped_page(
                         current_url,
@@ -1612,8 +1617,7 @@ async def _fetch_source_page(
                     source_settings["source_review_max_bytes_per_page"],
                 )
                 if content_type == "application/pdf" or (
-                    urlparse(current_url).path.lower().endswith(".pdf")
-                    and raw_bytes[:1024].lstrip().startswith(b"%PDF-")
+                    is_pdf_url and raw_bytes[:1024].lstrip().startswith(b"%PDF-")
                 ):
                     return extract_source_review_evidence_from_pdf(
                         pdf_bytes=raw_bytes,
@@ -1830,7 +1834,7 @@ def extract_source_review_evidence_from_pdf(
     ]
     coverage_header = (
         f"PDF coverage: Inspected {pages_to_inspect} of {total_pages} total page(s) "
-        f"({pages_with_text} page(s) with extractable text)."
+        f"({total_pages} total page(s); {pages_with_text} page(s) inspected with extractable text)."
     )
     if not labeled_pages:
         excerpts = [
@@ -1894,6 +1898,7 @@ def extract_source_review_evidence_from_pdf(
         "content_type": "application/pdf",
         "pdf_page_count": total_pages,
         "pdf_pages_inspected": pages_to_inspect,
+        "pdf_pages_reviewed": pages_with_text,
         "pdf_pages_with_text": pages_with_text,
         "depth": depth,
         "parent_url": parent_url,
@@ -3222,7 +3227,7 @@ def _compact_page_for_evidence(page_result: Dict[str, Any]) -> Dict[str, Any]:
         "structured_items": page_result.get("structured_items", [])[:SOURCE_REVIEW_HARD_LIMITS["max_structured_items_per_page"]],
         "structured_item_count": page_result.get("structured_item_count", 0),
     }
-    for pdf_field in ("pdf_page_count", "pdf_pages_inspected", "pdf_pages_with_text"):
+    for pdf_field in ("pdf_page_count", "pdf_pages_inspected", "pdf_pages_reviewed", "pdf_pages_with_text"):
         if page_result.get(pdf_field) is not None:
             compacted[pdf_field] = page_result.get(pdf_field)
     return compacted

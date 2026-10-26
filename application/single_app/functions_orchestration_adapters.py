@@ -1434,11 +1434,12 @@ def _notes_from_source_review(result):
             continue
         title = _text(page.get('title')) or url
         pdf_total = _coerce_int(page.get('pdf_page_count'), 0)
-        pdf_inspected = _coerce_int(page.get('pdf_pages_inspected'), pdf_total)
+        pdf_inspected = _coerce_int(
+            page.get('pdf_pages_inspected', page.get('pdf_pages_reviewed')),
+            pdf_total,
+        )
         if pdf_total > 0:
-            reviewed.append(
-                f'Reviewed: {title} ({url}) — inspected {pdf_inspected} of {pdf_total} PDF page(s)'
-            )
+            reviewed.append(f'Reviewed: {title} ({url}) [{pdf_inspected} of {pdf_total} PDF page(s) inspected]')
         else:
             reviewed.append(f'Reviewed: {title} ({url})')
     if reviewed:

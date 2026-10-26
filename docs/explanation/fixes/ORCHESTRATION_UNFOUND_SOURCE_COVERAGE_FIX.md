@@ -1,7 +1,7 @@
 # Orchestration Unfound Source Information & Linked PDF Coverage Fix
 
-- **Version Implemented**: **0.261.384**
-- **Related Config Update**: `application/single_app/config.py` (`VERSION = "0.261.384"`)
+- **Version Implemented**: **0.261.385**
+- **Related Config Update**: `application/single_app/config.py` (`VERSION = "0.261.385"`)
 - **Related Functional Test**: `functional_tests/test_orchestration_unfound_source_handling.py`
 
 ## Issue Description
@@ -39,7 +39,7 @@ When a user asked a question to check whether specific information existed in a 
 - `application/single_app/functions_task_completeness.py`:
   - Updated `CHECK_POLICY` and `CORRECTION_POLICY` so that for source-grounded tasks where the supplied evidence does not contain the requested fact/item, an answer that clearly states the content does not contain it, reports the available source/page coverage, and summarizes what the inspected content covers satisfies the requirement (`status: "satisfied"`), or is marked `"missing"` (for bounded correction) if coverage/evidence details from the inputs were omitted.
 - `application/single_app/config.py`:
-  - Incremented `VERSION` to `"0.261.384"`.
+  - Incremented `VERSION` to `"0.261.385"`.
 
 ## Validation
 

@@ -2,8 +2,8 @@
 # test_orchestration_unfound_source_handling.py
 """
 Functional test for orchestrator unfound source information handling and linked PDF page coverage.
-Version: 0.261.384
-Implemented in: 0.261.384
+Version: 0.261.385
+Implemented in: 0.261.385
 
 This test ensures that when a user asks a question about a linked PDF or document
 and the searched content does not contain the requested information:
@@ -49,8 +49,8 @@ def _build_sample_manual_pdf_bytes(page_texts):
         document.close()
 
 
-def test_version_at_least_0_261_384():
-    assert_app_version_at_least("0.261.384")
+def test_version_at_least_0_261_385():
+    assert_app_version_at_least("0.261.385")
 
 
 def test_source_review_extracts_pdf_pages_and_reports_page_coverage():
@@ -120,7 +120,7 @@ def test_source_review_extracts_pdf_pages_and_reports_page_coverage():
 
     assert step_result["status"] == "completed"
     assert "5 of 5 PDF page(s) inspected" in step_result["summary"]
-    assert any("inspected 5 of 5 PDF page(s)" in note for note in step_result["notes"])
+    assert any("5 of 5 PDF page(s) inspected" in note for note in step_result["notes"])
 
 
 def test_url_fetch_skipped_link_populates_explanatory_note_for_compose():

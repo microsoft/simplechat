@@ -496,7 +496,7 @@ def retain_document_search_result(step, context, results, *, source_manifest, ci
     seen_pages = set()
     for hit in results:
         page_num = hit.get('page_number') if type(hit) is dict else None
-        if page_num is not None and page_num != '' and page_num not in seen_pages:
+        if page_num is not None and page_num != '' and not isinstance(page_num, bool) and page_num not in seen_pages:
             seen_pages.add(page_num)
             returned_pages.append(page_num)
     prepared = {

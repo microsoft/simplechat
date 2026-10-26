@@ -1,8 +1,8 @@
 # test_task_completeness_engine.py
 """Grounded, bounded task checking and recovery.
 
-Version: 0.261.382
-Implemented in: 0.261.382
+Version: 0.261.384
+Implemented in: 0.261.382; 0.261.384
 """
 
 import json
@@ -179,3 +179,118 @@ def test_oversized_evidence_fails_explicitly_without_a_model_call(monkeypatch):
     assert state["reason_code"] == "completeness_context_limit"
     assert state["corrections"] == 0 and calls == []
     assert checkpoints[-1]["status"] == "verification_unavailable"
+
+
+def test_discontiguous_heading_quotes_and_negative_constraints_pass_normalization():
+    candidate = (
+        "Civic Bridge desk brief (CB-27-983413)\n\n"
+        "## Decision\n"
+        "Avery, readiness reviewer: maintain amber readiness for Civic Bridge review CB-27-983413 "
+        "and proceed with focused review of the Civic Bridge training brief, FED-PROGRAM-027.\n\n"
+        "## Evidence\n"
+        "The established baseline is a $200,000 budget, amber readiness, and Rowan as mission owner. "
+        "The amber rating indicates that readiness requires continued attention and validation before "
+        "full confidence can be established.\n\n"
+        "## Next step\n"
+        "Review outstanding readiness dependencies with Rowan, confirm budget alignment to the "
+        "$200,000 baseline, and identify actions needed to progress beyond amber status."
+    )
+    payload = json.dumps({
+        "requirements": [
+            {
+                "id": "first_line",
+                "requirement": "The very first plain paragraph line must be exactly: Civic Bridge desk brief (CB-27-983413).",
+                "status": "satisfied",
+                "reason": "Starts with the required plain paragraph line.",
+                "evidence_refs": ["approved_request", "instruction"],
+                "answer_quote": "Civic Bridge desk brief (CB-27-983413)",
+            },
+            {
+                "id": "headings_order",
+                "requirement": "Then use exactly these Markdown section headings in this order: ## Decision, ## Evidence, ## Next step.",
+                "status": "satisfied",
+                "reason": "All three Markdown headings appear in the exact required order.",
+                "evidence_refs": [],
+                "answer_quote": "## Decision ... ## Evidence ... ## Next step",
+            },
+            {
+                "id": "baseline_facts",
+                "requirement": "State the established baseline facts explicitly: Civic Bridge review CB-27-983413; Civic Bridge training brief FED-PROGRAM-027; budget $200,000; readiness amber; mission owner Rowan.",
+                "status": "satisfied",
+                "reason": "Every baseline fact is stated explicitly.",
+                "evidence_refs": [],
+                "answer_quote": "Civic Bridge review CB-27-983413; FED-PROGRAM-027; $200,000 budget; amber readiness; Rowan as mission owner",
+            },
+            {
+                "id": "no_em_dashes",
+                "requirement": "Do not use em dashes.",
+                "status": "satisfied",
+                "reason": "No em dashes appear in the response.",
+                "evidence_refs": [],
+                "answer_quote": "",
+            },
+            {
+                "id": "concise_tone",
+                "requirement": "Keep the tone concise and professional.",
+                "status": "satisfied",
+                "reason": "The brief is concise and professional.",
+                "evidence_refs": [],
+                "answer_quote": "",
+            },
+        ]
+    })
+    requirements = normalize_assessment(f"```json\n{payload}\n```", candidate=candidate, evidence={})
+    assert len(requirements) == 5
+    assert all(item["status"] == "satisfied" for item in requirements)
+    assert all(item["answer_quote"] and item["answer_quote"] in candidate for item in requirements)
+    assert all(item["evidence_refs"] == [] for item in requirements)
+
+
+def test_nested_evidence_identifiers_and_citations_resolve_to_top_level_evidence_keys():
+    candidate = (
+        "## Decision\n"
+        "- **Policy reference:** FCRA-ACQ-027\n"
+        "- **Revision marker:** FED-POLICY-V1-027\n"
+        "(Source: FED-7d616b930e5474d0-policy-v1.md, Page: 1) [#01fed089-baca-4422-a2e8-f1e039e1b8c0_1]"
+    )
+    evidence = {
+        "policy_findings": {
+            "kind": "records-v1",
+            "value": [{
+                "document_id": "01fed089-baca-4422-a2e8-f1e039e1b8c0",
+                "file_name": "FED-7d616b930e5474d0-policy-v1.md",
+                "policy_id": "FCRA-ACQ-027",
+                "marker": "FED-POLICY-V1-027",
+            }],
+            "document_citations": [{
+                "citation_id": "01fed089-baca-4422-a2e8-f1e039e1b8c0_1",
+                "citation": "(Source: FED-7d616b930e5474d0-policy-v1.md, Page: 1) [#01fed089-baca-4422-a2e8-f1e039e1b8c0_1]",
+            }],
+        },
+        "grant_record": {
+            "kind": "structured-v1",
+            "value": {"grant_id": "DEMO-GRANT-001", "amount": 125000},
+        },
+    }
+    payload = json.dumps({
+        "requirements": [
+            {
+                "id": "policy_ref",
+                "requirement": "Include the policy reference and revision marker.",
+                "status": "satisfied",
+                "reason": "Stated from policy findings.",
+                "evidence_refs": [
+                    "[#01fed089-baca-4422-a2e8-f1e039e1b8c0_1]",
+                    "FED-7d616b930e5474d0-policy-v1.md",
+                    "policy_findings.value[0]",
+                    "DEMO-GRANT-001",
+                    "instruction",
+                ],
+                "answer_quote": "Policy reference: FCRA-ACQ-027",
+            },
+        ]
+    })
+    requirements = normalize_assessment(payload, candidate=candidate, evidence=evidence)
+    assert requirements[0]["evidence_refs"] == ["policy_findings", "grant_record"]
+    assert requirements[0]["answer_quote"] in candidate
+
