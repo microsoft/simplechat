@@ -88,7 +88,11 @@ KNOWLEDGE_POLICIES = {
     KNOWLEDGE_BASIS_SOURCES: (
         'Knowledge basis: sources. Every factual claim must come from the named inputs or the '
         "user's own words. Do not add outside facts. When the inputs do not cover something, "
-        'say what is unknown instead of guessing.'
+        'say what is unknown instead of guessing. When the user asked to find or verify '
+        'specific information in the sources and the named inputs do not contain it, state '
+        'clearly that the searched content does not contain that information, report the '
+        'source and page/section inspection counts from the inputs when available, and briefly '
+        'note what the inspected content covers as evidence that the source was reviewed.'
     ),
     KNOWLEDGE_BASIS_MIXED: (
         'Knowledge basis: sources and general knowledge. Ground claims in the named inputs '
@@ -96,7 +100,9 @@ KNOWLEDGE_POLICIES = {
         'historical dates or geography, may come from general knowledge. Never use general '
         'knowledge for time-sensitive, local, private or source-specific facts such as current '
         "events, prices, schedules, opening hours or the contents of the user's documents; say "
-        'what is unknown instead. Do not invent citations or links.'
+        'what is unknown instead, and when a source-specific detail is not present in the '
+        'searched inputs, report the inspected source/page coverage and what the source '
+        'actually covers. Do not invent citations or links.'
     ),
 }
 CONVERSATION_POLICY = (
@@ -795,6 +801,21 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                         'task_completeness': public_completeness_report(state),
                     })
 
+            deliverable_guidance = compose_deliverable_guidance(step, images)
+            visual_guidance = build_answer_visual_guidance(visuals, has_existing_charts=bool(charts))
+            completeness_generation_policy = ' '.join(part for part in (
+                policy,
+                CONVERSATION_POLICY if history else '',
+                *deliverable_guidance,
+                *visual_guidance,
+            ) if part)
+            completeness_evidence = {
+                **_model_inputs(inputs, charts),
+                **({'images': images} if images else {}),
+                **({'unavailable_inputs': missing} if missing else {}),
+                **({'saved_memory': memory['context_messages']} if memory.get('context_messages') else {}),
+                **({'conversation_history': history} if history else {}),
+            }
             response, completeness_state = check_and_correct(
                 response,
                 instruction={
@@ -807,11 +828,10 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 },
                 contract={
                     'outputs': outputs, 'profiles': profiles, 'knowledge_basis': basis,
-                    'generation_policy': policy,
+                    'generation_policy': completeness_generation_policy,
                     'visual_requirements': _compose_visual_rules(step, {}),
                 },
-                evidence={**_model_inputs(inputs, charts), **({'images': images} if images else {}),
-                          **({'unavailable_inputs': missing} if missing else {})},
+                evidence=completeness_evidence,
                 policy=check_policy, invoke=invoke_check, validate=validate_candidate,
                 checkpoint=save_completeness, saved_state=saved_completeness, recheck=recheck,
                 on_error=lambda error_type: log_event(

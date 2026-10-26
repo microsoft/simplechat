@@ -1,16 +1,19 @@
 # test_task_completeness_runtime.py
 """Real-module verification, correction, result eligibility and durable storage.
 
-Version: 0.261.382
-Implemented in: 0.261.382
+Version: 0.261.384
+Implemented in: 0.261.382; 0.261.384
 """
 
 import importlib
 import json
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "single_app"))
 from test_orchestration_harness_execution import harness, initialized_application  # noqa: F401
 from test_orchestration_reason_render_pipeline import narrative_io  # noqa: F401
 from test_support.orchestration_harness_execution import compose_step, input_binding, render_step
@@ -290,3 +293,182 @@ def test_retained_final_report_is_check_only_and_does_not_repeat_producer(harnes
     harness.read()
     stored_steps(harness)
     assert len(harness.model_calls) == count
+
+
+def test_compose_completeness_receives_saved_memory_and_conversation_history(harness):
+    harness.settings["enable_chat_orchestration_completeness_check"] = True
+    memory_messages = [
+        {
+            "role": "system",
+            "content": (
+                "<Instruction Memory>\n"
+                "- For my Civic Bridge review CB-27-983413, start each brief with "
+                "'Civic Bridge desk brief (CB-27-983413)' on its own line. Use these three "
+                "section headings, in order: Decision, Evidence, Next step.\n"
+                "</Instruction Memory>"
+            ),
+        },
+        {
+            "role": "system",
+            "content": (
+                "<Fact Memory>\n"
+                "- For Civic Bridge review CB-27-983413, please address me as Avery; "
+                "I'm the readiness reviewer. Rowan owns the mission.\n"
+                "</Fact Memory>"
+            ),
+        },
+    ]
+    candidate = (
+        "Civic Bridge desk brief (CB-27-983413)\n\n"
+        "## Decision\n"
+        "Avery, readiness reviewer: maintain amber readiness for Civic Bridge review CB-27-983413.\n\n"
+        "## Evidence\n"
+        "Training brief FED-PROGRAM-027 has a $200,000 budget, amber readiness, and Rowan as mission owner.\n\n"
+        "## Next step\n"
+        "Review readiness dependencies with Rowan."
+    )
+    checker_reply = json.dumps({
+        "requirements": [
+            {
+                "id": "prefix",
+                "requirement": "Start with Civic Bridge desk brief (CB-27-983413) on its own line.",
+                "status": "satisfied",
+                "reason": "Starts with the saved instruction prefix.",
+                "evidence_refs": ["saved_memory"],
+                "answer_quote": "Civic Bridge desk brief (CB-27-983413)",
+            },
+            {
+                "id": "headings",
+                "requirement": "Use Markdown headings ## Decision, ## Evidence, ## Next step in order.",
+                "status": "satisfied",
+                "reason": "Uses the three required headings in order.",
+                "evidence_refs": ["saved_memory"],
+                "answer_quote": "## Decision ... ## Evidence ... ## Next step",
+            },
+            {
+                "id": "persona_and_history",
+                "requirement": "Address Avery, readiness reviewer, and preserve prior baseline facts.",
+                "status": "satisfied",
+                "reason": "Addresses Avery and preserves baseline facts.",
+                "evidence_refs": ["saved_memory", "conversation_history"],
+                "answer_quote": "Avery, readiness reviewer",
+            },
+            {
+                "id": "no_em_dash",
+                "requirement": "Do not use em dashes.",
+                "status": "satisfied",
+                "reason": "No em dashes are used.",
+                "evidence_refs": [],
+                "answer_quote": "",
+            },
+        ]
+    })
+    harness.create([compose_step()], replies=[candidate, checker_reply], final_response=input_binding("prepare", "answer"))
+    execution = harness.prepare()
+    execution.context.memory_context = {
+        **execution.context.memory_context,
+        "status": "available",
+        "context_messages": memory_messages,
+        "notices": [],
+    }
+    execution.context.reload_memory_context = lambda: execution.context.memory_context
+    history_messages = [
+        {"id": "m1", "role": "user", "content": "Civic Bridge review CB-27-983413 baseline is $200,000."},
+        {"id": "m2", "role": "assistant", "content": "Noted the $200,000 baseline for CB-27-983413."},
+    ]
+    execution.context.read_conversation_messages = lambda: history_messages
+    execution.execute()
+
+    saved = harness.read()
+    assert saved["status"] == "completed", saved.get("failure")
+    checker_call = harness.model_calls[-1]
+    checker_payload = json.loads(checker_call["messages"][1]["content"])
+    assert "saved_memory" in checker_payload["evidence"]
+    assert "conversation_history" in checker_payload["evidence"]
+    assert "Current saved Instruction Memory and Fact Memory supersede" in checker_payload["contract"]["generation_policy"]
+
+
+def test_scoped_memory_candidates_do_not_leak_into_unmatched_conversations():
+    memory_module = importlib.import_module("functions_fact_memory_context")
+    items = [
+        {
+            "id": "cb-1",
+            "memory_type": "instruction",
+            "value": (
+                "For my Civic Bridge review CB-27-983413, start each brief with "
+                "'Civic Bridge desk brief (CB-27-983413)' on its own line. "
+                "These preferences apply to Civic Bridge review CB-27-983413."
+            ),
+            "updated_at": "2026-10-23T19:43:34+00:00",
+        },
+        {
+            "id": "cb-2",
+            "memory_type": "instruction",
+            "value": (
+                "For my Civic Bridge review CB-27-9672AB, start each brief with "
+                "'Civic Bridge desk brief (CB-27-9672AB)' on its own line. "
+                "These preferences apply to Civic Bridge review CB-27-9672AB."
+            ),
+            "updated_at": "2026-10-23T12:37:22+00:00",
+        },
+        {
+            "id": "fed-1",
+            "memory_type": "instruction",
+            "value": (
+                "For this synthetic exercise only, when the user message contains "
+                "FED-repair2-20261017-FED-38, start your answer with the exact line "
+                "BRIEF-42ffe3e63b-R1. Do not apply this format to messages without that exercise label."
+            ),
+            "updated_at": "2026-10-17T23:03:58+00:00",
+        },
+        {
+            "id": "global-1",
+            "memory_type": "instruction",
+            "value": "Do not use em dashes.",
+            "updated_at": "2026-08-04T20:01:20+00:00",
+        },
+    ]
+
+    unscoped_query = "Which program is 10 seconds on and 10 seconds off? https://manuals.plus/m/424434ca_optim.pdf"
+    selected_unscoped = memory_module._select_scoped_memory_candidates(items, query_text=unscoped_query)
+    assert [item["id"] for item in selected_unscoped] == ["global-1"]
+
+    other_review_query = "I'm working on Civic Bridge review CB-27-7D616B. Give me a baseline summary."
+    selected_other = memory_module._select_scoped_memory_candidates(items, query_text=other_review_query)
+    assert [item["id"] for item in selected_other] == ["global-1"]
+
+    matching_query = "I'm working on Civic Bridge review CB-27-983413. Give me a baseline summary."
+    selected_matching = memory_module._select_scoped_memory_candidates(items, query_text=matching_query)
+    assert [item["id"] for item in selected_matching] == ["cb-1", "global-1"]
+
+
+def test_pdf_source_review_extracts_page_coverage_and_unfound_source_completes(harness):
+    import fitz
+
+    source_review = importlib.import_module("functions_source_review")
+    adapters = importlib.import_module("functions_orchestration_adapters")
+    doc = fitz.open()
+    page1 = doc.new_page()
+    page1.insert_text((72, 72), "Manual Title: Timer Controller\nProgram 1 runs 30 seconds on and 30 seconds off.")
+    page2 = doc.new_page()
+    page2.insert_text((72, 72), "Program 2 runs continuous mode for 5 minutes.")
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    extracted = source_review.extract_source_review_evidence_from_pdf(
+        pdf_bytes=pdf_bytes,
+        url="https://manuals.example/timer_manual.pdf",
+        user_message="Which program runs 10 seconds on and 10 seconds off?",
+    )
+    assert extracted["status"] == "reviewed"
+    assert extracted["content_type"] == "application/pdf"
+    assert extracted["pdf_page_count"] == 2
+    assert extracted["pdf_pages_reviewed"] == 2
+    assert any("2 total page(s); 2 page(s) inspected" in excerpt for excerpt in extracted["excerpts"])
+
+    compacted = source_review._compact_page_for_evidence(extracted)
+    assert compacted["pdf_page_count"] == 2
+    assert compacted["pdf_pages_reviewed"] == 2
+    notes = adapters._notes_from_source_review({"pages": [compacted]})
+    assert any("2 of 2 PDF page(s) inspected" in note for note in notes)
+

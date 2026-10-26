@@ -95,6 +95,7 @@ SAFE_CONTENT_TYPES = (
     "text/html",
     "text/plain",
     "text/markdown",
+    "application/pdf",
     "application/json",
     "application/ld+json",
     "application/xml",
@@ -1432,6 +1433,8 @@ async def perform_source_review_async(
         for page in result["pages"]
     )
     max_depth_reviewed = max([int(page.get("depth") or 0) for page in result["pages"]] or [0])
+    pdf_pages_total = sum(int(page.get("pdf_page_count") or 0) for page in result["pages"])
+    pdf_pages_reviewed = sum(int(page.get("pdf_pages_reviewed") or 0) for page in result["pages"])
     planner_result = result.get("planner", {}) if isinstance(result.get("planner"), dict) else {}
     result["coverage"] = {
         "pages_reviewed": len(result["pages"]),
@@ -1456,6 +1459,10 @@ async def perform_source_review_async(
         "load_more_pages": load_more_pages,
         "load_more_clicks_succeeded": load_more_clicks_succeeded,
         "structured_items_extracted": structured_items_extracted,
+        **({
+            "pdf_pages_total": pdf_pages_total,
+            "pdf_pages_reviewed": pdf_pages_reviewed,
+        } if pdf_pages_total else {}),
     }
     if not result["pages"] and result["skipped"] and not result.get("skipped_reason"):
         skipped_reasons = []
@@ -1572,6 +1579,9 @@ async def _fetch_source_page(
                     )
 
                 content_type = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+                is_pdf_url = urlparse(current_url).path.lower().endswith(".pdf")
+                if content_type in ("application/octet-stream", "binary/octet-stream") and is_pdf_url:
+                    content_type = "application/pdf"
                 if not _is_supported_content_type(content_type):
                     return _skipped_page(
                         current_url,
@@ -1599,6 +1609,16 @@ async def _fetch_source_page(
                     response,
                     source_settings["source_review_max_bytes_per_page"],
                 )
+                if content_type == "application/pdf" or (is_pdf_url and raw_bytes.startswith(b"%PDF-")):
+                    return extract_source_review_evidence_from_pdf(
+                        pdf_bytes=raw_bytes,
+                        url=current_url,
+                        user_message=user_message,
+                        truncated=truncated,
+                        depth=depth,
+                        parent_url=parent_url,
+                        reason=reason,
+                    )
                 html_text = raw_bytes.decode(_detect_encoding(response), errors="ignore")
                 page_result = _extract_page_evidence(
                     content=html_text,
@@ -1715,6 +1735,87 @@ def _extract_page_evidence(
         parent_url=parent_url,
         reason=reason,
     )
+
+
+def extract_source_review_evidence_from_pdf(
+    *,
+    pdf_bytes: bytes,
+    url: str,
+    user_message: str,
+    truncated: bool = False,
+    depth: int = 0,
+    parent_url: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Extract page-by-page text, page counts, and coverage summary from a PDF."""
+    try:
+        import fitz
+
+        doc = fitz.open(stream=pdf_bytes or b"", filetype="pdf")
+    except Exception as pdf_error:
+        return _skipped_page(
+            url,
+            "pdf_parse_failed",
+            depth=depth,
+            parent_url=parent_url,
+            content_type="application/pdf",
+            error=str(pdf_error)[:300],
+        )
+
+    try:
+        total_pages = len(doc)
+        metadata = doc.metadata or {}
+        doc_title = _clean_text(metadata.get("title") or "")
+        page_blocks = []
+        page_previews = []
+        pages_with_text = 0
+        for page_index in range(total_pages):
+            page_num = page_index + 1
+            raw_page_text = _clean_text(doc[page_index].get_text("text") or "")
+            if not raw_page_text:
+                continue
+            pages_with_text += 1
+            page_blocks.append(f"[Page {page_num} of {total_pages}] {raw_page_text}")
+            if len(page_previews) < 12:
+                page_previews.append(f"Page {page_num}: {raw_page_text[:160]}")
+    finally:
+        doc.close()
+
+    full_text = "\n\n".join(page_blocks)
+    url_filename = os.path.basename(urlparse(url).path) or url
+    title = doc_title or url_filename or url
+    coverage_line = (
+        f"PDF coverage summary for {title}: {total_pages} total page(s); "
+        f"{pages_with_text} page(s) inspected with extractable text."
+    )
+    if page_previews:
+        coverage_line = f"{coverage_line} Inspected page contents: {' | '.join(page_previews)}"
+    coverage_line = coverage_line[:SOURCE_REVIEW_HARD_LIMITS["max_excerpt_chars"]]
+    snippets = _select_relevant_snippets(full_text, user_message) if full_text else []
+    max_excerpts = SOURCE_REVIEW_HARD_LIMITS["max_excerpts_per_page"]
+    if coverage_line not in snippets:
+        snippets = [coverage_line, *snippets[:max(0, max_excerpts - 1)]]
+
+    return {
+        "status": "reviewed",
+        "url": url,
+        "title": title,
+        "published_date": _normalize_date(_find_date_candidate(full_text[:3000]) or _find_date_candidate(url)),
+        "content_type": "application/pdf",
+        "pdf_page_count": total_pages,
+        "pdf_pages_reviewed": pages_with_text,
+        "depth": depth,
+        "parent_url": parent_url,
+        "reason": reason,
+        "text_char_count": len(full_text),
+        "truncated": truncated,
+        "excerpts": snippets,
+        "links": [],
+        "link_count": 0,
+        "structured_items": [],
+        "structured_item_count": 0,
+        "prompt_injection_markers": _detect_prompt_injection_markers(full_text),
+    }
 
 
 def extract_source_review_evidence_from_html(
@@ -3006,7 +3107,7 @@ def _should_follow_links(page_result: Dict[str, Any], source_settings: Dict[str,
 
 
 def _compact_page_for_evidence(page_result: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+    compacted = {
         "url": page_result.get("url"),
         "title": page_result.get("title"),
         "published_date": page_result.get("published_date"),
@@ -3030,6 +3131,10 @@ def _compact_page_for_evidence(page_result: Dict[str, Any]) -> Dict[str, Any]:
         "structured_items": page_result.get("structured_items", [])[:SOURCE_REVIEW_HARD_LIMITS["max_structured_items_per_page"]],
         "structured_item_count": page_result.get("structured_item_count", 0),
     }
+    if page_result.get("pdf_page_count") is not None:
+        compacted["pdf_page_count"] = page_result.get("pdf_page_count")
+        compacted["pdf_pages_reviewed"] = page_result.get("pdf_pages_reviewed")
+    return compacted
 
 
 def _skipped_page(
