@@ -233,6 +233,13 @@ def _select_scoped_memory_candidates(items, query_text=None, context_text=None, 
     has_any_matched_id = bool(
         all_query_ids and any(fact_id_sets[id(fact)] & all_query_ids for fact in items)
     )
+    scoped_prefix_starts = ('for ', 'in ', 'on ', 'during ', 'when ', 'under ', 'if ')
+    scoped_value_markers = (
+        'apply to ', 'applies to ', 'only when ', 'when the user message contains', 'do not apply',
+    )
+    query_id_stems = {
+        token.split('-', 1)[0] for token in all_query_ids if '-' in token and token.split('-', 1)[0]
+    }
     allowed_scoped_ids = set()
     for prefix, members in prefix_members.items():
         primary_matched = [fact for fact in members if fact_id_sets[id(fact)] & primary_ids]
@@ -243,14 +250,28 @@ def _select_scoped_memory_candidates(items, query_text=None, context_text=None, 
         if context_matched:
             allowed_scoped_ids.update(id(fact) for fact in context_matched)
             continue
-        if not has_any_matched_id:
+        member_id_sets = {frozenset(fact_id_sets[id(fact)]) for fact in members}
+        member_stems = {
+            token.split('-', 1)[0]
+            for fact in members
+            for token in fact_id_sets[id(fact)]
+            if '-' in token and token.split('-', 1)[0]
+        }
+        is_scoped_group = (
+            len(member_id_sets) > 1
+            or prefix.startswith(scoped_prefix_starts)
+            or any(
+                any(marker in str(fact.get('value') or '').lower() for marker in scoped_value_markers)
+                for fact in members
+            )
+            or bool(query_id_stems and (member_stems & query_id_stems))
+        )
+        if not has_any_matched_id and not is_scoped_group:
             allowed_scoped_ids.add(prefix_latest_id[prefix])
     filtered = [
         fact for fact in items
         if fact_prefixes[id(fact)] is None or id(fact) in allowed_scoped_ids
     ]
-    if not filtered:
-        filtered = list(items)
     rank_meta = {}
     for fact in filtered:
         primary_count = len(fact_id_sets[id(fact)] & primary_ids) if primary_ids else 0

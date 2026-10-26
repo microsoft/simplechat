@@ -408,6 +408,11 @@ def retain_document_search_result(step, context, results, *, source_manifest, ci
         grouped.setdefault(hit['document_id'], []).append({
             key: deepcopy(hit.get(key)) for key in ('chunk_text', 'page_number', 'chunk_sequence', 'score')
         })
+    pages_in_excerpts = sorted({
+        hit['page_number']
+        for hit in results
+        if isinstance(hit, dict) and isinstance(hit.get('page_number'), int) and not isinstance(hit.get('page_number'), bool)
+    })
     prepared = {
         'version': 'orchestration-gathered-content-v1', 'capability_id': 'document_search',
         'content_scope': 'returned_excerpts',
@@ -420,6 +425,7 @@ def retain_document_search_result(step, context, results, *, source_manifest, ci
         'search_scope': deepcopy(search_scope),
         'coverage': {
             'returned_excerpt_count': len(results), 'discovered_source_count': len(sources),
+            'pages_in_returned_excerpts': pages_in_excerpts,
             'whole_document_coverage': False, 'exhaustive_corpus_coverage': False,
         },
     }

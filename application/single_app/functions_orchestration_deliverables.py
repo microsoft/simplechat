@@ -1263,6 +1263,14 @@ def compose_deliverable_guidance(step, images):
             f"- {entry['description']}" + (f" ({entry['quantity']})" if entry.get('quantity') else '')
             for entry in wanted
         )
+        if step.get('inputs'):
+            lines.append(
+                'When the user asked to find or verify information in the bound sources and '
+                'those inputs do not contain it, deliver this by clearly stating that the '
+                'searched content does not contain the requested information, stating how many '
+                'pages or sections were inspected (when reported in the inputs), and citing '
+                'evidence of what the inspected content covers.'
+            )
     if images:
         tokens = ', '.join(f"[[image:{image['asset_id']}]] ({image['title']})" for image in images)
         lines.append(
