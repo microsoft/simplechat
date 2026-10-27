@@ -57,6 +57,7 @@ SCALE_PANES = {
         "redis-cache-section",
         "redis-monitoring-section",
         "conversation-cache-section",
+        "request-stream-timeouts-section",
     ),
     "cosmos": (
         "document-access-index-section",

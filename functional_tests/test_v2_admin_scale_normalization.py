@@ -115,6 +115,10 @@ def test_cache_and_index_values_keep_v1_bounds():
 
     cases = (
         ("conversation_cache_ttl_seconds", {0: 0, 120: 120, -1: 0}),
+        ("model_stream_read_timeout_seconds", {30: 30, 120: 120, 600: 600, 15: 30, 900: 600}),
+        ("document_action_timeout_seconds", {60: 60, 300: 300, 900: 900, 10: 60, 1200: 900}),
+        ("stream_disconnect_grace_seconds", {0: 0, 60: 60, 300: 300, -5: 0, 500: 300}),
+        ("model_call_max_retries", {0: 0, 1: 1, 3: 3, -1: 0, 5: 3}),
         ("document_access_index_cache_ttl_seconds", {60: 60, 900: 900, 59: 60, 901: 900}),
         ("document_access_index_backfill_batch_size", {1: 1, 1000: 1000, 0: 1, 1001: 1000}),
         ("document_access_index_repair_batch_size", {1: 1, 500: 500, 0: 1, 501: 500}),

@@ -4,7 +4,7 @@ counts:
   capabilities: 133
   admin_groups: 15
   admin_tabs: 49
-  admin_sections: 107
+  admin_sections: 108
   actions: 33
   chat_controls: 47
   sub_elements: 3
@@ -871,6 +871,10 @@ admin_sections:
   group: scale
 - id: redis-monitoring-section
   label: Redis Metrics
+  tab: redis-caching
+  group: scale
+- id: request-stream-timeouts-section
+  label: Request & Stream Timeouts
   tab: redis-caching
   group: scale
 - id: retention-policy-section

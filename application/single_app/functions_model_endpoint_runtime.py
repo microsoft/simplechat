@@ -28,21 +28,33 @@ from functions_model_endpoint_validation import (
 )
 from functions_settings import resolve_model_endpoint_foundry_scope
 from model_endpoint_clients import (
+    AUXILIARY_MODEL_CALL_TIMEOUT_SECONDS,
+    DEFAULT_DOCUMENT_ACTION_TIMEOUT_SECONDS,
+    DEFAULT_MODEL_CALL_MAX_RETRIES,
+    DEFAULT_MODEL_STREAM_READ_TIMEOUT_SECONDS,
+    DEFAULT_STREAM_DISCONNECT_GRACE_SECONDS,
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
     MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
     AnthropicSemanticKernelChatCompletion,
     CustomAnthropicChatCompletionClient,
     OpenAIStyleChatCompletionClient,
+    bind_callable_with_timeout,
     build_anthropic_chat_client,
+    build_openai_client_timeout,
+    build_openai_client_timeout_options,
     build_openai_style_chat_client,
     build_custom_openai_async_http_client,
     build_custom_openai_sync_http_client,
     infer_model_endpoint_protocol,
     normalize_openai_style_base_url,
+    resolve_document_action_timeout_seconds,
+    resolve_model_call_max_retries,
+    resolve_model_stream_read_timeout_seconds,
     resolve_openai_style_request_api_version,
     resolve_custom_azure_openai_base_url,
     resolve_custom_openai_base_url,
+    resolve_stream_disconnect_grace_seconds,
     sanitize_custom_async_openai_client,
 )
 
@@ -248,6 +260,7 @@ def build_custom_openai_client_kwargs(
         'base_url': base_url,
         'default_headers': merged_headers,
         'http_client': factory(**transport_options),
+        **build_openai_client_timeout_options(settings),
     }
     if descriptor.protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
         kwargs['default_query'] = {'api-version': connection['api_version']}
@@ -264,7 +277,9 @@ def _build_custom_anthropic_client(endpoint_config, settings, extra_headers):
     return CustomAnthropicChatCompletionClient(
         endpoint=endpoint, auth_headers=merged_headers,
         anthropic_version=connection.get('anthropic_version') or descriptor.default_version,
-        url_mode=connection.get('url_mode') or 'auto', **transport_options,
+        url_mode=connection.get('url_mode') or 'auto',
+        timeout=resolve_model_stream_read_timeout_seconds(settings),
+        **transport_options,
     )
 
 
@@ -330,6 +345,7 @@ def build_model_endpoint_sync_chat_client(
             OpenAI(**kwargs), sanitize_errors=True, api_type=api_type, request_url=kwargs['base_url'],
         ), runtime_protocol
     auth_type = str(auth_settings.get('type') or 'managed_identity').strip().lower()
+    timeout_options = globals().get('build_openai_client_timeout_options', lambda *_a, **_k: {})(settings)
 
     if auth_type in ('api_key', 'key'):
         api_key = auth_settings.get('api_key')
@@ -353,6 +369,7 @@ def build_model_endpoint_sync_chat_client(
             azure_endpoint=endpoint,
             api_key=api_key,
             default_headers=extra_headers or None,
+            **timeout_options,
         ), runtime_protocol
 
     credential = resolve_credential_for_model_endpoint_auth(auth_settings)
@@ -383,6 +400,7 @@ def build_model_endpoint_sync_chat_client(
         azure_endpoint=endpoint,
         azure_ad_token_provider=token_provider,
         default_headers=extra_headers or None,
+        **timeout_options,
     ), runtime_protocol
 
 
@@ -650,6 +668,7 @@ def build_semantic_kernel_chat_service_for_model(
                 client_kwargs = {
                     'api_key': api_key,
                     'base_url': normalize_openai_style_base_url(endpoint),
+                    **globals().get('build_openai_client_timeout_options', lambda *_a, **_k: {})(settings),
                 }
                 if extra_headers:
                     client_kwargs['default_headers'] = extra_headers
@@ -690,6 +709,7 @@ def build_semantic_kernel_chat_service_for_model(
             client_kwargs = {
                 'api_key': token,
                 'base_url': normalize_openai_style_base_url(endpoint),
+                **globals().get('build_openai_client_timeout_options', lambda *_a, **_k: {})(settings),
             }
             if extra_headers:
                 client_kwargs['default_headers'] = extra_headers

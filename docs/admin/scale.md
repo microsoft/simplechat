@@ -194,6 +194,36 @@ Index > Azure AI Search. See [Knowledge settings]({{ '/admin/knowledge/' | relat
 | Enable conversation cache | Caches conversation lists, feeds, and advanced-search results per user. Off bypasses cache reads and writes. | On | `enable_conversation_cache`; capability toggle; needs Redis |
 | Cache TTL | How long a cached payload lives. `0` stops writing new entries. | 120 seconds | `conversation_cache_ttl_seconds`; shown while the cache is on |
 
+### Request & Stream Timeouts {#request-stream-timeouts-section}
+
+Each live chat stream holds one web-worker HTTP thread and one dedicated chat-stream worker
+thread until the response finishes, times out, or cancels. If an upstream AI model endpoint
+stalls without a socket read timeout, or if a multi-window document action runs without an
+overall deadline, slow calls can accumulate and exhaust worker threads across the instance.
+
+This card sets the guardrails that keep stalled model calls and abandoned browser tabs from
+tying up worker capacity:
+
+- **Granular socket read timeouts:** `model_stream_read_timeout_seconds` bounds how long
+  SimpleChat waits for the first token from a model or between streamed chunks. Healthy streams
+  that continue emitting tokens are not interrupted by this limit.
+- **Overall document-action deadline:** `document_action_timeout_seconds` caps total wall-clock
+  runtime for multi-window Analyze and Compare requests. When a run stops at this deadline,
+  completed durable window checkpoints are preserved so retrying can resume from saved progress.
+- **Disconnected stream grace window:** When a browser tab closes or loses connectivity during
+  a stream, SimpleChat keeps the background worker alive briefly so a page refresh can reattach.
+  If no client reattaches before `stream_disconnect_grace_seconds` elapses, the stream cancels
+  itself and releases its worker thread.
+
+#### Settings
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Model & Stream Read Timeout | Maximum wait for the initial model response or between streamed chunks before the socket read fails (30 to 600 seconds). | 120 seconds | `model_stream_read_timeout_seconds` |
+| Document Action Total Deadline | Overall wall-clock budget for synchronous and multi-window document actions such as Analyze and Compare (60 to 900 seconds). | 300 seconds | `document_action_timeout_seconds` |
+| Disconnected Stream Grace Period | How long an in-flight stream continues after browser disconnect to allow `/reattach` before auto-cancelling (`0` cancels immediately; 0 to 300 seconds). | 60 seconds | `stream_disconnect_grace_seconds` |
+| Model Call Max Retries | Automatic SDK retry attempts per model call on transient connection or rate-limit errors (0 to 3 retries). | 1 retry | `model_call_max_retries` |
+
 ## Cosmos {#cosmos}
 
 ### DAI Metrics {#document-access-index-section}

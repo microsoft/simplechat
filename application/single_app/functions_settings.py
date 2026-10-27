@@ -1887,6 +1887,10 @@ def get_settings(use_cosmos=False, include_source=False):
         'chat_bootstrap_cache_ttl_seconds': 300,
         'enable_conversation_cache': True,
         'conversation_cache_ttl_seconds': 120,
+        'model_stream_read_timeout_seconds': 120,
+        'document_action_timeout_seconds': 300,
+        'stream_disconnect_grace_seconds': 60,
+        'model_call_max_retries': 1,
 
         # Cosmos DB Throughput Scale Settings
         **get_default_cosmos_throughput_settings(),

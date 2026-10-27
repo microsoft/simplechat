@@ -38,6 +38,7 @@ SCALE_SECTIONS = {
         "redis-cache-section",
         "redis-monitoring-section",
         "conversation-cache-section",
+        "request-stream-timeouts-section",
         "document-access-index-section",
         "cosmos-maintenance-section",
         "cosmos-throughput-section",

@@ -100,6 +100,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 # Flask app configuration constants
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
+CHAT_STREAM_EXECUTOR_MAX_WORKERS = max(8, int(os.getenv('SIMPLECHAT_CHAT_STREAM_WORKERS', '32') or '32'))
 SESSION_TYPE = 'filesystem'
 VERSION = "0.261.387"
 IS_DEVELOPMENT = is_development_env_enabled()

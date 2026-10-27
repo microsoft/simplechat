@@ -44,17 +44,25 @@ from semantic_kernel_plugins.chart_plugin import ChartPlugin
 from foundry_agent_runtime import FoundryAgentInvocationError, FoundryAgentUserAuthenticationRequired, execute_foundry_agent, resolve_authority
 from functions_orchestration_timing import OrchestrationExecutionStopped
 from model_endpoint_clients import (
+    AUXILIARY_MODEL_CALL_TIMEOUT_SECONDS,
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
     MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
     MODEL_CONTEXT_MODE_FOLD_LATEST_USER,
     ModelEndpointBehavior,
+    bind_callable_with_timeout,
     build_anthropic_chat_client,
+    build_openai_client_timeout,
+    build_openai_client_timeout_options,
     build_openai_style_chat_client,
     create_completion_with_reasoning,
     extract_chat_completion_response_text,
     infer_model_endpoint_protocol,
     normalize_chat_completion_text,
+    resolve_document_action_timeout_seconds,
+    resolve_model_call_max_retries,
+    resolve_model_stream_read_timeout_seconds,
+    resolve_stream_disconnect_grace_seconds,
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_capabilities import ModelTokenBudgetError
@@ -8909,11 +8917,20 @@ class ActiveConversationStreamSession:
 
     HEARTBEAT_EVENT = ': keep-alive\n\n'
 
-    def __init__(self, user_id, conversation_id, heartbeat_interval_seconds=15, session_ttl_seconds=600, analysis_message_id=None):
+    def __init__(
+        self,
+        user_id,
+        conversation_id,
+        heartbeat_interval_seconds=15,
+        session_ttl_seconds=600,
+        analysis_message_id=None,
+        disconnect_grace_seconds=60,
+    ):
         self.user_id = user_id
         self.conversation_id = conversation_id
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
         self.session_ttl_seconds = session_ttl_seconds
+        self.disconnect_grace_seconds = max(0, int(disconnect_grace_seconds if disconnect_grace_seconds is not None else 60))
         self.cache_key = f'{user_id}:{conversation_id}'
         self._condition = threading.Condition()
         self._accepting_events = True
@@ -8929,6 +8946,7 @@ class ActiveConversationStreamSession:
             'heartbeat_interval_seconds': self.heartbeat_interval_seconds,
             'updated_at': _utcnow_iso(),
         })
+        metadata.setdefault('disconnect_grace_seconds', self.disconnect_grace_seconds)
         metadata.setdefault('status', STREAM_STATUS_STARTED)
         metadata.setdefault('started_at', metadata['updated_at'])
         metadata.setdefault('event_count', 0)
@@ -9003,6 +9021,28 @@ class ActiveConversationStreamSession:
         self._persist_metadata(metadata)
         return self.get_status_snapshot()
 
+    def _get_disconnect_grace_seconds(self, metadata=None):
+        raw_grace = (metadata or {}).get('disconnect_grace_seconds')
+        if raw_grace is None:
+            return self.disconnect_grace_seconds
+        return max(0, _safe_int(raw_grace))
+
+    def _has_disconnect_grace_expired(self, metadata):
+        if not isinstance(metadata, dict):
+            return False
+        if not metadata.get('consumer_detached') or not metadata.get('active'):
+            return False
+        if metadata.get('status') in TERMINAL_STREAM_STATUSES:
+            return False
+        grace_seconds = self._get_disconnect_grace_seconds(metadata)
+        if grace_seconds <= 0:
+            return True
+        detached_at = _parse_iso_datetime(metadata.get('last_detached_at'))
+        if detached_at is None:
+            return False
+        now_dt = _parse_iso_datetime(_utcnow_iso()) or datetime.utcnow()
+        return (now_dt - detached_at).total_seconds() >= float(grace_seconds)
+
     def mark_consumer_detached(self, reason='client_disconnect'):
         metadata = self._build_metadata(active=self.is_active(), existing=self._get_metadata())
         if metadata.get('consumer_detached'):
@@ -9015,6 +9055,8 @@ class ActiveConversationStreamSession:
         if metadata.get('active'):
             metadata['status'] = STREAM_STATUS_DETACHED_RUNNING
         self._persist_metadata(metadata)
+        if metadata.get('active') and self._get_disconnect_grace_seconds(metadata) <= 0:
+            return self.request_cancel(reason='client_disconnect')
         return self.get_status_snapshot()
 
     def mark_reattached(self):
@@ -9061,7 +9103,12 @@ class ActiveConversationStreamSession:
         metadata = self._get_metadata()
         if not metadata or metadata.get('status') in TERMINAL_STREAM_STATUSES:
             return False
-        return bool(metadata.get('cancel_requested'))
+        if metadata.get('cancel_requested'):
+            return True
+        if self._has_disconnect_grace_expired(metadata):
+            self.request_cancel(reason='client_disconnect_timeout')
+            return True
+        return False
 
     def get_cancel_reason(self):
         metadata = self._get_metadata()
@@ -9318,9 +9365,15 @@ class ActiveConversationStreamRegistry:
         for key in expired_keys:
             self._sessions.pop(key, None)
 
-    def start_session(self, user_id, conversation_id, *, analysis_message_id=None):
+    def start_session(self, user_id, conversation_id, *, analysis_message_id=None, disconnect_grace_seconds=None):
         if not user_id or not conversation_id:
             return None
+
+        if disconnect_grace_seconds is None:
+            try:
+                disconnect_grace_seconds = resolve_stream_disconnect_grace_seconds(get_settings())
+            except Exception:
+                disconnect_grace_seconds = 60
 
         with self._lock:
             self._cleanup_locked()
@@ -9341,6 +9394,7 @@ class ActiveConversationStreamRegistry:
                 heartbeat_interval_seconds=self.heartbeat_interval_seconds,
                 session_ttl_seconds=self.completed_session_ttl_seconds,
                 analysis_message_id=analysis_message_id,
+                disconnect_grace_seconds=disconnect_grace_seconds,
             )
             self._sessions[key] = session
             session.initialize()
@@ -15386,6 +15440,9 @@ def register_route_backend_chats(bp):
                         stream_bridge.finish()
 
         executor = current_app.extensions.get('executor')
+        chat_stream_executor = current_app.extensions.get('chat_stream_executor')
+        if chat_stream_executor:
+            executor = chat_stream_executor
         if executor:
             try:
                 executor.submit(stream_worker)
@@ -16902,6 +16959,40 @@ def register_route_backend_chats(bp):
                 request_correlation_id=request_correlation_id,
             )
         except MixedSourceCancellationError as exc:
+            if getattr(exc, 'timed_out', False):
+                timeout_seconds = int(
+                    getattr(exc, 'timeout_seconds', None)
+                    or resolve_document_action_timeout_seconds(settings)
+                )
+                if analysis_checkpoints is not None:
+                    analysis_checkpoints.cancel(reason='timed_out')
+                if thought_tracker.enabled:
+                    thought_tracker.add_thought(
+                        'cancellation',
+                        f'Document action timed out after {timeout_seconds}s',
+                        detail=f'phase={exc.phase}',
+                    )
+                log_event(
+                    '[CHAT_DOCUMENT_ACTION] Document action timed out.',
+                    extra={
+                        'conversation_id': conversation_id,
+                        'user_id': user_id,
+                        'timeout_seconds': timeout_seconds,
+                        'phase': exc.phase,
+                    },
+                    level=logging.WARNING,
+                )
+                return {
+                    'error': (
+                        f'Document action timed out after {timeout_seconds} seconds. '
+                        'Completed analysis windows were saved so you can retry or narrow the selection.'
+                    ),
+                    'timed_out': True,
+                    'warning_type': 'document_action_timeout',
+                    'conversation_id': conversation_id,
+                    'user_message_id': user_message_id,
+                    'request_correlation_id': request_correlation_id,
+                }, 504
             if analysis_checkpoints is not None:
                 analysis_checkpoints.cancel(reason='cancelled')
             if thought_tracker.enabled:
@@ -18509,7 +18600,8 @@ def register_route_backend_chats(bp):
                         api_version=settings.get('azure_apim_gpt_api_version'),
                         azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
                         api_key=settings.get('azure_apim_gpt_subscription_key'),
-                        default_headers=legacy_identity_headers or None
+                        default_headers=legacy_identity_headers or None,
+                        **build_openai_client_timeout_options(settings),
                     )
                 else:
                     auth_type = settings.get('azure_openai_gpt_authentication_type')
@@ -18538,7 +18630,8 @@ def register_route_backend_chats(bp):
                             api_version=api_version,
                             azure_endpoint=endpoint,
                             azure_ad_token_provider=token_provider,
-                            default_headers=legacy_identity_headers or None
+                            default_headers=legacy_identity_headers or None,
+                            **build_openai_client_timeout_options(settings),
                         )
                     else: # Default to API Key
                         api_key = settings.get('azure_openai_gpt_key')
@@ -18547,7 +18640,8 @@ def register_route_backend_chats(bp):
                             api_version=api_version,
                             azure_endpoint=endpoint,
                             api_key=api_key,
-                            default_headers=legacy_identity_headers or None
+                            default_headers=legacy_identity_headers or None,
+                            **build_openai_client_timeout_options(settings),
                         )
 
                 if not image_gen_enabled and (not gpt_client or not gpt_model):
@@ -23221,7 +23315,8 @@ def register_route_backend_chats(bp):
                             api_version=gpt_api_version,
                             azure_endpoint=gpt_endpoint,
                             api_key=settings.get('azure_apim_gpt_subscription_key'),
-                            default_headers=legacy_identity_headers or None
+                            default_headers=legacy_identity_headers or None,
+                            **build_openai_client_timeout_options(settings),
                         )
                     else:
                         auth_type = settings.get('azure_openai_gpt_authentication_type')
@@ -23251,14 +23346,16 @@ def register_route_backend_chats(bp):
                                 api_version=api_version,
                                 azure_endpoint=endpoint,
                                 azure_ad_token_provider=token_provider,
-                                default_headers=legacy_identity_headers or None
+                                default_headers=legacy_identity_headers or None,
+                                **build_openai_client_timeout_options(settings),
                             )
                         else:
                             gpt_client = AzureOpenAI(
                                 api_version=api_version,
                                 azure_endpoint=endpoint,
                                 api_key=settings.get('azure_openai_gpt_key'),
-                                default_headers=legacy_identity_headers or None
+                                default_headers=legacy_identity_headers or None,
+                                **build_openai_client_timeout_options(settings),
                             )
 
                     if not gpt_client or not gpt_model:
@@ -26196,33 +26293,41 @@ def register_route_backend_chats(bp):
                                 reasoning_adjustments=reasoning_metadata['reasoning_adjustments'],
                             )
 
-                        for chunk in stream:
-                            assert_current_request_sources_available(user_id)
-                            if stream_cancel_requested():
-                                yield finalize_cancelled_stream_response()
-                                return
+                        try:
+                            for chunk in stream:
+                                assert_current_request_sources_available(user_id)
+                                if stream_cancel_requested():
+                                    yield finalize_cancelled_stream_response()
+                                    return
 
-                            if chunk.choices and len(chunk.choices) > 0:
-                                delta = chunk.choices[0].delta
-                                chunk_content = normalize_chat_completion_text(getattr(delta, 'content', None))
-                                if chunk_content:
-                                    accumulated_content += chunk_content
-                                    if not suppress_streamed_file_payload:
-                                        yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+                                if chunk.choices and len(chunk.choices) > 0:
+                                    delta = chunk.choices[0].delta
+                                    chunk_content = normalize_chat_completion_text(getattr(delta, 'content', None))
+                                    if chunk_content:
+                                        accumulated_content += chunk_content
+                                        if not suppress_streamed_file_payload:
+                                            yield f"data: {json.dumps({'content': chunk_content})}\n\n"
 
-                            if stream_cancel_requested():
-                                yield finalize_cancelled_stream_response()
-                                return
+                                if stream_cancel_requested():
+                                    yield finalize_cancelled_stream_response()
+                                    return
 
-                            # Capture token usage from final chunk with stream_options
-                            if hasattr(chunk, 'usage') and chunk.usage:
-                                token_usage_data = {
-                                    'prompt_tokens': chunk.usage.prompt_tokens,
-                                    'completion_tokens': chunk.usage.completion_tokens,
-                                    'total_tokens': chunk.usage.total_tokens,
-                                    'captured_at': datetime.utcnow().isoformat()
-                                }
-                                debug_print(f"[STREAMING_TOKENS] Captured usage - prompt: {chunk.usage.prompt_tokens}, completion: {chunk.usage.completion_tokens}, total: {chunk.usage.total_tokens}")
+                                # Capture token usage from final chunk with stream_options
+                                if hasattr(chunk, 'usage') and chunk.usage:
+                                    token_usage_data = {
+                                        'prompt_tokens': chunk.usage.prompt_tokens,
+                                        'completion_tokens': chunk.usage.completion_tokens,
+                                        'total_tokens': chunk.usage.total_tokens,
+                                        'captured_at': datetime.utcnow().isoformat()
+                                    }
+                                    debug_print(f"[STREAMING_TOKENS] Captured usage - prompt: {chunk.usage.prompt_tokens}, completion: {chunk.usage.completion_tokens}, total: {chunk.usage.total_tokens}")
+                        finally:
+                            stream_close = getattr(stream, 'close', None)
+                            if callable(stream_close):
+                                try:
+                                    stream_close()
+                                except Exception as stream_close_error:
+                                    debug_print(f"[STREAMING] Failed to close model stream cleanly: {stream_close_error}")
 
                         if not accumulated_content:
                             debug_print(
@@ -28795,8 +28900,14 @@ def assess_history_only_answerability(gpt_client, gpt_model, conversation_histor
     assessment_messages.extend(conversation_history_for_api or [])
     assessment_messages.append({'role': 'user', 'content': assessment_prompt})
 
+    bounded_create = bind_callable_with_timeout(
+        gpt_client,
+        gpt_client.chat.completions.create,
+        timeout_seconds=AUXILIARY_MODEL_CALL_TIMEOUT_SECONDS,
+        max_retries=0,
+    )
     assessment_response = guard_model_callable(
-        gpt_client.chat.completions.create, conversation_history_for_api,
+        bounded_create, conversation_history_for_api,
     )(
         model=gpt_model,
         messages=assessment_messages,
@@ -29083,8 +29194,14 @@ def build_conversation_history_segments(
             try:
                 # Older user and assistant text is conversation content; only this
                 # request's input reads guard the summary model call.
+                bounded_summary_create = bind_callable_with_timeout(
+                    gpt_client,
+                    gpt_client.chat.completions.create,
+                    timeout_seconds=AUXILIARY_MODEL_CALL_TIMEOUT_SECONDS,
+                    max_retries=0,
+                )
                 summary_callable = guard_model_callable(
-                    gpt_client.chat.completions.create, (),
+                    bounded_summary_create, (),
                 )
                 summary_messages = [
                     {"role": "system", "content": "Summarize older conversation context for future chat turns."},
