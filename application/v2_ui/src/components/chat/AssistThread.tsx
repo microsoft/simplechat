@@ -164,7 +164,7 @@ export function AssistThread({
     const logRef = useRef<HTMLDivElement>(null);
     const firstLogRender = useRef(true);
     const speechEnabled = Boolean(
-        useBootstrapStore((state) => state.bootstrap?.features?.enable_speech_to_text_input),
+        useBootstrapStore((state) => state.data?.features?.enable_speech_to_text_input),
     );
     const [voiceStatus, setVoiceStatus] = useState<RecordingState>('idle');
     const voiceBaselineRef = useRef('');

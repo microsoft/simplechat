@@ -2,8 +2,9 @@
 # test_v2_voice_dictation_and_ask_ai.py
 """
 Functional test for V2 voice dictation speedup, progressive segmentation, and Ask AI voice input.
-Version: 0.261.386
+Version: 0.261.388
 Implemented in: 0.261.386
+Bootstrap selector regression fixed in: 0.261.388
 
 This test ensures that:
 1. /api/speech/transcribe-chat uses Azure Speech Fast Transcription API on the configured
@@ -132,6 +133,10 @@ def test_v2_voice_input_and_composer_ux_contract():
     composer_editor = _read(V2_SRC / "components" / "chat" / "ComposerEditor.tsx")
     composer = _read(V2_SRC / "components" / "chat" / "Composer.tsx")
     assist_thread = _read(V2_SRC / "components" / "chat" / "AssistThread.tsx")
+
+    assert "useBootstrapStore((state) => state.data?.features?.enable_speech_to_text_input)" in assist_thread, (
+        "AssistThread must read the speech-input flag from BootstrapState.data"
+    )
 
     # VoiceInput must provide live waveform bars, Finishing… state, cancel rollback, and Retry pill.
     assert 'data-testid="voice-input-waveform"' in voice_input

@@ -2,6 +2,8 @@
 
 **Implemented in version:** **0.261.386** (`application/single_app/config.py`)
 
+**Bootstrap selector fixed in version:** **0.261.388** (`application/single_app/config.py`)
+
 ## Overview
 
 SimpleChat's V2 interface (`application/v2_ui`) supports push-to-record voice dictation in both the main Chat composer and all conversational **Ask AI** panels. For longer recordings (15–90 seconds), the V2 voice pipeline combines two speed and usability improvements while keeping the existing `/api/speech/transcribe-chat` endpoint and Azure Speech Service configuration:
@@ -52,6 +54,12 @@ sequenceDiagram
 
 No new admin settings are required. Voice dictation in Chat and Ask AI is governed by the existing `enable_speech_to_text_input` setting and uses the shared Azure Speech Service settings (`speech_service_endpoint`, `speech_service_locale`, `speech_service_authentication_type`, and `speech_service_key` / Managed Identity).
 
+The shared Ask AI composer reads this flag from `useBootstrapStore`'s `data.features`
+payload. Version **0.261.388** corrects an invalid `state.bootstrap` selector that
+caused TypeScript error TS2339 and blocked the V2 production build, including the
+Docker build run by the AZD predeploy hook. No deployment configuration changes
+are required.
+
 ## Usage Instructions
 
 1. Enable **Enable Voice Input (Speech-to-Text)** in **Admin Settings → Audio & Video**.
@@ -67,6 +75,10 @@ No new admin settings are required. Voice dictation in Chat and Ask AI is govern
 ## Testing and Validation
 
 - `functional_tests/test_v2_voice_dictation_and_ask_ai.py`
+  includes a regression check for the shared Ask AI composer's bootstrap selector.
 - `functional_tests/test_v2_voice_dictation_logic.mjs`
 - `functional_tests/test_missing_swagger_routes_fix.py`
 - `functional_tests/test_route_authentication_audit_findings_fix.py`
+
+Run `npm run build` from `application/v2_ui` to validate TypeScript and generate
+the production bundle before retrying deployment.
