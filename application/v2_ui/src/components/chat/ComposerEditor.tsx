@@ -141,6 +141,8 @@ export interface ComposerEditorProps {
     describedBy?: string;
     invalid?: boolean;
     labelClassName?: string;
+    /** Active voice dictation status, rendered inline below the textarea as Listening… / Finishing… */
+    voiceStatus?: 'idle' | 'recording' | 'transcribing';
 }
 
 export interface ComposerEditorActions {
@@ -216,6 +218,7 @@ export function ComposerEditor({
     describedBy,
     invalid = false,
     labelClassName = 'sr-only',
+    voiceStatus = 'idle',
 }: ComposerEditorProps) {
     const localTextareaRef = useRef<HTMLTextAreaElement>(null);
     const localFileInputRef = useRef<HTMLInputElement>(null);
@@ -1187,6 +1190,26 @@ export function ComposerEditor({
                         'placeholder:text-text-3 focus:outline-none selection:bg-accent-soft disabled:cursor-not-allowed')}
                     style={COMPOSER_TRANSPARENT_TEXT_STYLE} />
             </div>
+            {(voiceStatus === 'recording' || voiceStatus === 'transcribing') && (
+                <div
+                    role="status"
+                    aria-live="polite"
+                    data-testid="voice-dictation-status"
+                    className="flex items-center gap-1.5 px-2 pb-1 text-xs italic text-text-3"
+                >
+                    {voiceStatus === 'recording' ? (
+                        <>
+                            <span
+                                aria-hidden="true"
+                                className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-danger"
+                            />
+                            <span>Listening…</span>
+                        </>
+                    ) : (
+                        <span>Finishing…</span>
+                    )}
+                </div>
+            )}
             {!restricted && (
                 <input ref={fileInputRef} type="file" accept={uploadAccept} multiple={multipleFiles}
                     disabled={disabled || !uploadsEnabled} className="hidden" onChange={(event) => void onSelectFiles(event)} />

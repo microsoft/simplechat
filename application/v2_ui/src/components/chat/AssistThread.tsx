@@ -8,7 +8,10 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { clsx } from 'clsx';
 import { FileText, FolderOpen, Loader2, PenLine, RotateCcw, Send, Tag as TagIcon, X } from 'lucide-react';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { appendDictatedText, revertDictatedSegments } from '../../lib/voice';
 import { ComposerEditor } from './ComposerEditor';
+import { VoiceInput, type RecordingState } from './VoiceInput';
 import { CANCELLED_MESSAGE, type AssistExchange, type AssistThreadController } from '../../lib/assistThread';
 
 /** A `#` chip a turn was sent with, shown read-only in the thread. */
@@ -160,10 +163,15 @@ export function AssistThread({
     const limitId = `${id}-limit`;
     const logRef = useRef<HTMLDivElement>(null);
     const firstLogRender = useRef(true);
+    const speechEnabled = Boolean(
+        useBootstrapStore((state) => state.bootstrap?.features?.enable_speech_to_text_input),
+    );
+    const [voiceStatus, setVoiceStatus] = useState<RecordingState>('idle');
+    const voiceBaselineRef = useRef('');
     const { exchanges, pending } = thread;
     const inputDisabled = disabled || !thread.key;
     const canSubmit = !inputDisabled && !busy && !pending && !thread.overLimit
-        && Boolean(thread.draft.text.trim());
+        && voiceStatus === 'idle' && Boolean(thread.draft.text.trim());
     const submit = () => {
         if (canSubmit) {
             thread.send();
@@ -317,7 +325,13 @@ export function AssistThread({
                 >
                     <div className={clsx(
                         'rounded-xl border bg-surface-sunken transition-colors focus-within:border-accent',
-                        thread.overLimit ? 'border-danger' : 'border-edge-strong',
+                        thread.overLimit
+                            ? 'border-danger'
+                            : voiceStatus === 'recording'
+                              ? 'border-danger/60'
+                              : voiceStatus === 'transcribing'
+                                ? 'border-accent'
+                                : 'border-edge-strong',
                         inputDisabled && 'opacity-60',
                     )}>
                         <ComposerEditor
@@ -328,6 +342,7 @@ export function AssistThread({
                             onChange={thread.setDraft}
                             conversationId={conversationId}
                             disabled={inputDisabled}
+                            voiceStatus={voiceStatus}
                             placeholder={placeholder}
                             rows={3}
                             onSubmit={submit}
@@ -355,15 +370,43 @@ export function AssistThread({
                             {`${thread.length}/${thread.maxLength}`}
                             {counterHint ? ` · ${counterHint}` : ''}
                         </span>
-                        <button
-                            type="submit"
-                            disabled={!canSubmit}
-                            aria-label={sendAriaLabel}
-                            className="ml-auto inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                            <Send size={13} aria-hidden="true" />
-                            {(busy || pending) && busyLabel ? busyLabel : sendLabel}
-                        </button>
+                        <div className="ml-auto flex items-center gap-1.5">
+                            {speechEnabled && (
+                                <VoiceInput
+                                    compact
+                                    disabled={inputDisabled}
+                                    onSessionStart={() => {
+                                        voiceBaselineRef.current = thread.draft.text;
+                                    }}
+                                    onStateChange={setVoiceStatus}
+                                    onCancelSession={(segments) =>
+                                        thread.setDraft((current) => ({
+                                            ...current,
+                                            text: revertDictatedSegments(
+                                                current.text,
+                                                voiceBaselineRef.current,
+                                                segments,
+                                            ),
+                                        }))
+                                    }
+                                    onTranscribed={(transcript) =>
+                                        thread.setDraft((current) => ({
+                                            ...current,
+                                            text: appendDictatedText(current.text, transcript),
+                                        }))
+                                    }
+                                />
+                            )}
+                            <button
+                                type="submit"
+                                disabled={!canSubmit}
+                                aria-label={sendAriaLabel}
+                                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                <Send size={13} aria-hidden="true" />
+                                {(busy || pending) && busyLabel ? busyLabel : sendLabel}
+                            </button>
+                        </div>
                     </div>
                 </form>
             ) : null}
