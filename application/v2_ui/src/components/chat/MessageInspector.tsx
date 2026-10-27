@@ -37,6 +37,9 @@ import { GlassButton } from '../ui/primitives';
 import { M365KindIcon, M365OpenLink } from './M365CitationChip';
 import { normalizePersistedThought, ThoughtsList } from './ThoughtsList';
 import { ChatUploadExtractionLoader } from './ChatUploadExtraction';
+import { EvidenceStatusDetails } from './EvidenceStatus';
+import { readEvidenceStatus, type EvidenceStatus } from '../../lib/evidenceStatus';
+import { readMaskState } from '../../lib/masking';
 
 export type InspectorSection = 'details' | 'sources' | 'reasoning';
 
@@ -165,13 +168,15 @@ function DetailsSection({ message }: { message: ChatMessage }) {
     );
 }
 
-function SourcesSection({ sources }: { sources: MessageSources }) {
-    if (sources.total === 0) {
+function SourcesSection({ sources, evidence }: { sources: MessageSources; evidence: EvidenceStatus | null }) {
+    if (sources.total === 0 && !evidence) {
         return <Empty>This response did not cite any sources.</Empty>;
     }
 
     return (
         <div className="space-y-4">
+            <EvidenceStatusDetails status={evidence} />
+            {sources.total === 0 && <Empty>This response did not cite any sources.</Empty>}
             {sources.conversations.length > 0 && (
                 <div>
                     <h4 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-text-3 uppercase">
@@ -449,6 +454,8 @@ export function MessageInspector({
     onClose: () => void;
 }) {
     const sources = readSources(message as unknown as Json);
+    const masks = readMaskState(message);
+    const evidence = masks.hasAnyMask ? null : readEvidenceStatus(message.metadata?.evidence_status);
     // An uploaded file cites nothing and has no reasoning. Its sources are what ingestion
     // extracted from it, which is the material any later citation of the file comes from.
     const upload = message.role === 'file';
@@ -464,7 +471,7 @@ export function MessageInspector({
     const active = available.includes(section) ? section : available[0];
 
     return (
-        <div className="glass-flat mt-1.5 w-full max-w-[min(64rem,92%)] rounded-xl border border-edge">
+        <div id={`message-inspector-${message.id}`} className="glass-flat mt-1.5 w-full max-w-[min(64rem,92%)] rounded-xl border border-edge">
             <div className="flex items-center gap-1 border-b border-edge px-2 py-1.5">
                 {available.map((entry) => (
                     <button
@@ -513,7 +520,7 @@ export function MessageInspector({
                         <Empty>This upload has no stored extraction to show.</Empty>
                     )
                 )}
-                {active === 'sources' && !upload && <SourcesSection sources={sources} />}
+                {active === 'sources' && !upload && <SourcesSection sources={sources} evidence={evidence} />}
                 {active === 'reasoning' && <ReasoningSection message={message} />}
             </div>
         </div>

@@ -59,13 +59,14 @@ from model_endpoint_clients import (
     extract_chat_completion_response_text,
     infer_model_endpoint_protocol,
     normalize_chat_completion_text,
+    resolve_model_inference_endpoint,
     resolve_document_action_timeout_seconds,
     resolve_model_call_max_retries,
     resolve_model_stream_read_timeout_seconds,
     resolve_stream_disconnect_grace_seconds,
 )
-from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_capabilities import ModelTokenBudgetError
+from functions_model_endpoint_validation import ModelEndpointValidationError
 from functions_model_catalog import apply_model_profile
 from functions_fact_memory_autosave import (
     run_fact_memory_autosave,
@@ -92,6 +93,7 @@ from functions_fact_memory_context import (
 )
 from functions_model_endpoint_runtime import (
     MODEL_ENDPOINT_PROVIDER_ALLOWLIST,
+    build_legacy_chat_client,
     build_model_endpoint_context,
     build_model_endpoint_sync_chat_client,
     build_semantic_kernel_chat_service_for_model,
@@ -2832,6 +2834,25 @@ def _analysis_history_metadata():
         if getattr(g, 'conversation_reference_revision', None):
             metadata['conversation_reference_revision'] = g.conversation_reference_revision
     return metadata
+
+
+def _chat_coverage_presentation():
+    return "status" if has_request_context() and request.headers.get("X-SimpleChat-UI") == "v2" else "prose"
+
+
+def _record_chat_evidence_status(handoff, conversation_id, message_id):
+    if _chat_coverage_presentation() == "status":
+        g.chat_evidence_status = {
+            "conversation_id": conversation_id, "message_id": message_id,
+            "value": handoff.get("evidence_status"),
+        }
+
+
+def _chat_evidence_metadata(conversation_id, message_id):
+    saved = getattr(g, "chat_evidence_status", None) if has_request_context() else None
+    if saved and saved["conversation_id"] == conversation_id and saved["message_id"] == message_id and saved["value"]:
+        return {"evidence_status": deepcopy(saved["value"])}
+    return {}
 
 
 class SavedAnalysisFollowupUnsupported(ValueError):
@@ -12795,6 +12816,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         previous_failed_call_parameters = []  # entity lookup: concrete failed call params for retry hints
         has_multi_sheet_workbook = False
         sheet_score_match_fn = _score_tabular_entity_sheet_match if entity_lookup_mode else _score_tabular_sheet_match
+        schema_started_at = time.monotonic()
         for file_context in analysis_file_contexts:
             fname = file_context['file_name']
             file_source_hint = file_context.get('source_hint', source_hint)
@@ -12932,6 +12954,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 }))
 
         schema_context = "\n".join(schema_parts)
+        log_event(
+            "[TABULAR_SK_ANALYSIS] Schema preload completed.",
+            extra={"phase": "schema_preload", "duration_ms": round((time.monotonic() - schema_started_at) * 1000),
+                   "file_count": len(analysis_file_contexts)},
+            level=logging.INFO,
+        )
         allow_multi_sheet_discovery = has_multi_sheet_workbook and not schema_summary_mode
         allowed_function_names = ['describe_tabular_file'] if schema_summary_mode else sorted(get_tabular_analysis_function_names())
         attachment_search_function_names = [] if schema_summary_mode else get_tabular_attachment_search_function_names()
@@ -13412,6 +13440,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
             result = None
             synthesis_exception = None
+            model_started_at = time.monotonic()
             try:
                 result = await guard_chat_service(chat_service).get_chat_message_contents(
                     chat_history, execution_settings, kernel=kernel
@@ -13421,7 +13450,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         result[0],
                         token_usage_callback,
                     )
-            except ScreeningError:
+            except (ScreeningError, ModelTokenBudgetError, ModelEndpointValidationError):
                 raise
             except Exception as exc:
                 synthesis_exception = exc
@@ -13429,6 +13458,13 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} synthesis failed after tool execution setup: {exc}",
                     level=logging.WARNING,
                     exceptionTraceback=True,
+                )
+            finally:
+                log_event(
+                    "[TABULAR_SK_ANALYSIS] Model phase finished.",
+                    extra={"phase": "model_call", "duration_ms": round((time.monotonic() - model_started_at) * 1000),
+                           "analysis_attempt": attempt_number},
+                    level=logging.INFO,
                 )
 
             invocations_after = plugin_logger.get_invocations_for_conversation(
@@ -13812,6 +13848,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         log_event("[TABULAR_SK_ANALYSIS] Unable to obtain computed tool-backed results", level=logging.WARNING)
         return None
 
+    except (ScreeningError, ModelTokenBudgetError, ModelEndpointValidationError):
+        raise
     except Exception as e:
         log_event(f"[TABULAR_SK_ANALYSIS] Error: {e}", level=logging.WARNING, exceptionTraceback=True)
         return None
@@ -15076,7 +15114,11 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     connection = resolved_endpoint_cfg.get('connection', {}) or {}
     auth_settings = resolved_endpoint_cfg.get('auth', {}) or {}
     deployment = resolve_model_endpoint_request_model(resolved_endpoint_cfg, model_cfg)
-    endpoint = str(connection.get('endpoint') or '').strip()
+    endpoint = resolve_model_inference_endpoint(
+        connection.get('endpoint'), use_responses_api=connection.get('use_responses_api'),
+        provider=provider, api_type=get_model_endpoint_api_type(resolved_endpoint_cfg),
+        url_mode=connection.get('url_mode'),
+    )
     api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
     api_type = get_model_endpoint_api_type(resolved_endpoint_cfg)
     anthropic_version = str(connection.get('anthropic_version') or '').strip()
@@ -18524,10 +18566,6 @@ def register_route_backend_chats(bp):
             )
             try:
                 multi_endpoint_config = None
-                legacy_identity_headers = build_model_endpoint_identity_headers(
-                    settings,
-                    identity_context={'user_id': user_id},
-                )
                 if not image_gen_enabled and settings.get('enable_multi_model_endpoints', False):
                     multi_endpoint_config = resolve_streaming_multi_endpoint_gpt_config(
                         settings,
@@ -18596,12 +18634,8 @@ def register_route_backend_chats(bp):
                             )
 
                     # initialize the APIM client
-                    gpt_client = AzureOpenAI(
-                        api_version=settings.get('azure_apim_gpt_api_version'),
-                        azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
-                        api_key=settings.get('azure_apim_gpt_subscription_key'),
-                        default_headers=legacy_identity_headers or None,
-                        **build_openai_client_timeout_options(settings),
+                    gpt_client = build_legacy_chat_client(
+                        settings, gpt_model, use_apim=True, identity_context={'user_id': user_id},
                     )
                 else:
                     auth_type = settings.get('azure_openai_gpt_authentication_type')
@@ -18624,25 +18658,9 @@ def register_route_backend_chats(bp):
                     else:
                         raise ValueError("No GPT model selected or configured.")
 
-                    if auth_type == 'managed_identity':
-                        token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
-                        gpt_client = AzureOpenAI(
-                            api_version=api_version,
-                            azure_endpoint=endpoint,
-                            azure_ad_token_provider=token_provider,
-                            default_headers=legacy_identity_headers or None,
-                            **build_openai_client_timeout_options(settings),
-                        )
-                    else: # Default to API Key
-                        api_key = settings.get('azure_openai_gpt_key')
-                        if not api_key: raise ValueError("Azure OpenAI API Key not configured.")
-                        gpt_client = AzureOpenAI(
-                            api_version=api_version,
-                            azure_endpoint=endpoint,
-                            api_key=api_key,
-                            default_headers=legacy_identity_headers or None,
-                            **build_openai_client_timeout_options(settings),
-                        )
+                    gpt_client = build_legacy_chat_client(
+                        settings, gpt_model, identity_context={'user_id': user_id},
+                    )
 
                 if not image_gen_enabled and (not gpt_client or not gpt_model):
                     raise ValueError("GPT Client or Model could not be initialized.")
@@ -20431,7 +20449,9 @@ def register_route_backend_chats(bp):
                     telemetry_settings=settings,
                     request_correlation_id=mixed_source_request_correlation_id,
                     user_id=user_id,
+                    coverage_presentation=_chat_coverage_presentation(),
                 )
+                _record_chat_evidence_status(mixed_source_handoff, conversation_id, assistant_message_id)
                 system_messages_for_augmentation.append(mixed_source_handoff)
                 mixed_source_coverage = mixed_source_handoff.get(
                     'mixed_source_coverage',
@@ -22185,6 +22205,7 @@ def register_route_backend_chats(bp):
                 'agent_tags': agent_tags,
                 'metadata': {
                     **_analysis_history_metadata(),
+                    **_chat_evidence_metadata(conversation_id, assistant_message_id),
                     'user_info': user_info_for_assistant,  # Track which user created this assistant message
                     **_build_chat_reasoning_metadata(reasoning_resolution, reasoning_effort, gpt_reasoning_model_name),
                     'model_selection': {
@@ -22404,6 +22425,9 @@ def register_route_backend_chats(bp):
         except ModelTokenBudgetError as error:
             log_event("[CHAT_API_ERROR] Model budget configuration is invalid.", extra={"code": error.code}, level=logging.ERROR)
             return jsonify(error.payload), 400
+        except ModelEndpointValidationError as error:
+            log_event("[CHAT_API_ERROR] Model connection configuration is invalid.", level=logging.ERROR)
+            return jsonify({"error": error.public_message, "error_code": "model_configuration_invalid"}), 400
         except M365PolicyError as error:
             return jsonify(error.payload), 403
         except ScreeningError as error:
@@ -23259,10 +23283,6 @@ def register_route_backend_chats(bp):
 
                 try:
                     streaming_multi_endpoint_config = None
-                    legacy_identity_headers = build_model_endpoint_identity_headers(
-                        settings,
-                        identity_context={'user_id': user_id},
-                    )
                     if settings.get('enable_multi_model_endpoints', False):
                         streaming_multi_endpoint_config = resolve_streaming_multi_endpoint_gpt_config(
                             settings,
@@ -23311,12 +23331,8 @@ def register_route_backend_chats(bp):
                         gpt_endpoint = settings.get('azure_apim_gpt_endpoint')
                         gpt_api_version = settings.get('azure_apim_gpt_api_version')
 
-                        gpt_client = AzureOpenAI(
-                            api_version=gpt_api_version,
-                            azure_endpoint=gpt_endpoint,
-                            api_key=settings.get('azure_apim_gpt_subscription_key'),
-                            default_headers=legacy_identity_headers or None,
-                            **build_openai_client_timeout_options(settings),
+                        gpt_client = build_legacy_chat_client(
+                            settings, gpt_model, use_apim=True, identity_context={'user_id': user_id},
                         )
                     else:
                         auth_type = settings.get('azure_openai_gpt_authentication_type')
@@ -23336,27 +23352,9 @@ def register_route_backend_chats(bp):
                         gpt_endpoint = endpoint
                         gpt_api_version = api_version
 
-                        if auth_type == 'managed_identity':
-                            credential = DefaultAzureCredential()
-                            token_provider = get_bearer_token_provider(
-                                credential,
-                                cognitive_services_scope
-                            )
-                            gpt_client = AzureOpenAI(
-                                api_version=api_version,
-                                azure_endpoint=endpoint,
-                                azure_ad_token_provider=token_provider,
-                                default_headers=legacy_identity_headers or None,
-                                **build_openai_client_timeout_options(settings),
-                            )
-                        else:
-                            gpt_client = AzureOpenAI(
-                                api_version=api_version,
-                                azure_endpoint=endpoint,
-                                api_key=settings.get('azure_openai_gpt_key'),
-                                default_headers=legacy_identity_headers or None,
-                                **build_openai_client_timeout_options(settings),
-                            )
+                        gpt_client = build_legacy_chat_client(
+                            settings, gpt_model, identity_context={'user_id': user_id},
+                        )
 
                     if not gpt_client or not gpt_model:
                         yield f"data: {json.dumps({'error': 'Failed to initialize AI model'})}\n\n"
@@ -24776,7 +24774,9 @@ def register_route_backend_chats(bp):
                         telemetry_settings=settings,
                         request_correlation_id=mixed_source_request_correlation_id,
                         user_id=user_id,
+                        coverage_presentation=_chat_coverage_presentation(),
                     )
+                    _record_chat_evidence_status(mixed_source_handoff, conversation_id, assistant_message_id)
                     system_messages_for_augmentation.append(mixed_source_handoff)
                     mixed_source_coverage = mixed_source_handoff.get(
                         'mixed_source_coverage',
@@ -25707,6 +25707,7 @@ def register_route_backend_chats(bp):
                             'agent_tags': agent_tags_used if use_agent_streaming else [],
                             'metadata': {
                                 **_analysis_history_metadata(),
+                                **_chat_evidence_metadata(conversation_id, assistant_message_id),
                                 **cancel_metadata,
                                 'token_usage': token_usage_data,
                                 **_build_chat_reasoning_metadata(reasoning_resolution, reasoning_effort, gpt_reasoning_model_name),
@@ -26597,6 +26598,7 @@ def register_route_backend_chats(bp):
                         'agent_tags': agent_tags_used if use_agent_streaming else [],
                         'metadata': {
                             **_analysis_history_metadata(),
+                            **_chat_evidence_metadata(conversation_id, assistant_message_id),
                             **_build_chat_reasoning_metadata(reasoning_resolution, reasoning_effort, gpt_reasoning_model_name),
                             'model_selection': {
                                 'selected_model': final_model_used if use_agent_streaming else gpt_model,
@@ -27023,6 +27025,9 @@ def register_route_backend_chats(bp):
             except ModelTokenBudgetError as error:
                 log_event("[STREAMING] Model budget configuration is invalid.", extra={"code": error.code}, level=logging.ERROR)
                 yield f"data: {json.dumps({**error.payload, 'done': True})}\n\n"
+            except ModelEndpointValidationError as error:
+                log_event("[STREAMING] Model connection configuration is invalid.", level=logging.ERROR)
+                yield f"data: {json.dumps({'error': error.public_message, 'error_code': 'model_configuration_invalid', 'done': True})}\n\n"
             except M365PolicyError as error:
                 yield f"data: {json.dumps({**error.payload, 'done': True})}\n\n"
             except Exception as e:

@@ -231,6 +231,7 @@ from model_endpoint_clients import (
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_model_endpoint_runtime import (
+    build_legacy_chat_client,
     build_model_endpoint_sync_chat_client,
     build_semantic_kernel_chat_service_for_model,
 )
@@ -7260,56 +7261,15 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
 
 
 def _build_legacy_default_client(settings, identity_context=None):
-    extra_headers = build_model_endpoint_identity_headers(settings, identity_context=identity_context)
-    timeout_options = build_openai_client_timeout_options(settings)
-    if settings.get('enable_gpt_apim', False):
-        endpoint = settings.get('azure_apim_gpt_endpoint')
-        deployment_name = settings.get('azure_apim_gpt_deployment')
-        api_key = settings.get('azure_apim_gpt_subscription_key')
-        api_version = settings.get('azure_apim_gpt_api_version') or settings.get('azure_openai_gpt_api_version')
-        client = AzureOpenAI(
-            azure_endpoint=endpoint,
-            api_key=api_key,
-            api_version=api_version,
-            default_headers=extra_headers or None,
-            **timeout_options,
-        )
-        return client, deployment_name, 'aoai'
-
-    endpoint = settings.get('azure_openai_gpt_endpoint')
-    deployment_name = settings.get('azure_openai_gpt_deployment')
-    api_version = settings.get('azure_openai_gpt_api_version')
-    api_key = settings.get('azure_openai_gpt_key')
-    auth_type = str(settings.get('azure_openai_gpt_authentication_type') or 'key').strip().lower()
+    use_apim = settings.get('enable_gpt_apim', False)
+    deployment_name = settings.get('azure_apim_gpt_deployment' if use_apim else 'azure_openai_gpt_deployment')
     if isinstance(deployment_name, str) and ',' in deployment_name:
         deployment_name = deployment_name.split(',')[0].strip()
-
-    if auth_type in ('key', 'api_key') or api_key:
-        client = AzureOpenAI(
-            azure_endpoint=endpoint,
-            api_key=api_key,
-            api_version=api_version,
-            default_headers=extra_headers or None,
-            **timeout_options,
-        )
-        return client, deployment_name, 'aoai'
-
-    auth_settings = {
-        'type': auth_type,
-        'tenant_id': settings.get('azure_openai_gpt_tenant_id') or settings.get('azure_openai_tenant_id'),
-        'client_id': settings.get('azure_openai_gpt_client_id') or settings.get('azure_openai_client_id'),
-        'client_secret': settings.get('azure_openai_gpt_client_secret') or settings.get('azure_openai_client_secret'),
-        'managed_identity_client_id': settings.get('azure_openai_gpt_managed_identity_client_id') or settings.get('azure_openai_managed_identity_client_id'),
-        'management_cloud': settings.get('management_cloud') or settings.get('azure_management_cloud') or 'public',
-        'custom_authority': settings.get('custom_authority') or settings.get('azure_custom_authority') or '',
-    }
-    token_provider = _build_token_provider(auth_settings, provider='aoai', endpoint=endpoint)
-    client = AzureOpenAI(
-        azure_endpoint=endpoint,
-        azure_ad_token_provider=token_provider,
-        api_version=api_version,
-        default_headers=extra_headers or None,
-        **timeout_options,
+    if use_apim and not settings.get('azure_apim_gpt_api_version'):
+        settings = {**settings, 'azure_apim_gpt_api_version': settings.get('azure_openai_gpt_api_version')}
+    client = build_legacy_chat_client(
+        settings, deployment_name, use_apim=use_apim,
+        identity_context=identity_context, prefer_api_key=True,
     )
     return client, deployment_name, 'aoai'
 

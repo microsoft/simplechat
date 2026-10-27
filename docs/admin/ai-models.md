@@ -5,7 +5,7 @@ description: "Configure shared chat, image, and embedding connections, independe
 section: "Administration"
 audience: admin
 admin_tab: ai-models
-version: "0.261.126"
+version: "0.261.389"
 ---
 
 
@@ -51,6 +51,35 @@ In React V2, each connection is stored on its own: adding, editing, or deleting 
 **Manage access**, the shield on each connection, lists the delegated item policies that narrow that connection and creates new ones without leaving the page. Global endpoint governance is always on: people must pass the Global Endpoints feature policy, then any one of the connection's policies if it has any. With no policy on a connection, everyone who passes the feature policy can use it. See [Governance settings]({{ '/admin/governance/' | relative_url }}#governance-item-policies-section) for how policies combine.
 
 For a task-oriented walkthrough, see [Configure AI connections]({{ '/guides/configure-ai-connections/' | relative_url }}).
+
+### Responses API selection
+
+Implemented in version: **0.261.389**, recorded in
+`application/single_app/config.py`.
+
+The React V2 connection editor's **Use Responses API** switch selects Responses
+for supported Azure OpenAI and Custom **OpenAI API** text connections. Models
+selected from that connection inherit the API in chat, local agents, orchestration,
+and workflow model/agent runners; no second switch is needed on each consumer.
+
+Enter the resource or gateway API base, then select the switch. Pasting a full
+`/responses` URL selects it automatically and removes the operation from the saved
+endpoint. The base URL and `connection.use_responses_api` choice are stored
+separately, so the switch can be cleared without editing the URL again. Existing
+operation URLs remain compatible.
+
+Responses inference uses v1 without a dated API query. The previous dated version
+is retained for switching back; the editor hides that field while Responses is
+selected. A Foundry project URL is for project discovery, not this inference
+operation. Anthropic, Gemini and Custom dated Azure API contracts do not acquire
+Responses support from the switch.
+
+For APIM or another OpenAI-compatible gateway, expose the Responses operation on
+the gateway and retain its published prefix. With a Custom connection, **Exact**
+URL handling preserves an arbitrary API base, and **Gateway API key header**
+can supply `Ocp-Apim-Subscription-Key` or the header required by its policy.
+SimpleChat does not create gateway operations or bypass their authentication.
+Legacy APIM execution preserves its existing `api-key` convention.
 
 ### Authentication and model discovery
 

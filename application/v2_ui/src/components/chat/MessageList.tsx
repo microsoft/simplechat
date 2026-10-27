@@ -1,5 +1,7 @@
 // MessageList.tsx
 import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
+import { EvidenceStatusFooter } from './EvidenceStatus';
+import { readEvidenceStatus } from '../../lib/evidenceStatus';
 // Renders the message thread, the in-flight streaming bubble and the reasoning panel.
 
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -825,6 +827,10 @@ function MessageBubbleInner({
     const [draft, setDraft] = useState(message.content);
     const [inspector, setInspector] = useState<InspectorSection | null>(null);
     const replayPanelId = useId();
+    const inspectMessage = (section: InspectorSection | null) => {
+        setInspector(section);
+        if (section === 'sources') useChatStore.setState({ evidenceMessageId: message.id });
+    };
     const replayButtonRef = useRef<HTMLButtonElement>(null);
     const [expandedReplayRun, setExpandedReplayRun] = useState<string | null>(null);
     const bodyRef = useRef<HTMLDivElement>(null);
@@ -1263,6 +1269,12 @@ function MessageBubbleInner({
                                 metadata={message.metadata}
                             />
                         ) : null}
+                        {masks.ranges.length === 0 && <EvidenceStatusFooter
+                            status={readEvidenceStatus(message.metadata?.evidence_status)}
+                            expanded={inspector === 'sources'}
+                            controlsId={`message-inspector-${message.id}`}
+                            onOpen={() => inspectMessage('sources')}
+                        />}
                     </>
                 )}
             </div>
@@ -1290,7 +1302,7 @@ function MessageBubbleInner({
                     message={message}
                     onEdit={isUser ? () => setEditing(true) : undefined}
                     inspector={inspector}
-                    onInspect={setInspector}
+                    onInspect={inspectMessage}
                     alignRight={alignRight}
                     planReplay={canRepeatPlan ? {
                         expanded: replayExpanded,
@@ -1319,7 +1331,7 @@ function MessageBubbleInner({
                 <MessageInspector
                     message={message}
                     section={inspector}
-                    onSection={setInspector}
+                    onSection={inspectMessage}
                     onClose={() => setInspector(null)}
                 />
             )}

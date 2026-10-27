@@ -139,7 +139,8 @@ export function literalCodeRegions(content: string): Region[] {
             continue;
         }
         // A closing fence must use the same character and be at least as long as the opener.
-        if (marker[0] === openFence.marker[0] && marker.length >= openFence.marker.length) {
+        if (marker[0] === openFence.marker[0] && marker.length >= openFence.marker.length &&
+            fenceMatch[0].slice(fenceMatch[0].indexOf(marker) + marker.length).trim() === '') {
             regions.push({ start: openFence.start, end: fenceMatch.index + fenceMatch[0].length });
             openFence = null;
         }

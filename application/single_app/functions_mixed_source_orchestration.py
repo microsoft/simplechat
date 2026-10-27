@@ -19,6 +19,7 @@ from content_screening.access import (
 )
 from content_screening.contracts import SCREENING_FIELD, ScreeningError, SourceAuthorityUnverifiedError
 from functions_m365_citations import M365_ANSWER_STYLE_INSTRUCTIONS
+from functions_evidence_status import build_mixed_source_evidence_status
 
 def log_event(*args, **kwargs):
     """Lazily resolve telemetry logging to avoid module-level import cycles."""
@@ -1983,6 +1984,7 @@ def build_mixed_source_evidence_handoff(
     telemetry_settings=None,
     request_correlation_id=None,
     user_id=None,
+    coverage_presentation="prose",
 ):
     """Build one bounded synthesis handoff from Phase 1 evidence envelopes."""
     normalized_selection_mode = normalize_selection_mode(
@@ -2089,6 +2091,15 @@ def build_mixed_source_evidence_handoff(
         )
     else:
         partial_coverage_instruction = "Do not claim that selected sources were omitted."
+    if coverage_presentation == "status":
+        partial_coverage_instruction = (
+            "The application shows source coverage separately from your answer. "
+            "Do not append a generic Coverage note paragraph. Answer the supported parts concisely. "
+            "If a requested fact is not supported, say so plainly without inventing it. "
+            "When helpful, suggest the specific kind of document, clarification, time range, "
+            "or other authorized source that would address the unanswered part. "
+            "Do not claim an unsearched or inaccessible source was checked."
+        )
     if mode:
         emit_mixed_source_coverage_telemetry(
             telemetry_settings,
@@ -2115,5 +2126,9 @@ def build_mixed_source_evidence_handoff(
             f"{partial_coverage_instruction}\n\n{serialized_payload}"
         ),
         "mixed_source_coverage": coverage,
+        "evidence_status": build_mixed_source_evidence_status(
+            manifest_entries, ledger["entries"], envelopes,
+            partial=bool(coverage.get("partial_coverage")),
+        ),
         "evidence_envelopes": list(payload["evidence_envelopes"]),
     }

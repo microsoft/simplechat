@@ -20,6 +20,7 @@ from content_screening.contracts import DocumentHeldError
 from config import *
 from flask import jsonify, make_response, request
 from functions_appinsights import log_event
+from functions_evidence_status import append_export_evidence_notice
 from functions_ai_connections import require_model_capability
 from functions_authentication import *
 from functions_chat import sort_messages_by_thread
@@ -815,6 +816,7 @@ def _sanitize_message(
     # reader has on screen rather than the version the model first produced.
     if isinstance(content, str) and content:
         content = resolve_block_sources_in_content(message, content)
+    content = append_export_evidence_notice(content, message)
     reference_citation_buckets = _collect_raw_citation_buckets(message)
     source_citation_buckets = _collect_source_citation_buckets(message)
     normalized_citations = _normalize_citations(reference_citation_buckets)
@@ -2612,6 +2614,7 @@ def _render_message_export_content(
     # substitution and resolving into it would fight whatever the caller meant to export.
     if source_content is None and isinstance(raw_content, str) and raw_content:
         raw_content = resolve_block_sources_in_content(message, raw_content)
+    raw_content = append_export_evidence_notice(raw_content, message)
     rendered_content = replace_inline_visual_blocks_with_export_html(
         _normalize_content(raw_content),
         visual_assets,

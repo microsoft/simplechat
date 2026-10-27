@@ -41,6 +41,9 @@ import {
 } from './DrawerAssets';
 import { M365KindIcon, M365OpenLink } from './M365CitationChip';
 import { OrchestrationPlanPanel } from './OrchestrationPlanPanel';
+import { EvidenceStatusDetails } from './EvidenceStatus';
+import { readEvidenceStatus } from '../../lib/evidenceStatus';
+import { readMaskState } from '../../lib/masking';
 import type { UsedDocument, UsedM365Item } from '../../lib/types';
 
 /** Scroll a message into view and flash it, so the jump target is obvious. */
@@ -236,6 +239,12 @@ function DocumentsMode() {
     const kind = useChatStore((state) => state.activeConversationKind);
     const messages = useChatStore((state) => state.messages);
     const media = useMemo(() => collectConversationMedia(messages), [messages]);
+    const evidenceMessageId = useChatStore((state) => state.evidenceMessageId);
+    const evidenceMessage = messages.find((message) => message.id === evidenceMessageId && message.role === 'assistant' && message.conversation_id === activeConversationId)
+        ?? [...messages].reverse().find((message) => message.role === 'assistant' && message.conversation_id === activeConversationId);
+    const evidenceMask = evidenceMessage ? readMaskState(evidenceMessage) : null;
+    const evidence = evidenceMask && !evidenceMask.fullyMasked && evidenceMask.ranges.length === 0
+        ? readEvidenceStatus(evidenceMessage?.metadata?.evidence_status) : null;
     const files = useConversationGeneratedFiles();
     const generated = useConversationGeneratedDocuments();
     const entries = useMemo(
@@ -271,6 +280,7 @@ function DocumentsMode() {
         return (
             <div className="space-y-4 p-3">
                 {assets}
+                <EvidenceStatusDetails status={evidence} />
                 <div className="space-y-2">
                     {Array.from({ length: 3 }).map((_, index) => (
                         <Skeleton key={index} className="h-16 w-full" />
@@ -284,6 +294,7 @@ function DocumentsMode() {
         return (
             <div className="space-y-4 p-3">
                 {assets}
+                <EvidenceStatusDetails status={evidence} />
                 <div className="flex items-start gap-2 text-sm text-danger">
                     <TriangleAlert size={16} className="mt-0.5 shrink-0" />
                     {metadataError}
@@ -292,7 +303,7 @@ function DocumentsMode() {
         );
     }
 
-    if (documents.length === 0 && m365.total === 0 && !assets) {
+    if (documents.length === 0 && m365.total === 0 && !assets && !evidence) {
         return (
             <EmptyState
                 icon={<Files size={24} />}
@@ -305,6 +316,7 @@ function DocumentsMode() {
     return (
         <div className="space-y-4 p-3">
             {assets}
+            <EvidenceStatusDetails status={evidence} />
             {documents.length > 0 && (
                 <section aria-label="Used in answers">
                     {(assets || m365.total > 0) && <SectionHeading>Used in answers</SectionHeading>}

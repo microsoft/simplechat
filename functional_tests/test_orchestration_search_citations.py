@@ -1,8 +1,8 @@
 # test_orchestration_search_citations.py
 """Search content handoffs retain exact passage citations, not just document identities.
 
-Version: 0.261.365
-Implemented in: 0.261.365
+Version: 0.261.389
+Implemented in: 0.261.365; per-answer evidence status in 0.261.388
 
 The real adapters, retained readers, lineage projection and Compose execute with
 offline search/model/storage transport. No external qualification harness is changed.
@@ -140,6 +140,11 @@ def test_search_content_citations_reach_composition_and_reopen_without_retrieval
     reopened = search_content.runtime.result_runtime.read_result_document_citations(fresh, reference)
     assert reopened == result['citations']
     assert [item['citation_id'] for item in reopened] == [hit['id'] for hit in HITS]
+    evidence_status = search_content.runtime.result_runtime.read_result_evidence_status(fresh, reference)
+    assert evidence_status['state'] == 'complete'
+    assert {source['document_id']: source['evidence_count'] for source in evidence_status['sources']} == {
+        'document-1': 2, 'document-2': 1,
+    }
     assert len(search_content.calls) == 1 and len(case.model.calls) == (2 if chained else 1)
 
 
@@ -176,6 +181,12 @@ def test_same_search_bound_as_both_content_outputs_does_not_duplicate_citations(
     result = execute(search_content.runtime, case)
     assert result['status'] == 'completed', result
     assert [item['citation_id'] for item in result['citations']] == [hit['id'] for hit in HITS]
+    evidence_status = search_content.runtime.result_runtime.read_result_evidence_status(
+        case.context, case.context.task_results['answer'].output('answer'),
+    )
+    assert {source['document_id']: source['evidence_count'] for source in evidence_status['sources']} == {
+        'document-1': 2, 'document-2': 1,
+    }
 
 
 @pytest.mark.parametrize('missing', ['search_results', 'citations'])

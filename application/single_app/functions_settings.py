@@ -77,6 +77,7 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     normalize_model_endpoint_api_type,
 )
+from functions_model_endpoint_validation import normalize_model_inference_connection
 from functions_rate_limit import (
     RATE_LIMIT_MESSAGE_DEFAULT,
     build_rate_limit_error_payload,
@@ -3261,6 +3262,11 @@ def normalize_model_endpoints(endpoints):
         connection = endpoint_copy.get("connection") or {}
         if not isinstance(connection, dict):
             raise AIConnectionError("Connection configuration must be an object.")
+        normalized_connection = normalize_model_inference_connection(connection)
+        if normalized_connection != connection:
+            changed = True
+        connection = normalized_connection
+        endpoint_copy["connection"] = connection
         provider = str(endpoint_copy.get("provider") or "aoai").strip().lower()
         if endpoint_copy.get("provider") != provider:
             endpoint_copy["provider"] = provider

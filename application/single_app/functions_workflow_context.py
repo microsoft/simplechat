@@ -243,7 +243,7 @@ def wrap_workflow_model_client(client, model, provider, *, endpoint_metadata=Non
         model,
         endpoint_metadata,
         provider="azure" if api_type == "azure_openai" else provider,
-        protocol="messages" if api_type == "anthropic" or provider == "claude" else "chat_completions",
+        protocol="messages" if api_type == "anthropic" or provider == "claude" else getattr(client, "_inference_api", "chat_completions"),
         request_output_limit=_configured_response_tokens(model),
     )
     return WorkflowModelClient(client, budget, provider)

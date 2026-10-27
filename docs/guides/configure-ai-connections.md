@@ -4,7 +4,7 @@ title: "Configure AI connections"
 description: "Configure shared AI resources once and choose independent chat, image, and embedding defaults."
 section: "Guides"
 audience: admin
-version: "0.261.108"
+version: "0.261.389"
 ---
 
 ## What this does
@@ -113,6 +113,29 @@ service access, network policy, and live readiness remain separate requirements.
 ## Select task-specific defaults
 
 ### Chat
+
+Implemented in version: **0.261.389**, with the version update in
+`application/single_app/config.py`: resource-root legacy Azure inference needs
+a dated API version. A v1 inference endpoint uses `/openai/v1/` without a dated
+query; setting the version field to `v1` alone does not change a legacy route.
+Foundry project discovery keeps its own version field.
+
+To opt into reasoning with function tools on a supported OpenAI/Azure model,
+select **Use Responses API** on its connection. Enter the resource or gateway
+API base; pasting a full operation such as
+`https://<resource>.openai.azure.com/openai/v1/responses` checks the switch and
+saves the base without `/responses`. The API choice is stored separately and
+can be changed without reconstructing the URL.
+
+Select that connection's model in chat, a local agent, or a workflow runner.
+Personal and group Endpoints use the same editor when their governance policies
+allow changes. Configure reasoning effort on the agent itself when using one.
+For APIM, publish the Responses operation on the gateway first; Custom OpenAI
+connections preserve exact API bases and configurable authentication headers.
+The switch does not rewrite YAMCS/database plugins, change existing connections
+automatically, or establish that a gateway supports Responses. See
+[V2 model tools and evidence status]({{ '/explanation/features/V2_MODEL_TOOLS_AND_EVIDENCE_STATUS/' | relative_url }})
+for stateless continuation, streaming behavior, and limitations.
 
 If you already use **Use AI Connections for chat**, choose an enabled, chat-compatible
 model as its default under **Chat**.

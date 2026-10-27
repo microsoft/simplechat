@@ -11,7 +11,7 @@ from functions_model_endpoint_providers import (
     get_model_endpoint_provider,
     normalize_custom_endpoint_url_mode,
 )
-from functions_model_endpoint_validation import ModelEndpointValidationError
+from functions_model_endpoint_validation import ModelEndpointValidationError, model_endpoint_inference_api
 
 
 CUSTOM_OPENAI_OPERATION_SUFFIXES = (
@@ -23,6 +23,32 @@ CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN = re.compile(r"^v\d+(?:[a-z][a-z0-9]*)?$",
 def normalize_endpoint_text(endpoint: Any) -> str:
     """Return a trimmed endpoint URL without a trailing slash."""
     return str(endpoint or "").strip().rstrip("/")
+
+
+def resolve_model_inference_endpoint(
+    endpoint, *, use_responses_api=None, provider="aoai", api_type="", url_mode="",
+):
+    """Materialize the chosen operation without storing it in the connection's base URL."""
+    endpoint = normalize_endpoint_text(endpoint)
+    if model_endpoint_inference_api(endpoint, use_responses_api) != "responses":
+        return endpoint
+    if not endpoint:
+        raise ModelEndpointValidationError("A model inference endpoint URL is required.")
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in ("https", "http") or not parsed.netloc or parsed.query or parsed.fragment or parsed.username or parsed.password:
+        raise ModelEndpointValidationError("Use an HTTP(S) inference API base without credentials, query parameters, or a fragment.")
+    if endpoint.lower().endswith("/responses"):
+        return endpoint
+    if str(provider).lower() == "custom":
+        return resolve_custom_openai_base_url(endpoint, api_type, url_mode) + "responses"
+    if endpoint.lower().endswith("/chat/completions"):
+        endpoint = endpoint[:-len("/chat/completions")]
+    path = parsed.path.rstrip("/")
+    if not path:
+        endpoint += "/openai/v1"
+    elif path.lower().endswith("/openai"):
+        endpoint += "/v1"
+    return endpoint.rstrip("/") + "/responses"
 
 
 def normalize_custom_openai_base_url(raw_endpoint: Any) -> str:

@@ -81,6 +81,7 @@ from functions_generated_file_exports import (
     serialize_generated_xml,
 )
 from functions_model_budget_runtime import prepare_model_execution_settings
+from functions_model_endpoint_validation import model_endpoint_inference_api
 from functions_model_capabilities import (
     ModelTokenBudgetError,
     normalize_token_limit,
@@ -4253,9 +4254,14 @@ def _resolve_tabular_model_token_limits(gpt_model, settings, model_context=None,
         connection.get('endpoint') or chunk_model_context.get('endpoint'),
         chunk_model_context.get('request_model') or chunk_gpt_model,
         api_type,
+        use_responses_api=connection.get('use_responses_api', chunk_model_context.get('use_responses_api')),
     )
     budget_protocol = (
-        'messages' if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else 'chat_completions'
+        'messages' if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else
+        model_endpoint_inference_api(
+            connection.get('endpoint') or chunk_model_context.get('endpoint'),
+            connection.get('use_responses_api', chunk_model_context.get('use_responses_api')),
+        )
     )
     budget = resolve_model_token_budget(
         model,

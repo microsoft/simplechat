@@ -1,8 +1,8 @@
 # test_inline_citation_filename_fallback.py
 """
 Execute both production citation parsers against placeholder-label regressions.
-Version: 0.261.355
-Implemented in: 0.261.355
+Version: 0.261.389
+Implemented in: 0.261.355; raw V2 citation markers in 0.261.388
 
 Checks exact-ID filename fallback, preserved titles and locations, source isolation,
 conflicting records, inert filenames, legacy messages, and optional copied sources.
@@ -94,6 +94,23 @@ CASES = {
 for scope_key, scope_value in [("user_id", "owner"), ("group_id", "group"), ("public_workspace_id", "public")]:
     CASES[scope_key] = (marker(), [record(**{scope_key: scope_value})], ["public-guide.md"])
 
+RAW_MARKER = f"\u3010{FIRST}\u3011"
+RAW_CASES = {
+    "raw_page": {"message": f"Found it {RAW_MARKER}.", "records": [record(page_number=1)]},
+    "raw_sheet": {"message": RAW_MARKER, "records": [record(location_label="Sheet", sheet_name="Annual figures")]},
+    "raw_unknown": {"message": RAW_MARKER, "records": []},
+    "raw_other_message": {"message": RAW_MARKER, "records": [record(SECOND)]},
+    "raw_conflict": {"message": RAW_MARKER, "records": [record(), record(file_name="other.md"), record()]},
+    "raw_code": {"message": f"`{RAW_MARKER}`\n\n```text\n{RAW_MARKER}\n```\n", "records": [record()]},
+    "raw_open_fence": {"message": f"```text\n{RAW_MARKER}", "records": [record()]},
+    "raw_false_fence_close": {"message": f"```text\n{RAW_MARKER}\n```not-a-closing-fence\n{RAW_MARKER}\n```",
+                              "records": [record()]},
+    "raw_no_page": {"message": RAW_MARKER, "records": [record()]},
+    "raw_mixed": {"message": f"{RAW_MARKER} then {marker('Other guide', SECOND)}",
+                  "records": [record(page_number=1), record(SECOND, "other.md", page_number=2)]},
+    "raw_unsafe_name": {"message": RAW_MARKER, "records": [record(file_name="<img src=x onerror=run()>.md")]},
+}
+
 NODE_RUNNER = r"""
 const esbuild = require('esbuild');
 esbuild.buildSync({
@@ -133,6 +150,7 @@ def parsed_results():
         key: {"message": message, "records": records}
         for key, (message, records, _) in CASES.items()
     }
+    inputs.update(RAW_CASES)
     with tempfile.TemporaryDirectory(prefix="simplechat-citation-fallback-") as temporary:
         bundle = Path(temporary) / "citations.cjs"
         built = subprocess.run(
@@ -196,6 +214,25 @@ def test_fallbacks_stay_inert_and_preserve_surrounding_prose(parsed_results):
 
 def test_implementation_version():
     assert_app_version_at_least("0.261.355")
+
+
+def test_v2_raw_markers_use_only_exact_recorded_source_metadata(parsed_results):
+    _, v2 = parsed_results
+    page = v2["raw_page"]["groups"][0]
+    assert page["fileName"] == "public-guide.md"
+    assert page["citations"][0]["locationValue"] == "1"
+    assert page["citations"][0]["citationId"] == FIRST
+    assert v2["raw_sheet"]["groups"][0]["citations"][0]["locationValue"] == "Annual figures"
+    assert v2["raw_no_page"]["groups"][0]["citations"][0]["pageNumber"] == ""
+    assert v2["raw_no_page"]["groups"][0]["citations"][0]["locationValue"] == ""
+    assert [group["fileName"] for group in v2["raw_mixed"]["groups"]] == ["public-guide.md", "Other guide"]
+    assert v2["raw_unsafe_name"]["groups"][0]["fileName"] == "<img src=x onerror=run()>.md"
+    for key in ("raw_unknown", "raw_other_message", "raw_conflict"):
+        assert v2[key]["groups"] == []
+        assert v2[key]["text"] == "[Source unavailable]"
+    for key in ("raw_code", "raw_open_fence", "raw_false_fence_close"):
+        assert v2[key]["groups"] == []
+        assert v2[key]["text"] == RAW_CASES[key]["message"]
 
 
 if __name__ == "__main__":

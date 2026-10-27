@@ -411,6 +411,7 @@ interface ChatState {
 
     /** Right-hand drawer state. Null means closed. */
     drawerMode: DrawerMode;
+    evidenceMessageId: string | null;
     metadata: ConversationMetadata | null;
     publicWorkspaceSelection: PublicWorkspaceSelection | null;
     setPublicWorkspaceSelection: (selection: PublicWorkspaceSelection | null) => void;
@@ -2393,6 +2394,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     retryPresentation: null,
 
     drawerMode: null,
+    evidenceMessageId: null,
     metadata: null,
     publicWorkspaceSelection: null,
     setPublicWorkspaceSelection: (selection) => set({ publicWorkspaceSelection: readPublicWorkspaceSelection(selection) }),

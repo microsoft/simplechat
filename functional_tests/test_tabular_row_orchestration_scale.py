@@ -1,7 +1,7 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.261.127
+Version: 0.261.389
 Updated in: 0.261.035 for shared model-budget resolution and scoped batching.
 Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152; Search shared preflight adapter in 0.250.159; aggregate route-helper harness coverage in 0.250.166; Analyze artifact Phase 7A harness compatibility updated in 0.250.178; reviewed correctness planning and semantic validation updated in 0.250.179; artifact publication lifecycle updated in 0.250.180; safe failure helper compatibility updated in 0.250.199; exhaustive Markdown scale compatibility updated in 0.250.200
 
@@ -30,6 +30,8 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from collections import Counter
 from typing import Any, Dict, Optional
+
+from azure.cosmos._cosmos_responses import CosmosDict
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +83,7 @@ from functions_model_capabilities import (  # noqa: E402
     resolve_model_token_budget,
 )
 from functions_model_endpoint_types import resolve_model_endpoint_request_model  # noqa: E402
+from functions_model_endpoint_validation import model_endpoint_inference_api  # noqa: E402
 from model_endpoint_clients import (  # noqa: E402
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     infer_model_endpoint_protocol,
@@ -945,7 +948,7 @@ def _load_authorization_helper(conversation_owner, visible_public_ids=None, grou
     class ConversationContainer:
         def read_item(self, item, partition_key):
             assert item == partition_key
-            return {'id': item, 'user_id': conversation_owner}
+            return CosmosDict({'id': item, 'user_id': conversation_owner}, response_headers={})
 
     module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
     selected_nodes = [
@@ -1367,7 +1370,7 @@ def _load_idempotent_artifact_helper():
 
     class ConversationContainer:
         def read_item(self, item, partition_key):
-            return {'id': item, 'user_id': 'user-1'}
+            return CosmosDict({'id': item, 'user_id': 'user-1'}, response_headers={})
 
     class MessageContainer:
         def __init__(self):
@@ -1377,12 +1380,12 @@ def _load_idempotent_artifact_helper():
         def read_item(self, item, partition_key):
             if item not in self.items:
                 raise CosmosResourceNotFoundError()
-            return dict(self.items[item])
+            return CosmosDict(dict(self.items[item]), response_headers={})
 
         def upsert_item(self, item):
             self.items[item['id']] = dict(item)
             self.upsert_count += 1
-            return dict(item)
+            return CosmosDict(dict(item), response_headers={})
 
     class BlobClient:
         def __init__(self):
@@ -1542,6 +1545,7 @@ def _load_performance_helpers(progress_updates=None):
         'resolve_model_token_budget': resolve_model_token_budget,
         'resolve_model_endpoint_request_model': resolve_model_endpoint_request_model,
         'infer_model_endpoint_protocol': infer_model_endpoint_protocol,
+        'model_endpoint_inference_api': model_endpoint_inference_api,
         'MODEL_ENDPOINT_PROTOCOL_ANTHROPIC': MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])

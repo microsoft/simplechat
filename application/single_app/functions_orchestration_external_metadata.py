@@ -296,12 +296,13 @@ def _run_seeds(read, producer, *, planner):
 def _current_model(read, producer, settings, *, planner):
     # These are metadata/policy resolvers, not any of the runtime client builders.
     from functions_ai_connections import require_model_capability
-    from functions_model_endpoint_providers import MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
+    from functions_model_endpoint_providers import MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI, MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE
     from functions_model_endpoint_runtime import resolve_model_endpoint_from_context
     from functions_model_endpoint_types import (
         get_model_endpoint_api_type, resolve_model_endpoint_request_model,
     )
-    from model_endpoint_clients import infer_model_endpoint_protocol
+    from model_endpoint_clients import infer_model_endpoint_protocol, normalize_openai_style_base_url, resolve_model_inference_endpoint
+    from functions_model_endpoint_validation import model_endpoint_inference_api
 
     seeds = _run_seeds(read, producer, planner=planner)
     supplied = _mapping(seeds.get("model"), optional=True)
@@ -402,8 +403,17 @@ def _current_model(read, producer, settings, *, planner):
         address = _text(settings.get("azure_openai_gpt_endpoint"), limit=8192)
         api_version = _text(settings.get("azure_openai_gpt_api_version"), limit=128)
         read.call(_model_metadata_operation, require_model_capability, model or deployment, provider=provider)
+    address = resolve_model_inference_endpoint(
+        address, provider=provider, api_type=api_type,
+        use_responses_api=(connection.get("use_responses_api") if endpoint_id else settings.get("azure_openai_gpt_use_responses_api")),
+        url_mode=connection.get("url_mode") if endpoint_id else "",
+    )
     protocol = infer_model_endpoint_protocol(provider, address, deployment, api_type)
-    if protocol != MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
+    if protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+        protocol = "responses" if model_endpoint_inference_api(address) == "responses" else protocol
+        address = normalize_openai_style_base_url(address)
+        api_version = ""
+    elif protocol != MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
         _unsupported()
     if urlsplit(_endpoint(address)).scheme != "https":
         _unsupported()

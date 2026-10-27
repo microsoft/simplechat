@@ -61,6 +61,7 @@ from model_endpoint_clients import (
     normalize_anthropic_messages_url,
     normalize_openai_style_base_url,
     resolve_custom_openai_base_url,
+    resolve_model_inference_endpoint,
 )
 from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import DefaultAzureCredential, ClientSecretCredential, get_bearer_token_provider
@@ -485,6 +486,8 @@ def register_route_backend_models(bp):
     def describe_resolved_request_url(provider, endpoint, api_type, url_mode, runtime_protocol):
         """Return the URL SimpleChat actually calls, for display after a test."""
         try:
+            if str(endpoint).rstrip("/").lower().endswith("/responses"):
+                return endpoint
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
                 return normalize_anthropic_messages_url(
                     endpoint,
@@ -607,7 +610,10 @@ def register_route_backend_models(bp):
             if provider == "aoai":
                 subscription_id = management.get("subscription_id")
                 resource_group = management.get("resource_group")
-                endpoint = connection.get("endpoint") or ""
+                endpoint = resolve_model_inference_endpoint(
+                    connection.get("endpoint"), use_responses_api=connection.get("use_responses_api"),
+                    provider=provider, api_type=get_model_endpoint_api_type(data), url_mode=connection.get("url_mode"),
+                )
                 account_name = endpoint.split('.')[0].replace("https://", "").replace("http://", "")
                 log_models_debug(
                     f"AOAI fetch account_name={account_name}"

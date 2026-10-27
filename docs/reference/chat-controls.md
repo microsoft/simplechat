@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.367"
+version: "0.261.389"
 ---
 
 ## How to use this reference
@@ -42,6 +42,27 @@ See [Reference and send between conversations]({{ '/guides/reference-and-send-co
 and [Conversation references and queued AI handoffs]({{ '/explanation/features/CONVERSATION_REFERENCES_AND_HANDOFFS/' | relative_url }}).
 
 ## Conversation header and status
+
+### React V2 document-evidence status
+
+Implemented in version: **0.261.388** (`application/single_app/config.py`).
+When recorded document evidence is partial or missing, **View sources** below
+the answer opens the answer's source outcomes and relevant next steps. Yellow
+indicates partial evidence; red indicates that no supporting document evidence
+was returned from the searched sources, not that the information cannot exist.
+Unavailable and pending sources stay distinct from no matches.
+
+| V2 control | Purpose | Availability |
+| --- | --- | --- |
+| Evidence status / View sources | Opens per-answer evidence outcomes without a generic warning paragraph dominating the answer. | Recorded degraded document-evidence outcome |
+| Sources evidence details | Explains what evidence was returned, which sources could not be checked, and what the user can try next. | Message inspector Sources tab |
+| Documents evidence indicators | Shows the inspected answer's source outcomes separately from documents actually cited in answers. | Conversation Documents pane |
+
+Unknown historical metadata and ordinary non-grounded chat do not become
+missing-evidence warnings. Suggested next steps do not automatically search
+another workspace or grant broader access. Copying preserves a short material
+limitation notice. See
+[V2 model tools and evidence status]({{ '/explanation/features/V2_MODEL_TOOLS_AND_EVIDENCE_STATUS/' | relative_url }}).
 
 ### React V2 sign-in recovery
 
