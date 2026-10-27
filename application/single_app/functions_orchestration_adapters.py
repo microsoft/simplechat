@@ -1433,11 +1433,13 @@ def _notes_from_source_review(result):
         if not url:
             continue
         title = _text(page.get('title')) or url
-        pdf_total = page.get('pdf_page_count')
-        pdf_reviewed = page.get('pdf_pages_reviewed')
-        if isinstance(pdf_total, int) and pdf_total > 0:
-            inspected = pdf_reviewed if isinstance(pdf_reviewed, int) else pdf_total
-            reviewed.append(f'Reviewed: {title} ({url}) [{inspected} of {pdf_total} PDF page(s) inspected]')
+        pdf_total = _coerce_int(page.get('pdf_page_count'), 0)
+        pdf_inspected = _coerce_int(
+            page.get('pdf_pages_inspected', page.get('pdf_pages_reviewed')),
+            pdf_total,
+        )
+        if pdf_total > 0:
+            reviewed.append(f'Reviewed: {title} ({url}) [{pdf_inspected} of {pdf_total} PDF page(s) inspected]')
         else:
             reviewed.append(f'Reviewed: {title} ({url})')
     if reviewed:
@@ -1486,12 +1488,43 @@ def _finalize_source_review(
     citations = _citations_from_source_review(result)
 
     if pages:
+        summary = found_summary.format(count=len(pages))
+        pdf_totals = [
+            (_coerce_int(page.get('pdf_pages_inspected'), _coerce_int(page.get('pdf_page_count'), 0)),
+             _coerce_int(page.get('pdf_page_count'), 0))
+            for page in pages
+            if _coerce_int(page.get('pdf_page_count'), 0) > 0
+        ]
+        if pdf_totals:
+            inspected_sum = sum(item[0] for item in pdf_totals)
+            total_sum = sum(item[1] for item in pdf_totals)
+            summary = f'{summary[:-1] if summary.endswith(".") else summary} ({inspected_sum} of {total_sum} PDF page(s) inspected).'
         return build_step_result(
             status=STEP_STATUS_COMPLETED,
-            summary=found_summary.format(count=len(pages)),
+            summary=summary,
             notes=notes,
             citations=citations,
         )
+
+    if capability_id == CAPABILITY_URL_FETCH and not notes:
+        skipped_entries = []
+        for skipped_item in (result.get('skipped') or ()):
+            if not isinstance(skipped_item, dict):
+                continue
+            skipped_url = _text(skipped_item.get('url'))
+            skipped_reason = _text(skipped_item.get('skip_reason') or skipped_item.get('reason') or 'unreadable')
+            if skipped_url:
+                skipped_entries.append(f'{skipped_url} (reason: {skipped_reason})')
+        if skipped_entries:
+            notes = [
+                'The linked URL(s) could not be read: '
+                + '; '.join(skipped_entries)
+                + '. Explain which linked URL(s) were checked and why their content was unavailable; do not invent content from unreadable links.'
+            ]
+        else:
+            notes = [
+                'No linked pages could be read for this request. Explain that the provided link could not be read and do not invent content.'
+            ]
 
     return build_step_result(
         status=STEP_STATUS_COMPLETED,
@@ -1577,35 +1610,13 @@ def run_url_fetch(step, context, *, settings, user_id, emit, cancel_requested):
         )
         return _failed_result('The linked pages could not be read.', exc)
 
-    finalized = _finalize_source_review(
+    return _finalize_source_review(
         result,
         capability_id=CAPABILITY_URL_FETCH,
         unavailable_summary='Reading linked pages is not available for this user.',
         empty_summary='No linked pages could be read.',
         found_summary='Read {count} linked page(s).',
     )
-    if finalized.get('status') == STEP_STATUS_COMPLETED and isinstance(result, dict):
-        pages = [page for page in (result.get('pages') or ()) if isinstance(page, dict)]
-        pdf_total = sum(int(page.get('pdf_page_count') or 0) for page in pages)
-        pdf_reviewed = sum(int(page.get('pdf_pages_reviewed') or 0) for page in pages)
-        if pdf_total > 0:
-            finalized['summary'] = (
-                f"{finalized['summary']} Inspected {pdf_reviewed} of {pdf_total} PDF page(s)."
-            )
-        elif not pages and not finalized.get('notes'):
-            skipped_lines = []
-            for skipped in result.get('skipped') or ():
-                if not isinstance(skipped, dict):
-                    continue
-                skipped_url = _text(skipped.get('url'))
-                skip_reason = _text(skipped.get('skip_reason') or skipped.get('reason')) or 'unavailable'
-                if skipped_url:
-                    skipped_lines.append(f'Skipped: {skipped_url} ({skip_reason})')
-            if skipped_lines:
-                finalized['notes'] = [
-                    'No linked page content could be read for this request.\n' + '\n'.join(skipped_lines)
-                ]
-    return finalized
 
 
 def run_deep_research(step, context, *, settings, user_id, emit, cancel_requested):

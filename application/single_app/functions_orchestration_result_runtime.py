@@ -161,6 +161,90 @@ def read_result_document_citations(context, reference):
         return _read_result_document_citations(service, reference)
 
 
+def read_result_source_coverage(context, reference):
+    """Project bounded source/page coverage from the exact producer manifest when available."""
+    service = require_result_service(context)
+    producer = getattr(reference, 'producer', None)
+    capability_id = getattr(producer, 'capability_id', None)
+    if capability_id not in ('document_search', 'document_analyze', 'document_compare'):
+        return None
+    if getattr(reference, 'output_name', None) in ('prepared', 'coverage'):
+        return None
+    try:
+        manifest = service._load_manifest(reference)
+        if manifest.get('producer') != producer.to_dict():
+            return None
+        if capability_id == 'document_search':
+            descriptor = (manifest.get('outputs') or {}).get('prepared')
+            if descriptor is None:
+                return None
+            prepared_reader = service.open_result(
+                _reference(producer, 'prepared', descriptor, reference.manifest_sha256),
+                allow_partial=True, require_current_sources=True,
+            )
+            prepared = read_complete_input(prepared_reader)
+            if type(prepared) is dict and type(prepared.get('coverage')) is dict:
+                return deepcopy(prepared['coverage'])
+        elif capability_id in ('document_analyze', 'document_compare'):
+            descriptor = (manifest.get('outputs') or {}).get('coverage')
+            if descriptor is None:
+                return None
+            coverage_reader = service.open_result(
+                _reference(producer, 'coverage', descriptor, reference.manifest_sha256),
+                allow_partial=True, require_current_sources=True,
+            )
+            coverage_payload = read_complete_input(coverage_reader)
+            if type(coverage_payload) is dict:
+                summary = {}
+                if type(coverage_payload.get('coverage')) is dict:
+                    raw_cov = coverage_payload['coverage']
+                    summary['coverage'] = {
+                        key: deepcopy(raw_cov[key])
+                        for key in (
+                            'document_count', 'total_windows', 'processed_windows', 'failed_windows',
+                            'total_chunks', 'processed_chunks', 'window_unit',
+                            'assigned_sources', 'completed_sources', 'assigned_work_units', 'completed_work_units',
+                        )
+                        if key in raw_cov
+                    }
+                    if isinstance(raw_cov.get('documents'), list):
+                        summary['documents'] = [
+                            {
+                                key: doc.get(key)
+                                for key in (
+                                    'document_id', 'file_name', 'document_name', 'total_pages',
+                                    'total_windows', 'processed_windows', 'total_chunks', 'processed_chunks', 'status',
+                                )
+                                if isinstance(doc, dict) and doc.get(key) is not None
+                            }
+                            for doc in raw_cov['documents'] if isinstance(doc, dict)
+                        ]
+                if type(coverage_payload.get('validation')) is dict:
+                    val_cov = coverage_payload['validation'].get('coverage')
+                    if type(val_cov) is dict and 'coverage' not in summary:
+                        summary['coverage'] = {
+                            key: deepcopy(val_cov[key])
+                            for key in (
+                                'assigned_sources', 'completed_sources',
+                                'assigned_work_units', 'completed_work_units', 'failed_work_units',
+                            )
+                            if key in val_cov
+                        }
+                if isinstance(coverage_payload.get('sources'), list):
+                    summary['sources'] = [
+                        {
+                            key: src.get(key)
+                            for key in ('document_id', 'file_name', 'scope')
+                            if isinstance(src, dict) and src.get(key) is not None
+                        }
+                        for src in coverage_payload['sources'] if isinstance(src, dict)
+                    ]
+                return summary or None
+    except Exception:
+        return None
+    return None
+
+
 def _read_result_document_citations(service, reference):
     root = service.open_result(reference, allow_partial=True, require_current_sources=True)
     if root.metadata()['source_count'] == 0:
@@ -408,11 +492,13 @@ def retain_document_search_result(step, context, results, *, source_manifest, ci
         grouped.setdefault(hit['document_id'], []).append({
             key: deepcopy(hit.get(key)) for key in ('chunk_text', 'page_number', 'chunk_sequence', 'score')
         })
-    pages_in_excerpts = sorted({
-        hit['page_number']
-        for hit in results
-        if isinstance(hit, dict) and isinstance(hit.get('page_number'), int) and not isinstance(hit.get('page_number'), bool)
-    })
+    returned_pages = []
+    seen_pages = set()
+    for hit in results:
+        page_num = hit.get('page_number') if type(hit) is dict else None
+        if page_num is not None and page_num != '' and not isinstance(page_num, bool) and page_num not in seen_pages:
+            seen_pages.add(page_num)
+            returned_pages.append(page_num)
     prepared = {
         'version': 'orchestration-gathered-content-v1', 'capability_id': 'document_search',
         'content_scope': 'returned_excerpts',
@@ -425,7 +511,8 @@ def retain_document_search_result(step, context, results, *, source_manifest, ci
         'search_scope': deepcopy(search_scope),
         'coverage': {
             'returned_excerpt_count': len(results), 'discovered_source_count': len(sources),
-            'pages_in_returned_excerpts': pages_in_excerpts,
+            'returned_page_count': len(returned_pages),
+            'pages_in_returned_excerpts': returned_pages,
             'whole_document_coverage': False, 'exhaustive_corpus_coverage': False,
         },
     }
