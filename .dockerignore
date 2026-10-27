@@ -10,36 +10,37 @@
 !docker-customization/**
 !LICENSE
 
-.git/
-.github/
-.vscode/
-.azure/
-artifacts/
-deployers/
-docs/
-functional_tests/
-ui_tests/
-scripts/
+# ACR's archive matcher needs directory rules without trailing slashes.
+.git
+.github
+.vscode
+.azure
+artifacts
+deployers
+docs
+functional_tests
+ui_tests
+scripts
 
 **/.env
 **/.env.*
-**/.venv/
-**/venv/
-**/__pycache__/
-**/.pytest_cache/
+**/.venv
+**/venv
+**/__pycache__
+**/.pytest_cache
 **/*.pyc
 **/*.pyo
 **/*.pyd
 
-application/single_app/flask_session/
-application/single_app/uploaded_openapi_files/
-application/single_app/instance/
+application/single_app/flask_session
+application/single_app/uploaded_openapi_files
+application/single_app/instance
 # V2 React UI: never ship host build artifacts into the image context.
 # node_modules would overwrite the container's Linux dependency tree with the host's
 # platform-specific one, and a stale static/v2 from a local build would survive alongside
 # the freshly compiled bundle because COPY merges rather than replaces.
-application/v2_ui/node_modules/
-application/v2_ui/dist/
-application/single_app/static/v2/
-application/single_app/native/onenote_extractor/target/
-application/single_app/native/onenote_extractor/bin/
+application/v2_ui/node_modules
+application/v2_ui/dist
+application/single_app/static/v2
+application/single_app/native/onenote_extractor/target
+application/single_app/native/onenote_extractor/bin
