@@ -1,16 +1,30 @@
 // voice.ts
 // Voice input and output helpers.
 //
-// Input records with MediaRecorder and converts to 16 kHz mono WAV before upload, which
-// is what /api/speech/transcribe-chat expects. Output plays the audio stream returned by
-// /api/chat/tts.
+// Input captures 16 kHz mono WAV segments (progressively while speaking, plus a MediaRecorder
+// fallback) and uploads them to /api/speech/transcribe-chat. Output plays the audio stream
+// returned by /api/chat/tts.
 
 import { apiUrl, API_BASE } from './apiClient';
 
 const CREDENTIALS_MODE: RequestCredentials = API_BASE ? 'include' : 'same-origin';
 
 /** Azure Speech works best at 16 kHz mono, matching the existing client. */
-const TARGET_SAMPLE_RATE = 16000;
+export const TARGET_SAMPLE_RATE = 16000;
+
+/** RMS threshold above which a PCM frame is treated as active speech rather than silence. */
+export const SPEECH_RMS_THRESHOLD = 0.012;
+
+/** Minimum segment duration (seconds) before a natural pause flushes a background clip. */
+export const PAUSE_FLUSH_MIN_SECONDS = 6;
+
+/** Natural pause duration (seconds) that triggers a background segment flush. */
+export const PAUSE_SILENCE_SECONDS = 0.55;
+
+/** Maximum continuous segment duration (seconds) before flushing while speaking. */
+export const MAX_SEGMENT_SECONDS = 12;
+
+const BAR_WEIGHTS = [0.65, 0.9, 1.0, 0.8, 0.92];
 
 function writeString(view: DataView, offset: number, value: string) {
     for (let index = 0; index < value.length; index += 1) {
@@ -24,7 +38,7 @@ function writeString(view: DataView, offset: number, value: string) {
  * MediaRecorder rarely produces WAV directly (Chrome gives WebM/Opus), so the recording is
  * decoded and re-encoded rather than uploaded in whatever container the browser chose.
  */
-function encodeWav(samples: Float32Array, sampleRate: number): Blob {
+export function encodeWav(samples: Float32Array, sampleRate: number): Blob {
     const buffer = new ArrayBuffer(44 + samples.length * 2);
     const view = new DataView(buffer);
 
@@ -53,7 +67,7 @@ function encodeWav(samples: Float32Array, sampleRate: number): Blob {
 }
 
 /** Downsample by simple decimation with averaging, which is adequate for speech. */
-function resample(input: Float32Array, fromRate: number, toRate: number): Float32Array {
+export function resample(input: Float32Array, fromRate: number, toRate: number): Float32Array {
     if (fromRate === toRate) {
         return input;
     }
@@ -69,6 +83,105 @@ function resample(input: Float32Array, fromRate: number, toRate: number): Float3
         output[index] = end > start ? total / (end - start) : 0;
     }
     return output;
+}
+
+/** Concatenate PCM frames and encode as a 16 kHz mono WAV blob. */
+export function pcmChunksToWav(chunks: readonly Float32Array[], sampleRate: number): Blob {
+    let totalLength = 0;
+    for (const chunk of chunks) {
+        totalLength += chunk.length;
+    }
+    const merged = new Float32Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+    }
+    return encodeWav(resample(merged, sampleRate, TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE);
+}
+
+/** Compute root-mean-square amplitude (0..1) of a mono PCM frame. */
+export function computeRms(samples: ArrayLike<number>): number {
+    if (samples.length === 0) {
+        return 0;
+    }
+    let sumSquares = 0;
+    for (let index = 0; index < samples.length; index += 1) {
+        const value = samples[index];
+        sumSquares += value * value;
+    }
+    return Math.sqrt(sumSquares / samples.length);
+}
+
+/** Convert an RMS level into normalized bar heights (0.25..1.0) for the live audio meter. */
+export function computeAudioLevelBars(rms: number, count = 5): number[] {
+    const normalized = Math.min(1, Math.max(0, (rms - 0.004) / 0.12));
+    const bars: number[] = [];
+    for (let index = 0; index < count; index += 1) {
+        const weight = BAR_WEIGHTS[index % BAR_WEIGHTS.length];
+        const height = 0.25 + normalized * 0.75 * weight;
+        bars.push(Number(Math.min(1, Math.max(0.25, height)).toFixed(3)));
+    }
+    return bars;
+}
+
+export interface SpeechSegmentState {
+    durationSec: number;
+    silenceSec: number;
+    hasSpeech: boolean;
+}
+
+/**
+ * Decide whether the current in-progress recording segment should be flushed to the
+ * transcription endpoint while recording continues.
+ */
+export function shouldFlushSpeechSegment(state: SpeechSegmentState): boolean {
+    if (!state.hasSpeech) {
+        return false;
+    }
+    if (state.durationSec >= MAX_SEGMENT_SECONDS) {
+        return true;
+    }
+    if (state.durationSec >= PAUSE_FLUSH_MIN_SECONDS && state.silenceSec >= PAUSE_SILENCE_SECONDS) {
+        return true;
+    }
+    return false;
+}
+
+/** Append a newly transcribed segment onto existing text with clean spacing. */
+export function appendDictatedText(current: string, transcript: string): string {
+    const trimmed = transcript.trim();
+    if (!trimmed) {
+        return current;
+    }
+    if (!current) {
+        return trimmed;
+    }
+    const needsSpace = !/\s$/.test(current);
+    return `${current}${needsSpace ? ' ' : ''}${trimmed}`;
+}
+
+/** Roll back text dictated during a cancelled recording session. */
+export function revertDictatedSegments(
+    current: string,
+    baseline: string,
+    insertedSegments: readonly string[],
+): string {
+    if (insertedSegments.length === 0) {
+        return current;
+    }
+    let expected = baseline;
+    for (const segment of insertedSegments) {
+        expected = appendDictatedText(expected, segment);
+    }
+    if (current === expected) {
+        return baseline;
+    }
+    const dictatedSuffix = insertedSegments.map((item) => item.trim()).filter(Boolean).join(' ');
+    if (dictatedSuffix && current.endsWith(dictatedSuffix)) {
+        return current.slice(0, current.length - dictatedSuffix.length).trimEnd();
+    }
+    return baseline;
 }
 
 export async function blobToWav(blob: Blob): Promise<Blob> {
@@ -88,7 +201,7 @@ export interface TranscriptionResult {
     error?: string;
 }
 
-export async function transcribeAudio(wav: Blob): Promise<TranscriptionResult> {
+export async function transcribeAudio(wav: Blob, signal?: AbortSignal): Promise<TranscriptionResult> {
     const formData = new FormData();
     // Field name and filename match what the route reads.
     formData.append('audio', wav, 'recording.wav');
@@ -97,6 +210,7 @@ export async function transcribeAudio(wav: Blob): Promise<TranscriptionResult> {
         method: 'POST',
         credentials: CREDENTIALS_MODE,
         body: formData,
+        signal,
     });
 
     if (!response.ok) {

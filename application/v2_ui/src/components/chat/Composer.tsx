@@ -138,7 +138,8 @@ import {
 import { AiNotice } from './AiNotice';
 import { ActionRecoveryNotice } from './ActionRecoveryNotice';
 import { requestDesktopNotificationPermission } from '../../lib/desktopNotifications';
-import { VoiceInput } from './VoiceInput';
+import { appendDictatedText, revertDictatedSegments } from '../../lib/voice';
+import { VoiceInput, type RecordingState } from './VoiceInput';
 import { WebSearchNotice } from './WebSearchNotice';
 import { ImageReferenceThumbnail } from './ImageReferenceThumbnail';
 import { useImageEditCapability } from '../../lib/imageRevisions';
@@ -277,6 +278,8 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
     const [draft, setDraft] = useState(createComposerDraft);
     const { text, attachedPrompt } = draft;
+    const [voiceStatus, setVoiceStatus] = useState<RecordingState>('idle');
+    const voiceBaselineRef = useRef('');
     // A message made only of mention chips is a ping, which typing `@Name` alone always allowed.
     const hasMentionChips = (draft.mentions?.length ?? 0) > 0;
     const promptInstance = draft.promptInstance ?? 0;
@@ -1769,6 +1772,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         onChange={setDraft}
                         conversationId={activeConversationId}
                         disabled={!canPost}
+                        voiceStatus={voiceStatus}
                         rows={1}
                         promptContext={promptContext()}
                         actionsRef={editorActionsRef}
@@ -2146,10 +2150,18 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         <div className="composer-primary-actions ml-auto flex shrink-0 items-center gap-1.5">
                             {features.enable_speech_to_text_input && (
                                 <VoiceInput
-                                    onTranscribed={(transcript) =>
+                                    disabled={!canPost}
+                                    onSessionStart={() => {
+                                        voiceBaselineRef.current = text;
+                                    }}
+                                    onStateChange={setVoiceStatus}
+                                    onCancelSession={(segments) =>
                                         setText((current) =>
-                                            current ? `${current} ${transcript}` : transcript,
+                                            revertDictatedSegments(current, voiceBaselineRef.current, segments),
                                         )
+                                    }
+                                    onTranscribed={(transcript) =>
+                                        setText((current) => appendDictatedText(current, transcript))
                                     }
                                 />
                             )}
