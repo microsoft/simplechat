@@ -36,6 +36,7 @@ from functions_debug import debug_print
 from functions_documents import get_document_record, get_ordered_document_chunks
 from functions_group import get_user_groups
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from model_endpoint_clients import build_openai_client_timeout_options
 from public_source_access import get_public_source_workspace_ids
 from public_source_policy import uses_all_public_sources
 from functions_search import (
@@ -1132,12 +1133,14 @@ def _create_summary_client(settings, user_id=None):
         settings,
         identity_context={'user_id': user_id},
     )
+    timeout_options = globals().get('build_openai_client_timeout_options', lambda *_a, **_k: {})(settings)
     if settings.get('enable_gpt_apim', False):
         return AzureOpenAI(
             api_version=settings.get('azure_apim_gpt_api_version'),
             azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
             api_key=settings.get('azure_apim_gpt_subscription_key'),
             default_headers=extra_headers or None,
+            **timeout_options,
         )
 
     auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
@@ -1151,6 +1154,7 @@ def _create_summary_client(settings, user_id=None):
             azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
             azure_ad_token_provider=token_provider,
             default_headers=extra_headers or None,
+            **timeout_options,
         )
 
     return AzureOpenAI(
@@ -1158,6 +1162,7 @@ def _create_summary_client(settings, user_id=None):
         azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
         api_key=settings.get('azure_openai_gpt_key'),
         default_headers=extra_headers or None,
+        **timeout_options,
     )
 
 

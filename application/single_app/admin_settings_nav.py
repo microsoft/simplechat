@@ -540,6 +540,7 @@ ADMIN_NAV = [
                     {"id": "redis-cache-section", "label": "Redis Cache", "icon": "bi-database"},
                     {"id": "redis-monitoring-section", "label": "Redis Metrics", "icon": "bi-activity"},
                     {"id": "conversation-cache-section", "label": "Conversation Cache", "icon": "bi-chat-square-text"},
+                    {"id": "request-stream-timeouts-section", "label": "Request & Stream Timeouts", "icon": "bi-hourglass-split"},
                 ],
             },
             {

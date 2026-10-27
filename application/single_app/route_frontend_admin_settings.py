@@ -2301,6 +2301,54 @@ def register_route_frontend_admin_settings(bp):
                     120,
                 ),
             )
+            model_stream_read_timeout_seconds = max(
+                30,
+                min(
+                    600,
+                    parse_admin_int(
+                        form_data.get('model_stream_read_timeout_seconds'),
+                        settings.get('model_stream_read_timeout_seconds', 120),
+                        'model_stream_read_timeout_seconds',
+                        120,
+                    ),
+                ),
+            )
+            document_action_timeout_seconds = max(
+                60,
+                min(
+                    900,
+                    parse_admin_int(
+                        form_data.get('document_action_timeout_seconds'),
+                        settings.get('document_action_timeout_seconds', 300),
+                        'document_action_timeout_seconds',
+                        300,
+                    ),
+                ),
+            )
+            stream_disconnect_grace_seconds = max(
+                0,
+                min(
+                    300,
+                    parse_admin_int(
+                        form_data.get('stream_disconnect_grace_seconds'),
+                        settings.get('stream_disconnect_grace_seconds', 60),
+                        'stream_disconnect_grace_seconds',
+                        60,
+                    ),
+                ),
+            )
+            model_call_max_retries = max(
+                0,
+                min(
+                    3,
+                    parse_admin_int(
+                        form_data.get('model_call_max_retries'),
+                        settings.get('model_call_max_retries', 1),
+                        'model_call_max_retries',
+                        1,
+                    ),
+                ),
+            )
             dai_debug_enabled = bool(settings.get('enable_dai_debug', False))
             document_access_index_shadow_validation_enabled = (
                 form_data.get('enable_document_access_index_shadow_validation') == 'on'
@@ -2542,6 +2590,10 @@ def register_route_frontend_admin_settings(bp):
                 'redis_port': form_data.get('redis_port', '').strip(),
                 'enable_conversation_cache': form_data.get('enable_conversation_cache') == 'on',
                 'conversation_cache_ttl_seconds': conversation_cache_ttl_seconds,
+                'model_stream_read_timeout_seconds': model_stream_read_timeout_seconds,
+                'document_action_timeout_seconds': document_action_timeout_seconds,
+                'stream_disconnect_grace_seconds': stream_disconnect_grace_seconds,
+                'model_call_max_retries': model_call_max_retries,
 
                 # Document Access Index
                 'enable_document_access_index_container': True,

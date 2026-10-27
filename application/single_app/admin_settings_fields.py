@@ -7239,6 +7239,77 @@ ADMIN_SETTINGS_FIELDS = {
             ),
         },
     ],
+    "request-stream-timeouts-section": [
+        {
+            "key": "model_stream_read_timeout_seconds",
+            "type": "range",
+            "label": "Model & Stream Read Timeout",
+            "help": (
+                "Maximum wait for the first token from an AI model or between streamed "
+                "chunks before the socket read fails. Active streams that keep emitting "
+                "tokens are not interrupted by this timeout."
+            ),
+            "default": 120,
+            "min": 30,
+            "max": 600,
+            "step": 15,
+            "suffix": " sec",
+            "notice": (
+                "Worker capacity guidance: Each active chat stream holds one web worker "
+                "HTTP thread and one dedicated chat-stream worker thread until it finishes, "
+                "times out, or disconnects. Keeping per-chunk read timeouts, total document "
+                "action deadlines, and disconnect grace windows bounded prevents stalled "
+                "upstream model calls from exhausting worker threads."
+            ),
+            "notice_level": "info",
+        },
+        {
+            "key": "document_action_timeout_seconds",
+            "type": "range",
+            "label": "Document Action Total Deadline",
+            "help": (
+                "Overall wall-clock budget for synchronous and multi-window document "
+                "actions (Analyze and Compare). Completed durable window checkpoints are "
+                "preserved if a run stops at this deadline so a retry can resume."
+            ),
+            "default": 300,
+            "min": 60,
+            "max": 900,
+            "step": 30,
+            "suffix": " sec",
+        },
+        {
+            "key": "stream_disconnect_grace_seconds",
+            "type": "range",
+            "label": "Disconnected Stream Grace Period",
+            "help": (
+                "How long an in-flight stream continues running after the browser "
+                "disconnects so a page refresh or brief network drop can reattach. If no "
+                "client reattaches before this window expires, the stream cancels itself "
+                "and frees its worker thread. Set 0 to cancel immediately on disconnect."
+            ),
+            "default": 60,
+            "min": 0,
+            "max": 300,
+            "step": 15,
+            "suffix": " sec",
+        },
+        {
+            "key": "model_call_max_retries",
+            "type": "range",
+            "label": "Model Call Max Retries",
+            "help": (
+                "Maximum automatic SDK retries per model call on transient connection or "
+                "rate-limit errors. Lower values release worker threads faster when an "
+                "upstream model endpoint is degraded."
+            ),
+            "default": 1,
+            "min": 0,
+            "max": 3,
+            "step": 1,
+            "suffix": " retries",
+        },
+    ],
     # ------------------------------------------------------------------
     # Scale / Cosmos
     #

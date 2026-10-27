@@ -54,6 +54,7 @@ from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
     AnthropicSemanticKernelChatCompletion,
+    build_openai_client_timeout_options,
     infer_model_endpoint_protocol,
     normalize_openai_style_base_url,
     resolve_openai_style_request_api_version,
@@ -329,6 +330,7 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
         client_kwargs = {
             "api_key": token_or_key,
             "base_url": normalize_openai_style_base_url(agent_config["endpoint"]),
+            **globals().get("build_openai_client_timeout_options", lambda *_a, **_k: {})(),
         }
         if request_api_version:
             client_kwargs["default_query"] = {"api-version": request_api_version}

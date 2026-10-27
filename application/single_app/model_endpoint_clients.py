@@ -3,6 +3,7 @@
 
 import json
 import asyncio
+import os
 import re
 import ssl
 from collections.abc import Mapping
@@ -70,6 +71,189 @@ ANTHROPIC_MODEL_MARKERS = ("claude",)
 OPENAI_REASONING_MODEL_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4")
 MODEL_CONTEXT_MODE_SYSTEM = "system"
 MODEL_CONTEXT_MODE_FOLD_LATEST_USER = "fold_latest_user"
+
+DEFAULT_MODEL_STREAM_READ_TIMEOUT_SECONDS = 120
+MIN_MODEL_STREAM_READ_TIMEOUT_SECONDS = 30
+MAX_MODEL_STREAM_READ_TIMEOUT_SECONDS = 600
+
+DEFAULT_DOCUMENT_ACTION_TIMEOUT_SECONDS = 300
+MIN_DOCUMENT_ACTION_TIMEOUT_SECONDS = 60
+MAX_DOCUMENT_ACTION_TIMEOUT_SECONDS = 900
+
+DEFAULT_STREAM_DISCONNECT_GRACE_SECONDS = 60
+MIN_STREAM_DISCONNECT_GRACE_SECONDS = 0
+MAX_STREAM_DISCONNECT_GRACE_SECONDS = 300
+
+DEFAULT_MODEL_CALL_MAX_RETRIES = 1
+MIN_MODEL_CALL_MAX_RETRIES = 0
+MAX_MODEL_CALL_MAX_RETRIES = 3
+
+AUXILIARY_MODEL_CALL_TIMEOUT_SECONDS = 30.0
+
+
+def _coerce_bounded_int(raw_value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(float(raw_value))
+    except (TypeError, ValueError):
+        parsed = int(default)
+    return max(minimum, min(maximum, parsed))
+
+
+def resolve_model_stream_read_timeout_seconds(
+    settings: Any = None,
+    default: int = DEFAULT_MODEL_STREAM_READ_TIMEOUT_SECONDS,
+) -> int:
+    """Resolve the per-chunk/read timeout in seconds for model endpoint calls."""
+    raw_value = None
+    if isinstance(settings, Mapping):
+        raw_value = settings.get("model_stream_read_timeout_seconds")
+    if raw_value in (None, ""):
+        raw_value = (
+            os.environ.get("SIMPLECHAT_OPENAI_READ_TIMEOUT_SECONDS")
+            or os.environ.get("SIMPLECHAT_OPENAI_TIMEOUT_SECONDS")
+        )
+    return _coerce_bounded_int(
+        raw_value if raw_value not in (None, "") else default,
+        default,
+        MIN_MODEL_STREAM_READ_TIMEOUT_SECONDS,
+        MAX_MODEL_STREAM_READ_TIMEOUT_SECONDS,
+    )
+
+
+def resolve_document_action_timeout_seconds(
+    settings: Any = None,
+    default: int = DEFAULT_DOCUMENT_ACTION_TIMEOUT_SECONDS,
+) -> int:
+    """Resolve the total wall-clock deadline in seconds for document action runs."""
+    raw_value = None
+    if isinstance(settings, Mapping):
+        raw_value = settings.get("document_action_timeout_seconds")
+    if raw_value in (None, ""):
+        raw_value = os.environ.get("SIMPLECHAT_DOCUMENT_ACTION_TIMEOUT_SECONDS")
+    return _coerce_bounded_int(
+        raw_value if raw_value not in (None, "") else default,
+        default,
+        MIN_DOCUMENT_ACTION_TIMEOUT_SECONDS,
+        MAX_DOCUMENT_ACTION_TIMEOUT_SECONDS,
+    )
+
+
+def resolve_stream_disconnect_grace_seconds(
+    settings: Any = None,
+    default: int = DEFAULT_STREAM_DISCONNECT_GRACE_SECONDS,
+) -> int:
+    """Resolve how long a disconnected stream runs before auto-cancelling."""
+    raw_value = None
+    if isinstance(settings, Mapping):
+        raw_value = settings.get("stream_disconnect_grace_seconds")
+    if raw_value in (None, ""):
+        raw_value = os.environ.get("SIMPLECHAT_STREAM_DISCONNECT_GRACE_SECONDS")
+    return _coerce_bounded_int(
+        raw_value if raw_value not in (None, "") else default,
+        default,
+        MIN_STREAM_DISCONNECT_GRACE_SECONDS,
+        MAX_STREAM_DISCONNECT_GRACE_SECONDS,
+    )
+
+
+def resolve_model_call_max_retries(
+    settings: Any = None,
+    default: int = DEFAULT_MODEL_CALL_MAX_RETRIES,
+) -> int:
+    """Resolve the SDK max_retries setting for model endpoint clients."""
+    raw_value = None
+    if isinstance(settings, Mapping):
+        raw_value = settings.get("model_call_max_retries")
+    if raw_value in (None, ""):
+        raw_value = os.environ.get("SIMPLECHAT_OPENAI_MAX_RETRIES")
+    return _coerce_bounded_int(
+        raw_value if raw_value not in (None, "") else default,
+        default,
+        MIN_MODEL_CALL_MAX_RETRIES,
+        MAX_MODEL_CALL_MAX_RETRIES,
+    )
+
+
+def build_openai_client_timeout(
+    settings: Any = None,
+    *,
+    read_timeout_seconds: float | int | None = None,
+    connect_timeout_seconds: float = 10.0,
+    write_timeout_seconds: float = 30.0,
+    pool_timeout_seconds: float = 10.0,
+) -> httpx.Timeout:
+    """Build a granular httpx.Timeout so stalled connects or reads fail fast."""
+    if read_timeout_seconds is not None and float(read_timeout_seconds) > 0:
+        read_timeout = float(read_timeout_seconds)
+    else:
+        read_timeout = float(resolve_model_stream_read_timeout_seconds(settings))
+    connect_timeout = min(float(connect_timeout_seconds), max(1.0, read_timeout))
+    write_timeout = min(float(write_timeout_seconds), max(1.0, read_timeout))
+    pool_timeout = min(float(pool_timeout_seconds), max(1.0, read_timeout))
+    return httpx.Timeout(
+        timeout=read_timeout,
+        connect=connect_timeout,
+        read=read_timeout,
+        write=write_timeout,
+        pool=pool_timeout,
+    )
+
+
+def build_openai_client_timeout_options(
+    settings: Any = None,
+    *,
+    read_timeout_seconds: float | int | None = None,
+    max_retries: int | None = None,
+) -> Dict[str, Any]:
+    """Return keyword arguments (`timeout` and `max_retries`) for OpenAI SDK clients."""
+    resolved_retries = (
+        resolve_model_call_max_retries(settings)
+        if max_retries is None
+        else max(MIN_MODEL_CALL_MAX_RETRIES, min(MAX_MODEL_CALL_MAX_RETRIES, int(max_retries)))
+    )
+    return {
+        "timeout": build_openai_client_timeout(
+            settings,
+            read_timeout_seconds=read_timeout_seconds,
+        ),
+        "max_retries": resolved_retries,
+    }
+
+
+def bind_callable_with_timeout(
+    client: Any,
+    create_callable: Any,
+    *,
+    timeout_seconds: float = AUXILIARY_MODEL_CALL_TIMEOUT_SECONDS,
+    max_retries: int = 0,
+):
+    """Return a chat.completions.create callable bounded by a short timeout and retry cap."""
+    timeout_obj = build_openai_client_timeout(read_timeout_seconds=timeout_seconds)
+    with_options = getattr(client, "with_options", None) if client is not None else None
+    if callable(with_options):
+        try:
+            scoped_client = with_options(timeout=timeout_obj, max_retries=max_retries)
+            scoped_create = getattr(getattr(scoped_client, "chat", None), "completions", None)
+            scoped_create = getattr(scoped_create, "create", None)
+            if callable(scoped_create):
+                return scoped_create
+        except Exception:
+            pass
+    inner_client = getattr(client, "_client", None) if client is not None else None
+    inner_with_options = getattr(inner_client, "with_options", None) if inner_client is not None else None
+    if callable(inner_with_options) and isinstance(client, OpenAIStyleChatCompletionClient):
+        try:
+            scoped_inner = inner_with_options(timeout=timeout_obj, max_retries=max_retries)
+            return OpenAIStyleChatCompletionClient(
+                scoped_inner,
+                sanitize_errors=client._sanitize_errors,
+                api_type=client._api_type,
+                protocol=client._protocol,
+                request_url=client._request_url,
+            ).chat.completions.create
+        except Exception:
+            pass
+    return create_callable
 
 
 def normalize_anthropic_finish_reason(finish_reason: Any) -> str | None:
@@ -686,6 +870,7 @@ def build_openai_style_chat_client(
     allow_insecure_custom_endpoints: bool = False,
     ca_bundle_path: Any = "",
     client_cert: Any = None,
+    settings: Any = None,
 ):
     """Build an OpenAI-compatible chat client for Foundry data-plane endpoints."""
     request_api_version = resolve_openai_style_request_api_version(api_version)
@@ -695,6 +880,7 @@ def build_openai_style_chat_client(
             resolve_custom_openai_base_url(base_url, api_type, url_mode)
             if direct_custom else normalize_openai_style_base_url(base_url)
         ),
+        **build_openai_client_timeout_options(settings),
     }
     if direct_custom:
         client_kwargs["http_client"] = build_custom_openai_sync_http_client(
@@ -766,19 +952,25 @@ def build_anthropic_chat_client(
     api_key: str = "",
     bearer_token: str = "",
     extra_headers: Dict[str, str] | None = None,
-    timeout: int = 90,
+    timeout: int | None = None,
     anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
     direct_custom: bool = False,
     allow_private_custom_endpoints: bool = False,
     custom_endpoint_ca_bundle_path: str = "",
+    settings: Any = None,
 ):
     """Build a chat-completions-shaped adapter over the Anthropic messages protocol."""
+    resolved_timeout = (
+        int(timeout)
+        if timeout is not None
+        else resolve_model_stream_read_timeout_seconds(settings)
+    )
     return AnthropicChatCompletionClient(
         endpoint=endpoint,
         api_key=api_key,
         bearer_token=bearer_token,
         extra_headers=extra_headers,
-        timeout=timeout,
+        timeout=resolved_timeout,
         anthropic_version=anthropic_version,
         direct_custom=direct_custom,
         allow_private_custom_endpoints=allow_private_custom_endpoints,
@@ -821,14 +1013,16 @@ class AnthropicChatCompletionClient:
     def create(self, **kwargs: Any):
         payload = self._build_payload(kwargs)
         stream = bool(kwargs.get("stream"))
+        call_timeout = kwargs.get("timeout")
+        effective_timeout = float(call_timeout) if isinstance(call_timeout, (int, float)) and call_timeout > 0 else float(self.timeout)
         if self.direct_custom:
-            return self._create_direct_custom(payload, stream=stream)
+            return self._create_direct_custom(payload, stream=stream, timeout_override=effective_timeout)
 
         response = requests.post(
             self.endpoint,
             headers=self._build_headers(stream=stream),
             json=payload,
-            timeout=(30, self.timeout),
+            timeout=(min(30.0, effective_timeout), effective_timeout),
             stream=stream,
             allow_redirects=not self.direct_custom,
         )
@@ -840,7 +1034,8 @@ class AnthropicChatCompletionClient:
 
         return self._build_completion_response(response.json())
 
-    def _create_direct_custom(self, payload, *, stream):
+    def _create_direct_custom(self, payload, *, stream, timeout_override=None):
+        effective_timeout = float(timeout_override) if timeout_override is not None else float(self.timeout)
         http_client = build_custom_openai_sync_http_client(
             allow_private=self.allow_private_custom_endpoints,
             ca_bundle_path=self.custom_endpoint_ca_bundle_path,
@@ -850,7 +1045,7 @@ class AnthropicChatCompletionClient:
             self.endpoint,
             headers=self._build_headers(stream=stream),
             json=payload,
-            timeout=httpx.Timeout(self.timeout, connect=30),
+            timeout=httpx.Timeout(effective_timeout, connect=min(30.0, effective_timeout)),
         )
         try:
             response = http_client.send(
@@ -1284,12 +1479,14 @@ class CustomAnthropicChatCompletionClient(AnthropicChatCompletionClient):
     def create(self, **kwargs):
         payload = self._build_payload(kwargs)
         stream = bool(kwargs.get("stream"))
+        call_timeout = kwargs.get("timeout")
+        effective_timeout = float(call_timeout) if isinstance(call_timeout, (int, float)) and call_timeout > 0 else float(self.timeout)
         client = build_custom_openai_sync_http_client(**self._transport_options)
         response = None
         try:
             request = client.build_request(
                 "POST", self.endpoint, headers=self._build_headers(stream=stream),
-                json=payload, timeout=httpx.Timeout(self.timeout, connect=30),
+                json=payload, timeout=httpx.Timeout(effective_timeout, connect=min(30.0, effective_timeout)),
             )
             response = client.send(request, stream=stream, follow_redirects=False)
             response.raise_for_status()

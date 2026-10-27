@@ -40,6 +40,7 @@ from functions_appinsights import *
 from functions_activity_logging import *
 from functions_session_store import install_merging_session_interface
 
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 from datetime import datetime
@@ -173,8 +174,14 @@ if not (disable_flask_instrumentation == "1" or disable_flask_instrumentation.lo
 
 app.config['EXECUTOR_TYPE'] = EXECUTOR_TYPE
 app.config['EXECUTOR_MAX_WORKERS'] = EXECUTOR_MAX_WORKERS
+app.config['CHAT_STREAM_EXECUTOR_MAX_WORKERS'] = CHAT_STREAM_EXECUTOR_MAX_WORKERS
 executor = Executor()
 executor.init_app(app)
+chat_stream_executor = ThreadPoolExecutor(
+    max_workers=CHAT_STREAM_EXECUTOR_MAX_WORKERS,
+    thread_name_prefix='chat-stream',
+)
+app.extensions['chat_stream_executor'] = chat_stream_executor
 app.config['SESSION_TYPE'] = SESSION_TYPE
 app.config['VERSION'] = VERSION
 app.config['IS_DEVELOPMENT'] = IS_DEVELOPMENT

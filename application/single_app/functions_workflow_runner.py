@@ -13,8 +13,9 @@ import os
 import re
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from contextlib import contextmanager, nullcontext
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from copy import deepcopy
 from datetime import datetime, timezone
 from agent_execution_context import AgentExecutionCancelled, DelegationBudget, capture_execution_identity
@@ -220,6 +221,12 @@ from functions_mixed_source_orchestration import (
 )
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
+    bind_callable_with_timeout,
+    build_openai_client_timeout,
+    build_openai_client_timeout_options,
+    resolve_document_action_timeout_seconds,
+    resolve_model_call_max_retries,
+    resolve_model_stream_read_timeout_seconds,
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_endpoint_types import resolve_model_endpoint_request_model
@@ -7254,6 +7261,7 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
 
 def _build_legacy_default_client(settings, identity_context=None):
     extra_headers = build_model_endpoint_identity_headers(settings, identity_context=identity_context)
+    timeout_options = build_openai_client_timeout_options(settings)
     if settings.get('enable_gpt_apim', False):
         endpoint = settings.get('azure_apim_gpt_endpoint')
         deployment_name = settings.get('azure_apim_gpt_deployment')
@@ -7264,6 +7272,7 @@ def _build_legacy_default_client(settings, identity_context=None):
             api_key=api_key,
             api_version=api_version,
             default_headers=extra_headers or None,
+            **timeout_options,
         )
         return client, deployment_name, 'aoai'
 
@@ -7281,6 +7290,7 @@ def _build_legacy_default_client(settings, identity_context=None):
             api_key=api_key,
             api_version=api_version,
             default_headers=extra_headers or None,
+            **timeout_options,
         )
         return client, deployment_name, 'aoai'
 
@@ -7299,6 +7309,7 @@ def _build_legacy_default_client(settings, identity_context=None):
         azure_ad_token_provider=token_provider,
         api_version=api_version,
         default_headers=extra_headers or None,
+        **timeout_options,
     )
     return client, deployment_name, 'aoai'
 
@@ -10221,12 +10232,17 @@ def _execute_document_analysis_workflow(
     client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
 
     def invoke_model_prompt(prompt_text, stage='window_analysis', metadata=None):
-        completion = client.chat.completions.create(
-            model=deployment_name,
-            messages=_build_workflow_chat_messages(
+        completion = _invoke_document_action_model_completion(
+            client,
+            deployment_name,
+            _build_workflow_chat_messages(
                 prompt_text,
                 url_access_context=url_access_context,
             ),
+            workflow=workflow,
+            settings=settings,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
         )
         _accumulate_token_usage(token_usage_aggregate, completion)
         if not getattr(completion, 'choices', None):
@@ -10619,12 +10635,17 @@ def _execute_document_comparison_workflow(
     client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
 
     def invoke_model_prompt(prompt_text, stage='window_analysis', metadata=None):
-        completion = client.chat.completions.create(
-            model=deployment_name,
-            messages=_build_workflow_chat_messages(
+        completion = _invoke_document_action_model_completion(
+            client,
+            deployment_name,
+            _build_workflow_chat_messages(
                 prompt_text,
                 url_access_context=url_access_context,
             ),
+            workflow=workflow,
+            settings=settings,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
         )
         _accumulate_token_usage(token_usage_aggregate, completion)
         if not getattr(completion, 'choices', None):
@@ -10957,6 +10978,76 @@ def _execute_document_merge_workflow(
     return result
 
 
+_DOCUMENT_ACTION_MODEL_EXECUTOR = ThreadPoolExecutor(
+    max_workers=16,
+    thread_name_prefix='doc-action-model',
+)
+
+
+def _invoke_document_action_model_completion(
+    client,
+    deployment_name,
+    messages,
+    *,
+    workflow=None,
+    settings=None,
+    cancel_requested=None,
+    request_correlation_id=None,
+):
+    """Invoke a document-action model call with remaining-deadline bounds and cancellation polling."""
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'model_invocation',
+        request_correlation_id=request_correlation_id,
+    )
+    workflow_dict = workflow if isinstance(workflow, dict) else {}
+    deadline = workflow_dict.get('_document_action_deadline')
+    timeout_state = workflow_dict.get('_document_action_timeout_state')
+    read_timeout = float(resolve_model_stream_read_timeout_seconds(settings))
+    effective_timeout = read_timeout
+    if isinstance(deadline, (int, float)):
+        remaining = float(deadline) - time.monotonic()
+        if remaining <= 0:
+            if isinstance(timeout_state, dict):
+                timeout_state['timed_out'] = True
+            raise MixedSourceCancellationError('model_invocation_timeout')
+        effective_timeout = max(1.0, min(read_timeout, remaining))
+
+    create_callable = bind_callable_with_timeout(
+        client,
+        client.chat.completions.create,
+        timeout_seconds=effective_timeout,
+        max_retries=resolve_model_call_max_retries(settings),
+    )
+    if not callable(cancel_requested):
+        return create_callable(model=deployment_name, messages=messages)
+
+    ctx = copy_context()
+    future = _DOCUMENT_ACTION_MODEL_EXECUTOR.submit(
+        ctx.run,
+        create_callable,
+        model=deployment_name,
+        messages=messages,
+    )
+    while True:
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'model_invocation',
+            request_correlation_id=request_correlation_id,
+        )
+        try:
+            return future.result(timeout=0.05)
+        except FutureTimeoutError:
+            if future.done():
+                raise
+        except Exception as exc:
+            if isinstance(deadline, (int, float)) and time.monotonic() >= float(deadline):
+                if isinstance(timeout_state, dict):
+                    timeout_state['timed_out'] = True
+                raise MixedSourceCancellationError('model_invocation_timeout') from exc
+            raise
+
+
 def _execute_document_action_workflow(
     workflow,
     settings,
@@ -10971,71 +11062,102 @@ def _execute_document_action_workflow(
     request_correlation_id = normalize_mixed_source_correlation_id(
         request_correlation_id
     )
-    raise_if_mixed_source_cancelled(
-        cancel_requested,
-        'manifest',
-        request_correlation_id=request_correlation_id,
+    timeout_seconds = int(
+        (workflow or {}).get('_document_action_timeout_seconds')
+        or resolve_document_action_timeout_seconds(settings)
     )
-    action_config = _get_document_action_config(workflow)
-    action_config = _resolve_recent_document_action_targets(workflow, action_config, settings)
-    if (action_config.get('selection_summary') or {}).get('status') == 'no_matches':
-        return _no_document_selection_result(action_config)
-    workflow = _apply_runtime_document_action_config(workflow, action_config)
-    action_type = action_config.get('type')
-    debug_print(
-        '[WORKFLOW_DOCUMENT_ACTION] Dispatching action | '
-        f"workflow_id={workflow.get('id')} | "
-        f'run_id={run_id} | '
-        f'action_type={action_type} | '
-        f"runner_type={workflow.get('runner_type')} | "
-        f'conversation_id={conversation_id}'
-    )
+    deadline = (workflow or {}).get('_document_action_deadline')
+    if not isinstance(deadline, (int, float)):
+        deadline = time.monotonic() + float(timeout_seconds)
+    timeout_state = {'timed_out': False, 'timeout_seconds': timeout_seconds}
+    caller_cancel_requested = cancel_requested
 
+    def deadline_cancel_requested():
+        if callable(caller_cancel_requested) and caller_cancel_requested():
+            return True
+        if time.monotonic() >= float(deadline):
+            timeout_state['timed_out'] = True
+            return True
+        return False
+
+    workflow = {
+        **(workflow or {}),
+        '_document_action_deadline': deadline,
+        '_document_action_timeout_seconds': timeout_seconds,
+        '_document_action_timeout_state': timeout_state,
+    }
     try:
-        if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
-            result = _execute_document_analysis_workflow(
-                workflow,
-                settings,
-                conversation_id=conversation_id,
-                run_id=run_id,
-                thought_tracker=thought_tracker,
-                external_activity_callback=external_activity_callback,
-                action_config=action_config,
-                url_access_context=url_access_context,
-                cancel_requested=cancel_requested,
-                request_correlation_id=request_correlation_id,
-            )
-        elif action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
-            result = _execute_document_comparison_workflow(
-                workflow,
-                settings,
-                conversation_id=conversation_id,
-                run_id=run_id,
-                thought_tracker=thought_tracker,
-                external_activity_callback=external_activity_callback,
-                action_config=action_config,
-                url_access_context=url_access_context,
-                cancel_requested=cancel_requested,
-                request_correlation_id=request_correlation_id,
-            )
-        else:
-            raise ValueError('No document action is enabled for this workflow.')
-    except Exception as exc:
+        raise_if_mixed_source_cancelled(
+            deadline_cancel_requested,
+            'manifest',
+            request_correlation_id=request_correlation_id,
+        )
+        action_config = _get_document_action_config(workflow)
+        action_config = _resolve_recent_document_action_targets(workflow, action_config, settings)
+        if (action_config.get('selection_summary') or {}).get('status') == 'no_matches':
+            return _no_document_selection_result(action_config)
+        workflow = _apply_runtime_document_action_config(workflow, action_config)
+        action_type = action_config.get('type')
         debug_print(
-            '[WORKFLOW_DOCUMENT_ACTION] Action failed | '
+            '[WORKFLOW_DOCUMENT_ACTION] Dispatching action | '
             f"workflow_id={workflow.get('id')} | "
             f'run_id={run_id} | '
             f'action_type={action_type} | '
             f"runner_type={workflow.get('runner_type')} | "
-            f'error={exc}'
+            f'conversation_id={conversation_id}'
         )
-        raise
 
-    raise_if_mixed_source_cancelled(
-        cancel_requested,
-        'finalization',
-        request_correlation_id=request_correlation_id,
-    )
+        try:
+            if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+                result = _execute_document_analysis_workflow(
+                    workflow,
+                    settings,
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                    thought_tracker=thought_tracker,
+                    external_activity_callback=external_activity_callback,
+                    action_config=action_config,
+                    url_access_context=url_access_context,
+                    cancel_requested=deadline_cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                )
+            elif action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
+                result = _execute_document_comparison_workflow(
+                    workflow,
+                    settings,
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                    thought_tracker=thought_tracker,
+                    external_activity_callback=external_activity_callback,
+                    action_config=action_config,
+                    url_access_context=url_access_context,
+                    cancel_requested=deadline_cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                )
+            else:
+                raise ValueError('No document action is enabled for this workflow.')
+        except Exception as exc:
+            debug_print(
+                '[WORKFLOW_DOCUMENT_ACTION] Action failed | '
+                f"workflow_id={workflow.get('id')} | "
+                f'run_id={run_id} | '
+                f'action_type={action_type} | '
+                f"runner_type={workflow.get('runner_type')} | "
+                f'error={exc}'
+            )
+            raise
+
+        raise_if_mixed_source_cancelled(
+            deadline_cancel_requested,
+            'finalization',
+            request_correlation_id=request_correlation_id,
+        )
+    except MixedSourceCancellationError as exc:
+        user_cancelled = bool(callable(caller_cancel_requested) and caller_cancel_requested())
+        if timeout_state.get('timed_out') and not user_cancelled:
+            exc.timed_out = True
+            exc.timeout_seconds = timeout_seconds
+        raise
     debug_print(
         '[WORKFLOW_DOCUMENT_ACTION] Action completed | '
         f"workflow_id={workflow.get('id')} | "
