@@ -22432,7 +22432,8 @@ def register_route_backend_chats(bp):
         try:
             destination_lease = _acquire_chat_destination_lease(user_id, finalized_conversation_id)
         except (ConversationHandoffError, ConversationReferenceError) as error:
-            CHAT_STREAM_REGISTRY.finish_session(user_id, finalized_conversation_id, stream_session.session_id)
+            stream_session.publish(build_stream_error_event(error.public_message, code=error.code))
+            stream_session.close()
             return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
         try:
             stream_conversation_reference_resolution = _resolve_chat_conversation_references(
@@ -22442,7 +22443,8 @@ def register_route_backend_chats(bp):
                 destination_id=requested_conversation_id,
             )
         except (ConversationHandoffError, ConversationReferenceError) as error:
-            CHAT_STREAM_REGISTRY.finish_session(user_id, finalized_conversation_id, stream_session.session_id)
+            stream_session.publish(build_stream_error_event(error.public_message, code=error.code))
+            stream_session.close()
             _release_chat_destination_lease(destination_lease, finalized_conversation_id)
             return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
         g.chat_destination_lease = destination_lease
@@ -22631,6 +22633,8 @@ def register_route_backend_chats(bp):
             return build_background_stream_response(generate_compatibility_response, stream_session=stream_session)
 
         def generate(publish_background_event=None):
+            nonlocal stream_conversation_reference_resolution
+
             try:
                 # Import debug_print for use in generator
                 from functions_debug import debug_print
