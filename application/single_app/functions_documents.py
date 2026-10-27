@@ -92,7 +92,11 @@ from utils_cache import (
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_onenote import ONENOTE_MAX_CHUNKS, OneNoteExtractionError, extract_onenote
 from functions_content import *
-from functions_office_media import extract_office_embedded_images_with_diagnostics
+from functions_office_media import (
+    extract_office_embedded_images_with_diagnostics,
+    format_word_comment_block,
+    strip_appended_word_comments,
+)
 from functions_document_transform_sources import (
     OFFICE_REFERENCE_MIME_TYPES,
     TEMPLATE_EXTENSIONS,

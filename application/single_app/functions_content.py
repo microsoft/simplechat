@@ -13,12 +13,8 @@ from config import *
 from azure.ai.documentintelligence.models import DocumentAnalysisFeature
 from functions_office_media import (
     OFFICE_COMMENT_ANCHOR_MAX_CHARS,
-    WORD_COMMENTS_SECTION_HEADING,
     extract_docx_comments,
-    extract_office_embedded_images,
-    format_word_comment_block,
     format_word_comments_section,
-    strip_appended_word_comments,
 )
 from functions_embeddings import generate_embedding_batch
 from functions_embedding_compatibility import active_embedding_profile, embedding_query_slot, read_embedding_settings
