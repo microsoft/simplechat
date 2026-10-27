@@ -1,6 +1,6 @@
-# V2 GPT-5.6 model tool and citation fixes (v0.261.389)
+# V2 GPT-5.6 model tool and citation fixes (v0.261.390)
 
-Fixed/Implemented in version: **0.261.389**, recorded in
+Fixed/Implemented in version: **0.261.390**, recorded in
 `application/single_app/config.py`.
 
 ## Issue and root causes
@@ -70,6 +70,8 @@ aliases, explicit None versus positive effort, Responses function continuation,
 generation limits, streaming delivery, private state, safe failures, and
 cancellation. Production-parser checks and rendered browser cases cover exact
 source resolution, evidence-state distinctions, and conversation isolation.
+The cancellation regression bounds the wait for the cancelled task and fails
+explicitly if its blocked mock responder completes unexpectedly.
 
 These are application-contract regressions, not a live customer-model benchmark.
 Existing working YAMCS, database, and other action plugins are not rewritten.

@@ -1,7 +1,7 @@
 # test_responses_model_tool_execution.py
 """Functional tests for Responses reasoning in the real authorized SDK tool loop.
 
-Version: 0.261.389
+Version: 0.261.390
 Implemented in: 0.261.388
 
 The real SDK and Semantic Kernel execute against a mock HTTP transport. Reasoning
@@ -238,7 +238,7 @@ def test_cancellation_does_not_replay_a_completed_tool():
                 executions.append(query)
                 return query
 
-        async def respond(request):
+        async def respond(request) -> httpx.Response:
             requests.append(request)
             if len(requests) == 1:
                 return httpx.Response(200, json={
@@ -250,6 +250,7 @@ def test_cancellation_does_not_replay_a_completed_tool():
                 })
             started.set()
             await asyncio.Event().wait()
+            raise AssertionError("The mock response must be interrupted by cancellation.")
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
             client = AsyncOpenAI(api_key="offline", base_url="https://offline.invalid/openai/v1/", http_client=http)
@@ -266,7 +267,7 @@ def test_cancellation_does_not_replay_a_completed_tool():
                 await asyncio.wait_for(started.wait(), timeout=10)
                 task.cancel()
                 with pytest.raises(asyncio.CancelledError):
-                    await task
+                    await asyncio.wait_for(task, timeout=10)
             finally:
                 await client.close()
             return len(requests), executions
