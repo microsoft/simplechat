@@ -1406,6 +1406,16 @@ def register_route_frontend_chats(bp):
                     ])
                 else:
                     extracted_content = str(extracted_content_raw)
+
+                if file_ext_nodot in {'docx', 'dotx'}:
+                    word_comments, _total_words = extract_docx_comments(temp_file_path)
+                    comments_section = format_word_comments_section(word_comments)
+                    if comments_section:
+                        extracted_content = (
+                            f"{extracted_content.rstrip()}\n\n{comments_section}"
+                            if extracted_content and extracted_content.strip()
+                            else comments_section
+                        )
                 
                 # For images, either store blob-backed bytes or convert to base64 for legacy inline display.
                 if is_image_file:

@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.390)**
+
+#### New Features
+
+*   **Word Document Review Comment Extraction (`.docx`, `.docm`, `.doc`, `.dotx`)**
+    *   Added local extraction of review comments from modern OOXML Word documents (`.docx`, `.docm`, `.dotx`) and legacy Word 97–2003 binary OLE documents (`.doc`), which were previously omitted by Azure Document Intelligence and `docx2txt` or flattened without metadata in piece tables.
+    *   OOXML extraction parses `word/comments.xml`, `word/commentsExtended.xml`, and `word/document.xml` to capture comment authors, initials, timestamps, resolved states, threaded replies, quoted anchor text (`w:commentRangeStart`/`w:commentRangeEnd`), and reading-order word offsets. Legacy `.doc` extraction parses the MS-DOC File Information Block (`FibRgLw97` `ccpAtn`, `PlcfandTxt`, `PlcfandRef`, `GrpXstAtnOwners`, and annotation bookmarks) while keeping raw annotation streams separate from body text.
+    *   Workspace ingestion merges each comment thread into the document chunk containing its anchored text, and direct chat uploads, `.docm` processing, M365 extraction, and content screening include the extracted comments.
+    *   (Ref: `functions_office_media.py`, `functions_content.py`, `functions_documents.py`, `route_frontend_chats.py`, [Word Comment Extraction](features/WORD_COMMENT_EXTRACTION.md), [#1850](https://github.com/microsoft/simplechat/issues/1850))
+
 ### **(v0.261.385)**
 
 #### Bug Fixes
