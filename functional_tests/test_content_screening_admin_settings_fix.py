@@ -1,7 +1,7 @@
 # test_content_screening_admin_settings_fix.py
 """
 Functional regressions for discoverable and persistent screening administration.
-Version: 0.261.127
+Version: 0.261.389
 Implemented in: 0.261.107
 Enabled-empty policies implemented in: 0.261.114
 
@@ -119,8 +119,8 @@ def test_acr_context_includes_ui_source_but_not_local_dependencies_or_secrets():
     rules = (APP_ROOT.parents[1] / ".dockerignore").read_text(encoding="utf-8").splitlines()
     assert "!application/v2_ui/" in rules
     assert "!application/v2_ui/**" in rules
-    assert rules.index("application/v2_ui/node_modules/") > rules.index("!application/v2_ui/**")
-    assert "**/.env" in rules and "application/single_app/static/v2/" in rules
+    assert rules.index("application/v2_ui/node_modules") > rules.index("!application/v2_ui/**")
+    assert "**/.env" in rules and "application/single_app/static/v2" in rules
 
 
 def test_failed_settings_write_never_echoes_a_successful_switch_value():
