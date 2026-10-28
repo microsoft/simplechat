@@ -55,6 +55,76 @@ class ModelEndpointUnresolvableError(ModelEndpointValidationError):
     """DNS is unavailable; saving is allowed, but a request must fail closed."""
 
 
+def endpoint_uses_openai_style_protocol(endpoint: Any) -> bool:
+    try:
+        parsed = urlparse(str(endpoint or "").strip())
+    except ValueError as exc:
+        raise ModelEndpointValidationError("The model inference endpoint URL is invalid.") from exc
+    path = parsed.path.lower()
+    hostname = (parsed.hostname or "").lower()
+    return (
+        re.search(r"/openai/v1(?:/|$)", path) is not None
+        or "/api/projects/" in path
+        or hostname.endswith(".services.ai.azure.com")
+    )
+
+
+def model_endpoint_inference_api(endpoint, use_responses_api=None):
+    """Prefer the saved API choice, retaining operation URLs for older records."""
+    if use_responses_api is not None:
+        if not isinstance(use_responses_api, bool):
+            raise ModelEndpointValidationError("Use Responses API must be true or false.")
+        if use_responses_api:
+            return "responses"
+    try:
+        path = urlparse(str(endpoint or "")).path.rstrip("/").lower()
+    except ValueError as exc:
+        raise ModelEndpointValidationError("The model inference endpoint URL is invalid.") from exc
+    return "responses" if path.endswith("/responses") else "chat_completions"
+
+
+def normalize_model_inference_connection(connection):
+    """Save an operation URL as its base and an explicit, independently editable API choice."""
+    result = dict(connection)
+    if "use_responses_api" in result:
+        if not isinstance(result["use_responses_api"], bool):
+            raise ModelEndpointValidationError("Use Responses API must be true or false.")
+    endpoint = str(result.get("endpoint") or "").strip()
+    try:
+        parsed = urlparse(endpoint)
+    except ValueError as exc:
+        raise ModelEndpointValidationError("The model inference endpoint URL is invalid.") from exc
+    path = parsed.path.rstrip("/")
+    for suffix, enabled in (("/responses", True), ("/chat/completions", False)):
+        if path.lower().endswith(suffix):
+            if parsed.query or parsed.fragment:
+                raise ModelEndpointValidationError("Use a model endpoint without query parameters or a fragment.")
+            result["endpoint"] = urlunparse(parsed._replace(path=path[:-len(suffix)]))
+            result["use_responses_api"] = enabled
+            break
+    return result
+
+
+def validate_model_endpoint_api_version(provider, endpoint, api_version, api_type="", *, use_responses_api=None):
+    """Do not send a protocol name as a dated Azure API-version query."""
+    provider = str(provider or "aoai").strip().lower()
+    legacy_custom = provider == "custom" and api_type == "azure_openai"
+    inference_api = model_endpoint_inference_api(endpoint, use_responses_api)
+    legacy_azure = provider in {"aoai", "aifoundry", "new_foundry"} and (
+        inference_api != "responses" and not endpoint_uses_openai_style_protocol(endpoint)
+    )
+    if inference_api == "responses" and (
+        provider not in {"aoai", "aifoundry", "new_foundry", "custom"}
+        or provider == "custom" and api_type != "openai"
+        or "/api/projects/" in str(endpoint or "").lower()
+    ):
+        raise ModelEndpointValidationError("Responses tool execution requires an OpenAI-compatible v1 inference connection.")
+    if (legacy_custom or legacy_azure) and str(api_version or "").strip().lower() in {"v1", "preview", "latest"}:
+        raise ModelEndpointValidationError(
+            "This connection requires a dated Azure API version. To use v1, configure an OpenAI-compatible /openai/v1/ inference endpoint; v1 is not a dated api-version value."
+        )
+
+
 def custom_endpoint_setting_enabled(settings: dict | None, key: str) -> bool:
     """Do not treat a serialized false value as permission to widen network access."""
     return (settings or {}).get(key) is True
@@ -216,6 +286,8 @@ def validate_custom_model_endpoint(
     endpoint["connection"] = connection
     if connection.get("url_mode", "auto") not in CUSTOM_ENDPOINT_URL_MODES:
         raise ModelEndpointValidationError("Custom endpoint URL mode must be auto or exact.")
+    if connection.get("url_mode") == "exact" and model_endpoint_inference_api(connection["endpoint"]) == "responses":
+        raise ModelEndpointValidationError("Use automatic URL mode with a full Responses operation URL so the v1 base is resolved correctly.")
     if connection.get("client_key_path") and not connection.get("client_cert_path"):
         raise ModelEndpointValidationError("A Custom client key requires a client certificate.")
     for field in ("client_cert_path", "client_key_path"):
@@ -255,4 +327,12 @@ def validate_custom_model_endpoints(
     if not isinstance(endpoints, list):
         raise ModelEndpointValidationError("Model endpoints must be a list.")
     for endpoint in endpoints:
+        if isinstance(endpoint, dict):
+            connection = endpoint.get("connection") or {}
+            validate_model_endpoint_api_version(
+                endpoint.get("provider"), connection.get("endpoint"),
+                connection.get("openai_api_version") or connection.get("api_version"),
+                get_model_endpoint_api_type(endpoint),
+                use_responses_api=connection.get("use_responses_api"),
+            )
         validate_custom_model_endpoint(endpoint, settings, require_api_key=require_api_key)

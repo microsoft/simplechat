@@ -2,6 +2,7 @@
 // Custom transport metadata is supplied by the server registry, not inferred from model names.
 
 import type { ConnectionModel, ModelConnection } from './modelConnections';
+import { normalizeInferenceConnection, usesResponsesApi } from './modelInference';
 
 export type CustomApiType = 'openai' | 'azure_openai' | 'anthropic' | 'gemini';
 
@@ -67,6 +68,9 @@ export function validateCustomConnection(connection: ModelConnection): Record<st
     } catch {
         errors.endpoint = 'Enter the full Custom endpoint URL.';
     }
+    if (usesResponsesApi(connection.connection) && connection.api_type !== 'openai') {
+        errors.use_responses_api = 'Responses requires the OpenAI API contract.';
+    }
     if (connection.api_type === 'azure_openai' && !text(connection.connection?.api_version)) {
         errors.api_version = 'Custom Azure OpenAI requires an explicit API version.';
     }
@@ -100,8 +104,7 @@ export function validateCustomConnection(connection: ModelConnection): Record<st
 export function buildCustomConnectionPayload(connection: ModelConnection): Record<string, unknown> {
     const apiType = text(connection.api_type);
     const connectionBlock: Record<string, unknown> = {
-        ...connection.connection,
-        endpoint: text(connection.connection?.endpoint),
+        ...normalizeInferenceConnection(connection.connection ?? {}),
         url_mode: text(connection.connection?.url_mode) || 'auto',
     };
     delete connectionBlock.openai_api_version;

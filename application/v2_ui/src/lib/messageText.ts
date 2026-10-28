@@ -24,6 +24,7 @@
 import { parseCitations, type CitationGroup } from './citations';
 import { parseInlineChart, resolveChartTable, INLINE_CHART_LANGUAGE } from './inlineChartSpec';
 import { applyMasks, MASK_PLACEHOLDER_PATTERN, readMaskState } from './masking';
+import { EVIDENCE_LABELS, readEvidenceStatus } from './evidenceStatus';
 import type { ChatMessage } from './types';
 
 /** Stands in for a redacted span, matching the `masked` chip shown in the message. */
@@ -169,5 +170,12 @@ export function messageToPlainText(
             .join('\n')}`;
     }
 
+    const evidence = readEvidenceStatus(message.metadata?.evidence_status);
+    if (evidence && evidence.state !== 'complete' && evidence.state !== 'unknown') {
+        plain += `\n\nEvidence: ${EVIDENCE_LABELS[evidence.state]}.`;
+        if (options.includeSources && masks.ranges.length === 0) {
+            plain += `\n${evidence.sources.map((source) => `${source.name}: ${EVIDENCE_LABELS[source.state]}`).join('\n')}`;
+        }
+    }
     return plain;
 }

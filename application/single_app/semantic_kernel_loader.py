@@ -35,6 +35,7 @@ from semantic_kernel_plugins.chart_plugin import ChartPlugin
 from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled, resolve_model_endpoint_foundry_scope
 from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_for_model
+from functions_model_endpoint_validation import validate_model_endpoint_api_version, model_endpoint_inference_api
 from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
@@ -57,6 +58,7 @@ from model_endpoint_clients import (
     build_openai_client_timeout_options,
     infer_model_endpoint_protocol,
     normalize_openai_style_base_url,
+    resolve_model_inference_endpoint,
     resolve_openai_style_request_api_version,
 )
 from functions_appinsights import log_event, get_appinsights_logger
@@ -174,7 +176,10 @@ log_event("[SK_LOADER] Starting loader imports")
 try:
     from semantic_kernel.agents import ChatCompletionAgent
     from agent_logging_chat_completion import LoggingChatCompletionAgent
-    from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion, OpenAIChatCompletion
+    from model_tool_chat_completion import (
+        AzureToolChatCompletion as AzureChatCompletion,
+        OpenAIToolChatCompletion as OpenAIChatCompletion,
+    )
 except ImportError:
     ChatCompletionAgent = None
     AzureChatCompletion = None
@@ -233,7 +238,9 @@ def build_agent_model_budget(agent_config, settings=None):
     if request_limit in (None, "", -1, 0):
         request_limit = model.get("responseLength")
     runtime_protocol = resolve_agent_endpoint_protocol(agent_config)
-    protocol = "messages" if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else "chat_completions"
+    protocol = "messages" if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else model_endpoint_inference_api(
+        agent_config.get("endpoint"), agent_config.get("use_responses_api"),
+    )
     provider = endpoint.get("provider")
     if agent_config.get("api_type") == "azure_openai":
         provider = "azure"
@@ -254,11 +261,17 @@ def build_agent_budget_arguments(chat_service, agent_config, budget):
 
 def resolve_agent_endpoint_protocol(agent_config):
     """Infer the protocol needed for an endpoint-bound Semantic Kernel agent."""
+    validate_model_endpoint_api_version(
+        agent_config.get("model_provider") or agent_config.get("provider"),
+        agent_config.get("endpoint"), agent_config.get("api_version"), agent_config.get("api_type"),
+        use_responses_api=agent_config.get("use_responses_api"),
+    )
     return infer_model_endpoint_protocol(
         agent_config.get("model_provider") or agent_config.get("provider") or "aoai",
         agent_config.get("endpoint"),
         agent_config.get("deployment"),
         agent_config.get("api_type"),
+        use_responses_api=agent_config.get("use_responses_api"),
     )
 
 
@@ -303,7 +316,16 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
         )
         return chat_service
 
+    agent_config = {
+        **agent_config,
+        "endpoint": resolve_model_inference_endpoint(
+            agent_config.get("endpoint"), use_responses_api=agent_config.get("use_responses_api"),
+            provider=agent_config.get("model_provider") or "aoai", api_type=agent_config.get("api_type"),
+            url_mode=((agent_config.get("model_endpoint_config") or {}).get("connection") or {}).get("url_mode"),
+        ),
+    }
     runtime_protocol = resolve_agent_endpoint_protocol(agent_config)
+    model_token_budget = build_agent_model_budget(agent_config, settings)
     token_or_key = resolve_agent_endpoint_token(agent_config)
     if not token_or_key:
         return None
@@ -332,12 +354,17 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
             "base_url": normalize_openai_style_base_url(agent_config["endpoint"]),
             **globals().get("build_openai_client_timeout_options", lambda *_a, **_k: {})(),
         }
+        if agent_config.get("key") and not agent_config.get("token_provider") and agent_config.get("model_provider") in (None, "", "aoai"):
+            client_kwargs["api_key"] = "custom-header-auth"
+            client_kwargs["default_headers"] = {"api-key": token_or_key, "Authorization": ""}
         if request_api_version:
             client_kwargs["default_query"] = {"api-version": request_api_version}
         return OpenAIChatCompletion(
             service_id=service_id,
             ai_model_id=agent_config["deployment"],
             async_client=AsyncOpenAI(**client_kwargs),
+            model_token_budget=model_token_budget,
+            inference_api=model_endpoint_inference_api(agent_config["endpoint"]),
         )
 
     if not AzureChatCompletion:
@@ -353,6 +380,7 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
                 api_key=agent_config.get("key") or "",
                 api_version=agent_config["api_version"],
                 azure_ad_token_provider=token_provider,
+                model_token_budget=model_token_budget,
             )
         except TypeError:
             return AzureChatCompletion(
@@ -362,6 +390,7 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
                 api_key=agent_config.get("key") or "",
                 api_version=agent_config["api_version"],
                 ad_token_provider=token_provider,
+                model_token_budget=model_token_budget,
             )
 
     return AzureChatCompletion(
@@ -370,6 +399,7 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
         endpoint=agent_config["endpoint"],
         api_key=agent_config.get("key") or "",
         api_version=agent_config["api_version"],
+        model_token_budget=model_token_budget,
     )
 
 
@@ -517,6 +547,9 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             except Exception as e:
                 log_event(f"[SK_LOADER] Failed to resolve Key Vault secret for agent '{agent.get('name')}' in get_user_apim: {e}", level=logging.ERROR, exceptionTraceback=True)
                 # Fallback to using the value as-is
+        endpoint = resolve_model_inference_endpoint(
+            endpoint, use_responses_api=agent.get("azure_apim_gpt_use_responses_api", agent.get("azure_agent_apim_gpt_use_responses_api")),
+        )
         return (endpoint, key, deployment, api_version)
 
     def get_global_apim():
@@ -538,6 +571,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             except Exception as e:
                 log_event(f"[SK_LOADER] Failed to resolve Key Vault secret in get_global_apim: {e}", level=logging.ERROR, exceptionTraceback=True)
                 # Fallback to using the value as-is
+        endpoint = resolve_model_inference_endpoint(endpoint, use_responses_api=settings.get("azure_apim_gpt_use_responses_api"))
         return (endpoint, key, deployment, api_version)
 
     def get_user_gpt():
@@ -559,6 +593,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             except Exception as e:
                 log_event(f"[SK_LOADER] Failed to resolve Key Vault secret for agent '{agent.get('name')}' in get_user_gpt: {e}", level=logging.ERROR, exceptionTraceback=True)
                 # Fallback to using the value as-is
+        endpoint = resolve_model_inference_endpoint(endpoint, use_responses_api=agent.get("azure_openai_gpt_use_responses_api"))
         return (endpoint, key, deployment, api_version)
 
     def get_global_gpt():
@@ -580,6 +615,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             except Exception as e:
                 log_event(f"[SK_LOADER] Failed to resolve Key Vault secret in get_global_gpt: {e}", level=logging.ERROR, exceptionTraceback=True)
                 # Fallback to using the value as-is
+        endpoint = resolve_model_inference_endpoint(endpoint, use_responses_api=settings.get("azure_openai_gpt_use_responses_api"))
         return (endpoint, key, deployment, api_version)
 
     def merge_fields(primary, fallback):
@@ -699,7 +735,10 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
         auth = endpoint_cfg.get("auth", {}) or {}
         deployment = resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
         api_version = connection.get("openai_api_version") or connection.get("api_version")
-        endpoint = connection.get("endpoint")
+        endpoint = resolve_model_inference_endpoint(
+            connection.get("endpoint"), use_responses_api=connection.get("use_responses_api"),
+            provider=provider, api_type=get_model_endpoint_api_type(endpoint_cfg), url_mode=connection.get("url_mode"),
+        )
         return {
             "provider": provider,
             "endpoint": endpoint,
@@ -2351,7 +2390,7 @@ def load_single_agent_for_kernel(
         else:
             guard_chat_service(chat_service)
         if invocation_capture is not None:
-            if model_configuration is None or not isinstance(chat_service, AzureChatCompletion):
+            if model_configuration is None or not isinstance(chat_service, (AzureChatCompletion, OpenAIChatCompletion)):
                 invocation_capture.refuse()
             captured_arguments = build_agent_budget_arguments(
                 chat_service, agent_config, captured_budget,

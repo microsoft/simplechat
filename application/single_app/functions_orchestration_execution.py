@@ -166,7 +166,7 @@ from functions_orchestration_registry import (
     resolve_admitted_export_catalog, resolve_available_capability_ids,
 )
 from functions_orchestration_result_contracts import InputBinding, ResultContractError, ResultRef, TaskResult
-from functions_orchestration_result_runtime import read_complete_input, read_result_document_citations
+from functions_orchestration_result_runtime import read_complete_input, read_result_document_citations, read_result_evidence_status
 from functions_orchestration_results import ResultUnavailableError
 from functions_orchestration_schema import (
     LEGACY_PLAN_CODE,
@@ -1522,6 +1522,7 @@ class HarnessExecution:
         if status not in {"completed", "waiting", "failed", "cancelled"}:
             error = error or HarnessExecutionError("result_invalid")
         prepared, citations, reader = "", [], None
+        evidence_status = None
         assets, charts, workflow_result_contexts = {}, {}, []
         m365_records, external_citations = [], []
         if error is None:
@@ -1538,7 +1539,11 @@ class HarnessExecution:
                             raise HarnessExecutionError("result_invalid")
                         reader.recheck()
                         if self._delivery_only:
-                            citations = read_result_document_citations(self.context, reference)
+                            evidence_outcome = {}
+                            citations = read_result_document_citations(self.context, reference, evidence_status_out=evidence_outcome)
+                            evidence_status = evidence_outcome.get("value")
+                        elif self.context is not None:
+                            evidence_status = read_result_evidence_status(self.context, reference)
                     if not self._delivery_only:
                         citations = result.get("citations") or []
                     citations = self._validate_citations(citations, enrich_display=True)
@@ -1555,6 +1560,7 @@ class HarnessExecution:
                 _log_failure("Execution context could not be reauthorized.", self.record, exc)
                 error, prepared, citations, assets, charts, workflow_result_contexts = exc, "", [], {}, {}, []
                 m365_records, external_citations = [], []
+                evidence_status = None
         if error is not None:
             failure = _failure(error)
             status = "cancelled" if failure["code"] == "user_cancelled" else "failed"
@@ -1755,6 +1761,7 @@ class HarnessExecution:
                 **({"generated_images": generated_images} if generated_images else {}),
             },
             "token_usage": combined_usage, **reasoning,
+            **({"evidence_status": evidence_status} if evidence_status and prepared and not output_check.blocked else {}),
             # The lineage the answer's stored workflow results need, so every later read masks it.
             **(
                 {"workflow_result_contexts": deepcopy(workflow_result_contexts)}

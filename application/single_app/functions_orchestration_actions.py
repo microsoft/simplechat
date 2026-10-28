@@ -167,6 +167,8 @@ def _action_model_configuration(settings, service, protocol, endpoint, model_con
         provider=(endpoint.get('provider') or 'aoai') if endpoint else 'aoai',
         configured_endpoint=configured_endpoint, configured_api_version=configured_version,
         endpoint_id=(endpoint or {}).get('id'), model_id=model_context.get('model_id'),
+        use_responses_api=connection.get('use_responses_api') if endpoint else settings.get(f'{prefix}_use_responses_api'),
+        url_mode=connection.get('url_mode') or '',
     )
 
 
@@ -213,7 +215,7 @@ def _action_model_budget(settings, service, protocol, endpoint, model_context):
     return resolve_model_token_budget(
         project_model_budget_metadata(record) if record else {'deploymentName': deployment},
         endpoint_metadata, provider=provider,
-        protocol='messages' if protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else 'chat_completions',
+        protocol='messages' if protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else getattr(service, 'inference_api', 'chat_completions'),
     )
 
 

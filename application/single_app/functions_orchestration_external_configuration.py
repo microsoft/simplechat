@@ -73,7 +73,7 @@ _RUN_OPTION_FIELDS = frozenset({
     "max_completion_tokens", "max_prompt_tokens", "truncation_strategy", "parallel_tool_calls", "tool_choice",
 })
 _MODEL_PARAMETER_FIELDS = frozenset({
-    "temperature", "top_p", "max_tokens", "max_completion_tokens", "max_prompt_tokens",
+    "temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens", "max_prompt_tokens",
     "response_length", "reasoning_effort", "response_format", "parallel_tool_calls",
     "presence_penalty", "frequency_penalty", "seed", "tool_choice",
 })

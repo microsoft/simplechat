@@ -55,12 +55,14 @@ def set_generation_limit(settings, budget, value):
         field = "max_completion_tokens"
     if field in type(settings).model_fields:
         setattr(settings, field, value)
+    elif "extra_body" in type(settings).model_fields:
+        settings.extra_body = {**(settings.extra_body or {}), field: value}
     else:
         settings.extension_data[field] = value
 
 
 def _set_reasoning_effort(settings, budget, effort):
-    if effort is None or budget.protocol != "chat_completions":
+    if effort is None or budget.protocol not in ("chat_completions", "responses"):
         return
     if effort not in ("none", "minimal", "low", "medium", "high", "xhigh"):
         raise ModelTokenBudgetError("model_context_invalid", "Select a supported reasoning effort.")

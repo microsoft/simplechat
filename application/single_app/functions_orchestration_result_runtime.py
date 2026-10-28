@@ -9,6 +9,7 @@ from dataclasses import replace
 
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_analysis_access import analysis_source_snapshot
+from functions_evidence_status import evidence_status_from_sources
 from functions_orchestration_invocation_capture import (
     OrchestrationInvocationCancelledError, OrchestrationInvocationControlError, OrchestrationInvocationServiceError,
 )
@@ -154,11 +155,20 @@ def _search_evidence_citations(reader, prepared):
     return associated
 
 
-def read_result_document_citations(context, reference):
+def read_result_document_citations(context, reference, *, evidence_status_out=None):
     """Project document provenance from the exact final result, never ambient work."""
     service = require_result_service(context)
     with service.read_operation():
-        return _read_result_document_citations(service, reference)
+        return _read_result_document_citations(service, reference, evidence_status_out=evidence_status_out)
+
+
+def read_result_evidence_status(context, reference):
+    """Read returned Search evidence from the answer's verified lineage, not ambient work."""
+    service = require_result_service(context)
+    outcome = {}
+    with service.read_operation():
+        _read_result_document_citations(service, reference, evidence_status_out=outcome)
+    return outcome.get("value")
 
 
 def read_result_source_coverage(context, reference):
@@ -245,12 +255,13 @@ def read_result_source_coverage(context, reference):
     return None
 
 
-def _read_result_document_citations(service, reference):
+def _read_result_document_citations(service, reference, *, evidence_status_out=None):
     root = service.open_result(reference, allow_partial=True, require_current_sources=True)
     if root.metadata()['source_count'] == 0:
         return []
     sources, citations, visited, expanded = {}, {}, set(), set()
     coverage_values = {}
+    search_counts, source_names = {}, {}
     citation_fields = (
         'citation_id', 'chunk_id', 'file_name', 'title', 'page_number', 'chunk_sequence',
         'sheet_name', 'location_label', 'location_value', 'classification', 'document_classification', 'score',
@@ -323,6 +334,8 @@ def _read_result_document_citations(service, reference):
                     _search_evidence_citations(reader, prepared)
                     if current.output_name == 'evidence' else prepared['citations']
                 )
+                for source in lineage['sources']:
+                    search_counts.setdefault(source_key(source), set())
         elif producer.capability_id in ('document_analyze', 'document_compare'):
             # Coverage is this producer's citation sidecar, not an implicit input from
             # another task. Reopen the exact committed digest, including after recovery.
@@ -354,6 +367,14 @@ def _read_result_document_citations(service, reference):
             if len(matches) != 1:
                 raise ResultContractError('result_citation_source_invalid')
             projected = project(matches[0], citation)
+            identity_key = source_key(matches[0])
+            if isinstance(citation.get('file_name'), str) and citation['file_name'].strip():
+                source_names[identity_key] = citation['file_name'].strip()
+            if producer.capability_id == 'document_search' and identity_key in search_counts:
+                search_counts[identity_key].add((
+                    producer, current.manifest_sha256,
+                    canonical_digest({name: value for name, value in projected.items() if name != 'evidence_id'}),
+                ))
             identity = {key: value for key, value in projected.items() if key != 'evidence_id'}
             citations.setdefault(source_key(matches[0]), {}).setdefault(
                 canonical_digest(identity), projected,
@@ -367,6 +388,19 @@ def _read_result_document_citations(service, reference):
     if len(canonical_bytes(projected)) > MAX_DESCRIPTOR_BYTES:
         raise ResultContractError('result_citations_too_large')
     root.recheck()
+    if evidence_status_out is not None:
+        rows = []
+        for index, (identity, source) in enumerate(sources.items(), start=1):
+            count = len(search_counts[identity]) if identity in search_counts else None
+            row = {
+                "name": str(source_names.get(identity) or source.get("file_name") or f"Selected source {index}")[:160],
+                "document_id": source["document_id"],
+                "state": "missing" if count == 0 else "complete" if count is not None else "unknown",
+            }
+            if count is not None:
+                row["evidence_count"] = count
+            rows.append(row)
+        evidence_status_out["value"] = evidence_status_from_sources(rows)
     return projected
 
 

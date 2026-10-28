@@ -10,6 +10,7 @@
 // middle of an answer.
 
 import { isM365CitationId } from './m365Citations';
+import { literalCodeRegions } from './promptVariables';
 import type { HybridCitation } from './types';
 
 /** How a citation resolves, which determines what clicking it should do. */
@@ -44,6 +45,9 @@ export interface CitationGroup {
 const CITATION_MARKER =
     /\(Source:\s*((?:(?!\(Source:).)+?),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*((?:(?!\(Source:).)+?)\)\s*((?:\[#.*?\]\s*)+)/gi;
 
+const RAW_DOCUMENT_MARKER =
+    /\u3010\s*#?([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}_[a-z0-9_.-]{1,128})\s*\u3011/gi;
+
 /** A bare `[#id]` run left over when a marker was emitted without its Source prefix. */
 const ORPHAN_BRACKET_RUN = /(?:[ \t]*\[#[^\]]*\])+/g;
 
@@ -70,6 +74,34 @@ function documentFileNames(records: readonly HybridCitation[]): Map<string, stri
         names.set(id, names.has(id) && names.get(id) !== name ? null : name);
     }
     return names;
+}
+
+function rawDocumentSources(records: readonly HybridCitation[]): Map<string, CitationGroup | null> {
+    const sources = new Map<string, CitationGroup | null>();
+    for (const record of Array.isArray(records) ? records : []) {
+        if (typeof record?.citation_id !== 'string' || typeof record?.file_name !== 'string') continue;
+        const id = record.citation_id.trim().replace(/^#/, '');
+        const fileName = record.file_name.trim();
+        if (!id || !fileName) continue;
+        const location = record.location_value ?? record.sheet_name ?? record.page_number;
+        const locationValue = typeof location === 'string' || typeof location === 'number' && Number.isFinite(location) ? String(location) : '';
+        const source: CitationGroup = {
+            id: '',
+            kind: 'document',
+            fileName,
+            locationLabel: typeof record.location_label === 'string' && record.location_label.trim()
+                ? record.location_label : typeof record.sheet_name === 'string' ? 'Sheet' : record.page_number != null ? 'Page' : 'Location',
+            citations: [{
+                citationId: id,
+                documentId: typeof record.document_id === 'string' ? record.document_id : splitCitationId(id).documentId,
+                pageNumber: typeof record.page_number === 'string' || typeof record.page_number === 'number' ? String(record.page_number) : '',
+                locationValue,
+            }],
+        };
+        // A later matching duplicate must not undo an earlier conflicting source.
+        sources.set(id, sources.has(id) && JSON.stringify(sources.get(id)) !== JSON.stringify(source) ? null : source);
+    }
+    return sources;
 }
 
 function splitCitationId(rawId: string): ParsedCitation {
@@ -127,10 +159,21 @@ export function parseCitations(
 ): ParsedMessage {
     const groups: CitationGroup[] = [];
     const fileNames = documentFileNames(documentCitations);
+    const rawSources = rawDocumentSources(documentCitations);
+    const codeRegions = message.includes('\u3010') ? literalCodeRegions(message) : [];
+    const markers = new RegExp(`${CITATION_MARKER.source}|${RAW_DOCUMENT_MARKER.source}`, 'gi');
 
     let text = message.replace(
-        CITATION_MARKER,
-        (_whole, fileName: string, locationLabel: string, locations: string, brackets: string) => {
+        markers,
+        (whole, fileName: string, locationLabel: string, locations: string, brackets: string, rawId: string | undefined, offset: number) => {
+            if (rawId) {
+                if (codeRegions.some((region) => offset >= region.start && offset < region.end)) return whole;
+                const source = rawSources.get(rawId);
+                if (!source) return '[Source unavailable]';
+                const index = groups.length;
+                groups.push({ ...source, id: `cite-${index}` });
+                return CITATION_PLACEHOLDER(index);
+            }
             // The bracket group's trailing `\s*` swallows whatever followed the last
             // `[#id]`, which is usually the blank line separating the citation from the
             // next markdown block. Dropping it merges that block into the citation's

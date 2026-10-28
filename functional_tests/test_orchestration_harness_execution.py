@@ -1,7 +1,7 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.380
+Version: 0.261.389
 Implemented in: 0.261.127
 Invocation, catalog, and citation regressions implemented in: 0.261.129
 Direct initial-binding scope coverage implemented in: 0.261.130
@@ -3599,7 +3599,7 @@ def test_citation_delivery_rechecks_exact_sources_and_preserves_storage_uncertai
     def unavailable_store(*args, **kwargs):
         raise ServiceRequestError("PRIVATE_CITATION_STORAGE_DIAGNOSTIC")
 
-    def recheck_source(context, reference):
+    def recheck_source(context, reference, *, evidence_status_out=None):
         references.append(reference.to_dict())
         if change == "revoked":
             citation_execution.source.state["allowed"] = False
@@ -3609,7 +3609,7 @@ def test_citation_delivery_rechecks_exact_sources_and_preserves_storage_uncertai
             citation_execution.source.document["_etag"] = "changed-source-revision"
         else:
             monkeypatch.setattr(harness.results.container, "read_item", unavailable_store)
-        return project(context, reference)
+        return project(context, reference, evidence_status_out=evidence_status_out)
 
     monkeypatch.setattr(harness.execution, "read_result_document_citations", recheck_source)
     with harness.publication_only(services):

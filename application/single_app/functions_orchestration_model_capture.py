@@ -11,7 +11,7 @@ from functions_orchestration_invocation_capture import OrchestrationInvocationCa
 
 
 _MODEL_PARAMETERS = frozenset({
-    "temperature", "top_p", "max_tokens", "max_completion_tokens", "max_prompt_tokens",
+    "temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens", "max_prompt_tokens",
     "response_length", "reasoning_effort", "response_format", "parallel_tool_calls",
     "presence_penalty", "frequency_penalty", "seed", "tool_choice",
 })
@@ -52,14 +52,46 @@ def local_agent_model_parameters(arguments, service_id):
 
 def azure_chat_construction_metadata(
     service, *, protocol, provider, configured_endpoint, configured_api_version,
-    endpoint_id=None, model_id=None,
+    endpoint_id=None, model_id=None, use_responses_api=None, url_mode="",
 ):
     # These SDK types belong to an executing model boundary, not app bootstrap.
-    from openai import AsyncAzureOpenAI
-    from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
-    from functions_model_endpoint_providers import MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
+    from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion, OpenAIChatCompletion
+    from functions_model_endpoint_providers import MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI, MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE
+    from functions_model_endpoint_validation import model_endpoint_inference_api
+    from functions_model_endpoint_urls import resolve_custom_openai_base_url, resolve_model_inference_endpoint
+    from model_endpoint_clients import normalize_openai_style_base_url
 
     client = getattr(service, "client", None)
+    if protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+        if (
+            not isinstance(service, OpenAIChatCompletion) or not isinstance(client, AsyncOpenAI)
+            or isinstance(client, AsyncAzureOpenAI) or not isinstance(configured_endpoint, str)
+            or not configured_endpoint or not service.ai_model_id
+        ):
+            return None
+        selected_api = model_endpoint_inference_api(configured_endpoint, use_responses_api)
+        effective_endpoint = resolve_model_inference_endpoint(
+            configured_endpoint, use_responses_api=use_responses_api, provider=provider,
+            api_type="openai" if provider == "custom" else "", url_mode=url_mode,
+        )
+        expected = (
+            resolve_custom_openai_base_url(configured_endpoint, "openai", url_mode)
+            if provider == "custom" and selected_api != "responses"
+            else normalize_openai_style_base_url(effective_endpoint)
+        )
+        mode = getattr(service, "inference_api", "chat_completions")
+        if (
+            str(client.base_url).rstrip("/") != expected.rstrip("/")
+            or bool(client.default_query)
+            or mode != selected_api
+        ):
+            return None
+        return {
+            "provider": provider, "protocol": "responses" if mode == "responses" else protocol,
+            "endpoint": str(client.base_url), "api_version": "", "deployment": service.ai_model_id,
+            "endpoint_id": endpoint_id, "model_id": model_id, "parameters": {},
+        }
     actual_endpoint = getattr(client, "_azure_endpoint", None)
     actual_version = getattr(client, "_api_version", None)
     if (

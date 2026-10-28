@@ -1,4 +1,5 @@
 // modelConnections.ts
+import { normalizeInferenceConnection, usesResponsesApi } from './modelInference';
 // Types, API wrappers and pure form logic for global model connections.
 //
 // A "connection" is an Azure OpenAI/Foundry resource or a Custom API: where
@@ -162,6 +163,7 @@ export interface ModelConnection extends ConnectionCapacity {
     enabled?: boolean;
     connection?: {
         endpoint?: string;
+        use_responses_api?: boolean;
         openai_api_version?: string;
         api_version?: string;
         anthropic_version?: string;
@@ -316,6 +318,16 @@ export function endpointIncludesProject(endpoint: unknown): boolean {
     return text(endpoint).toLowerCase().includes('/api/projects/');
 }
 
+export function usesV1InferenceEndpoint(endpoint: unknown): boolean {
+    try {
+        const parsed = new URL(text(endpoint));
+        return /\/openai\/v1(?:\/|$)|\/api\/projects\//i.test(parsed.pathname) ||
+            parsed.hostname.toLowerCase().endsWith('.services.ai.azure.com');
+    } catch {
+        return false;
+    }
+}
+
 /**
  * Pull the project name out of a Foundry endpoint URL.
  *
@@ -437,9 +449,9 @@ export function toEditableConnection(source: ModelConnection): ModelConnection {
     return {
         ...blank,
         ...source,
-        connection: source.provider === 'custom'
-            ? { url_mode: 'auto', ...(source.connection ?? {}) }
-            : { ...blank.connection, ...(source.connection ?? {}) },
+        connection: normalizeInferenceConnection(source.provider === 'custom'
+            ? { url_mode: 'auto' as const, ...(source.connection ?? {}) }
+            : { ...blank.connection, ...(source.connection ?? {}) }),
         management: { ...blank.management, ...(source.management ?? {}) },
         auth: source.provider === 'custom'
             ? { type: 'api_key', ...(source.auth ?? {}) }
@@ -564,14 +576,21 @@ export function validateConnection(
     }
 
     const endpoint = text(connection.connection?.endpoint);
+    if (usesResponsesApi(connection.connection) && endpointIncludesProject(endpoint)) {
+        errors.use_responses_api = 'Responses needs an inference API base, not a Foundry project URL.';
+    }
     if (!endpoint) {
         errors.endpoint = 'An endpoint URL is required.';
     } else if (!/^https?:\/\//i.test(endpoint)) {
         errors.endpoint = 'Enter the full URL, including https://.';
     }
 
-    if (!custom && !text(connection.connection?.openai_api_version)) {
+    if (!custom && !usesResponsesApi(connection.connection) && !text(connection.connection?.openai_api_version)) {
         errors.openai_api_version = 'An OpenAI API version is required.';
+    }
+    if (!custom && !usesResponsesApi(connection.connection) && /^(v1|preview|latest)$/i.test(text(connection.connection?.openai_api_version)) &&
+        !usesV1InferenceEndpoint(endpoint)) {
+        errors.openai_api_version = 'Use a dated Azure API version for a resource endpoint, or configure an /openai/v1/ inference endpoint for v1.';
     }
     if (custom && authType !== 'api_key') {
         errors.auth_type = 'OpenAI-compatible connections support API key authentication only.';
@@ -714,8 +733,8 @@ export function buildConnectionPayload(connection: ModelConnection): Record<stri
 
     const endpoint = text(connection.connection?.endpoint);
     const connectionBlock: Record<string, unknown> = {
-        ...connection.connection,
-        endpoint,
+        ...normalizeInferenceConnection(connection.connection ?? {}),
+        endpoint: normalizeInferenceConnection(connection.connection ?? {}).endpoint ?? endpoint,
         openai_api_version: text(connection.connection?.openai_api_version) || defaultOpenAiApiVersion(provider),
     };
 
@@ -1365,6 +1384,10 @@ function personalEndpoint(value: unknown): ModelConnection {
         throw new Error('A personal model endpoint response was malformed. Refresh and try again.');
     }
     requireWorkspaceId(value.id);
+    if (isRecord(value.connection) && value.connection.use_responses_api !== undefined &&
+        typeof value.connection.use_responses_api !== 'boolean') {
+        throw new Error('A personal model endpoint API choice was malformed. Refresh and try again.');
+    }
     const textFields = {
         connection: ['endpoint', 'openai_api_version', 'api_version', 'anthropic_version', 'url_mode',
             'client_cert_path', 'client_key_path', 'project_api_version', 'project_name'],

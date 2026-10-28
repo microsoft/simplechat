@@ -90,6 +90,8 @@ KNOWLEDGE_POLICIES = {
         "user's own words. Do not add outside facts. When the inputs do not cover something, "
         'say what is unknown instead of guessing; state that the searched content does not '
         'contain it, report the inspected page or source coverage, and summarize what it covers.'
+        ' Keep limitations concise rather than appending a generic Coverage note paragraph. '
+        'Where useful, suggest the kind of document or clarification that would address the unanswered part.'
     ),
     KNOWLEDGE_BASIS_MIXED: (
         'Knowledge basis: sources and general knowledge. Ground claims in the named inputs '
@@ -99,6 +101,8 @@ KNOWLEDGE_POLICIES = {
         "events, prices, schedules, opening hours or the contents of the user's documents; say "
         'what is unknown, report the inspected source/page coverage, and summarize what it '
         'covers instead. Do not invent citations or links.'
+        ' Keep limitations concise rather than appending a generic Coverage note paragraph, '
+        'and suggest a relevant source or clarification when the answer cannot be supported.'
     ),
 }
 CONVERSATION_POLICY = (

@@ -19,6 +19,7 @@ from openai import (
     APIError, BadRequestError, DEFAULT_CONNECTION_LIMITS,
     DefaultAsyncHttpxClient, DefaultHttpxClient, OpenAI,
 )
+from openai.types.chat import ChatCompletionChunk
 from pydantic import Field
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
 from semantic_kernel.connectors.ai.function_calling_utils import update_settings_from_function_call_configuration
@@ -54,10 +55,13 @@ from functions_model_endpoint_providers import (
 )
 from functions_model_endpoint_validation import (
     ModelEndpointValidationError,
+    endpoint_uses_openai_style_protocol,
+    model_endpoint_inference_api,
     resolve_custom_model_endpoint_addresses,
     validate_custom_model_endpoint_url,
 )
 from functions_model_endpoint_urls import (
+    resolve_model_inference_endpoint,
     CUSTOM_OPENAI_OPERATION_SUFFIXES,
     CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN,
     normalize_endpoint_text,
@@ -65,6 +69,7 @@ from functions_model_endpoint_urls import (
     resolve_custom_openai_base_url,
     resolve_custom_azure_openai_base_url,
 )
+from model_responses_chat import responses_completion, responses_request
 
 
 ANTHROPIC_MODEL_MARKERS = ("claude",)
@@ -250,6 +255,7 @@ def bind_callable_with_timeout(
                 api_type=client._api_type,
                 protocol=client._protocol,
                 request_url=client._request_url,
+                inference_api=client._inference_api,
             ).chat.completions.create
         except Exception:
             pass
@@ -429,34 +435,34 @@ def is_anthropic_model(deployment_name: Any) -> bool:
     return any(marker in normalized_name for marker in ANTHROPIC_MODEL_MARKERS)
 
 
-def endpoint_uses_openai_style_protocol(endpoint: Any) -> bool:
-    """Return whether the endpoint is already an OpenAI-compatible Foundry URL."""
-    endpoint_value = normalize_endpoint_text(endpoint).lower()
-    endpoint_path = get_endpoint_path(endpoint_value)
-    return (
-        "/openai/v1" in endpoint_path
-        or "/api/projects/" in endpoint_path
-        or "services.ai.azure.com" in endpoint_value
-    )
-
-
-def infer_model_endpoint_protocol(provider: Any, endpoint: Any, deployment_name: Any = "", api_type: Any = "") -> str:
+def infer_model_endpoint_protocol(
+    provider: Any, endpoint: Any, deployment_name: Any = "", api_type: Any = "", *, use_responses_api=None,
+) -> str:
     """Infer the runtime protocol from provider, endpoint path, and deployment name."""
     normalized_provider = str(provider or "aoai").strip().lower()
     if normalized_provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
         descriptor = get_model_endpoint_provider(api_type)
         if descriptor is None:
             raise ModelEndpointValidationError("Custom endpoints require a supported API type.")
+        if model_endpoint_inference_api(endpoint, use_responses_api) == "responses" and api_type != "openai":
+            raise ModelEndpointValidationError("Responses connections require the OpenAI API contract.")
         return descriptor.protocol
     endpoint_path = get_endpoint_path(endpoint)
 
     if normalized_provider in ("anthropic", "claude"):
+        if model_endpoint_inference_api(endpoint, use_responses_api) == "responses":
+            raise ModelEndpointValidationError("Responses connections require an OpenAI-compatible chat model.")
         return MODEL_ENDPOINT_PROTOCOL_ANTHROPIC
 
     if "/anthropic/" in endpoint_path or is_anthropic_model(deployment_name):
+        if model_endpoint_inference_api(endpoint, use_responses_api) == "responses":
+            raise ModelEndpointValidationError("Responses connections require an OpenAI-compatible chat model.")
         return MODEL_ENDPOINT_PROTOCOL_ANTHROPIC
 
-    if normalized_provider in ("aifoundry", "new_foundry") and endpoint_uses_openai_style_protocol(endpoint):
+    if normalized_provider in ("aoai", "aifoundry", "new_foundry") and (
+        endpoint_uses_openai_style_protocol(endpoint)
+        or model_endpoint_inference_api(endpoint, use_responses_api) == "responses"
+    ):
         return MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE
 
     return MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
@@ -469,12 +475,12 @@ def normalize_openai_style_base_url(raw_endpoint: Any) -> str:
         raise ValueError("A Foundry endpoint is required for OpenAI-compatible inference.")
 
     lowered_endpoint = endpoint.lower()
-    for suffix in ("/chat/completions", "/responses", "/models"):
-        suffix_index = lowered_endpoint.find(suffix)
-        if suffix_index >= 0:
-            endpoint = endpoint[:suffix_index]
-            lowered_endpoint = endpoint.lower()
-            break
+    for suffix in ("/chat/completions", "/responses"):
+        if lowered_endpoint.endswith(suffix):
+            return endpoint[:-len(suffix)].rstrip("/") + "/"
+    if lowered_endpoint.endswith("/models"):
+        endpoint = endpoint[:-len("/models")]
+        lowered_endpoint = endpoint.lower()
 
     openai_v1_index = lowered_endpoint.find("/openai/v1")
     if openai_v1_index >= 0:
@@ -549,6 +555,49 @@ def iter_synthetic_stream_text_chunks(
             buffer = ""
     if buffer:
         yield buffer
+
+
+def iter_synthetic_chat_message_chunks(message, model_id, function_invoke_attempt=0):
+    """Deliver complete tool calls and usage once, with progressively chunked text."""
+    text_items = [item for item in message.items or [] if isinstance(item, TextContent)]
+    other_items = [item for item in message.items or [] if not isinstance(item, TextContent)]
+    text_chunks = list(iter_synthetic_stream_text_chunks("".join(item.text or "" for item in text_items)))
+    for text in text_chunks[:-1]:
+        yield StreamingChatMessageContent(
+            role=message.role, items=[StreamingTextContent(choice_index=0, text=text, ai_model_id=model_id)],
+            choice_index=0, ai_model_id=model_id, function_invoke_attempt=function_invoke_attempt,
+        )
+    final_items = []
+    if text_chunks:
+        final_items.append(StreamingTextContent(
+            choice_index=0, text=text_chunks[-1], ai_model_id=model_id,
+            inner_content=text_items[-1].inner_content if text_items else None,
+            metadata=text_items[-1].metadata if text_items else {},
+            encoding=text_items[-1].encoding if text_items else None,
+        ))
+    yield StreamingChatMessageContent(
+        role=message.role, items=[*final_items, *other_items], choice_index=0, ai_model_id=model_id,
+        inner_content=message.inner_content, metadata=message.metadata, finish_reason=message.finish_reason,
+        function_invoke_attempt=function_invoke_attempt,
+    )
+
+
+def iter_completed_chat_chunks(completion):
+    message = completion.choices[0].message
+    parts = list(iter_synthetic_stream_text_chunks(message.content or "")) or [""]
+    for index, part in enumerate(parts):
+        final = index == len(parts) - 1
+        delta = {"content": part}
+        if final and message.tool_calls:
+            delta["tool_calls"] = [
+                {"index": position, **call.model_dump(exclude_none=True)}
+                for position, call in enumerate(message.tool_calls)
+            ]
+        yield ChatCompletionChunk(
+            id=completion.id, model=completion.model, created=completion.created, object="chat.completion.chunk",
+            choices=[{"index": 0, "delta": delta, "finish_reason": completion.choices[0].finish_reason if final else None}],
+            usage=completion.usage if final else None,
+        )
 
 
 def normalize_chat_completion_text(content: Any) -> str:
@@ -895,18 +944,20 @@ def build_openai_style_chat_client(
     return OpenAIStyleChatCompletionClient(
         OpenAI(**client_kwargs), sanitize_errors=direct_custom,
         api_type=api_type, request_url=client_kwargs["base_url"],
+        inference_api=model_endpoint_inference_api(base_url),
     )
 
 
 class OpenAIStyleChatCompletionClient:
     """Small wrapper that makes OpenAI-compatible Foundry calls tolerant of Azure-only options."""
 
-    def __init__(self, client: OpenAI, *, sanitize_errors=False, api_type="", protocol="", request_url=""):
+    def __init__(self, client: OpenAI, *, sanitize_errors=False, api_type="", protocol="", request_url="", inference_api="chat_completions"):
         self._client = client
         self._sanitize_errors = sanitize_errors
         self._api_type = api_type
         self._protocol = protocol
         self._request_url = request_url
+        self._inference_api = inference_api
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs: Any):
@@ -915,7 +966,12 @@ class OpenAIStyleChatCompletionClient:
         if not descriptor or not descriptor.supports_stream_options:
             request_kwargs.pop("stream_options", None)
         try:
-            response = self._client.chat.completions.create(**request_kwargs)
+            if self._inference_api == "responses":
+                response = responses_completion(self._client.responses.create(**responses_request(request_kwargs)))
+                if request_kwargs.get("stream"):
+                    response = iter_completed_chat_chunks(response)
+            else:
+                response = self._client.chat.completions.create(**request_kwargs)
         except (*CUSTOM_ENDPOINT_REQUEST_ERRORS, ValueError) as exc:
             if not self._sanitize_errors:
                 raise
@@ -1750,48 +1806,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         alongside the finish reason and usage metadata. Emitting metadata only
         once keeps token usage from being counted per chunk.
         """
-        text_items = [item for item in message.items or [] if isinstance(item, TextContent)]
-        other_items = [item for item in message.items or [] if not isinstance(item, TextContent)]
-
-        combined_text = "".join(item.text or "" for item in text_items)
-        text_chunks = list(iter_synthetic_stream_text_chunks(combined_text))
-
-        # Every chunk before the last carries text only.
-        for chunk_text in text_chunks[:-1]:
-            yield StreamingChatMessageContent(
-                role=message.role,
-                items=[StreamingTextContent(
-                    choice_index=0,
-                    text=chunk_text,
-                    ai_model_id=self.ai_model_id,
-                )],
-                choice_index=0,
-                ai_model_id=self.ai_model_id,
-                function_invoke_attempt=function_invoke_attempt,
-            )
-
-        final_items: List[Any] = []
-        if text_chunks:
-            final_items.append(StreamingTextContent(
-                choice_index=0,
-                text=text_chunks[-1],
-                ai_model_id=self.ai_model_id,
-                inner_content=text_items[-1].inner_content if text_items else None,
-                metadata=text_items[-1].metadata if text_items else {},
-                encoding=text_items[-1].encoding if text_items else None,
-            ))
-        final_items.extend(other_items)
-
-        yield StreamingChatMessageContent(
-            role=message.role,
-            items=final_items,
-            choice_index=0,
-            ai_model_id=self.ai_model_id,
-            inner_content=message.inner_content,
-            metadata=message.metadata,
-            finish_reason=message.finish_reason,
-            function_invoke_attempt=function_invoke_attempt,
-        )
+        yield from iter_synthetic_chat_message_chunks(message, self.ai_model_id, function_invoke_attempt)
 
     def _to_streaming_chat_message_content(
         self,

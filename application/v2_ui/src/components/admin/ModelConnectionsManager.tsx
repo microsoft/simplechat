@@ -83,6 +83,8 @@ import { CatalogProfilePicker } from './ModelCatalogManager';
 import { CustomAuthenticationFields, CustomConnectionFields } from './CustomConnectionFields';
 import { CustomNetworkPolicyEditor } from './CustomNetworkPolicyEditor';
 import { GlassButton } from '../ui/primitives';
+import { EditorSwitch } from '../workspace/EditorLayout';
+import { normalizeInferenceConnection, usesResponsesApi } from '../../lib/modelInference';
 import { ConnectionCapacityFields, ConnectionModelMetadata } from '../workspace/ConnectionMetadataFields';
 import { useModelConnectionsStore, modelConnectionsChanged } from '../../stores/modelConnectionsStore';
 import { toast } from '../../stores/toastStore';
@@ -461,6 +463,7 @@ function ConnectionEditor({
                 if (path === 'api_type') {
                     const descriptor = customApiTypes.find((option) => option.value === value);
                     next.connection = { ...next.connection, api_version: '', anthropic_version: descriptor?.defaultVersion || '' };
+                    if (value !== 'openai') next.connection.use_responses_api = false;
                     next.auth = { ...next.auth, api_key_header: '', api_key_prefix: descriptor?.defaultApiKeyPrefix || '' };
                     next.models = next.models?.map(({ capability_status: _status, ...model }) => model);
                 }
@@ -471,6 +474,9 @@ function ConnectionEditor({
                 ...((current as Record<string, Record<string, unknown>>)[group] ?? {}),
                 [key]: value,
             };
+            if (path === 'connection.endpoint') {
+                next.connection = normalizeInferenceConnection(next.connection ?? {});
+            }
             return next;
         });
     }, [customApiTypes]);
@@ -763,7 +769,7 @@ function ConnectionEditor({
                         ? 'The Custom API URL. HTTPS is required unless both private-host and plaintext HTTP permissions are explicitly enabled.'
                         : foundry
                         ? 'A Foundry project URL. Including /api/projects/<name> names the project for you.'
-                        : 'The resource endpoint, for example https://my-resource.openai.azure.com.'
+                        : 'Enter the resource or gateway API base. Pasting a full Responses URL selects Responses and saves only the base URL.'
                 }
             >
                 <input
@@ -778,10 +784,24 @@ function ConnectionEditor({
                 />
             </Field>
 
-            {shown.openAiVersion ? <Field
+            {!embeddingOnly && (draft.provider === 'aoai' || foundry || custom && draft.api_type === 'openai') && (
+                <EditorSwitch
+                    label="Use Responses API"
+                    description="Use Responses for supported text models, including reasoning with actions. Chat, agents and workflows using this connection inherit the choice. Gateways must expose the Responses operation."
+                    checked={usesResponsesApi(draft.connection)}
+                    disabled={busy || !canSave || (foundry && !usesResponsesApi(draft.connection) && String(draft.connection?.endpoint ?? '').includes('/api/projects/'))}
+                    error={errors.use_responses_api}
+                    onChange={(checked) => setField('connection.use_responses_api', checked)}
+                />
+            )}
+
+            {shown.openAiVersion && !usesResponsesApi(draft.connection) ? <Field
                 label="OpenAI API version"
                 error={errors.openai_api_version}
                 htmlFor="connection-openai-version"
+                help={foundry
+                    ? 'v1 inference does not send a dated api-version query. Project API version below controls discovery, not model reasoning or tool support.'
+                    : 'Resource-root Azure endpoints need a dated API version. For v1, use /openai/v1/; use the full /openai/v1/responses endpoint to opt into reasoning with tools on supported models. Entering v1 here alone does not change the protocol.'}
             >
                 <input
                     id="connection-openai-version"
