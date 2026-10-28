@@ -92,7 +92,11 @@ from utils_cache import (
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_onenote import ONENOTE_MAX_CHUNKS, OneNoteExtractionError, extract_onenote
 from functions_content import *
-from functions_office_media import extract_office_embedded_images_with_diagnostics
+from functions_office_media import (
+    extract_office_embedded_images_with_diagnostics,
+    format_word_comment_block,
+    strip_appended_word_comments,
+)
 from functions_document_transform_sources import (
     OFFICE_REFERENCE_MIME_TYPES,
     TEMPLATE_EXTENSIONS,
@@ -866,6 +870,53 @@ def _append_overflow_image_chunks(merged_chunks, overflow_blocks):
         })
 
     return merged_chunks
+
+
+def _build_word_comment_chunks(file_path, file_ext=None, update_callback=None):
+    """Extract review comments from a Word file and return placeable content blocks.
+
+    Azure Document Intelligence and docx2txt ignore review comments in Word documents, and legacy
+    .doc piece tables mix annotation streams with body text unless parsed via the FIB. Extracting
+    structured comments with their reading-order word offsets lets the ingestion pipeline merge
+    each comment thread into the chunk containing its anchored text.
+
+    Returns ``(comment_blocks, comment_count, total_body_words)``.
+    """
+    try:
+        comments, total_body_words = extract_word_comments(file_path, file_ext)
+    except Exception as comment_error:
+        if current_extraction() is not None:
+            raise ScreeningError(code="screening_word_comment_extraction_failed") from comment_error
+        log_event(
+            f"[DOCUMENTS] Word comment extraction failed for "
+            f"{os.path.basename(str(file_path or ''))}: {comment_error}",
+            level=logging.WARNING,
+        )
+        return [], 0, 0
+
+    if not comments:
+        return [], 0, total_body_words
+
+    total_comments = len(comments)
+    blocks = []
+    for index, comment in enumerate(comments, start=1):
+        formatted = format_word_comment_block(comment, index=index, total=total_comments)
+        if not formatted:
+            continue
+        blocks.append({
+            'content': formatted,
+            'slide_number': None,
+            'word_offset': comment.get('word_offset'),
+            'position_known': bool(comment.get('position_known')),
+            'comment_id': comment.get('id'),
+        })
+
+    if blocks and update_callback is not None:
+        update_callback(
+            status=f"Extracted {len(blocks)} review comment(s) from {os.path.basename(str(file_path or ''))}."
+        )
+
+    return blocks, len(blocks), total_body_words
 
 
 def _assert_unique_chunk_page_numbers(chunks, document_id):
@@ -10841,6 +10892,15 @@ def process_office_template(document_id, user_id, temp_file_path, original_filen
         chunks = chunk_word_file_into_pages(
             di_pages=chunks, chunk_size=chunk_config.get("docx", {}).get("value", WORD_CHUNK_SIZE),
         )
+        comment_blocks, _comment_count, comment_total_words = _build_word_comment_chunks(
+            temp_file_path, file_ext, update_callback,
+        )
+        if comment_blocks:
+            chunks, _merged_comments, comment_overflow = _merge_embedded_images_into_chunks(
+                chunks, comment_blocks, comment_total_words, settings,
+            )
+            chunks = _append_overflow_image_chunks(chunks, comment_overflow)
+            _assert_unique_chunk_page_numbers(chunks, document_id)
     image_blocks, _image_count, _image_engine, total_body_words = _build_office_embedded_image_chunks(
         temp_file_path, settings, update_callback,
     )
@@ -11051,6 +11111,7 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             update_callback(status=f"Extracting legacy Word content from {chunk_effective_filename}...")
             try:
                 extracted_text = extract_word_text(chunk_path, file_ext)
+                extracted_text = strip_appended_word_comments(extracted_text)
                 if extracted_text and extracted_text.strip():
                     di_extracted_pages = [{
                         "page_number": 1,
@@ -11232,6 +11293,37 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                 )
             else:
                 final_chunks_to_save = [] # No text extracted and no vision description to index
+
+        # --- Word review comment extraction (DOCX/DOC/DOCM) ---
+        # Document Intelligence and docx2txt omit Word margin comments, so comments are extracted
+        # from the package/OLE stream and merged into the chunk containing their anchored text.
+        if is_word:
+            comment_blocks, word_comment_count, comment_total_words = _build_word_comment_chunks(
+                chunk_path,
+                file_ext,
+                update_callback,
+            )
+            if comment_blocks:
+                if capture is not None:
+                    for comment_block in comment_blocks:
+                        capture.add_supplement(comment_block.get("content", ""), kind="comment")
+                final_chunks_to_save, merged_comment_count, overflow_comment_blocks = (
+                    _merge_embedded_images_into_chunks(
+                        final_chunks_to_save,
+                        comment_blocks,
+                        comment_total_words,
+                        settings,
+                    )
+                )
+                final_chunks_to_save = _append_overflow_image_chunks(
+                    final_chunks_to_save, overflow_comment_blocks
+                )
+                _assert_unique_chunk_page_numbers(final_chunks_to_save, document_id)
+                update_callback(
+                    number_of_pages=len(final_chunks_to_save),
+                    word_comment_count=word_comment_count,
+                    word_comment_merged=merged_comment_count,
+                )
 
         # --- Embedded Office image analysis (DOCX/DOC/PPTX/PPT) ---
         # Neither extraction engine describes figures inside Office files, so embedded images are

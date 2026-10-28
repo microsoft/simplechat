@@ -11,7 +11,11 @@ from bs4 import BeautifulSoup
 from functions_debug import debug_print
 from config import *
 from azure.ai.documentintelligence.models import DocumentAnalysisFeature
-from functions_office_media import extract_office_embedded_images
+from functions_office_media import (
+    OFFICE_COMMENT_ANCHOR_MAX_CHARS,
+    extract_docx_comments,
+    format_word_comments_section,
+)
 from functions_embeddings import generate_embedding_batch
 from functions_embedding_compatibility import active_embedding_profile, embedding_query_slot, read_embedding_settings
 from functions_ai_connections import AIConnectionError
@@ -33,7 +37,7 @@ def extract_markdown_file(file_path):
         return f.read()
 
 
-def extract_docx_text(file_path):
+def extract_docx_text(file_path, include_comments=True):
     """Extract text from OOXML Word documents such as .docx and .docm."""
     try:
         import docx2txt
@@ -42,7 +46,17 @@ def extract_docx_text(file_path):
             "docx2txt library is required for .docx/.docm file processing. Install with: pip install docx2txt"
         ) from exc
 
-    return docx2txt.process(file_path)
+    body_text = docx2txt.process(file_path) or ""
+    if not include_comments:
+        return body_text
+
+    comments, _total_words = extract_docx_comments(file_path)
+    comments_section = format_word_comments_section(comments)
+    if not comments_section:
+        return body_text
+    if body_text and body_text.strip():
+        return f"{body_text.rstrip()}\n\n{comments_section}"
+    return comments_section
 
 
 def _normalize_legacy_doc_text(text):
@@ -98,8 +112,8 @@ def _score_legacy_doc_candidate(text):
     return readable_characters
 
 
-def _extract_legacy_doc_text_from_piece_table(word_stream, piece_table_bytes):
-    """Parse a PlcPcd piece table from the WordDocument stream."""
+def _extract_legacy_doc_raw_text_from_piece_table(word_stream, piece_table_bytes):
+    """Parse a PlcPcd piece table and return the un-normalized character stream."""
     if len(piece_table_bytes) < 16 or (len(piece_table_bytes) - 4) % 12 != 0:
         return ""
 
@@ -148,7 +162,70 @@ def _extract_legacy_doc_text_from_piece_table(word_stream, piece_table_bytes):
         raw_text = word_stream[stream_offset:stream_offset + byte_count]
         text_segments.append(raw_text.decode(encoding, errors='ignore'))
 
-    return _normalize_legacy_doc_text("".join(text_segments))
+    return "".join(text_segments)
+
+
+def _extract_legacy_doc_text_from_piece_table(word_stream, piece_table_bytes):
+    """Parse a PlcPcd piece table from the WordDocument stream."""
+    raw_text = _extract_legacy_doc_raw_text_from_piece_table(word_stream, piece_table_bytes)
+    return _normalize_legacy_doc_text(raw_text)
+
+
+def _extract_legacy_doc_raw_text_from_table_stream(word_stream, table_stream, fc_clx=0, lcb_clx=0):
+    """Return the raw un-normalized piece-table text from a Word table stream."""
+    if lcb_clx and 0 <= fc_clx and (fc_clx + lcb_clx) <= len(table_stream):
+        clx_slice = table_stream[fc_clx:fc_clx + lcb_clx]
+        search_offset = 0
+        while search_offset <= len(clx_slice) - 5:
+            marker_offset = clx_slice.find(b"\x02", search_offset)
+            if marker_offset == -1 or marker_offset > len(clx_slice) - 5:
+                break
+            piece_table_length = struct.unpack("<I", clx_slice[marker_offset + 1:marker_offset + 5])[0]
+            piece_table_end = marker_offset + 5 + piece_table_length
+            if (
+                piece_table_length >= 16
+                and (piece_table_length - 4) % 12 == 0
+                and piece_table_end <= len(clx_slice)
+            ):
+                raw_candidate = _extract_legacy_doc_raw_text_from_piece_table(
+                    word_stream, clx_slice[marker_offset + 5:piece_table_end]
+                )
+                if _score_legacy_doc_candidate(_normalize_legacy_doc_text(raw_candidate)) > 0:
+                    return raw_candidate
+            search_offset = marker_offset + 1
+
+    best_raw = ""
+    best_score = 0
+    search_offset = 0
+
+    while search_offset <= len(table_stream) - 5:
+        piece_table_marker_offset = table_stream.find(b"\x02", search_offset)
+        if piece_table_marker_offset == -1 or piece_table_marker_offset > len(table_stream) - 5:
+            break
+
+        piece_table_length = struct.unpack(
+            "<I",
+            table_stream[piece_table_marker_offset + 1:piece_table_marker_offset + 5],
+        )[0]
+        piece_table_end = piece_table_marker_offset + 5 + piece_table_length
+
+        if (
+            piece_table_length >= 16
+            and (piece_table_length - 4) % 12 == 0
+            and piece_table_end <= len(table_stream)
+        ):
+            candidate_raw = _extract_legacy_doc_raw_text_from_piece_table(
+                word_stream,
+                table_stream[piece_table_marker_offset + 5:piece_table_end],
+            )
+            candidate_score = _score_legacy_doc_candidate(_normalize_legacy_doc_text(candidate_raw))
+            if candidate_score > best_score:
+                best_raw = candidate_raw
+                best_score = candidate_score
+
+        search_offset = piece_table_marker_offset + 1
+
+    return best_raw
 
 
 def _extract_legacy_doc_text_from_table_stream(word_stream, table_stream):
@@ -187,7 +264,317 @@ def _extract_legacy_doc_text_from_table_stream(word_stream, table_stream):
     return best_text
 
 
-def extract_legacy_doc_text(file_path):
+def _parse_legacy_doc_fib(word_stream):
+    """Parse MS-DOC File Information Block (FIB) subdocument lengths and comment table pointers."""
+    if not word_stream or len(word_stream) < 154:
+        return None
+
+    w_ident = struct.unpack_from("<H", word_stream, 0)[0]
+    if w_ident not in (0xA5EC, 0xA5DC):
+        return None
+
+    flags = struct.unpack_from("<H", word_stream, 0x0A)[0]
+    table_stream_name = "1Table" if (flags & 0x0200) else "0Table"
+
+    csw = struct.unpack_from("<H", word_stream, 0x20)[0]
+    offset_cslw = 0x22 + (csw * 2)
+    if csw < 14 or offset_cslw + 2 > len(word_stream):
+        return None
+
+    cslw = struct.unpack_from("<H", word_stream, offset_cslw)[0]
+    offset_rg_lw = offset_cslw + 2
+    if cslw < 11 or offset_rg_lw + (cslw * 4) > len(word_stream):
+        return None
+
+    (
+        ccp_text,
+        ccp_ftn,
+        ccp_hdr,
+        ccp_mcr,
+        ccp_atn,
+        ccp_edn,
+        ccp_txbx,
+        ccp_hdr_txbx,
+    ) = struct.unpack_from("<8I", word_stream, offset_rg_lw + 12)
+
+    offset_cb_fc_lcb = offset_rg_lw + (cslw * 4)
+    cb_rg_fc_lcb = 0
+    offset_fc_lcb = offset_cb_fc_lcb + 2
+    if offset_fc_lcb <= len(word_stream):
+        cb_rg_fc_lcb = struct.unpack_from("<H", word_stream, offset_cb_fc_lcb)[0]
+
+    def _read_fc_lcb(entry_index):
+        entry_offset = offset_fc_lcb + (entry_index * 8)
+        if entry_index < cb_rg_fc_lcb and (entry_offset + 8) <= len(word_stream):
+            return struct.unpack_from("<II", word_stream, entry_offset)
+        return (0, 0)
+
+    fc_plcfand_ref, lcb_plcfand_ref = _read_fc_lcb(4)
+    fc_plcfand_txt, lcb_plcfand_txt = _read_fc_lcb(5)
+    fc_clx, lcb_clx = _read_fc_lcb(33)
+    fc_grp_xst_atn_owners, lcb_grp_xst_atn_owners = _read_fc_lcb(36)
+    fc_plcfbkf_atn, lcb_plcfbkf_atn = _read_fc_lcb(42)
+    fc_plcfbkl_atn, lcb_plcfbkl_atn = _read_fc_lcb(43)
+
+    return {
+        "table_stream_name": table_stream_name,
+        "ccp_text": ccp_text,
+        "ccp_ftn": ccp_ftn,
+        "ccp_hdr": ccp_hdr,
+        "ccp_mcr": ccp_mcr,
+        "ccp_atn": ccp_atn,
+        "ccp_edn": ccp_edn,
+        "ccp_txbx": ccp_txbx,
+        "ccp_hdr_txbx": ccp_hdr_txbx,
+        "fc_plcfand_ref": fc_plcfand_ref,
+        "lcb_plcfand_ref": lcb_plcfand_ref,
+        "fc_plcfand_txt": fc_plcfand_txt,
+        "lcb_plcfand_txt": lcb_plcfand_txt,
+        "fc_clx": fc_clx,
+        "lcb_clx": lcb_clx,
+        "fc_grp_xst_atn_owners": fc_grp_xst_atn_owners,
+        "lcb_grp_xst_atn_owners": lcb_grp_xst_atn_owners,
+        "fc_plcfbkf_atn": fc_plcfbkf_atn,
+        "lcb_plcfbkf_atn": lcb_plcfbkf_atn,
+        "fc_plcfbkl_atn": fc_plcfbkl_atn,
+        "lcb_plcfbkl_atn": lcb_plcfbkl_atn,
+    }
+
+
+def _parse_legacy_doc_atn_owners(table_stream, fc_owners, lcb_owners):
+    """Parse GrpXstAtnOwners array of UTF-16LE length-prefixed author names."""
+    owners = []
+    if not lcb_owners or fc_owners < 0 or (fc_owners + lcb_owners) > len(table_stream):
+        return owners
+
+    owners_bytes = table_stream[fc_owners:fc_owners + lcb_owners]
+    offset = 0
+    while offset + 2 <= len(owners_bytes):
+        cch = struct.unpack_from("<H", owners_bytes, offset)[0]
+        offset += 2
+        byte_len = cch * 2
+        if offset + byte_len > len(owners_bytes):
+            break
+        owner_name = owners_bytes[offset:offset + byte_len].decode("utf-16le", errors="ignore").strip("\x00").strip()
+        owners.append(owner_name)
+        offset += byte_len
+    return owners
+
+
+def _parse_legacy_doc_atn_bookmarks(table_stream, fib):
+    """Parse PlcfbkfAtn and PlcfbklAtn to map bookmark indices to (start_cp, end_cp) in body text."""
+    fc_bkf = fib.get("fc_plcfbkf_atn", 0)
+    lcb_bkf = fib.get("lcb_plcfbkf_atn", 0)
+    fc_bkl = fib.get("fc_plcfbkl_atn", 0)
+    lcb_bkl = fib.get("lcb_plcfbkl_atn", 0)
+    if (
+        lcb_bkf < 8
+        or (lcb_bkf - 4) % 8 != 0
+        or (fc_bkf + lcb_bkf) > len(table_stream)
+        or lcb_bkl < 8
+        or lcb_bkl % 4 != 0
+        or (fc_bkl + lcb_bkl) > len(table_stream)
+    ):
+        return {}
+
+    bkf_bytes = table_stream[fc_bkf:fc_bkf + lcb_bkf]
+    bkl_bytes = table_stream[fc_bkl:fc_bkl + lcb_bkl]
+    bkf_count = (lcb_bkf - 4) // 8
+    bkl_count = (lcb_bkl // 4) - 1
+    if bkf_count <= 0 or bkl_count <= 0:
+        return {}
+
+    start_cps = struct.unpack_from(f"<{bkf_count + 1}I", bkf_bytes, 0)
+    end_cps = struct.unpack_from(f"<{bkl_count + 1}I", bkl_bytes, 0)
+    fbkf_offset = (bkf_count + 1) * 4
+
+    bookmark_ranges = {}
+    for idx in range(bkf_count):
+        ibkl = struct.unpack_from("<H", bkf_bytes, fbkf_offset + (idx * 4))[0]
+        if 0 <= ibkl < bkl_count:
+            start_cp = start_cps[idx]
+            end_cp = end_cps[ibkl]
+            if end_cp >= start_cp:
+                bookmark_ranges[idx] = (start_cp, end_cp)
+    return bookmark_ranges
+
+
+def _extract_legacy_doc_comments_from_streams(table_stream, fib, raw_full_text):
+    """Extract structured comments and total body word count from decoded MS-DOC streams."""
+    if not fib or not raw_full_text:
+        return [], len(_normalize_legacy_doc_text(raw_full_text).split())
+
+    ccp_text = fib.get("ccp_text", 0)
+    ccp_atn = fib.get("ccp_atn", 0)
+    body_raw = raw_full_text[:ccp_text] if ccp_text > 0 else raw_full_text
+    total_body_words = len(_normalize_legacy_doc_text(body_raw).split())
+
+    if ccp_atn <= 0:
+        return [], total_body_words
+
+    atn_start = (
+        ccp_text
+        + fib.get("ccp_ftn", 0)
+        + fib.get("ccp_hdr", 0)
+        + fib.get("ccp_mcr", 0)
+    )
+    atn_end = atn_start + ccp_atn
+    if atn_start >= len(raw_full_text):
+        return [], total_body_words
+
+    raw_atn_text = raw_full_text[atn_start:min(atn_end, len(raw_full_text))]
+    if not raw_atn_text:
+        return [], total_body_words
+
+    owners = _parse_legacy_doc_atn_owners(
+        table_stream,
+        fib.get("fc_grp_xst_atn_owners", 0),
+        fib.get("lcb_grp_xst_atn_owners", 0),
+    )
+    bookmark_ranges = _parse_legacy_doc_atn_bookmarks(table_stream, fib)
+
+    # Parse PlcfandRef (30-byte ATRDPre10 per annotation reference)
+    ref_records = []
+    fc_ref = fib.get("fc_plcfand_ref", 0)
+    lcb_ref = fib.get("lcb_plcfand_ref", 0)
+    if lcb_ref >= 38 and (lcb_ref - 4) % 34 == 0 and (fc_ref + lcb_ref) <= len(table_stream):
+        ref_bytes = table_stream[fc_ref:fc_ref + lcb_ref]
+        ref_count = (lcb_ref - 4) // 34
+        ref_cps = struct.unpack_from(f"<{ref_count + 1}I", ref_bytes, 0)
+        atrd_base = (ref_count + 1) * 4
+        for idx in range(ref_count):
+            atrd = ref_bytes[atrd_base + (idx * 30):atrd_base + ((idx + 1) * 30)]
+            initl_cch = min(struct.unpack_from("<H", atrd, 0)[0], 9)
+            initials = atrd[2:2 + (initl_cch * 2)].decode("utf-16le", errors="ignore").strip("\x00").strip()
+            ibst = struct.unpack_from("<H", atrd, 20)[0]
+            author = owners[ibst] if 0 <= ibst < len(owners) else ""
+            bkmk_tag = struct.unpack_from("<i", atrd, 26)[0]
+            ref_records.append({
+                "anchor_cp": ref_cps[idx],
+                "author": author,
+                "initials": initials,
+                "bkmk_tag": bkmk_tag,
+            })
+
+    # Parse PlcfandTxt (start/end CP offsets within the annotation subdocument)
+    comment_slices = []
+    fc_txt = fib.get("fc_plcfand_txt", 0)
+    lcb_txt = fib.get("lcb_plcfand_txt", 0)
+    if lcb_txt >= 8 and lcb_txt % 4 == 0 and (fc_txt + lcb_txt) <= len(table_stream):
+        txt_bytes = table_stream[fc_txt:fc_txt + lcb_txt]
+        cp_count = lcb_txt // 4
+        txt_cps = struct.unpack_from(f"<{cp_count}I", txt_bytes, 0)
+        for idx in range(cp_count - 1):
+            start_offset = max(0, min(txt_cps[idx], len(raw_atn_text)))
+            end_offset = max(start_offset, min(txt_cps[idx + 1], len(raw_atn_text)))
+            if end_offset > start_offset:
+                comment_slices.append(raw_atn_text[start_offset:end_offset])
+
+    if not comment_slices:
+        if "\x05" in raw_atn_text:
+            comment_slices = [part for part in raw_atn_text.split("\x05") if part.strip()]
+        else:
+            comment_slices = [raw_atn_text]
+
+    comments = []
+    for idx, raw_slice in enumerate(comment_slices):
+        comment_text = _normalize_legacy_doc_text(raw_slice)
+        if not comment_text:
+            continue
+
+        ref_info = ref_records[idx] if idx < len(ref_records) else {}
+        author = ref_info.get("author") or (owners[0] if len(owners) == 1 else "")
+        initials = ref_info.get("initials", "")
+        anchor_cp = ref_info.get("anchor_cp")
+        bkmk_tag = ref_info.get("bkmk_tag", -1)
+
+        word_offset = None
+        anchor_text = ""
+        if anchor_cp is not None and ccp_text > 0:
+            bounded_cp = max(0, min(int(anchor_cp), len(body_raw)))
+            body_prefix = _normalize_legacy_doc_text(body_raw[:bounded_cp])
+            word_offset = len(body_prefix.split())
+
+            if bkmk_tag in bookmark_ranges:
+                bkmk_start, bkmk_end = bookmark_ranges[bkmk_tag]
+                anchor_text = _normalize_legacy_doc_text(
+                    body_raw[max(0, bkmk_start):min(len(body_raw), bkmk_end)]
+                )[:OFFICE_COMMENT_ANCHOR_MAX_CHARS]
+            elif bounded_cp > 0:
+                para_start = body_raw.rfind("\r", 0, bounded_cp)
+                snippet_start = max(0 if para_start == -1 else para_start + 1, bounded_cp - 120)
+                anchor_text = _normalize_legacy_doc_text(
+                    body_raw[snippet_start:bounded_cp]
+                )[:OFFICE_COMMENT_ANCHOR_MAX_CHARS]
+
+        comments.append({
+            "id": str(idx + 1),
+            "author": author,
+            "initials": initials,
+            "date": "",
+            "text": comment_text,
+            "anchor_text": anchor_text,
+            "word_offset": word_offset,
+            "position_known": word_offset is not None,
+            "parent_id": None,
+            "done": False,
+            "replies": [],
+        })
+
+    return comments, total_body_words
+
+
+def extract_legacy_doc_comments(file_path):
+    """Extract structured comments and total body word count from a legacy OLE .doc file."""
+    if not file_path or not olefile.isOleFile(file_path):
+        return [], 0
+
+    ole = olefile.OleFileIO(file_path)
+    try:
+        if not ole.exists("WordDocument"):
+            return [], 0
+
+        word_stream = ole.openstream("WordDocument").read()
+        fib = _parse_legacy_doc_fib(word_stream)
+        if not fib:
+            return [], 0
+
+        preferred_table = fib.get("table_stream_name", "1Table")
+        table_candidates = [preferred_table] + [
+            name for name in ("1Table", "0Table") if name != preferred_table
+        ]
+        for table_stream_name in table_candidates:
+            if not ole.exists(table_stream_name):
+                continue
+            table_stream = ole.openstream(table_stream_name).read()
+            raw_full_text = _extract_legacy_doc_raw_text_from_table_stream(
+                word_stream,
+                table_stream,
+                fc_clx=fib.get("fc_clx", 0),
+                lcb_clx=fib.get("lcb_clx", 0),
+            )
+            if not raw_full_text:
+                continue
+            return _extract_legacy_doc_comments_from_streams(table_stream, fib, raw_full_text)
+
+        return [], 0
+    except Exception:
+        return [], 0
+    finally:
+        ole.close()
+
+
+def extract_word_comments(file_path, file_extension=None):
+    """Extract structured review comments and total body words from any supported Word file."""
+    resolved_extension = (file_extension or os.path.splitext(str(file_path or ""))[1]).lower()
+    if resolved_extension == ".doc" and olefile.isOleFile(file_path):
+        return extract_legacy_doc_comments(file_path)
+    if zipfile.is_zipfile(file_path):
+        return extract_docx_comments(file_path)
+    return [], 0
+
+
+def extract_legacy_doc_text(file_path, include_comments=True):
     """Extract text from Word 97-2003 .doc files using OLE streams and piece tables."""
     if not olefile.isOleFile(file_path):
         raise Exception("File is not a valid OLE compound document")
@@ -198,22 +585,61 @@ def extract_legacy_doc_text(file_path):
             raise Exception("Missing WordDocument stream")
 
         word_stream = ole.openstream("WordDocument").read()
+        fib = _parse_legacy_doc_fib(word_stream)
+
         best_text = ""
         best_score = 0
+        best_raw = ""
+        best_table_stream = b""
 
         for table_stream_name in ("1Table", "0Table"):
             if not ole.exists(table_stream_name):
                 continue
 
             table_stream = ole.openstream(table_stream_name).read()
-            candidate_text = _extract_legacy_doc_text_from_table_stream(word_stream, table_stream)
+            candidate_raw = _extract_legacy_doc_raw_text_from_table_stream(
+                word_stream,
+                table_stream,
+                fc_clx=fib.get("fc_clx", 0) if fib else 0,
+                lcb_clx=fib.get("lcb_clx", 0) if fib else 0,
+            )
+            candidate_text = _normalize_legacy_doc_text(candidate_raw)
             candidate_score = _score_legacy_doc_candidate(candidate_text)
             if candidate_score > best_score:
                 best_text = candidate_text
                 best_score = candidate_score
+                best_raw = candidate_raw
+                best_table_stream = table_stream
 
         if not best_text:
             raise Exception("Could not locate a readable text piece table in the document")
+
+        if fib and fib.get("ccp_atn", 0) > 0 and best_raw:
+            atn_start = (
+                fib.get("ccp_text", 0)
+                + fib.get("ccp_ftn", 0)
+                + fib.get("ccp_hdr", 0)
+                + fib.get("ccp_mcr", 0)
+            )
+            atn_end = atn_start + fib.get("ccp_atn", 0)
+            if 0 <= atn_start < len(best_raw):
+                non_atn_raw = best_raw[:atn_start] + best_raw[min(atn_end, len(best_raw)):]
+                body_text = _normalize_legacy_doc_text(non_atn_raw)
+            else:
+                body_text = best_text
+
+            if not include_comments:
+                return body_text
+
+            comments, _total_words = _extract_legacy_doc_comments_from_streams(
+                best_table_stream, fib, best_raw
+            )
+            comments_section = format_word_comments_section(comments)
+            if comments_section:
+                if body_text:
+                    return f"{body_text}\n\n{comments_section}"
+                return comments_section
+            return body_text
 
         return best_text
     finally:
