@@ -36,6 +36,18 @@ _INLINE_DOCUMENT_CITATION_GROUP_PATTERN = re.compile(
     r"\[\s{0,8}#([^\]\r\n]{1,1024})\]",
     re.IGNORECASE,
 )
+_BRACKETED_DOCUMENT_CITATION_GROUP_PATTERN = re.compile(
+    r"\[\s{0,8}((?:#?(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{8})_[a-z0-9_.-]{1,128})(?:\s{0,8}[;,]\s{0,8}#?(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{8})_[a-z0-9_.-]{1,128})*)\s{0,8}\]",
+    re.IGNORECASE,
+)
+_RAW_DOCUMENT_CITATION_PATTERN = re.compile(
+    r"\u3010\s{0,8}#?([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}_[a-z0-9_.-]{1,128})\s{0,8}\u3011",
+    re.IGNORECASE,
+)
+_UUID_PREFIX_CITATION_ID_PATTERN = re.compile(
+    r"^([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_([a-z0-9_.-]{1,128})$",
+    re.IGNORECASE,
+)
 _INLINE_DOCUMENT_SOURCE_PATTERN = re.compile(
     r"\(Source:((?:(?!\(Source:).){1,256}?),"
     r"\s{0,8}(Page(?:s)?|Sheet(?:s)?|Location):"
@@ -78,16 +90,32 @@ def _normalize_reference_id(value: Any) -> str:
     return str(value or "").strip().lstrip("#").strip()
 
 
+def _short_document_citation_id(citation_id: Any) -> str:
+    normalized_id = _normalize_reference_id(citation_id)
+    match = _UUID_PREFIX_CITATION_ID_PATTERN.match(normalized_id)
+    if not match:
+        return ""
+    return f"{match.group(1).lower()}_{match.group(2)}"
+
+
 def extract_explicit_document_citation_ids(content: Any) -> List[str]:
-    """Return ordered, unique citation IDs from explicit ``[#id]`` groups."""
+    """Return ordered, unique citation IDs from explicit ``[#id]`` and bracketed chunk groups."""
     citation_ids: List[str] = []
-    for citation_group in _INLINE_DOCUMENT_CITATION_GROUP_PATTERN.findall(
-        str(content or "")
-    ):
+    text = str(content or "")
+    for citation_group in _INLINE_DOCUMENT_CITATION_GROUP_PATTERN.findall(text):
         for raw_citation_id in re.split(r"[;,]", citation_group):
             citation_id = _normalize_reference_id(raw_citation_id)
             if citation_id and citation_id not in citation_ids:
                 citation_ids.append(citation_id)
+    for citation_group in _BRACKETED_DOCUMENT_CITATION_GROUP_PATTERN.findall(text):
+        for raw_citation_id in re.split(r"[;,]", citation_group):
+            citation_id = _normalize_reference_id(raw_citation_id)
+            if citation_id and citation_id not in citation_ids:
+                citation_ids.append(citation_id)
+    for raw_citation_id in _RAW_DOCUMENT_CITATION_PATTERN.findall(text):
+        citation_id = _normalize_reference_id(raw_citation_id)
+        if citation_id and citation_id not in citation_ids:
+            citation_ids.append(citation_id)
     return citation_ids
 
 
@@ -283,10 +311,29 @@ def build_cited_source_subsets(
     explicit_web_urls = set(extract_explicit_web_urls(content))
 
     hybrid_source_records = _as_dict_list(hybrid_citations)
+    short_id_counts: Dict[str, int] = {}
+    for citation in hybrid_source_records:
+        short_id = _short_document_citation_id(_get_document_citation_id(citation))
+        if short_id:
+            short_id_counts[short_id] = short_id_counts.get(short_id, 0) + 1
+
+    def _citation_matches_explicit_ids(citation: Mapping[str, Any]) -> bool:
+        citation_id = _get_document_citation_id(citation)
+        if not citation_id:
+            return False
+        if citation_id in document_citation_ids:
+            return True
+        short_id = _short_document_citation_id(citation_id)
+        return bool(
+            short_id
+            and short_id_counts.get(short_id) == 1
+            and short_id in {item.lower() for item in document_citation_ids}
+        )
+
     exact_document_citations = [
         citation
         for citation in hybrid_source_records
-        if _get_document_citation_id(citation) in document_citation_ids
+        if _citation_matches_explicit_ids(citation)
     ]
     unmatched_source_references = [
         source_reference
@@ -304,10 +351,7 @@ def build_cited_source_subsets(
     seen_document_citations = set()
     for citation in hybrid_source_records:
         citation_id = _get_document_citation_id(citation)
-        matched_by_id = bool(
-            citation_id
-            and citation_id in document_citation_ids
-        )
+        matched_by_id = _citation_matches_explicit_ids(citation)
         matched_by_source = any(
             _source_reference_matches_citation(source_reference, citation)
             for source_reference in unmatched_source_references

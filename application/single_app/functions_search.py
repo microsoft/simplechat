@@ -562,63 +562,59 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         group_access_filter = f"({group_conditions} or {shared_conditions})"
     public_workspace_filter = _build_public_workspace_filter_clause(active_public_workspace_ids)
 
-    try:
-        if doc_scope == "all":
-            user_filter = _combine_odata_filters(
-                user_access_filter, content_filter,
-                embedding_search_filter(search_client_user, embedding_profile, embedding_settings),
+    def _run_scoped_index_queries(*, use_semantic_ranker=True):
+        def _search_index(client, scope_filter_clause, scope_name, semantic_config_name):
+            combined_filter = _combine_odata_filters(
+                scope_filter_clause, content_filter,
+                embedding_search_filter(client, embedding_profile, embedding_settings),
             )
-            user_results = search_with_embedding_profile(
-                search_client_user, embedding_profile, top=top_n,
-                search_text=query,
-                vector_queries=[vector_query],
-                filter=user_filter,
-                query_type="semantic",
-                semantic_configuration_name="nexus-user-index-semantic-configuration",
-                query_caption="extractive",
-                query_answer="extractive",
-                select=get_search_select_fields("personal")
+            search_kwargs = {
+                "top": top_n,
+                "search_text": query,
+                "vector_queries": [vector_query],
+                "filter": combined_filter,
+                "select": get_search_select_fields(scope_name),
+            }
+            if use_semantic_ranker:
+                search_kwargs.update({
+                    "query_type": "semantic",
+                    "semantic_configuration_name": semantic_config_name,
+                    "query_caption": "extractive",
+                    "query_answer": "extractive",
+                })
+            else:
+                search_kwargs["query_type"] = "simple"
+            return search_with_embedding_profile(
+                client, embedding_profile, **search_kwargs
             )
 
+        if doc_scope == "all":
+            user_results = _search_index(
+                search_client_user,
+                user_access_filter,
+                "personal",
+                "nexus-user-index-semantic-configuration",
+            )
             if group_access_filter:
-                group_filter = _combine_odata_filters(
-                    group_access_filter, content_filter,
-                    embedding_search_filter(search_client_group, embedding_profile, embedding_settings),
-                )
-                group_results = search_with_embedding_profile(
-                    search_client_group, embedding_profile, top=top_n,
-                    search_text=query,
-                    vector_queries=[vector_query],
-                    filter=group_filter,
-                    query_type="semantic",
-                    semantic_configuration_name="nexus-group-index-semantic-configuration",
-                    query_caption="extractive",
-                    query_answer="extractive",
-                    select=get_search_select_fields("group")
+                group_results = _search_index(
+                    search_client_group,
+                    group_access_filter,
+                    "group",
+                    "nexus-group-index-semantic-configuration",
                 )
             else:
                 group_results = []
 
             if public_workspace_filter:
-                public_filter = _combine_odata_filters(
-                    public_workspace_filter, content_filter,
-                    embedding_search_filter(search_client_public, embedding_profile, embedding_settings),
-                )
-                public_results = search_with_embedding_profile(
-                    search_client_public, embedding_profile, top=top_n,
-                    search_text=query,
-                    vector_queries=[vector_query],
-                    filter=public_filter,
-                    query_type="semantic",
-                    semantic_configuration_name="nexus-public-index-semantic-configuration",
-                    query_caption="extractive",
-                    query_answer="extractive",
-                    select=get_search_select_fields("public")
+                public_results = _search_index(
+                    search_client_public,
+                    public_workspace_filter,
+                    "public",
+                    "nexus-public-index-semantic-configuration",
                 )
             else:
                 public_results = []
 
-            # Extract results from each index
             user_results_final = extract_search_results(user_results, top_n)
             group_results_final = extract_search_results(group_results, top_n)
             public_results_final = extract_search_results(public_results, top_n)
@@ -631,84 +627,64 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 public_count=len(public_results_final)
             )
 
-            # Normalize scores from each index to [0, 1] range for fair comparison
             user_results_normalized = normalize_scores(user_results_final, "user_index")
             group_results_normalized = normalize_scores(group_results_final, "group_index")
             public_results_normalized = normalize_scores(public_results_final, "public_index")
 
-            # Merge normalized results
-            results = user_results_normalized + group_results_normalized + public_results_normalized
-
+            merged_results = user_results_normalized + group_results_normalized + public_results_normalized
             debug_print(
                 "Merged results from all indexes",
                 "SEARCH",
-                total_count=len(results)
+                total_count=len(merged_results)
             )
+            return merged_results
 
-        elif doc_scope == "personal":
-            user_filter = _combine_odata_filters(
-                user_access_filter, content_filter,
-                embedding_search_filter(search_client_user, embedding_profile, embedding_settings),
+        if doc_scope == "personal":
+            user_results = _search_index(
+                search_client_user,
+                user_access_filter,
+                "personal",
+                "nexus-user-index-semantic-configuration",
             )
-            user_results = search_with_embedding_profile(
-                search_client_user, embedding_profile, top=top_n,
-                search_text=query,
-                vector_queries=[vector_query],
-                filter=user_filter,
-                query_type="semantic",
-                semantic_configuration_name="nexus-user-index-semantic-configuration",
-                query_caption="extractive",
-                query_answer="extractive",
-                select=get_search_select_fields("personal")
-            )
-            results = extract_search_results(user_results, top_n)
+            return extract_search_results(user_results, top_n)
 
-        elif doc_scope == "group":
+        if doc_scope == "group":
             if not group_access_filter:
-                results = []
-            else:
-                group_filter = _combine_odata_filters(
-                    group_access_filter, content_filter,
-                    embedding_search_filter(search_client_group, embedding_profile, embedding_settings),
-                )
-                group_results = search_with_embedding_profile(
-                    search_client_group, embedding_profile, top=top_n,
-                    search_text=query,
-                    vector_queries=[vector_query],
-                    filter=group_filter,
-                    query_type="semantic",
-                    semantic_configuration_name="nexus-group-index-semantic-configuration",
-                    query_caption="extractive",
-                    query_answer="extractive",
-                    select=get_search_select_fields("group")
-                )
-                results = extract_search_results(group_results, top_n)
+                return []
+            group_results = _search_index(
+                search_client_group,
+                group_access_filter,
+                "group",
+                "nexus-group-index-semantic-configuration",
+            )
+            return extract_search_results(group_results, top_n)
 
-        elif doc_scope == "public":
-            if public_workspace_filter:
-                public_filter = _combine_odata_filters(
-                    public_workspace_filter, content_filter,
-                    embedding_search_filter(search_client_public, embedding_profile, embedding_settings),
-                )
-                public_results = search_with_embedding_profile(
-                    search_client_public, embedding_profile, top=top_n,
-                    search_text=query,
-                    vector_queries=[vector_query],
-                    filter=public_filter,
-                    query_type="semantic",
-                    semantic_configuration_name="nexus-public-index-semantic-configuration",
-                    query_caption="extractive",
-                    query_answer="extractive",
-                    select=get_search_select_fields("public")
-                )
-                results = extract_search_results(public_results, top_n)
-            else:
-                results = []
+        if doc_scope == "public":
+            if not public_workspace_filter:
+                return []
+            public_results = _search_index(
+                search_client_public,
+                public_workspace_filter,
+                "public",
+                "nexus-public-index-semantic-configuration",
+            )
+            return extract_search_results(public_results, top_n)
+
+        return []
+
+    semantic_fallback_used = False
+    try:
+        results = _run_scoped_index_queries(use_semantic_ranker=True)
     except Exception as search_error:
         if is_semantic_search_quota_error(search_error):
             record_semantic_search_quota_exceeded(search_error, source="hybrid_search")
-            raise SemanticSearchQuotaExceededError() from search_error
-        raise
+            try:
+                results = _run_scoped_index_queries(use_semantic_ranker=False)
+                semantic_fallback_used = True
+            except Exception:
+                raise SemanticSearchQuotaExceededError() from search_error
+        else:
+            raise
 
     results = filter_available_results(results, user_id=user_id)
 
@@ -790,7 +766,8 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         query=query[:40],
         final_result_count=len(results)
     )
-    clear_semantic_search_quota_warning(source="hybrid_search")
+    if not semantic_fallback_used:
+        clear_semantic_search_quota_warning(source="hybrid_search")
 
     results = filter_available_results(results, user_id=user_id, cached=True)
     assert_evidence_available(selected_sources, user_id=user_id)

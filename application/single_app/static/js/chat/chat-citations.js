@@ -110,11 +110,55 @@ function buildDocumentFileNameLookup(records) {
     return names;
 }
 
+function buildRawDocumentSourceLookup(records) {
+    const sources = new Map();
+    if (!Array.isArray(records)) {
+        return sources;
+    }
+    const uuidPrefixRegex = /^([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_([a-z0-9_.-]{1,128})$/i;
+    for (const record of records) {
+        if (typeof record?.citation_id !== 'string' || typeof record?.file_name !== 'string') {
+            continue;
+        }
+        const id = record.citation_id.trim().replace(/^#/, '');
+        const fileName = record.file_name.trim();
+        if (!id || !fileName || isM365CitationId(id)) {
+            continue;
+        }
+        const location = record.location_value ?? record.sheet_name ?? record.page_number ?? parseDocIdAndPage(id).pageNumber ?? '1';
+        const locationValue = typeof location === 'string' || (typeof location === 'number' && Number.isFinite(location))
+            ? String(location)
+            : '1';
+        const locationLabel = typeof record.location_label === 'string' && record.location_label.trim()
+            ? record.location_label.trim()
+            : typeof record.sheet_name === 'string'
+                ? 'Sheet'
+                : 'Page';
+        const sheetName = typeof record.sheet_name === 'string' ? record.sheet_name : null;
+        const source = {
+            citationId: id,
+            fileName,
+            locationLabel,
+            locationValue,
+            sheetName,
+        };
+        const serialized = JSON.stringify(source);
+        sources.set(id, sources.has(id) && JSON.stringify(sources.get(id)) !== serialized ? null : source);
+        const shortMatch = uuidPrefixRegex.exec(id);
+        if (shortMatch) {
+            const shortKey = `${shortMatch[1].toLowerCase()}_${shortMatch[2]}`;
+            sources.set(shortKey, sources.has(shortKey) && JSON.stringify(sources.get(shortKey)) !== serialized ? null : source);
+        }
+    }
+    return sources;
+}
+
 export function parseCitations(message, options = {}) {
   // ... (keep existing implementation)
   const citationRegex = /\(Source:\s*((?:(?!\(Source:).)+?),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*((?:(?!\(Source:).)+?)\)\s*((?:\[#.*?\]\s*)+)/gi;
   const m365CitationLookup = buildM365CitationLookup(options.m365Citations);
   const documentFileNames = buildDocumentFileNameLookup(options.documentCitations);
+  const rawDocumentSources = buildRawDocumentSourceLookup(options.documentCitations);
 
   let result = message.replace(citationRegex, (whole, filename, locationLabel, locations, bracketSection) => {
     // The bracket group's trailing \s* consumes whatever whitespace followed the last
@@ -238,6 +282,29 @@ export function parseCitations(message, options = {}) {
     const linkedPagesText = linkedTokens.join(', ');
     return `(Source: ${filenameHtml}, ${escapeHtml(locationLabel)}: ${linkedPagesText})${trailingWhitespace}`;
   });
+
+  if (rawDocumentSources.size > 0 && result.includes('[')) {
+    const bracketedDocRegex = /\[\s*(#?(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{8})_[a-z0-9_.-]{1,128}(?:\s*[;,]\s*#?(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{8})_[a-z0-9_.-]{1,128})*)\s*\]/gi;
+    result = result.replace(bracketedDocRegex, (whole, inner) => {
+      const tokens = inner
+        .split(/[;,]/)
+        .map((part) => part.trim().replace(/^#/, ''))
+        .filter(Boolean);
+      if (!tokens.length) {
+        return whole;
+      }
+      const resolvedSources = tokens.map(
+        (token) => rawDocumentSources.get(token) || rawDocumentSources.get(token.toLowerCase()) || null
+      );
+      if (resolvedSources.some((source) => !source)) {
+        return whole;
+      }
+      const rendered = resolvedSources.map((source) => (
+        `(Source: ${escapeHtml(source.fileName)}, ${escapeHtml(source.locationLabel)}: ${buildAnchorIfExists(source.locationValue, source.citationId, source.sheetName)})`
+      ));
+      return rendered.join(', ');
+    });
+  }
 
   // Cleanup pass: strip any remaining [#guid...] bracket groups that the main regex didn't match.
   // These appear when the model uses non-standard citation formats (e.g. "passim" instead of "Page: N").
