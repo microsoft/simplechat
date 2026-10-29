@@ -2,6 +2,52 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.061)**
+
+#### New Features
+
+*   **Opt-In Tabular Model HTTP-Attempt Diagnostics**
+    *   Added opt-in environment-variable diagnostics (`SIMPLECHAT_TABULAR_HTTP_DIAGNOSTICS`, `SIMPLECHAT_TABULAR_HTTP_BUDGET_SECONDS`, `SIMPLECHAT_TABULAR_HTTP_MAX_RETRIES`, and `SIMPLECHAT_TABULAR_HTTP_TIMEOUT_SECONDS`) for tabular Azure OpenAI calls.
+    *   Records structured `[TABULAR_MODEL_HTTP]` telemetry covering request attempts, retries, elapsed durations, correlation headers, and pre-header transport failures without logging prompts, completions, or credentials.
+    *   (Ref: `functions_tabular_model_diagnostics.py`, `functions_model_endpoint_runtime.py`, `route_backend_chats.py`, `docs/admin/operations.md`)
+
+#### Bug Fixes
+
+*   **Workflow Instruction Drafting Uses the Selected Metadata Endpoint**
+    *   The Draft Workflow Instructions button now resolves its client and request model through the same metadata extraction model endpoint resolver used by document metadata extraction.
+    *   Workflows and agent instruction drafts no longer send the selected metadata extraction deployment to the legacy global GPT or APIM endpoint when the model is hosted on a configured AI Foundry or multi-endpoint connection.
+    *   (Ref: `resolve_metadata_extraction_client()`, `route_backend_agents.py`, `route_backend_workflows.py`, [Workflow Instruction Model Endpoint Fix](fixes/WORKFLOW_INSTRUCTION_MODEL_ENDPOINT_FIX.md))
+
+*   **Tabular Analysis Required-Tool Choice Continuation Fix**
+    *   Tabular analysis rounds now switch tool-choice behavior from `required` to `auto` after the initial tool invocation while preserving function allowlists and invocation limits, allowing the model to either request follow-up tools or return its final answer.
+    *   (Ref: `allow_tabular_completion_after_initial_tools()`, `route_backend_chats.py`, `test_tabular_tool_error_retry_and_thoughts.py`)
+
+### **(v0.261.060)**
+
+#### Bug Fixes
+
+*   **Safety Violation Date and User Metadata**
+    *   Safety violation list and card views now show created dates and target user names, reducing the need to open each violation to identify when it occurred and who it affected.
+    *   CSV exports now include a user name column and populate created, last updated, and archived timestamps using existing safety log metadata when older records are missing explicit date fields.
+    *   (Ref: `route_backend_safety.py`, `admin-safety-violations.js`, [Safety Violation Metadata Display Fix](fixes/SAFETY_VIOLATION_METADATA_DISPLAY_FIX.md))
+
+### **(v0.261.059)**
+
+#### New Features
+
+*   **Configurable Content Safety Prompt Category Thresholds**
+    *   Administrators can now set Azure AI Content Safety prompt thresholds separately for Violence, Hate, Sexual, and Self-harm.
+    *   Each category supports Low (`2`), Medium (`4`), and High (`6`), with Medium as the default to preserve previous behavior.
+    *   Higher threshold levels do not override model deployment guardrails.
+    *   (Ref: Content Safety admin settings, `content_safety_category_thresholds`, [Content Safety Block Threshold](features/CONTENT_SAFETY_BLOCK_THRESHOLD.md))
+
+#### User Interface Enhancements
+
+*   **Admin Settings Slider Contrast**
+    *   Admin Settings range sliders now use the same gray tone as an off toggle switch in dark mode, making slider tracks visible against the admin page background.
+    *   This includes the Content Safety prompt category threshold sliders, Main Page Logo Size, and document action capability sliders.
+    *   (Ref: `content-safety.html`, `branding.html`, `actions.html`, `styles.css`, Admin Settings)
+
 ### **(v0.261.054)**
 
 #### Bug Fixes

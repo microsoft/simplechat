@@ -81,7 +81,7 @@
         const row = document.createElement('tr');
         row.className = 'table-loading-row';
         const cell = document.createElement('td');
-        cell.colSpan = 5;
+        cell.colSpan = 7;
         cell.className = isError ? 'text-danger text-center p-4' : 'table-loading-row';
         cell.textContent = message;
         row.appendChild(cell);
@@ -200,7 +200,7 @@
         return categories.reduce(function (entries, entry) {
             const categoryName = String(entry.category || '').trim();
             const severity = normalizeSeverity(entry.severity);
-            if (categoryName && severity >= 1 && severity <= 4) {
+            if (categoryName && severity >= 1 && severity <= 7) {
                 entries.push({ category: categoryName, severity });
             }
             return entries;
@@ -269,6 +269,29 @@
         wrapper.className = 'review-badge-list';
         appendCategoryBadges(wrapper, logItem, '-');
         cell.appendChild(wrapper);
+        return cell;
+    }
+
+    function createUserCell(logItem, userInfo) {
+        const cell = document.createElement('td');
+        const name = document.createElement('div');
+        name.className = 'fw-semibold';
+        name.textContent = logItem.user_name || userInfo?.display_name || logItem.user_id || 'Unknown User';
+        cell.appendChild(name);
+
+        const email = logItem.user_email || userInfo?.email || '';
+        if (email) {
+            const emailElement = document.createElement('div');
+            emailElement.className = 'small text-muted';
+            emailElement.textContent = email;
+            cell.appendChild(emailElement);
+        }
+        return cell;
+    }
+
+    function createDateCell(logItem) {
+        const cell = document.createElement('td');
+        cell.textContent = formatDateTime(logItem.created_at);
         return cell;
     }
 
@@ -620,7 +643,10 @@
 
         for (const item of items) {
             const row = document.createElement('tr');
+            const userInfo = await lookupUserInfo(item.user_id);
 
+            row.appendChild(createDateCell(item));
+            row.appendChild(createUserCell(item, userInfo));
             row.appendChild(createTextCell(item.message || '', 'table-message-cell', item.message || ''));
             row.appendChild(createCategoryCell(item));
             row.appendChild(createBadgeCell(createStatusBadge(item.status || 'New')));
@@ -658,7 +684,7 @@
             header.className = 'review-card-header';
             const timestamp = document.createElement('div');
             timestamp.className = 'review-card-meta';
-            timestamp.textContent = formatDateTime(item.last_updated || item.created_at);
+            timestamp.textContent = formatDateTime(item.created_at);
             const statusBadges = document.createElement('div');
             statusBadges.className = 'review-badge-list';
             statusBadges.appendChild(createStatusBadge(item.status || 'New'));

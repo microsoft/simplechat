@@ -88,6 +88,47 @@ def _format_triggered_categories(log_item):
     return ', '.join(formatted_categories)
 
 
+def _iso_from_cosmos_ts(value):
+    try:
+        return datetime.utcfromtimestamp(float(value)).isoformat()
+    except (TypeError, ValueError, OSError):
+        return ''
+
+
+def _normalize_safety_log_dates(log_item):
+    created_at = (
+        log_item.get('created_at')
+        or log_item.get('timestamp')
+        or _iso_from_cosmos_ts(log_item.get('_ts'))
+    )
+    last_updated = log_item.get('last_updated') or log_item.get('updated_at') or created_at
+    log_item['created_at'] = created_at or ''
+    log_item['last_updated'] = last_updated or ''
+    return log_item
+
+
+def _enrich_safety_log_users(logs):
+    user_cache = {}
+    for log_item in logs:
+        user_id = str(log_item.get('user_id') or '').strip()
+        if not user_id:
+            log_item['user_name'] = 'Unknown User'
+            log_item['user_email'] = ''
+            continue
+        if user_id not in user_cache:
+            try:
+                user_cache[user_id] = resolve_safety_target_user(user_id)
+            except Exception:
+                user_cache[user_id] = {
+                    'display_name': user_id,
+                    'email': '',
+                }
+        user_info = user_cache[user_id]
+        log_item['user_name'] = user_info.get('display_name') or user_id
+        log_item['user_email'] = user_info.get('email') or ''
+    return logs
+
+
 def _get_safety_actor_context():
     user = session.get('user', {}) or {}
     actor_id = _get_safety_session_user_id()
@@ -182,6 +223,7 @@ def _query_safety_logs(
         enable_cross_partition_query=True,
     ))
     for log_item in logs:
+        _normalize_safety_log_dates(log_item)
         log_item.update(serialize_archive_metadata(log_item))
     return logs
 
@@ -257,6 +299,7 @@ def _build_safety_export_response(logs, filename_prefix, include_user_id=False):
 
     headers = [
         'Violation ID',
+        'User Name',
         'Status',
         'Action',
         'Message',
@@ -274,9 +317,11 @@ def _build_safety_export_response(logs, filename_prefix, include_user_id=False):
 
     writer.writerow(headers)
 
+    _enrich_safety_log_users(logs)
     for log_item in logs:
         row = [
             log_item.get('id') or '',
+            log_item.get('user_name') or '',
             log_item.get('status') or 'New',
             log_item.get('action') or 'None',
             log_item.get('message') or '',
@@ -351,6 +396,7 @@ def register_route_backend_safety(bp):
                 archive_state=archive_state,
             )
             paginated_items, page, page_size = _paginate_safety_logs(logs, page, page_size)
+            _enrich_safety_log_users(paginated_items)
 
             return jsonify({
                 "logs": paginated_items,
@@ -579,6 +625,7 @@ def register_route_backend_safety(bp):
 
         try:
             item = cosmos_safety_container.read_item(item=log_id, partition_key=log_id)
+            _normalize_safety_log_dates(item)
             was_archived = bool(item.get('is_archived'))
             apply_archive_state(item, archived, actor['id'])
             item['last_updated'] = datetime.utcnow().isoformat()
@@ -684,6 +731,7 @@ def register_route_backend_safety(bp):
                 filter_action=filter_action,
             )
             paginated_items, page, page_size = _paginate_safety_logs(logs, page, page_size)
+            _enrich_safety_log_users(paginated_items)
 
             return jsonify({
                 "logs": paginated_items,

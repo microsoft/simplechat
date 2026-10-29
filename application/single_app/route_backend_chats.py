@@ -71,6 +71,7 @@ from functions_tabular_analysis import (
     orchestrate_tabular_request as _shared_orchestrate_tabular_request,
     queue_direct_tabular_generated_output_from_plan as _shared_queue_direct_tabular_generated_output_from_plan,
 )
+from functions_tabular_model_diagnostics import close_tabular_model_http_client
 from functions_tabular_orchestration import (
     build_tabular_legacy_post_tool_fallback_decision as _shared_build_tabular_legacy_post_tool_fallback_decision,
     get_tabular_generated_output_format as _shared_get_tabular_generated_output_format,
@@ -115,7 +116,11 @@ from functions_service_health import (
     SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
     SemanticSearchQuotaExceededError,
 )
-from functions_content_safety import build_content_safety_violation_message
+from functions_content_safety import (
+    build_content_safety_violation_message,
+    get_content_safety_category_label,
+    get_content_safety_category_threshold,
+)
 from functions_settings import *
 from functions_assigned_knowledge import (
     ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
@@ -12211,6 +12216,15 @@ def _select_likely_workbook_sheet(sheet_names, question_text, per_sheet=None, sc
     return best_sheet
 
 
+async def allow_tabular_completion_after_initial_tools(context, next):
+    """Require initial evidence gathering without forcing every continuation to call tools."""
+    settings = context.execution_settings
+    if context.request_sequence_index == 0 and settings is not None:
+        if getattr(settings, 'tool_choice', None) == 'required':
+            settings.tool_choice = 'auto'
+    await next(context)
+
+
 async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                    conversation_id, gpt_model, settings,
                                    source_hint="workspace", group_id=None,
@@ -12231,10 +12245,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
     from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
     from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
     from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
+    from semantic_kernel.filters import FilterTypes
     from semantic_kernel_plugins.document_search_plugin import DocumentSearchPlugin
     from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
     from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 
+    chat_service = None
     try:
         plugin_logger = get_plugin_logger()
         execution_mode = execution_mode if execution_mode in {
@@ -12264,6 +12280,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
         # 1. Create lightweight kernel with tabular and document-search plugins
         kernel = SKKernel()
+        kernel.add_filter(FilterTypes.AUTO_FUNCTION_INVOCATION, allow_tabular_completion_after_initial_tools)
         tabular_plugin = TabularProcessingPlugin()
         document_search_plugin = DocumentSearchPlugin()
         kernel.add_plugin(tabular_plugin, plugin_name="tabular_processing")
@@ -13321,6 +13338,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
     except Exception as e:
         log_event(f"[TABULAR_SK_ANALYSIS] Error: {e}", level=logging.WARNING, exceptionTraceback=True)
         return None
+    finally:
+        await close_tabular_model_http_client(chat_service)
 
 def _build_tabular_sk_citations_from_invocations(plugin_invocations):
     """Convert selected tabular invocations to the existing tool-citation shape."""
@@ -18040,14 +18059,22 @@ def register_route_backend_chats(bp):
                     request_obj = AnalyzeTextOptions(text=user_message)
                     cs_response = content_safety_client.analyze_text(request_obj)
 
-                    max_severity = 0
                     for cat_result in cs_response.categories_analysis:
+                        category_threshold = get_content_safety_category_threshold(
+                            settings,
+                            cat_result.category,
+                        )
                         triggered_categories.append({
                             "category": cat_result.category,
-                            "severity": cat_result.severity
+                            "severity": cat_result.severity,
+                            "threshold": category_threshold,
                         })
-                        if cat_result.severity > max_severity:
-                            max_severity = cat_result.severity
+                        if cat_result.severity >= category_threshold:
+                            blocked = True
+                            category_label = get_content_safety_category_label(cat_result.category)
+                            block_reasons.append(
+                                f"{category_label} severity >= {category_threshold}"
+                            )
 
                     if cs_response.blocklists_match:
                         for match in cs_response.blocklists_match:
@@ -18057,15 +18084,12 @@ def register_route_backend_chats(bp):
                                 "blocklistItemText": match.blocklist_item_text
                             })
 
-                    # Example: If severity >=4 or blocklist, we call it "blocked"
-                    if max_severity >= 4:
-                        blocked = True
-                        block_reasons.append("Max severity >= 4")
                     if len(blocklist_matches) > 0:
                         blocked = True
                         block_reasons.append("Blocklist match")
 
                     if blocked:
+                        safety_timestamp = datetime.utcnow().isoformat()
                         # Upsert to safety container
                         safety_item = {
                             'id': str(uuid.uuid4()),
@@ -18074,7 +18098,9 @@ def register_route_backend_chats(bp):
                             'message': user_message,
                             'triggered_categories': triggered_categories,
                             'blocklist_matches': blocklist_matches,
-                            'timestamp': datetime.utcnow().isoformat(),
+                            'timestamp': safety_timestamp,
+                            'created_at': safety_timestamp,
+                            'last_updated': safety_timestamp,
                             'reason': "; ".join(block_reasons),
                             'metadata': {
                                 'message_id': assistant_message_id,
@@ -22675,18 +22701,26 @@ def register_route_backend_chats(bp):
                         request_obj = AnalyzeTextOptions(text=user_message)
                         cs_response = content_safety_client.analyze_text(request_obj)
 
-                        max_severity = 0
                         triggered_categories = []
                         blocklist_matches = []
                         block_reasons = []
 
                         for cat_result in cs_response.categories_analysis:
+                            category_threshold = get_content_safety_category_threshold(
+                                settings,
+                                cat_result.category,
+                            )
                             triggered_categories.append({
                                 "category": cat_result.category,
-                                "severity": cat_result.severity
+                                "severity": cat_result.severity,
+                                "threshold": category_threshold,
                             })
-                            if cat_result.severity > max_severity:
-                                max_severity = cat_result.severity
+                            if cat_result.severity >= category_threshold:
+                                blocked = True
+                                category_label = get_content_safety_category_label(cat_result.category)
+                                block_reasons.append(
+                                    f"{category_label} severity >= {category_threshold}"
+                                )
 
                         if cs_response.blocklists_match:
                             for match in cs_response.blocklists_match:
@@ -22696,14 +22730,12 @@ def register_route_backend_chats(bp):
                                     "blocklistItemText": match.blocklist_item_text
                                 })
 
-                        if max_severity >= 4:
-                            blocked = True
-                            block_reasons.append("Max severity >= 4")
                         if len(blocklist_matches) > 0:
                             blocked = True
                             block_reasons.append("Blocklist match")
 
                         if blocked:
+                            safety_timestamp = datetime.utcnow().isoformat()
                             # Upsert to safety container
                             safety_item = {
                                 'id': str(uuid.uuid4()),
@@ -22712,7 +22744,9 @@ def register_route_backend_chats(bp):
                                 'message': user_message,
                                 'triggered_categories': triggered_categories,
                                 'blocklist_matches': blocklist_matches,
-                                'timestamp': datetime.utcnow().isoformat(),
+                                'timestamp': safety_timestamp,
+                                'created_at': safety_timestamp,
+                                'last_updated': safety_timestamp,
                                 'reason': "; ".join(block_reasons),
                                 'metadata': {
                                     'message_id': assistant_message_id,

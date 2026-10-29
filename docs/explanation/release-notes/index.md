@@ -20,6 +20,9 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.261.061 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.060 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.059 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.054 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.053 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.052 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -29,38 +32,38 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.261.048 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.047 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.046 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.045 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.044 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.043 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.042 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.041 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.040 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.030 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.028 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.027 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.026 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.025 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.023 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.021 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.020 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.019 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.018 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.017 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.016 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.015 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.014 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.013 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.012 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.011 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.010 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.009 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.007 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.006 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.005 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.004 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.003 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.002 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
-| v0.261.001 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
+| v0.261.045 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.044 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.043 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.042 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.041 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.040 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.030 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.028 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.027 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.026 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.025 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.023 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.021 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.020 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.019 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.018 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.017 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.016 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.015 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.014 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.013 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.012 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.011 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.010 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.009 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.007 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.006 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.005 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.004 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.003 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.002 | [Release notes 0.261.045 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.001 | [Release notes 0.261.001]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
 | v0.260.025 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
 | v0.260.024 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
 | v0.260.023 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
@@ -108,6 +111,52 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.235.003 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 
 ## Latest release notes
+
+### **(v0.261.061)**
+
+#### New Features
+
+*   **Opt-In Tabular Model HTTP-Attempt Diagnostics**
+    *   Added opt-in environment-variable diagnostics (`SIMPLECHAT_TABULAR_HTTP_DIAGNOSTICS`, `SIMPLECHAT_TABULAR_HTTP_BUDGET_SECONDS`, `SIMPLECHAT_TABULAR_HTTP_MAX_RETRIES`, and `SIMPLECHAT_TABULAR_HTTP_TIMEOUT_SECONDS`) for tabular Azure OpenAI calls.
+    *   Records structured `[TABULAR_MODEL_HTTP]` telemetry covering request attempts, retries, elapsed durations, correlation headers, and pre-header transport failures without logging prompts, completions, or credentials.
+    *   (Ref: `functions_tabular_model_diagnostics.py`, `functions_model_endpoint_runtime.py`, `route_backend_chats.py`, `docs/admin/operations.md`)
+
+#### Bug Fixes
+
+*   **Workflow Instruction Drafting Uses the Selected Metadata Endpoint**
+    *   The Draft Workflow Instructions button now resolves its client and request model through the same metadata extraction model endpoint resolver used by document metadata extraction.
+    *   Workflows and agent instruction drafts no longer send the selected metadata extraction deployment to the legacy global GPT or APIM endpoint when the model is hosted on a configured AI Foundry or multi-endpoint connection.
+    *   (Ref: `resolve_metadata_extraction_client()`, `route_backend_agents.py`, `route_backend_workflows.py`, [Workflow Instruction Model Endpoint Fix](fixes/WORKFLOW_INSTRUCTION_MODEL_ENDPOINT_FIX.md))
+
+*   **Tabular Analysis Required-Tool Choice Continuation Fix**
+    *   Tabular analysis rounds now switch tool-choice behavior from `required` to `auto` after the initial tool invocation while preserving function allowlists and invocation limits, allowing the model to either request follow-up tools or return its final answer.
+    *   (Ref: `allow_tabular_completion_after_initial_tools()`, `route_backend_chats.py`, `test_tabular_tool_error_retry_and_thoughts.py`)
+
+### **(v0.261.060)**
+
+#### Bug Fixes
+
+*   **Safety Violation Date and User Metadata**
+    *   Safety violation list and card views now show created dates and target user names, reducing the need to open each violation to identify when it occurred and who it affected.
+    *   CSV exports now include a user name column and populate created, last updated, and archived timestamps using existing safety log metadata when older records are missing explicit date fields.
+    *   (Ref: `route_backend_safety.py`, `admin-safety-violations.js`, [Safety Violation Metadata Display Fix](fixes/SAFETY_VIOLATION_METADATA_DISPLAY_FIX.md))
+
+### **(v0.261.059)**
+
+#### New Features
+
+*   **Configurable Content Safety Prompt Category Thresholds**
+    *   Administrators can now set Azure AI Content Safety prompt thresholds separately for Violence, Hate, Sexual, and Self-harm.
+    *   Each category supports Low (`2`), Medium (`4`), and High (`6`), with Medium as the default to preserve previous behavior.
+    *   Higher threshold levels do not override model deployment guardrails.
+    *   (Ref: Content Safety admin settings, `content_safety_category_thresholds`, [Content Safety Block Threshold](features/CONTENT_SAFETY_BLOCK_THRESHOLD.md))
+
+#### User Interface Enhancements
+
+*   **Admin Settings Slider Contrast**
+    *   Admin Settings range sliders now use the same gray tone as an off toggle switch in dark mode, making slider tracks visible against the admin page background.
+    *   This includes the Content Safety prompt category threshold sliders, Main Page Logo Size, and document action capability sliders.
+    *   (Ref: `content-safety.html`, `branding.html`, `actions.html`, `styles.css`, Admin Settings)
 
 ### **(v0.261.054)**
 
@@ -216,58 +265,3 @@ This page includes the latest release notes inline. Older release sections are s
     *   Fetch preparation and transport failures now consistently identify the selected file and show the same recovery guidance for locked files, cloud-placeholder files, and interrupted local upload requests.
     *   Also removed unsafe HTML-string construction from the retry modal's model-option cloning and reasoning-level controls.
     *   (Ref: chat upload file access handling, retry modal rendering, `chat-input-actions.js`, `chat-retry.js`, `test_chat_clipboard_paste_upload_support.py`)
-
-### **(v0.261.045)**
-
-#### Bug Fixes
-
-*   **Public Workspace Selector Dark Theme Styling**
-    *   Fixed the public workspace selector dropdown so its dark-theme background, border, search area, hover state, and active item styling match the group workspace selector.
-    *   Added the shared workspace selector row class to the public selector row and extended the existing group dropdown dark-theme rules to the public dropdown.
-    *   (Ref: public workspace selector, dark theme dropdown styling, `public_workspaces.html`, `styles.css`)
-
-*   **Revert Premature OneNote Rollout From Development**
-    *   Removed native `.one` and `.onepkg` workspace uploads from Development pending Reactv2 testing, correcting the accidental merge of PR #1525.
-    *   Restored the previous upload formats and container packaging. Existing document formats and the separately adapted Reactv2 OneNote implementation remain unchanged.
-    *   (Ref: `config.py`, `functions_documents.py`, `Dockerfile`, [OneNote Development Rollout Revert](fixes/ONENOTE_DEVELOPMENT_ROLLOUT_REVERT_FIX.md))
-
-### **(v0.261.044)**
-
-#### New Features
-
-*   **Admin Defaults For New Chat Model And Reasoning Effort**
-    *   Added Admin Settings controls that let administrators opt in to a default model and default reasoning effort for new non-agent chats.
-    *   The setting is off by default, preserving each user's existing last-selected model and per-model reasoning preferences until an admin enables the override.
-    *   New-chat defaults use the existing multi-endpoint model selector and continue to leave agent model bindings and existing conversation model history intact.
-    *   (Ref: `enable_default_model_for_new_conversations`, `default_reasoning_effort`, Model Endpoints admin settings, chat model selector)
-
-#### Bug Fixes
-
-*   **New Chat Defaults No Longer Leak Across Conversations**
-    *   Fixed new-chat admin model defaults being overwritten by a user's saved model when a freshly created blank conversation was opened through `/chats?conversationId=...`, including the left-navigation **New Chat** flow.
-    *   Existing conversations now restore their own last-used model from saved message metadata, while blank conversations with no model history apply the admin default model and reasoning effort.
-    *   Programmatic model selector refreshes no longer save the admin default as the user's preferred model or prematurely disable the admin default reasoning state.
-    *   (Ref: `chat-conversations.js`, `chat-model-selector.js`, `chat-messages.js`, `chat-reasoning.js`)
-
-*   **Shared Conversation Prompts Persist After Invite Approval**
-    *   Accepting an invitation now loads the conversation with the authoritative collaborative metadata returned by the approval request, preventing the initial creator prompt from disappearing while the response remains visible.
-    *   (Ref: `chat-collaboration.js`, `chat-conversations.js`)
-
-*   **Shared Conversation Delivery Remains Reliable Across Workers**
-    *   Shared event sessions now use a cross-worker Cosmos fallback when Redis is unavailable, preserve Redis event logs during worker attachment, and retry concurrent Cosmos event writes.
-    *   History supplies an EventSource cursor, so retained events do not replay after history loads and invitees retain the owner's existing prompts.
-    *   Accepting an invite while already viewing the conversation now updates membership and composer state in place instead of clearing the rendered history.
-    *   (Ref: `app_settings_cache.py`, `route_backend_collaboration.py`, `chat-collaboration.js`)
-
-*   **Microsoft 365 Enhancements Do Not Interrupt Shared Chat**
-    *   Optional Microsoft 365 action-card projection failures no longer terminate collaboration events.
-    *   Background action recovery remains silent for ordinary shared conversations, while saved actions retain explicit recovery controls.
-    *   (Ref: `route_backend_collaboration.py`, `chat-streaming.js`, `m365-pending-actions.js`)
-
-### **(v0.261.043)**
-
-#### Bug Fixes
-
-*   **Add Participants Remains Available Before Sharing**
-    *   Ordinary personal conversations no longer lose the Add participants action when a metadata response omits collaboration-only permission fields.
-    *   (Ref: `chat-conversations.js`, `chat-sidebar-conversations.js`)

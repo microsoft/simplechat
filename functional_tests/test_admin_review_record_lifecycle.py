@@ -2,12 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for admin review record lifecycle management.
-Version: 0.250.075
+Version: 0.261.060
 Implemented in: 0.250.075
 
 This test ensures feedback and safety records support active/archived filtering,
-non-sensitive activity audits, protected lifecycle routes, and pending safety
-remediation deletion safeguards.
+non-sensitive activity audits, protected lifecycle routes, pending safety
+remediation deletion safeguards, and safety export date/user metadata.
 """
 
 import importlib.util
@@ -21,6 +21,7 @@ APP_DIR = ROOT_DIR / 'application' / 'single_app'
 LIFECYCLE_PATH = APP_DIR / 'functions_review_lifecycle.py'
 FEEDBACK_ROUTE_PATH = APP_DIR / 'route_backend_feedback.py'
 SAFETY_ROUTE_PATH = APP_DIR / 'route_backend_safety.py'
+CHAT_ROUTE_PATH = APP_DIR / 'route_backend_chats.py'
 
 
 def _load_lifecycle_module(activity_logger):
@@ -91,6 +92,7 @@ def test_feedback_and_safety_route_contracts():
     """Admin lifecycle routes should keep auth gates and active-only user history."""
     feedback_source = FEEDBACK_ROUTE_PATH.read_text(encoding='utf-8')
     safety_source = SAFETY_ROUTE_PATH.read_text(encoding='utf-8')
+    chat_source = CHAT_ROUTE_PATH.read_text(encoding='utf-8')
 
     feedback_markers = [
         '@bp.route("/feedback/review/<feedbackId>/archive", methods=["PATCH"])',
@@ -112,6 +114,11 @@ def test_feedback_and_safety_route_contracts():
         "action_request_status') or '').strip().lower() == 'pending'",
         'log_review_lifecycle_action(',
         "'audit_warning'",
+        "'User Name'",
+        '_normalize_safety_log_dates(log_item)',
+        '_enrich_safety_log_users(paginated_items)',
+        '_enrich_safety_log_users(logs)',
+        "log_item.get('timestamp')",
     ]
 
     for marker in feedback_markers:
@@ -119,6 +126,8 @@ def test_feedback_and_safety_route_contracts():
     for marker in safety_markers:
         assert marker in safety_source, f'Missing safety lifecycle marker: {marker}'
 
+    assert "'created_at': safety_timestamp" in chat_source
+    assert "'last_updated': safety_timestamp" in chat_source
     assert feedback_source.count('@swagger_route(security=get_auth_security())') == feedback_source.count('@bp.route(')
     assert safety_source.count('@swagger_route(security=get_auth_security())') == safety_source.count('@bp.route(')
 
