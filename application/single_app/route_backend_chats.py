@@ -19863,10 +19863,8 @@ def register_route_backend_chats(bp):
             if default_system_prompt:
                 # Find if any system message (not summary or augmentation) is present
                 has_general_system_prompt = any(
-                    msg.get('role') == 'system' and not (
-                        msg.get('content', '').startswith('<Summary of previous conversation context>') or
-                        "retrieved document excerpts" in msg.get('content', '')
-                    )
+                    msg.get('role') == 'system'
+                    and str(msg.get('content') or '').strip() == default_system_prompt
                     for msg in conversation_history_for_api
                 )
                 if not has_general_system_prompt:
@@ -24116,10 +24114,8 @@ def register_route_backend_chats(bp):
                 default_system_prompt_inserted = False
                 if default_system_prompt:
                     has_general_system_prompt = any(
-                        msg.get('role') == 'system' and not (
-                            msg.get('content', '').startswith('<Summary of previous conversation context>') or
-                            "retrieved document excerpts" in msg.get('content', '')
-                        )
+                        msg.get('role') == 'system'
+                        and str(msg.get('content') or '').strip() == default_system_prompt
                         for msg in conversation_history_for_api
                     )
                     if not has_general_system_prompt:
