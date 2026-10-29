@@ -64,3 +64,4 @@ Please extend the payment window to 60 days.
   - Validates reading-order chunk placement into target document chunks without inventing duplicate page numbers.
   - Validates legacy `.doc` FIB (`FibRgLw97` / `FibRgFcLcb97`) comment extraction, author/initials decoding, bookmark anchor text, and clean separation of `ccpAtn` from body text.
 - **Regression Test**: `functional_tests/test_legacy_doc_ole_extraction.py` and `functional_tests/test_figure_chunk_association.py`.
+- **Related Architecture**: See [Document Accessibility, Structure, and Comment Extraction](DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION.md) for the full Mermaid dissection and storage routing diagrams across PDF, Word (`.docx`, `.docm`, `.dotx`, `.doc`), and PowerPoint (`.pptx`).
