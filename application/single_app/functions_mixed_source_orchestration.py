@@ -18,6 +18,7 @@ from content_screening.access import (
     strict_source_authority_enabled,
 )
 from content_screening.contracts import SCREENING_FIELD, ScreeningError, SourceAuthorityUnverifiedError
+from functions_document_citations import build_inline_citation_marker, resolve_citation_location
 from functions_m365_citations import M365_ANSWER_STYLE_INSTRUCTIONS
 from functions_evidence_status import build_mixed_source_evidence_status
 
@@ -1360,6 +1361,56 @@ def serialize_evidence_envelope(envelope):
     return serialized_envelope
 
 
+def _extract_result_document_id(result):
+    if not isinstance(result, dict):
+        return ""
+    document_id = str(result.get("document_id") or "").strip()
+    if document_id:
+        return document_id
+    raw_id = str(result.get("id") or result.get("citation_id") or "").strip()
+    if "_" in raw_id:
+        return "_".join(raw_id.split("_")[:-1])
+    return raw_id
+
+
+def _build_envelope_search_citation_entry(result, source):
+    result = result if isinstance(result, dict) else {}
+    source = source if isinstance(source, dict) else {}
+    citation_id = result.get("id") or result.get("chunk_id")
+    page_number = result.get("page_number")
+    chunk_sequence = result.get("chunk_sequence")
+    file_name = str(
+        result.get("file_name")
+        or source.get("file_name")
+        or source.get("display_name")
+        or ""
+    ).strip()
+    entry = {
+        "citation_id": citation_id,
+        "page_number": page_number,
+        "chunk_sequence": chunk_sequence,
+    }
+    if file_name:
+        entry["file_name"] = file_name
+    if citation_id:
+        location_page = page_number if page_number not in (None, "") else chunk_sequence or 1
+        location_label, location_value = resolve_citation_location(
+            page_number=location_page,
+            chunk_text=result.get("chunk_text"),
+            sheet_name=result.get("sheet_name"),
+            is_tabular=False,
+        )
+        inline_marker = build_inline_citation_marker(
+            file_name or "Document",
+            location_label,
+            location_value,
+            citation_id,
+        )
+        if inline_marker:
+            entry["citation"] = inline_marker
+    return entry
+
+
 def build_narrative_evidence_envelopes(
     narrative_sources,
     search_results,
@@ -1373,7 +1424,7 @@ def build_narrative_evidence_envelopes(
     results_by_document_id = {}
     for raw_result in list(search_results or []):
         result = raw_result if isinstance(raw_result, dict) else {}
-        document_id = str(result.get("document_id") or "").strip()
+        document_id = _extract_result_document_id(result)
         if not document_id:
             continue
         results_by_document_id.setdefault(document_id, []).append(result)
@@ -1394,11 +1445,7 @@ def build_narrative_evidence_envelopes(
                 "chunk_sequence": result.get("chunk_sequence"),
                 "score": result.get("score"),
             })
-            citations.append({
-                "citation_id": result.get("id") or result.get("chunk_id"),
-                "page_number": result.get("page_number"),
-                "chunk_sequence": result.get("chunk_sequence"),
-            })
+            citations.append(_build_envelope_search_citation_entry(result, source))
 
         result_count = len(source_results)
         envelopes.append(build_evidence_envelope(
@@ -1445,7 +1492,7 @@ def build_schema_summary_evidence_envelopes(
     results_by_document_id = {}
     for raw_result in list(search_results or []):
         result = raw_result if isinstance(raw_result, dict) else {}
-        document_id = str(result.get("document_id") or "").strip()
+        document_id = _extract_result_document_id(result)
         if document_id:
             results_by_document_id.setdefault(document_id, []).append(result)
 
@@ -1466,11 +1513,7 @@ def build_schema_summary_evidence_envelopes(
             for result in source_results
         ]
         citations = [
-            {
-                "citation_id": result.get("id") or result.get("chunk_id"),
-                "page_number": result.get("page_number"),
-                "chunk_sequence": result.get("chunk_sequence"),
-            }
+            _build_envelope_search_citation_entry(result, source)
             for result in source_results
         ]
         result_count = len(source_results)

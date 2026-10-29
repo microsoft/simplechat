@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.392)**
+
+#### Bug Fixes
+
+*   **Retrieval, Narrative/XML Fidelity, Default System Prompt, And Inline Citation Restoration**
+    *   Fixed a regression where `default_system_prompt` was omitted whenever `mixed_source_handoff`, chat-uploaded file/image messages, or other system augmentation messages were present in `conversation_history_for_api`.
+    *   Restored `build_search_augmentation_system_prompt(retrieved_content)` in mixed-source chat turns so full narrative and XML chunks, document metadata citations, and `(Source: ..., Page: ...) [#citation_id]` inline citation markers are no longer replaced solely by the 1,024-byte JSON envelope preview.
+    *   Hydrated workspace-backed chat file upload text (`file_content_source: "workspace"`) from indexed chunks in `_refresh_workspace_linked_history_message` when Content Screening is off, and removed the 50 KB history preview truncation for workspace-backed non-tabular chat uploads.
+    *   Added automatic fallback from `query_type="semantic"` to vector + BM25 keyword hybrid search (`query_type="simple"`) in `hybrid_search` when Azure AI Search Semantic Ranker monthly free quota is exhausted, while keeping the persisted service-health warning active.
+    *   Added resolution for bracketed full and 8-character hex prefix chunk citation IDs (`[8ed56431_1]`, `[15dce0d4_2; 8ed56431_2]`) in V2 `citations.ts`, Classic `chat-citations.js`, and `functions_citation_tracking.py`.
+    *   (Ref: `route_backend_chats.py`, `functions_mixed_source_orchestration.py`, `functions_search.py`, `functions_citation_tracking.py`, `citations.ts`, `chat-citations.js`, [Retrieval, Narrative/XML Fidelity, System Prompt, and Inline Citation Restoration Fix](fixes/RETRIEVAL_CITATION_SYSTEM_PROMPT_RESTORATION_FIX.md), [#1855](https://github.com/microsoft/simplechat/issues/1855))
+
 ### **(v0.261.390)**
 
 #### New Features

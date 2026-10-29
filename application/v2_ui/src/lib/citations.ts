@@ -48,6 +48,12 @@ const CITATION_MARKER =
 const RAW_DOCUMENT_MARKER =
     /\u3010\s*#?([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}_[a-z0-9_.-]{1,128})\s*\u3011/gi;
 
+const BRACKETED_DOCUMENT_MARKER =
+    /\[\s*(#?(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{8})_[a-z0-9_.-]{1,128}(?:\s*[;,]\s*#?(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{8})_[a-z0-9_.-]{1,128})*)\s*\]/gi;
+
+const UUID_PREFIX_CITATION_ID =
+    /^([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_([a-z0-9_.-]{1,128})$/i;
+
 /** A bare `[#id]` run left over when a marker was emitted without its Source prefix. */
 const ORPHAN_BRACKET_RUN = /(?:[ \t]*\[#[^\]]*\])+/g;
 
@@ -76,6 +82,11 @@ function documentFileNames(records: readonly HybridCitation[]): Map<string, stri
     return names;
 }
 
+function shortCitationId(id: string): string {
+    const match = UUID_PREFIX_CITATION_ID.exec(id);
+    return match ? `${match[1].toLowerCase()}_${match[2]}` : '';
+}
+
 function rawDocumentSources(records: readonly HybridCitation[]): Map<string, CitationGroup | null> {
     const sources = new Map<string, CitationGroup | null>();
     for (const record of Array.isArray(records) ? records : []) {
@@ -100,6 +111,13 @@ function rawDocumentSources(records: readonly HybridCitation[]): Map<string, Cit
         };
         // A later matching duplicate must not undo an earlier conflicting source.
         sources.set(id, sources.has(id) && JSON.stringify(sources.get(id)) !== JSON.stringify(source) ? null : source);
+        const shortKey = shortCitationId(id);
+        if (shortKey) {
+            sources.set(
+                shortKey,
+                sources.has(shortKey) && JSON.stringify(sources.get(shortKey)) !== JSON.stringify(source) ? null : source,
+            );
+        }
     }
     return sources;
 }
@@ -264,6 +282,37 @@ export function parseCitations(
         });
         return `${/^[ \t]/.test(run) ? ' ' : ''}${CITATION_PLACEHOLDER(groupIndex)}`;
     });
+
+    if (rawSources.size > 0 && text.includes('[')) {
+        const bracketCodeRegions = literalCodeRegions(text);
+        text = text.replace(
+            BRACKETED_DOCUMENT_MARKER,
+            (whole: string, inner: string, offset: number) => {
+                if (bracketCodeRegions.some((region) => offset >= region.start && offset < region.end)) {
+                    return whole;
+                }
+                const tokens = inner
+                    .split(/[;,]/)
+                    .map((part) => part.trim().replace(/^#/, ''))
+                    .filter(Boolean);
+                if (tokens.length === 0) {
+                    return whole;
+                }
+                const resolvedSources = tokens.map(
+                    (token) => rawSources.get(token) ?? rawSources.get(token.toLowerCase()) ?? null,
+                );
+                if (resolvedSources.some((source) => !source)) {
+                    return whole;
+                }
+                const replacements = (resolvedSources as CitationGroup[]).map((source) => {
+                    const groupIndex = groups.length;
+                    groups.push({ ...source, id: `cite-${groupIndex}` });
+                    return CITATION_PLACEHOLDER(groupIndex);
+                });
+                return replacements.join(' ');
+            },
+        );
+    }
 
     // Any bracket run that survives had no Source prefix to give it meaning, so it is
     // removed rather than shown to the user as raw ids.

@@ -1489,19 +1489,31 @@ def _resolve_chat_mixed_source_relevance_context(
         'candidate_count': 0,
     }
     if relevance_candidates_enabled:
-        candidate_result = search_relevant_tabular_candidates(
-            query=query,
-            user_id=user_id,
-            doc_scope=document_scope,
-            document_ids=candidate_document_ids,
-            tags_filter=tags_filter,
-            active_group_ids=active_group_ids,
-            active_public_workspace_id=active_public_workspace_ids,
-        )
+        try:
+            candidate_result = search_relevant_tabular_candidates(
+                query=query,
+                user_id=user_id,
+                doc_scope=document_scope,
+                document_ids=candidate_document_ids,
+                tags_filter=tags_filter,
+                active_group_ids=active_group_ids,
+                active_public_workspace_id=active_public_workspace_ids,
+            )
+        except SemanticSearchQuotaExceededError as quota_err:
+            debug_print(
+                f"Skipping relevance tabular candidate search after semantic quota error: {quota_err}"
+            )
     relevance_document_ids = []
     seen_document_ids = set()
     for result in list(search_results or []):
-        document_id = str((result or {}).get('document_id') or '').strip()
+        if not isinstance(result, dict):
+            continue
+        document_id = str(result.get('document_id') or '').strip()
+        if not document_id and result.get('id'):
+            raw_id = str(result.get('id') or '').strip()
+            document_id = '_'.join(raw_id.split('_')[:-1]) if '_' in raw_id else raw_id
+            if document_id:
+                result['document_id'] = document_id
         if document_id and document_id not in seen_document_ids:
             seen_document_ids.add(document_id)
             relevance_document_ids.append(document_id)
@@ -19908,12 +19920,12 @@ def register_route_backend_chats(bp):
                     # Construct system prompt for search results
                     system_prompt_search = build_search_augmentation_system_prompt(retrieved_content)
                     # Add this to a temporary list, don't save to DB yet
-                    if not is_mixed_source_chat_search_enabled(settings):
-                        system_messages_for_augmentation.append({
-                            'role': 'system',
-                            'content': system_prompt_search,
-                            'documents': combined_documents # Keep track of docs used
-                        })
+                    search_augmentation_message = {
+                        'role': 'system',
+                        'content': system_prompt_search,
+                        'documents': combined_documents # Keep track of docs used
+                    }
+                    system_messages_for_augmentation.append(search_augmentation_message)
 
                     # Loop through each source document/chunk used for this message
                     for source_doc in combined_documents:
@@ -20101,9 +20113,8 @@ def register_route_backend_chats(bp):
                             retrieved_content = "\n\n".join(retrieved_texts)
                             system_prompt_search = build_search_augmentation_system_prompt(retrieved_content)
                             # Update the system message with enhanced content and updated documents array
-                            if system_messages_for_augmentation:
-                                system_messages_for_augmentation[0]['content'] = system_prompt_search
-                                system_messages_for_augmentation[0]['documents'] = combined_documents
+                            search_augmentation_message['content'] = system_prompt_search
+                            search_augmentation_message['documents'] = combined_documents
                     # --- END NEW METADATA CITATIONS ---
 
                     # Update conversation classifications if new ones were found
@@ -21064,12 +21075,9 @@ def register_route_backend_chats(bp):
             default_system_prompt_inserted = False
             # Only add if non-empty and not already present (excluding summary/augmentation system messages)
             if default_system_prompt:
-                # Find if any system message (not summary or augmentation) is present
                 has_general_system_prompt = any(
-                    msg.get('role') == 'system' and not (
-                        msg.get('content', '').startswith('<Summary of previous conversation context>') or
-                        "retrieved document excerpts" in msg.get('content', '')
-                    )
+                    msg.get('role') == 'system'
+                    and str(msg.get('content') or '').strip() == default_system_prompt
                     for msg in conversation_history_for_api
                 )
                 if not has_general_system_prompt:
@@ -24678,12 +24686,11 @@ def register_route_backend_chats(bp):
                         retrieved_content = "\n\n".join(retrieved_texts)
                         system_prompt_search = build_search_augmentation_system_prompt(retrieved_content)
 
-                        if not is_mixed_source_chat_search_enabled(settings):
-                            system_messages_for_augmentation.append({
-                                'role': 'system',
-                                'content': system_prompt_search,
-                                'documents': combined_documents
-                            })
+                        system_messages_for_augmentation.append({
+                            'role': 'system',
+                            'content': system_prompt_search,
+                            'documents': combined_documents
+                        })
 
                         hybrid_citations_list.sort(key=_build_hybrid_citation_sort_key, reverse=True)
                     elif history_grounded_search_used:
@@ -25445,10 +25452,8 @@ def register_route_backend_chats(bp):
                 default_system_prompt_inserted = False
                 if default_system_prompt:
                     has_general_system_prompt = any(
-                        msg.get('role') == 'system' and not (
-                            msg.get('content', '').startswith('<Summary of previous conversation context>') or
-                            "retrieved document excerpts" in msg.get('content', '')
-                        )
+                        msg.get('role') == 'system'
+                        and str(msg.get('content') or '').strip() == default_system_prompt
                         for msg in conversation_history_for_api
                     )
                     if not has_general_system_prompt:
@@ -29131,7 +29136,41 @@ def emit_history_context_debug(history_debug_info, conversation_id):
 
 def _refresh_workspace_linked_history_message(message):
     """Do not reuse attachment text or vision metadata replaced by remediation."""
-    return refresh_workspace_attachment(message, get_current_user_id())
+    user_id = get_current_user_id()
+    refreshed = refresh_workspace_attachment(message, user_id)
+    if (
+        isinstance(refreshed, dict)
+        and refreshed.get("role") == "file"
+        and not refreshed.get("is_table")
+        and not str(refreshed.get("file_content") or "").strip()
+    ):
+        metadata = refreshed.get("metadata") if isinstance(refreshed.get("metadata"), dict) else {}
+        attachment = metadata.get("workspace_attachment") if isinstance(metadata.get("workspace_attachment"), dict) else {}
+        document_id = refreshed.get("workspace_document_id") or attachment.get("document_id")
+        if document_id and user_id:
+            try:
+                from functions_documents import get_ordered_document_chunks
+
+                document = assert_document_available(document_id, user_id, purpose="history")
+                chunks = get_ordered_document_chunks(
+                    document["id"],
+                    user_id=user_id,
+                    group_id=document.get("group_id"),
+                    public_workspace_id=document.get("public_workspace_id"),
+                )
+                text = "\n\n".join(
+                    str(chunk.get("chunk_text") or "").strip()
+                    for chunk in (chunks or [])
+                    if isinstance(chunk, dict) and str(chunk.get("chunk_text") or "").strip()
+                )
+                if text:
+                    refreshed = {
+                        **refreshed,
+                        "file_content": text,
+                    }
+            except Exception:
+                pass
+    return refreshed
 
 
 def build_conversation_history_segments(
@@ -29347,13 +29386,18 @@ def build_conversation_history_segments(
                     )
                 })
             else:
-                content_limit = (
-                    max_tabular_content_length_in_history
-                    if is_table else max_file_content_length_in_history
-                )
-                display_content = file_content[:content_limit]
-                if len(file_content) > content_limit:
-                    display_content += "..."
+                if is_table:
+                    content_limit = max_tabular_content_length_in_history
+                    display_content = file_content[:content_limit]
+                    if len(file_content) > content_limit:
+                        display_content += "..."
+                elif file_content_source == 'workspace':
+                    display_content = file_content
+                else:
+                    content_limit = max_file_content_length_in_history
+                    display_content = file_content[:content_limit]
+                    if len(file_content) > content_limit:
+                        display_content += "..."
 
                 if is_table:
                     conversation_history_messages.append({
