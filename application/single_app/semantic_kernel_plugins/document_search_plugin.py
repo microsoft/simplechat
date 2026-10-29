@@ -19,8 +19,8 @@ from functions_search_service import (
     SUMMARY_DEFAULT_FINAL_TARGET,
     SUMMARY_DEFAULT_WINDOW_SUMMARY_TARGET,
     SUMMARY_DEFAULT_WINDOW_UNIT,
+    get_document_accessibility_payload,
     get_document_chunks_payload,
-    search_documents as run_document_search,
     summarize_document_content,
 )
 from semantic_kernel_plugins.base_plugin import BasePlugin
@@ -145,6 +145,17 @@ class DocumentSearchPlugin(BasePlugin):
                         {'name': 'window_number', 'type': 'int', 'description': 'Optional 1-based window number to return.', 'required': False},
                     ],
                     'returns': {'type': 'dict', 'description': 'Ordered chunks and window metadata.'},
+                },
+                {
+                    'name': 'get_document_accessibility_report',
+                    'description': 'Return the full stored accessibility, structure, and formatting (font, size, colour) metadata for one workspace document.',
+                    'parameters': [
+                        {'name': 'document_id', 'type': 'str', 'description': 'Document id to read metadata for.', 'required': True},
+                        {'name': 'doc_scope', 'type': 'str', 'description': 'all, personal, group, or public.', 'required': False},
+                        {'name': 'sections', 'type': 'str', 'description': 'Optional comma-separated sections: accessibility, style, issues.', 'required': False},
+                        {'name': 'page_number', 'type': 'int', 'description': 'Optional page or slide number whose chunk text is also returned.', 'required': False},
+                    ],
+                    'returns': {'type': 'dict', 'description': 'Stored accessibility metadata, style inventory, and issues.'},
                 },
                 {
                     'name': 'summarize_document',
@@ -408,6 +419,50 @@ class DocumentSearchPlugin(BasePlugin):
                     window_number=window_number if int(window_number or 0) > 0 else None,
                 ),
                 'retrieve_document_chunks',
+            )
+        except ScreeningError as error:
+            return {"error": error.public_message, "error_code": error.code, "status_code": error.status_code}
+        except DocumentSearchScopeError as error:
+            return {'error': str(error)}
+        except Exception as e:
+            return {'error': str(e)}
+
+    # bac-check: ignore - get_document_accessibility_payload resolves document scope against the current user before reads.
+    @plugin_function_logger('DocumentSearchPlugin')
+    @kernel_function(
+        name='get_document_accessibility_report',
+        description=(
+            'Return the complete stored accessibility, structure, and formatting metadata for one accessible '
+            'workspace document: PDF tag tree and document properties, Word and PowerPoint structure, and the full '
+            'style inventory (fonts, sizes, colours, emphasis, outlier runs, paragraph styles, page setup). '
+            'Use it to build custom style-guide or accessibility checks. This is extracted metadata, not a '
+            'WCAG or PDF/UA conformance result. Use sections to limit the output and page_number to also '
+            'return that page\'s stored chunk text. '
+            'The payload carries a "citation" value; copy it verbatim into your answer when you use it.'
+        ),
+    )
+    def get_document_accessibility_report(
+        self,
+        document_id: Annotated[str, 'Document id to read accessibility and formatting metadata for.'],
+        doc_scope: Annotated[str, 'all, personal, group, or public.'] = '',
+        sections: Annotated[str, 'Optional comma-separated sections: accessibility, style, issues. Defaults to all.'] = '',
+        page_number: Annotated[int, 'Optional 1-based page or slide number whose stored chunk text should also be returned.'] = 0,
+        active_group_ids: Annotated[str, 'Optional comma-separated group ids when resolving group content.'] = '',
+        active_public_workspace_id: Annotated[str, 'Optional public workspace id when resolving public content.'] = '',
+    ) -> Annotated[dict, 'Stored accessibility, style inventory, and issue metadata for one document.']:
+        try:
+            return annotate_document_search_payload(
+                self._call_scope_limited_document_operation(
+                    get_document_accessibility_payload,
+                    self._resolve_doc_scope_requests(doc_scope),
+                    document_id=document_id,
+                    user_id=self._get_user_id(),
+                    active_group_ids=self._resolve_allowed_group_ids(active_group_ids),
+                    active_public_workspace_id=self._resolve_allowed_public_workspace_ids(active_public_workspace_id),
+                    sections=sections,
+                    page_number=page_number if int(page_number or 0) > 0 else None,
+                ),
+                'get_document_accessibility_report',
             )
         except ScreeningError as error:
             return {"error": error.public_message, "error_code": error.code, "status_code": error.status_code}

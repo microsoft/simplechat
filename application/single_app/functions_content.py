@@ -1,5 +1,6 @@
 # functions_content.py
 
+import bisect
 import email.utils
 import struct
 import zipfile
@@ -311,6 +312,8 @@ def _parse_legacy_doc_fib(word_stream):
 
     fc_plcfand_ref, lcb_plcfand_ref = _read_fc_lcb(4)
     fc_plcfand_txt, lcb_plcfand_txt = _read_fc_lcb(5)
+    fc_plcfbte_chpx, lcb_plcfbte_chpx = _read_fc_lcb(12)
+    fc_sttbf_ffn, lcb_sttbf_ffn = _read_fc_lcb(15)
     fc_clx, lcb_clx = _read_fc_lcb(33)
     fc_grp_xst_atn_owners, lcb_grp_xst_atn_owners = _read_fc_lcb(36)
     fc_plcfbkf_atn, lcb_plcfbkf_atn = _read_fc_lcb(42)
@@ -330,6 +333,10 @@ def _parse_legacy_doc_fib(word_stream):
         "lcb_plcfand_ref": lcb_plcfand_ref,
         "fc_plcfand_txt": fc_plcfand_txt,
         "lcb_plcfand_txt": lcb_plcfand_txt,
+        "fc_plcfbte_chpx": fc_plcfbte_chpx,
+        "lcb_plcfbte_chpx": lcb_plcfbte_chpx,
+        "fc_sttbf_ffn": fc_sttbf_ffn,
+        "lcb_sttbf_ffn": lcb_sttbf_ffn,
         "fc_clx": fc_clx,
         "lcb_clx": lcb_clx,
         "fc_grp_xst_atn_owners": fc_grp_xst_atn_owners,
@@ -522,6 +529,251 @@ def _extract_legacy_doc_comments_from_streams(table_stream, fib, raw_full_text):
         })
 
     return comments, total_body_words
+
+
+LEGACY_DOC_FKP_PAGE_SIZE = 512
+LEGACY_DOC_MAX_CHPX_PAGES = 4096
+LEGACY_DOC_MAX_STYLE_RUNS = 100000
+LEGACY_DOC_ICO_COLORS = {
+    1: "#000000", 2: "#0000FF", 3: "#00FFFF", 4: "#00FF00", 5: "#FF00FF", 6: "#FF0000",
+    7: "#FFFF00", 8: "#FFFFFF", 9: "#000080", 10: "#008080", 11: "#008000", 12: "#800080",
+    13: "#800000", 14: "#808000", 15: "#808080", 16: "#C0C0C0",
+}
+
+
+def _legacy_doc_piece_map(table_stream, fib):
+    """Return ``[(start_cp, end_cp, byte_start, is_compressed)]`` sorted by byte offset."""
+    fc_clx = fib.get("fc_clx", 0)
+    lcb_clx = fib.get("lcb_clx", 0)
+    if not lcb_clx or fc_clx < 0 or fc_clx + lcb_clx > len(table_stream):
+        return []
+
+    clx = table_stream[fc_clx:fc_clx + lcb_clx]
+    offset = 0
+    while offset < len(clx) and clx[offset] == 0x01:
+        if offset + 3 > len(clx):
+            return []
+        offset += 3 + struct.unpack_from("<H", clx, offset + 1)[0]
+    if offset + 5 > len(clx) or clx[offset] != 0x02:
+        return []
+
+    plc_length = struct.unpack_from("<I", clx, offset + 1)[0]
+    plc = clx[offset + 5:offset + 5 + plc_length]
+    if len(plc) < 16 or (len(plc) - 4) % 12 != 0:
+        return []
+
+    piece_count = (len(plc) - 4) // 12
+    cps = struct.unpack_from(f"<{piece_count + 1}I", plc, 0)
+    pieces = []
+    for index in range(piece_count):
+        fc_compressed = struct.unpack_from("<I", plc, ((piece_count + 1) * 4) + (index * 8) + 2)[0]
+        is_compressed = bool(fc_compressed & 0x40000000)
+        byte_start = fc_compressed & 0x3FFFFFFF
+        if is_compressed:
+            byte_start //= 2
+        pieces.append((cps[index], cps[index + 1], byte_start, is_compressed))
+    pieces.sort(key=lambda piece: piece[2])
+    return pieces
+
+
+def _legacy_doc_fc_range_to_cp_ranges(pieces, piece_starts, fc_start, fc_end):
+    """Map a WordDocument byte range onto character-position ranges through the piece table."""
+    ranges = []
+    index = max(bisect.bisect_right(piece_starts, fc_start) - 1, 0)
+    while index < len(pieces):
+        start_cp, end_cp, byte_start, is_compressed = pieces[index]
+        if byte_start >= fc_end:
+            break
+        unit = 1 if is_compressed else 2
+        byte_end = byte_start + ((end_cp - start_cp) * unit)
+        low = max(fc_start, byte_start)
+        high = min(fc_end, byte_end)
+        if low < high:
+            ranges.append((
+                start_cp + ((low - byte_start) // unit),
+                start_cp + ((high - byte_start) // unit),
+            ))
+        index += 1
+    return ranges
+
+
+def _parse_legacy_doc_chp_sprms(grpprl):
+    """Decode the character-formatting SPRMs this extractor understands from a CHPX Grpprl."""
+    props = {}
+    position = 0
+    while position + 2 <= len(grpprl):
+        opcode = struct.unpack_from("<H", grpprl, position)[0]
+        position += 2
+        spra = opcode >> 13
+        if spra in (0, 1):
+            operand_size = 1
+        elif spra in (2, 4, 5):
+            operand_size = 2
+        elif spra == 3:
+            operand_size = 4
+        elif spra == 7:
+            operand_size = 3
+        elif spra == 6 and position < len(grpprl):
+            operand_size = grpprl[position] + 1
+        else:
+            break
+        operand = grpprl[position:position + operand_size]
+        if len(operand) < operand_size:
+            break
+        position += operand_size
+
+        if opcode == 0x4A43:
+            props["size_pt"] = struct.unpack("<H", operand)[0] / 2.0
+        elif opcode == 0x4A4F:
+            props["font_index"] = struct.unpack("<H", operand)[0]
+        elif opcode == 0x0835 and operand[0] in (0, 1):
+            props["bold"] = bool(operand[0])
+        elif opcode == 0x0836 and operand[0] in (0, 1):
+            props["italic"] = bool(operand[0])
+        elif opcode == 0x2A3E:
+            props["underline"] = operand[0] != 0
+        elif opcode == 0x2A42 and operand[0] in LEGACY_DOC_ICO_COLORS:
+            props["color"] = LEGACY_DOC_ICO_COLORS[operand[0]]
+        elif opcode == 0x6870 and operand[3] != 0xFF:
+            props["color"] = f"#{operand[0]:02X}{operand[1]:02X}{operand[2]:02X}"
+    return props
+
+
+def _parse_legacy_doc_font_table(table_stream, fc_sttbf_ffn, lcb_sttbf_ffn):
+    """Return the font names from the SttbfFfn font table, indexed by font number."""
+    if not lcb_sttbf_ffn or fc_sttbf_ffn < 0 or fc_sttbf_ffn + lcb_sttbf_ffn > len(table_stream):
+        return []
+    data = table_stream[fc_sttbf_ffn:fc_sttbf_ffn + lcb_sttbf_ffn]
+    if len(data) < 4:
+        return []
+    count = struct.unpack_from("<H", data, 0)[0]
+
+    for header_size in (4, 2):
+        position = header_size
+        names = []
+        for _ in range(count):
+            if position >= len(data):
+                names = None
+                break
+            entry_end = position + 1 + data[position]
+            if data[position] < 40 or entry_end > len(data):
+                names = None
+                break
+            raw_name = data[position + 40:entry_end]
+            names.append(raw_name.decode("utf-16le", errors="ignore").split("\x00")[0].strip())
+            position = entry_end
+        if names is not None:
+            return names
+    return []
+
+
+def _legacy_doc_chpx_runs(word_stream, table_stream, fib):
+    """Yield ``(fc_first, fc_last, props)`` for every character-formatting run in the CHPX bin table."""
+    fc_bte = fib.get("fc_plcfbte_chpx", 0)
+    lcb_bte = fib.get("lcb_plcfbte_chpx", 0)
+    if not lcb_bte or fc_bte < 0 or fc_bte + lcb_bte > len(table_stream) or lcb_bte < 12:
+        return
+    plc = table_stream[fc_bte:fc_bte + lcb_bte]
+    page_count = min((len(plc) - 4) // 8, LEGACY_DOC_MAX_CHPX_PAGES)
+    for index in range(page_count):
+        page_number = struct.unpack_from("<I", plc, ((page_count + 1) * 4) + (index * 4))[0] & 0x3FFFFF
+        page_start = page_number * LEGACY_DOC_FKP_PAGE_SIZE
+        page = word_stream[page_start:page_start + LEGACY_DOC_FKP_PAGE_SIZE]
+        if len(page) < LEGACY_DOC_FKP_PAGE_SIZE:
+            continue
+        run_count = page[LEGACY_DOC_FKP_PAGE_SIZE - 1]
+        offsets_start = 4 * (run_count + 1)
+        if run_count == 0 or offsets_start + run_count > LEGACY_DOC_FKP_PAGE_SIZE - 1:
+            continue
+        boundaries = struct.unpack_from(f"<{run_count + 1}I", page, 0)
+        for run_index in range(run_count):
+            props = {}
+            chpx_offset = page[offsets_start + run_index] * 2
+            if chpx_offset and chpx_offset < LEGACY_DOC_FKP_PAGE_SIZE - 1:
+                cb = page[chpx_offset]
+                props = _parse_legacy_doc_chp_sprms(page[chpx_offset + 1:chpx_offset + 1 + cb])
+            yield boundaries[run_index], boundaries[run_index + 1], props
+
+
+def extract_legacy_doc_character_runs(file_path):
+    """Best-effort character formatting runs from a legacy OLE .doc file.
+
+    Reads direct run properties (font, size, bold, italic, underline, colour) from the CHPX bin table
+    and maps them onto body text through the piece table. Paragraph/character style inheritance and
+    document defaults are not applied, so values a run does not set directly stay ``None``.
+    Returns ``None`` when the structures cannot be read, otherwise
+    ``{'runs': [...], 'total_body_words': int, 'notes': [...]}``.
+    """
+    if not file_path or not olefile.isOleFile(file_path):
+        return None
+
+    ole = olefile.OleFileIO(file_path)
+    try:
+        if not ole.exists("WordDocument"):
+            return None
+        word_stream = ole.openstream("WordDocument").read()
+        fib = _parse_legacy_doc_fib(word_stream)
+        if not fib:
+            return None
+
+        preferred_table = fib.get("table_stream_name", "1Table")
+        for table_stream_name in [preferred_table] + [n for n in ("1Table", "0Table") if n != preferred_table]:
+            if not ole.exists(table_stream_name):
+                continue
+            table_stream = ole.openstream(table_stream_name).read()
+            raw_text = _extract_legacy_doc_raw_text_from_table_stream(
+                word_stream, table_stream, fc_clx=fib.get("fc_clx", 0), lcb_clx=fib.get("lcb_clx", 0)
+            )
+            pieces = _legacy_doc_piece_map(table_stream, fib)
+            if raw_text and pieces:
+                break
+        else:
+            return None
+
+        body_length = fib.get("ccp_text", 0) or len(raw_text)
+        body_text = raw_text[:body_length]
+        word_starts = [match.start() for match in re.finditer(r"\S+", body_text)]
+        font_names = _parse_legacy_doc_font_table(
+            table_stream, fib.get("fc_sttbf_ffn", 0), fib.get("lcb_sttbf_ffn", 0)
+        )
+        piece_starts = [piece[2] for piece in pieces]
+
+        runs = []
+        for fc_first, fc_last, props in _legacy_doc_chpx_runs(word_stream, table_stream, fib):
+            for start_cp, end_cp in _legacy_doc_fc_range_to_cp_ranges(pieces, piece_starts, fc_first, fc_last):
+                if start_cp >= len(body_text):
+                    continue
+                text = re.sub(r"[\x00-\x08\x0b-\x1f]", " ", body_text[start_cp:min(end_cp, len(body_text))])
+                if not text.strip():
+                    continue
+                font_index = props.get("font_index")
+                runs.append({
+                    "word_offset": bisect.bisect_left(word_starts, start_cp),
+                    "text": text,
+                    "font": font_names[font_index] if font_index is not None and font_index < len(font_names) else None,
+                    "size_pt": props.get("size_pt"),
+                    "color": props.get("color"),
+                    "bold": props.get("bold", False),
+                    "italic": props.get("italic", False),
+                    "underline": props.get("underline", False),
+                })
+                if len(runs) >= LEGACY_DOC_MAX_STYLE_RUNS:
+                    break
+            if len(runs) >= LEGACY_DOC_MAX_STYLE_RUNS:
+                break
+
+        notes = [
+            "Legacy .doc formatting is best effort: only direct run properties are read. Paragraph and "
+            "character style inheritance and document defaults are not applied, so text that relies on "
+            "styles for its font or size is reported as unresolved.",
+        ]
+        if len(runs) >= LEGACY_DOC_MAX_STYLE_RUNS:
+            notes.append(f"Only the first {LEGACY_DOC_MAX_STYLE_RUNS} formatting runs were read.")
+        return {"runs": runs, "total_body_words": len(word_starts), "notes": notes}
+    except Exception:
+        return None
+    finally:
+        ole.close()
 
 
 def extract_legacy_doc_comments(file_path):

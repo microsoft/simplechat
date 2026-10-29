@@ -44,6 +44,17 @@ Focus instructions tell the summarizer what to prioritize, such as contract date
 
 The V2 editor no longer offers ad hoc custom fields. Use **Advanced → JSON** only to review preserved legacy values.
 
+## Reading accessibility and formatting metadata
+
+The action includes a `get_document_accessibility_report` function for agents that review documents for accessibility or house style. For one document it returns the stored accessibility metadata (PDF tags, Office structure, comments), the style inventory (fonts, sizes, colours, outlier text, page setup), and the detected issues.
+
+- Choose which parts to return with `sections` (`accessibility`, `style`, `issues`); all are returned by default.
+- Pass `page_number` to also get that page or slide's stored text, which includes its structure, formatting, and comment lines.
+- Chat uploads are not supported; add the file to a workspace. Documents uploaded before this data was extracted need to be re-uploaded.
+- The issues list is heuristic. It is not a formal WCAG, Section 508, or PDF/UA conformance check. To apply your own rules, write them into the agent's instructions and have it compare them with the returned values.
+
+See [Document accessibility, structure, and comment extraction]({{ '/explanation/features/DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION/' | relative_url }}) for what is extracted for each file type.
+
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 
 ## Related
