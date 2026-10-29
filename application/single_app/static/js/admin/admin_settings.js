@@ -6914,6 +6914,37 @@ function setupToggles() {
         });
     }
 
+    const contentSafetyThresholdCopy = {
+        2: {
+            label: 'Low',
+            help: 'Block Low, Medium and High'
+        },
+        4: {
+            label: 'Medium',
+            help: 'Allow Low / Block Medium and High'
+        },
+        6: {
+            label: 'High',
+            help: 'Allow Low and Medium / Block High'
+        }
+    };
+    document.querySelectorAll('.content-safety-category-threshold-range').forEach((thresholdSlider) => {
+        const thresholdLabel = document.getElementById(thresholdSlider.dataset.thresholdLabelTarget);
+        const thresholdHelp = document.getElementById(thresholdSlider.dataset.thresholdHelpTarget);
+        const updateContentSafetyCategoryThreshold = () => {
+            const thresholdCopy = contentSafetyThresholdCopy[thresholdSlider.value] || contentSafetyThresholdCopy[4];
+            if (thresholdLabel) {
+                thresholdLabel.textContent = thresholdCopy.label;
+            }
+            if (thresholdHelp) {
+                thresholdHelp.textContent = thresholdCopy.help;
+            }
+        };
+        updateContentSafetyCategoryThreshold();
+        thresholdSlider.addEventListener('input', updateContentSafetyCategoryThreshold);
+        thresholdSlider.addEventListener('change', markFormAsModified);
+    });
+
     const enableContentSafetyApim = document.getElementById('enable_content_safety_apim');
     if (enableContentSafetyApim) {
         enableContentSafetyApim.addEventListener('change', function() {

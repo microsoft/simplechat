@@ -3,6 +3,23 @@
 
 CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT = 'Your message was blocked by Content Safety.'
 CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH = 3000
+CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT = 4
+CONTENT_SAFETY_CATEGORY_THRESHOLD_LOW = 2
+CONTENT_SAFETY_CATEGORY_THRESHOLD_MEDIUM = 4
+CONTENT_SAFETY_CATEGORY_THRESHOLD_HIGH = 6
+CONTENT_SAFETY_CATEGORY_KEYS = ('Violence', 'Hate', 'Sexual', 'SelfHarm')
+CONTENT_SAFETY_CATEGORY_LABELS = {
+    'Violence': 'Violence',
+    'Hate': 'Hate',
+    'Sexual': 'Sexual',
+    'SelfHarm': 'Self-harm',
+}
+CONTENT_SAFETY_CATEGORY_KEY_ALIASES = {
+    'violence': 'Violence',
+    'hate': 'Hate',
+    'sexual': 'Sexual',
+    'selfharm': 'SelfHarm',
+}
 
 
 def normalize_content_safety_violation_message(value):
@@ -11,6 +28,77 @@ def normalize_content_safety_violation_message(value):
     if not candidate:
         return CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT
     return candidate[:CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH]
+
+
+def normalize_content_safety_category_key(value):
+    """Return a supported Azure Content Safety category key."""
+    candidate = str(value or '').strip()
+    if candidate in CONTENT_SAFETY_CATEGORY_KEYS:
+        return candidate
+    normalized = (
+        candidate.lower()
+        .replace(' ', '')
+        .replace('-', '')
+        .replace('_', '')
+    )
+    if '.' in normalized:
+        normalized = normalized.rsplit('.', 1)[-1]
+    return CONTENT_SAFETY_CATEGORY_KEY_ALIASES.get(normalized)
+
+
+def normalize_content_safety_category_threshold(value):
+    """Return a trimmed Azure Content Safety threshold: low, medium, or high."""
+    try:
+        candidate = int(value)
+    except (TypeError, ValueError):
+        return CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT
+
+    if candidate <= CONTENT_SAFETY_CATEGORY_THRESHOLD_LOW:
+        return CONTENT_SAFETY_CATEGORY_THRESHOLD_LOW
+    if candidate <= CONTENT_SAFETY_CATEGORY_THRESHOLD_MEDIUM:
+        return CONTENT_SAFETY_CATEGORY_THRESHOLD_MEDIUM
+    return CONTENT_SAFETY_CATEGORY_THRESHOLD_HIGH
+
+
+def normalize_content_safety_category_thresholds(value, legacy_threshold=None):
+    """Return category-specific Content Safety block thresholds."""
+    legacy_default = normalize_content_safety_category_threshold(legacy_threshold)
+    raw_thresholds = value if isinstance(value, dict) else {}
+    return {
+        category_key: normalize_content_safety_category_threshold(
+            raw_thresholds.get(category_key, legacy_default)
+        )
+        for category_key in CONTENT_SAFETY_CATEGORY_KEYS
+    }
+
+
+def get_content_safety_category_thresholds(settings):
+    """Read category-specific severity thresholds from the settings document."""
+    if not isinstance(settings, dict):
+        return normalize_content_safety_category_thresholds({})
+    return normalize_content_safety_category_thresholds(
+        settings.get('content_safety_category_thresholds'),
+        legacy_threshold=settings.get('content_safety_block_threshold'),
+    )
+
+
+def get_content_safety_category_threshold(settings, category):
+    """Read the severity threshold for one Content Safety category."""
+    category_key = normalize_content_safety_category_key(category)
+    if not category_key:
+        return CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT
+    return get_content_safety_category_thresholds(settings).get(
+        category_key,
+        CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT,
+    )
+
+
+def get_content_safety_category_label(category):
+    """Return a user-facing Content Safety category label."""
+    category_key = normalize_content_safety_category_key(category)
+    if not category_key:
+        return str(category or '').strip() or 'Unknown'
+    return CONTENT_SAFETY_CATEGORY_LABELS[category_key]
 
 
 def build_content_safety_violation_message(

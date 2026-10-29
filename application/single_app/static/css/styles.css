@@ -230,6 +230,14 @@ main {
     box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
 }
 
+[data-bs-theme="dark"] .form-range::-webkit-slider-runnable-track {
+    background-color: #6c757d;
+}
+
+[data-bs-theme="dark"] .form-range::-moz-range-track {
+    background-color: #6c757d;
+}
+
 /* Fix for badges in dark mode */
 [data-bs-theme="dark"] .badge.bg-secondary {
     background-color: #495057 !important;
