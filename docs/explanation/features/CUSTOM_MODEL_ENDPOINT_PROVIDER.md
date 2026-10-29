@@ -56,6 +56,28 @@ Endpoint** stages edits; save the main settings form to persist them. React V2
 saves each connection individually. Image tests require a saved connection rather
 than an unsaved draft.
 
+### Repair connections with a missing API type
+
+Recovery behavior implemented in version: **0.261.392**, tracked in
+`application/single_app/config.py`.
+
+An older Custom record may show **API type missing**. Open its editor and select
+the API contract your gateway actually implements, then confirm the request model
+or deployment name and any required API version before saving. Existing
+identifiers and version fields are retained while the contract is unresolved;
+stored credentials do not need to be re-entered when their authentication method
+is unchanged.
+
+Global V2 connections can be repaired individually or deleted even when another
+saved Custom connection remains unresolved. Valid operations on other connections
+are not blocked by that record. API types are never inferred from gateway URLs or
+model names, and an unresolved configuration must pass normal validation before
+it can be saved. If a previous saved edit already removed required metadata,
+recover the actual values from the provider configuration.
+
+See the [edit and delete recovery fix](../fixes/MODEL_ENDPOINT_LEGACY_CUSTOM_EDIT_DELETE_FIX.md)
+for persistence and validation details.
+
 ### Verified capacity and image-input overrides
 
 Use **Advanced endpoint capacity** for verified endpoint defaults and **Advanced

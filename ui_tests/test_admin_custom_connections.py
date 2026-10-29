@@ -1,7 +1,7 @@
 # test_admin_custom_connections.py
 """
 Custom global connection editor browser regressions.
-Version: 0.261.107
+Version: 0.261.392
 Implemented in: 0.261.107
 
 Cover real classic/React forms, credential staging, explicit API types, metadata,
@@ -23,6 +23,41 @@ from playwright_connection import connect_options  # noqa: F401
 
 
 pytestmark = pytest.mark.ui
+
+
+@pytest.mark.parametrize("api_type", ["azure_openai", "openai"])
+def test_react_unresolved_custom_connection_requires_explicit_repair(page, api_type):
+    fixture = CustomConnectionsFixture(page)
+    endpoint = fixture.endpoints[0]
+    endpoint.pop("api_type")
+    endpoint["connection"]["api_version"] = "2025-04-01-preview"
+    endpoint["models"][0]["deploymentName"] = "actual-azure-deployment"
+    endpoint["auth"] = {"type": "api_key"}
+    endpoint["has_api_key"] = True
+    endpoint["has_bearer_token"] = False
+    fixture.open()
+    expect(page.get_by_text("API type missing", exact=False)).to_be_visible()
+    page.get_by_role("button", name="Edit Saved Gateway", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog.get_by_label("Custom API type", exact=True)).to_have_value("")
+    dialog.get_by_role("button", name="Save changes", exact=True).click()
+    expect(dialog.get_by_text("Choose a supported Custom API type.", exact=True)).to_be_visible()
+    assert fixture.connection_writes == []
+    dialog.get_by_label("Custom API type", exact=True).select_option(api_type)
+    if api_type == "azure_openai":
+        dialog.get_by_label("API version", exact=True).fill("2025-04-01-preview")
+        expect(dialog.get_by_label("Deployment name", exact=True)).to_have_value("actual-azure-deployment")
+    else:
+        expect(dialog.get_by_label("Model name", exact=True)).to_have_value("private-chat-model")
+    dialog.get_by_role("button", name="Save changes", exact=True).click()
+    expect(dialog).to_have_count(0)
+    saved = fixture.connection_writes[-1]
+    assert saved["id"] == "stable-endpoint"
+    assert saved["api_type"] == api_type
+    assert saved["models"][0]["id"] == "stable-model"
+    assert saved["models"][0]["vendorOptions"] == {"future": [1, 2]}
+    assert "api_key" not in saved["auth"]
+    fixture.assert_clean()
 
 
 @pytest.mark.parametrize("width", [1440, 390])

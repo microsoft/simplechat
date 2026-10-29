@@ -1,7 +1,7 @@
 # test_custom_model_endpoint_foundation.py
 """
 Functional tests for the Custom endpoint foundation.
-Version: 0.261.122
+Version: 0.261.392
 Implemented in: 0.261.107
 Semantic Kernel screening/workflow guard merge coverage: 0.261.113
 
@@ -50,6 +50,7 @@ import functions_workflow_context as workflow_context
 import model_endpoint_clients as clients
 from functions_model_endpoint_providers import get_model_endpoint_provider, get_model_endpoint_provider_ui_options
 from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
+from functions_keyvault_errors import KeyVaultSecretStorageError
 from functions_model_capabilities import project_model_budget_metadata, resolve_model_token_budget
 from test_model_endpoint_normalization_backend import _load_functions_settings_module, _restore_modules
 from test_v2_admin_model_endpoints_api import _load_persistence_helper
@@ -592,6 +593,7 @@ def admin_routes():
         "merge_model_endpoint_payload": settings.merge_model_endpoint_payload,
         "AIConnectionError": settings.AIConnectionError,
         "ModelEndpointValidationError": validation.ModelEndpointValidationError,
+        "KeyVaultSecretStorageError": KeyVaultSecretStorageError,
         "_persist_global_model_endpoints": persist,
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP / "route_backend_v2.py"), "exec"), namespace)

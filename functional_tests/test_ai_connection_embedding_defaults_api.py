@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_defaults_api.py
 """
 Functional tests for embedding defaults and administrator save boundaries.
-Version: 0.261.122
+Version: 0.261.392
 Implemented in: 0.261.106
 
 Mount the actual Flask handlers and pure profile/preflight collaborators with
@@ -36,6 +36,7 @@ from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, resolve_em
 from functions_model_capabilities import ModelTokenBudgetError, normalize_model_budget_overrides
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_model_endpoint_validation import ModelEndpointValidationError, validate_custom_model_endpoint, validate_custom_model_endpoints
+from functions_keyvault_errors import KeyVaultSecretStorageError
 from admin_settings_secret_utils import is_admin_settings_redacted_secret
 from content_screening.contracts import ScreeningError
 from test_app_settings_store_consistency import AppSettingsStore, FakeCosmos, SettingsConflictError
@@ -223,6 +224,7 @@ class AdminApiHarness:
             "log_event": lambda *_args, **_kwargs: None,
             "resolve_embedding_profile": resolve_embedding_profile,
             "ModelEndpointValidationError": ModelEndpointValidationError,
+            "KeyVaultSecretStorageError": KeyVaultSecretStorageError,
             "ModelTokenBudgetError": ModelTokenBudgetError,
             "normalize_model_budget_overrides": normalize_model_budget_overrides,
             "validate_custom_model_endpoints": validate_custom_model_endpoints,
@@ -725,8 +727,14 @@ class EmbeddingEndpointSaveTests(unittest.TestCase):
                 self.assertIn("embeddings", api.settings["ai_connection_default_notices"])
                 self.assertEqual("Retained image notice", api.settings["ai_connection_default_notices"]["image_generation"])
                 self.assertTrue(connections.embedding_settings_use_connections(api.settings))
-                self.assertLess(api.events.index("preflight"), api.events.index("stage"))
-                self.assertLess(api.events.index("commit"), api.events.index("cleanup"))
+                if change == "delete":
+                    self.assertNotIn("stage", api.events)
+                    self.assertNotIn("cleanup", api.events)
+                    self.assertLess(api.events.index("preflight"), api.events.index("commit"))
+                    self.assertLess(api.events.index("commit"), api.events.index("delete"))
+                else:
+                    self.assertLess(api.events.index("preflight"), api.events.index("stage"))
+                    self.assertLess(api.events.index("commit"), api.events.index("cleanup"))
                 self.assertEqual([], api.inspections)
 
     def test_same_id_vector_space_edits_are_rejected_before_any_secret_write(self):

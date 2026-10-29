@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the V2 admin global model endpoint API.
-Version: 0.261.108
+Version: 0.261.392
 Implemented in: 0.261.059
 
 Global model endpoints were the only scope without per-resource routes. They were
@@ -231,9 +231,14 @@ def test_writes_go_through_the_key_vault_persistence_helper():
         assert "_persist_global_model_endpoints" in source, (
             f"{name} does not persist through _persist_global_model_endpoints"
         )
-        assert "normalize_model_endpoints" in source, (
-            f"{name} does not normalize before persisting"
-        )
+        if name != "v2_admin_delete_model_endpoint":
+            assert "normalize_model_endpoints" in source, (
+                f"{name} does not normalize its candidate before persisting"
+            )
+        else:
+            assert "normalize_model_endpoints" not in source, (
+                "Deleting a connection must preserve unrelated legacy records"
+            )
 
     persist_source = ast.dump(functions["_persist_global_model_endpoints"])
     for helper in (
@@ -432,7 +437,7 @@ def test_persistence_runs_all_three_key_vault_passes():
     ]
     normalized = [{"id": "ep-keep", "name": "Keep", "enabled": True, "models": []}]
 
-    saved = persist(normalized, existing)
+    saved = persist(normalized, existing, updated_endpoint_id="ep-keep")
 
     assert [entry[0] for entry in calls["saved"]] == ["ep-keep"], calls["saved"]
     # Global scope keys its secrets by endpoint id, matching the classic form.
@@ -590,7 +595,7 @@ def test_image_default_is_revalidated_on_capability_or_availability_changes():
                 "enabled": model_enabled, "enabled_capabilities": capabilities,
             }],
         }]
-        persist(changed, existing)
+        persist(changed, existing, updated_endpoint_id="images")
         updates = calls["updates"][0]
         assert updates["image_generation_model_selection"]["endpoint_id"] == "", updates
         assert updates["ai_connection_default_notices"]["image_generation"], updates
