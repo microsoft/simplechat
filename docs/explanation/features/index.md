@@ -54,6 +54,9 @@ category: Version History
 
 ## Versioned Features
 
+- [Document Accessibility, Structure, and Comment Extraction](DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION.md)
+- [Word Document Comment Extraction](WORD_COMMENT_EXTRACTION.md)
+- [Content Understanding Enhanced Extraction](CONTENT_UNDERSTANDING_ENHANCED_EXTRACTION.md)
 - [Saved Analyze Results](ANALYZE_RESULTS.md)
 - [V2 Media Galleries And Viewer](V2_MEDIA_GALLERIES_AND_VIEWER.md)
 - [V2 Inline Diagram Editing](V2_INLINE_DIAGRAM_EDITING.md)

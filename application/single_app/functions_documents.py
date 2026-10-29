@@ -97,6 +97,14 @@ from functions_office_media import (
     format_word_comment_block,
     strip_appended_word_comments,
 )
+from functions_accessibility import (
+    build_word_chunk_accessibility_items,
+    extract_office_accessibility_metadata,
+    extract_pdf_accessibility_metadata,
+    format_accessibility_metadata_for_chat,
+    format_pdf_page_annotation_block,
+    format_pptx_comment_block,
+)
 from functions_document_transform_sources import (
     OFFICE_REFERENCE_MIME_TYPES,
     TEMPLATE_EXTENSIONS,
@@ -714,6 +722,26 @@ def _build_office_embedded_image_chunks(
             if not body_parts:
                 continue
 
+            alt_text = str(embedded_image.get('alt_text') or '').strip()
+            title_text = str(embedded_image.get('title_text') or '').strip()
+            is_decorative = bool(embedded_image.get('is_decorative', False))
+            placement = str(embedded_image.get('placement') or 'inline').strip()
+            allow_overlap = bool(embedded_image.get('allow_overlap', False))
+            a11y_parts = []
+            if is_decorative:
+                a11y_parts.append("Decorative=true")
+            elif alt_text or title_text:
+                if alt_text:
+                    a11y_parts.append(f'Alt text="{alt_text}"')
+                if title_text and title_text != alt_text:
+                    a11y_parts.append(f'Title="{title_text}"')
+            else:
+                a11y_parts.append("Alt text=MISSING")
+            a11y_parts.append(
+                f"Placement={placement}" + (" (allowOverlap=true)" if allow_overlap else "")
+            )
+            body_parts.append("Native image accessibility: " + "; ".join(a11y_parts))
+
             location_label = ''
             slide_number = embedded_image.get('slide_number')
             if slide_number:
@@ -917,6 +945,110 @@ def _build_word_comment_chunks(file_path, file_ext=None, update_callback=None):
         )
 
     return blocks, len(blocks), total_body_words
+
+
+def _append_inline_page_supplements_with_budget(page_content, supplement_blocks, settings):
+    """Append inline comment and accessibility blocks to a page/slide within the embedding budget."""
+    existing = str(page_content or '').rstrip()
+    if not supplement_blocks:
+        return existing
+
+    try:
+        embedding_char_budget = int(get_embedding_safe_chunk_characters(settings))
+    except Exception:
+        embedding_char_budget = OFFICE_IMAGE_MERGE_FALLBACK_CHAR_LIMIT
+    merged_char_limit = max(OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT, embedding_char_budget)
+
+    for block in supplement_blocks:
+        clean_block = str(block or '').strip()
+        if not clean_block:
+            continue
+        candidate = f"{existing}\n\n{clean_block}" if existing else clean_block
+        if len(candidate) <= merged_char_limit:
+            existing = candidate
+        else:
+            remaining = merged_char_limit - len(existing) - 4
+            if remaining > 200:
+                existing = f"{existing}\n\n{clean_block[:remaining].rstrip()}..."
+            break
+
+    return existing
+
+
+def _enrich_pdf_pages_with_comments_and_accessibility(di_pages, pdf_per_page_details, settings, capture=None):
+    """Attach PDF page annotations/comments and per-page tag trees inline to each extracted page."""
+    if not di_pages or not isinstance(pdf_per_page_details, dict):
+        return di_pages, 0
+
+    enriched_pages = []
+    total_annotations = 0
+    for page in di_pages:
+        page_copy = dict(page)
+        page_num = page_copy.get('page_number')
+        detail = pdf_per_page_details.get(page_num) if isinstance(page_num, int) else None
+        if detail:
+            supplements = []
+            annots = detail.get('annotations') or []
+            total_annots_on_page = len(annots)
+            for idx, annot in enumerate(annots, start=1):
+                formatted_annot = format_pdf_page_annotation_block(
+                    annot, index=idx, total=total_annots_on_page
+                )
+                if formatted_annot:
+                    supplements.append(formatted_annot)
+                    total_annotations += 1
+                    if capture is not None:
+                        capture.add_supplement(formatted_annot, kind="comment", page_number=page_num)
+
+            a11y_block = str(detail.get('formatted_accessibility_block') or '').strip()
+            if a11y_block:
+                supplements.append(a11y_block)
+
+            if supplements:
+                page_copy['content'] = _append_inline_page_supplements_with_budget(
+                    page_copy.get('content', ''), supplements, settings
+                )
+        enriched_pages.append(page_copy)
+
+    return enriched_pages, total_annotations
+
+
+def _enrich_pptx_slides_with_comments_and_accessibility(di_pages, pptx_per_slide_details, settings, capture=None):
+    """Attach PowerPoint slide comments and per-slide accessibility blocks inline to each slide."""
+    if not di_pages or not isinstance(pptx_per_slide_details, dict):
+        return di_pages, 0
+
+    enriched_slides = []
+    total_comments = 0
+    for slide in di_pages:
+        slide_copy = dict(slide)
+        slide_num = slide_copy.get('page_number')
+        detail = pptx_per_slide_details.get(slide_num) if isinstance(slide_num, int) else None
+        if detail:
+            supplements = []
+            comments = detail.get('comments') or []
+            total_on_slide = len(comments)
+            for idx, comment in enumerate(comments, start=1):
+                formatted_comment = format_pptx_comment_block(
+                    comment, index=idx, total=total_on_slide
+                )
+                if formatted_comment:
+                    supplements.append(formatted_comment)
+                    total_comments += 1
+                    if capture is not None:
+                        capture.add_supplement(formatted_comment, kind="comment", page_number=slide_num)
+
+            a11y_block = str(detail.get('formatted_accessibility_block') or '').strip()
+            if a11y_block:
+                supplements.append(a11y_block)
+
+            if supplements:
+                slide_copy['content'] = _append_inline_page_supplements_with_budget(
+                    slide_copy.get('content', ''), supplements, settings
+                )
+        enriched_slides.append(slide_copy)
+
+    return enriched_slides, total_comments
 
 
 def _assert_unique_chunk_page_numbers(chunks, document_id):
@@ -4475,8 +4607,8 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
 
 def get_document_metadata_for_citations(document_id, user_id=None, group_id=None, public_workspace_id=None):
     """
-    Retrieve keywords and abstract from a document for creating metadata citations.
-    Used to enhance search results with additional context from document metadata.
+    Retrieve keywords, abstract, vision analysis, and accessibility metadata from a document
+    for creating metadata citations and enriching search context.
 
     Args:
         document_id: The document's unique identifier
@@ -4485,7 +4617,7 @@ def get_document_metadata_for_citations(document_id, user_id=None, group_id=None
         public_workspace_id: Public workspace ID (for public documents)
 
     Returns:
-        dict: Dictionary with 'keywords' and 'abstract' fields, or None if document not found
+        dict: Dictionary with metadata fields, or None if document not found
     """
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -4507,70 +4639,26 @@ def get_document_metadata_for_citations(document_id, user_id=None, group_id=None
 
         document_item = assert_document_available(document_item, user_id, group_id, public_workspace_id)
 
-        # Extract keywords and abstract
         keywords = document_item.get('keywords', [])
         abstract = document_item.get('abstract', '')
-
-        # Return only if we have actual content
-        if keywords or abstract:
-            return {
-                'keywords': keywords if keywords else [],
-                'abstract': abstract if abstract else '',
-                'file_name': document_item.get('file_name', 'Unknown')
-            }
-
-        return None
-
-    except ScreeningError:
-        raise
-    except Exception as e:
-        # Document not found or error reading - return None silently
-        # This is expected for documents without metadata
-        return None
-
-def get_document_metadata_for_citations(document_id, user_id=None, group_id=None, public_workspace_id=None):
-    """
-    Retrieve keywords and abstract from a document for creating metadata citations.
-    Used to enhance search results with additional context from document metadata.
-
-    Args:
-        document_id: The document's unique identifier
-        user_id: User ID (for personal documents)
-        group_id: Group ID (for group documents)
-        public_workspace_id: Public workspace ID (for public documents)
-
-    Returns:
-        dict: Dictionary with 'keywords' and 'abstract' fields, or None if document not found
-    """
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    # Determine the correct container
-    if is_public_workspace:
-        cosmos_container = cosmos_public_documents_container
-    elif is_group:
-        cosmos_container = cosmos_group_documents_container
-    else:
-        cosmos_container = cosmos_user_documents_container
-
-    try:
-        # Read the document directly by ID
-        document_item = cosmos_container.read_item(
-            item=document_id,
-            partition_key=document_id
+        vision_analysis = document_item.get('vision_analysis')
+        accessibility_metadata = document_item.get('accessibility_metadata')
+        accessibility_summary = (
+            format_accessibility_metadata_for_chat(accessibility_metadata)
+            if isinstance(accessibility_metadata, dict) and accessibility_metadata
+            else ''
         )
 
-        document_item = assert_document_available(document_item, user_id, group_id, public_workspace_id)
-
-        # Extract keywords and abstract
-        keywords = document_item.get('keywords', [])
-        abstract = document_item.get('abstract', '')
-
-        # Return only if we have actual content
-        if keywords or abstract:
+        if keywords or abstract or vision_analysis or accessibility_summary:
             return {
                 'keywords': keywords if keywords else [],
                 'abstract': abstract if abstract else '',
+                'vision_analysis': vision_analysis if isinstance(vision_analysis, dict) else None,
+                'accessibility_metadata': accessibility_metadata if isinstance(accessibility_metadata, dict) else None,
+                'accessibility_summary': accessibility_summary,
+                'title': document_item.get('title', ''),
+                'authors': document_item.get('authors', []),
+                'language': document_item.get('language', ''),
                 'file_name': document_item.get('file_name', 'Unknown')
             }
 
@@ -9276,95 +9364,6 @@ def process_log(document_id, user_id, temp_file_path, original_filename, enable_
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
-def process_doc(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
-    """
-    Processes legacy .doc files via OLE piece tables and .docm files via docx2txt.
-    Note: .docx files still use Document Intelligence for better formatting preservation.
-    """
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    update_callback(status=f"Processing {original_filename.split('.')[-1].upper()} file...")
-    total_chunks_saved = 0
-    total_embedding_tokens = 0
-    embedding_model_name = None
-    chunk_config = get_chunk_size_config(get_settings())
-    file_ext = os.path.splitext(original_filename)[1].lower().lstrip('.')
-    target_words_per_chunk = chunk_config.get(file_ext, {}).get('value', 400)
-
-    if enable_enhanced_citations:
-        args = {
-            "temp_file_path": temp_file_path,
-            "user_id": user_id,
-            "document_id": document_id,
-            "blob_filename": original_filename,
-            "update_callback": update_callback
-        }
-
-        if is_public_workspace:
-            args["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args["group_id"] = group_id
-
-        upload_to_blob(**args)
-
-    try:
-        try:
-            text_content = extract_word_text(temp_file_path, f'.{file_ext}')
-        except Exception as e:
-            raise Exception(f"Error extracting text from {original_filename}: {e}")
-
-        if not text_content or not text_content.strip():
-            raise Exception(f"No text content extracted from {original_filename}")
-
-        # Split into words for chunking
-        words = text_content.split()
-        if not words:
-            raise Exception(f"No text content found in {original_filename}")
-
-        # Create chunks of target_words_per_chunk words
-        final_chunks = []
-        for i in range(0, len(words), target_words_per_chunk):
-            chunk_words = words[i:i + target_words_per_chunk]
-            chunk_text = " ".join(chunk_words)
-            final_chunks.append(chunk_text)
-
-        num_chunks = len(final_chunks)
-        update_callback(number_of_pages=num_chunks)
-
-        for idx, chunk_content in enumerate(final_chunks, start=1):
-            if chunk_content.strip():
-                update_callback(
-                    current_file_chunk=idx,
-                    status=f"Saving chunk {idx}/{num_chunks}..."
-                )
-                args = {
-                    "page_text_content": chunk_content,
-                    "page_number": idx,
-                    "file_name": original_filename,
-                    "user_id": user_id,
-                    "document_id": document_id
-                }
-
-                if is_public_workspace:
-                    args["public_workspace_id"] = public_workspace_id
-                elif is_group:
-                    args["group_id"] = group_id
-
-                token_usage = save_chunks(**args)
-                total_chunks_saved += 1
-
-                # Accumulate embedding tokens
-                if token_usage:
-                    total_embedding_tokens += token_usage.get('total_tokens', 0)
-                    if not embedding_model_name:
-                        embedding_model_name = token_usage.get('model_deployment_name')
-
-    except Exception as e:
-        raise Exception(f"Failed processing {original_filename}: {e}")
-
-    return total_chunks_saved, total_embedding_tokens, embedding_model_name
-
 def process_xml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes XML files using the consolidated token-aware XML pipeline."""
     return _process_xml_with_token_usage(
@@ -9567,9 +9566,44 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    chunk_config = get_chunk_size_config(get_settings())
+    settings = get_settings()
+    chunk_config = get_chunk_size_config(settings)
     file_ext = os.path.splitext(original_filename)[1].lower().lstrip('.')
+    dot_ext = f'.{file_ext}'
     target_words_per_chunk = chunk_config.get(file_ext, {}).get('value', 400)
+
+    office_a11y_meta = None
+    office_structural_events = []
+    try:
+        doc_title, doc_author = extract_word_metadata(temp_file_path, dot_ext)
+        doc_authors_list = parse_authors(doc_author)
+        office_a11y_meta, office_structural_events = extract_office_accessibility_metadata(
+            temp_file_path, dot_ext
+        )
+        update_fields = {'status': f"Extracted initial metadata for {file_ext.upper()} file"}
+        if doc_title or (office_a11y_meta and office_a11y_meta.get('title')):
+            update_fields['title'] = doc_title or office_a11y_meta.get('title')
+        if doc_authors_list:
+            update_fields['authors'] = doc_authors_list
+        elif doc_author:
+            update_fields['authors'] = [doc_author]
+        elif office_a11y_meta and office_a11y_meta.get('authors'):
+            update_fields['authors'] = office_a11y_meta.get('authors')
+        if office_a11y_meta:
+            if office_a11y_meta.get('subject'):
+                update_fields['abstract'] = office_a11y_meta['subject']
+            if office_a11y_meta.get('keywords'):
+                update_fields['keywords'] = office_a11y_meta['keywords']
+            if office_a11y_meta.get('language'):
+                update_fields['language'] = office_a11y_meta['language']
+            update_fields['accessibility_metadata'] = office_a11y_meta
+        update_callback(**update_fields)
+    except Exception as meta_err:
+        log_event(
+            f"[DOCUMENT_METADATA] Initial metadata warning in process_doc for {original_filename}: {type(meta_err).__name__}",
+            level=logging.WARNING,
+            debug_only=True,
+        )
 
     if enable_enhanced_citations:
         args = {
@@ -9589,37 +9623,108 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
 
     try:
         try:
-            text_content = extract_word_text(temp_file_path, f'.{file_ext}')
+            text_content = extract_word_text(temp_file_path, dot_ext)
+            text_content = strip_appended_word_comments(text_content)
         except Exception as e:
             raise Exception(f"Error extracting text from {original_filename}: {e}")
 
         if not text_content or not text_content.strip():
             raise Exception(f"No text content extracted from {original_filename}")
 
-        # Split into words for chunking
-        words = text_content.split()
-        if not words:
+        final_chunks_to_save = chunk_word_file_into_pages(
+            di_pages=[{"page_number": 1, "content": text_content}],
+            chunk_size=target_words_per_chunk,
+        )
+        if not final_chunks_to_save:
             raise Exception(f"No text content found in {original_filename}")
 
-        # Create chunks of target_words_per_chunk words
-        final_chunks = []
-        for i in range(0, len(words), target_words_per_chunk):
-            chunk_words = words[i:i + target_words_per_chunk]
-            chunk_text = " ".join(chunk_words)
-            final_chunks.append(chunk_text)
+        capture = current_extraction(document_id)
+        comment_blocks, word_comment_count, comment_total_words = _build_word_comment_chunks(
+            temp_file_path, dot_ext, update_callback,
+        )
+        if comment_blocks:
+            if capture is not None:
+                for comment_block in comment_blocks:
+                    capture.add_supplement(comment_block.get("content", ""), kind="comment")
+            final_chunks_to_save, merged_comment_count, overflow_comment_blocks = (
+                _merge_embedded_images_into_chunks(
+                    final_chunks_to_save,
+                    comment_blocks,
+                    comment_total_words,
+                    settings,
+                )
+            )
+            final_chunks_to_save = _append_overflow_image_chunks(
+                final_chunks_to_save, overflow_comment_blocks
+            )
+            _assert_unique_chunk_page_numbers(final_chunks_to_save, document_id)
+            update_callback(
+                word_comment_count=word_comment_count,
+                word_comment_merged=merged_comment_count,
+            )
 
-        num_chunks = len(final_chunks)
+        image_blocks, embedded_image_count, embedded_image_engine, embedded_total_words = (
+            _build_office_embedded_image_chunks(temp_file_path, settings, update_callback)
+        )
+        if image_blocks:
+            if capture is not None:
+                for image_block in image_blocks:
+                    capture.add_supplement(image_block.get("content", ""), kind="figure")
+            final_chunks_to_save, merged_image_count, overflow_image_blocks = (
+                _merge_embedded_images_into_chunks(
+                    final_chunks_to_save,
+                    image_blocks,
+                    embedded_total_words,
+                    settings,
+                )
+            )
+            final_chunks_to_save = _append_overflow_image_chunks(
+                final_chunks_to_save, overflow_image_blocks
+            )
+            _assert_unique_chunk_page_numbers(final_chunks_to_save, document_id)
+            update_callback(
+                office_embedded_image_count=embedded_image_count,
+                office_embedded_image_merged=merged_image_count,
+                office_embedded_image_engine=embedded_image_engine,
+            )
+
+        if office_a11y_meta and office_structural_events:
+            word_a11y_blocks = build_word_chunk_accessibility_items(
+                office_a11y_meta, office_structural_events
+            )
+            if word_a11y_blocks:
+                a11y_total_words = (
+                    office_a11y_meta.get('total_body_words')
+                    or comment_total_words
+                    or embedded_total_words
+                )
+                final_chunks_to_save, _merged_a11y, overflow_a11y = (
+                    _merge_embedded_images_into_chunks(
+                        final_chunks_to_save,
+                        word_a11y_blocks,
+                        a11y_total_words,
+                        settings,
+                    )
+                )
+                final_chunks_to_save = _append_overflow_image_chunks(
+                    final_chunks_to_save, overflow_a11y
+                )
+                _assert_unique_chunk_page_numbers(final_chunks_to_save, document_id)
+
+        num_chunks = len(final_chunks_to_save)
         update_callback(number_of_pages=num_chunks)
 
-        for idx, chunk_content in enumerate(final_chunks, start=1):
+        for idx, chunk_data in enumerate(final_chunks_to_save, start=1):
+            chunk_content = str(chunk_data.get("content") or '')
+            chunk_page_number = int(chunk_data.get("page_number") or idx)
             if chunk_content.strip():
                 update_callback(
-                    current_file_chunk=idx,
+                    current_file_chunk=chunk_page_number,
                     status=f"Saving chunk {idx}/{num_chunks}..."
                 )
                 args = {
                     "page_text_content": chunk_content,
-                    "page_number": idx,
+                    "page_number": chunk_page_number,
                     "file_name": original_filename,
                     "user_id": user_id,
                     "document_id": document_id
@@ -10887,6 +10992,9 @@ def process_office_template(document_id, user_id, temp_file_path, original_filen
     )
     chunks = [page for page in pages if page["content"].strip()]
     settings = get_settings()
+    template_a11y_meta, template_structural_details = extract_office_accessibility_metadata(
+        temp_file_path, file_ext,
+    )
     if file_ext == ".dotx":
         chunk_config = get_chunk_size_config(settings)
         chunks = chunk_word_file_into_pages(
@@ -10901,6 +11009,19 @@ def process_office_template(document_id, user_id, temp_file_path, original_filen
             )
             chunks = _append_overflow_image_chunks(chunks, comment_overflow)
             _assert_unique_chunk_page_numbers(chunks, document_id)
+        if template_a11y_meta and template_structural_details:
+            dotx_a11y_blocks = build_word_chunk_accessibility_items(
+                template_a11y_meta, template_structural_details,
+            )
+            if dotx_a11y_blocks:
+                chunks, _merged_a11y, a11y_overflow = _merge_embedded_images_into_chunks(
+                    chunks,
+                    dotx_a11y_blocks,
+                    template_a11y_meta.get('total_body_words') or comment_total_words,
+                    settings,
+                )
+                chunks = _append_overflow_image_chunks(chunks, a11y_overflow)
+                _assert_unique_chunk_page_numbers(chunks, document_id)
     image_blocks, _image_count, _image_engine, total_body_words = _build_office_embedded_image_chunks(
         temp_file_path, settings, update_callback,
     )
@@ -10923,10 +11044,16 @@ def process_office_template(document_id, user_id, temp_file_path, original_filen
         if isinstance(saved, dict):
             total_tokens += saved.get("total_tokens", 0) or 0
             model_name = saved.get("model_deployment_name") or model_name
-    update_callback(
-        office_template_structure=structure, number_of_pages=len(chunks),
-        status="Native Office template retained" if chunks else "Native Office template retained - no narrative content indexed",
-    )
+    template_update_fields = {
+        "office_template_structure": structure,
+        "number_of_pages": len(chunks),
+        "status": "Native Office template retained" if chunks else "Native Office template retained - no narrative content indexed",
+    }
+    if template_a11y_meta:
+        template_update_fields["accessibility_metadata"] = template_a11y_meta
+        if template_a11y_meta.get("language"):
+            template_update_fields["language"] = template_a11y_meta["language"]
+    update_callback(**template_update_fields)
     return len(chunks), total_tokens, model_name
 
 
@@ -10951,17 +11078,34 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
     is_legacy_ppt = file_ext == '.ppt'
     is_image = file_ext in tuple('.' + ext for ext in IMAGE_EXTENSIONS)
 
+    pdf_accessibility_meta = None
+    pdf_per_page_details = {}
+    office_accessibility_meta = None
+    office_structural_details = None
+
     try:
         if is_pdf:
             doc_title, doc_author, doc_subject, doc_keywords = extract_pdf_metadata(temp_file_path)
             doc_authors_list = parse_authors(doc_author)
             page_count = get_pdf_page_count(temp_file_path)
+            pdf_accessibility_meta, pdf_per_page_details = extract_pdf_accessibility_metadata(temp_file_path)
         elif is_word:
             doc_title, doc_author = extract_word_metadata(temp_file_path, file_ext)
             doc_authors_list = parse_authors(doc_author)
+            office_accessibility_meta, office_structural_details = extract_office_accessibility_metadata(
+                temp_file_path, file_ext
+            )
+            if isinstance(office_accessibility_meta, dict):
+                if not doc_subject and office_accessibility_meta.get('subject'):
+                    doc_subject = office_accessibility_meta.get('subject')
+                if not doc_keywords and office_accessibility_meta.get('keywords'):
+                    doc_keywords = office_accessibility_meta.get('keywords')
         elif is_ppt:
             doc_title, doc_author, doc_subject, doc_keywords = extract_presentation_metadata(temp_file_path, file_ext)
             doc_authors_list = parse_authors(doc_author)
+            office_accessibility_meta, office_structural_details = extract_office_accessibility_metadata(
+                temp_file_path, file_ext
+            )
 
         update_fields = {'status': "Extracted initial metadata"}
         if doc_title: update_fields['title'] = doc_title
@@ -10969,6 +11113,14 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
         elif doc_author: update_fields['authors'] = [doc_author]
         if doc_subject: update_fields['abstract'] = doc_subject
         if doc_keywords: update_fields['keywords'] = doc_keywords
+        if isinstance(pdf_accessibility_meta, dict):
+            update_fields['accessibility_metadata'] = pdf_accessibility_meta
+            if pdf_accessibility_meta.get('language'):
+                update_fields['language'] = pdf_accessibility_meta['language']
+        elif isinstance(office_accessibility_meta, dict):
+            update_fields['accessibility_metadata'] = office_accessibility_meta
+            if office_accessibility_meta.get('language'):
+                update_fields['language'] = office_accessibility_meta['language']
         update_callback(**update_fields)
 
     except Exception as e:
@@ -11234,6 +11386,28 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             except Exception as e:
                  raise Exception(f"Error chunking Word content for {chunk_effective_filename}: {str(e)}")
         elif is_pdf or is_ppt:
+            if is_pdf:
+                chunk_pdf_details = pdf_per_page_details
+                if chunk_path != temp_file_path:
+                    _, chunk_pdf_details = extract_pdf_accessibility_metadata(chunk_path)
+                di_extracted_pages, pdf_comment_count = _enrich_pdf_pages_with_comments_and_accessibility(
+                    di_extracted_pages,
+                    chunk_pdf_details,
+                    settings,
+                    capture=capture,
+                )
+                if pdf_comment_count:
+                    update_callback(pdf_comment_count=pdf_comment_count)
+            elif is_ppt and file_ext == '.pptx' and isinstance(office_structural_details, dict):
+                di_extracted_pages, pptx_comment_count = _enrich_pptx_slides_with_comments_and_accessibility(
+                    di_extracted_pages,
+                    office_structural_details,
+                    settings,
+                    capture=capture,
+                )
+                if pptx_comment_count:
+                    update_callback(pptx_comment_count=pptx_comment_count)
+
             target_key = 'pdf' if is_pdf else 'pptx'
             try:
                 target_size = int(chunk_config.get(target_key, {}).get('value', 1))
@@ -11374,6 +11548,28 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                     update_callback(
                         status=f"Merged {merged_image_count} embedded image(s) into their source chunk."
                     )
+
+        # --- Word native accessibility & structural section blocks (DOCX/DOCM) ---
+        if is_word and isinstance(office_accessibility_meta, dict) and isinstance(office_structural_details, list) and office_structural_details:
+            word_a11y_blocks = build_word_chunk_accessibility_items(
+                office_accessibility_meta,
+                office_structural_details,
+            )
+            if word_a11y_blocks:
+                a11y_total_words = office_accessibility_meta.get('total_body_words') or 0
+                final_chunks_to_save, _merged_a11y_count, overflow_a11y_blocks = (
+                    _merge_embedded_images_into_chunks(
+                        final_chunks_to_save,
+                        word_a11y_blocks,
+                        a11y_total_words,
+                        settings,
+                    )
+                )
+                final_chunks_to_save = _append_overflow_image_chunks(
+                    final_chunks_to_save, overflow_a11y_blocks
+                )
+                _assert_unique_chunk_page_numbers(final_chunks_to_save, document_id)
+                update_callback(number_of_pages=len(final_chunks_to_save))
 
         # Save Final Chunks to Search Index
         num_final_chunks = len(final_chunks_to_save)

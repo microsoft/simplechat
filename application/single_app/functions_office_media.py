@@ -445,6 +445,108 @@ def build_docx_image_word_offsets(archive):
     return image_word_offsets, word_count
 
 
+def _build_office_media_accessibility_map(archive):
+    """Map ``word/media/*`` and ``ppt/media/*`` entries to their native OOXML accessibility properties."""
+    media_a11y_map = {}
+
+    def _inspect_containers(root_elem, rel_targets):
+        if not rel_targets:
+            return
+        for elem in root_elem.iter():
+            local = _xml_local_name(elem.tag)
+            if local not in ('inline', 'anchor', 'pic', 'shape'):
+                continue
+            placement = 'floating' if local == 'anchor' else 'inline'
+            allow_overlap = _xml_attr_by_local_name(elem, 'allowOverlap') in ('1', 'true')
+            behind_doc = _xml_attr_by_local_name(elem, 'behindDoc') in ('1', 'true')
+
+            descr = ''
+            title = ''
+            is_decorative = False
+            rel_id = ''
+
+            if local == 'shape':
+                descr = _xml_attr_by_local_name(elem, 'alt').strip()
+                title = _xml_attr_by_local_name(elem, 'title').strip()
+
+            for sub in elem.iter():
+                s_local = _xml_local_name(sub.tag)
+                if s_local in ('docPr', 'cNvPr') and not (descr or title):
+                    descr = _xml_attr_by_local_name(sub, 'descr').strip()
+                    title = _xml_attr_by_local_name(sub, 'title').strip()
+                elif s_local == 'decorative':
+                    val = _xml_attr_by_local_name(sub, 'val').lower()
+                    if val in ('1', 'true', ''):
+                        is_decorative = True
+                elif s_local == 'blip' and not rel_id:
+                    rel_id = _xml_attr_by_local_name(sub, 'embed')
+                elif s_local == 'imagedata' and not rel_id:
+                    rel_id = _xml_attr_by_local_name(sub, 'id')
+                    if not descr:
+                        descr = _xml_attr_by_local_name(sub, 'title').strip()
+
+            media_name = rel_targets.get(rel_id) if rel_id else ''
+            if not media_name:
+                continue
+
+            media_a11y_map.setdefault(
+                media_name,
+                {
+                    'alt_text': descr,
+                    'title_text': title,
+                    'is_decorative': is_decorative,
+                    'placement': placement,
+                    'allow_overlap': allow_overlap,
+                    'behind_doc': behind_doc,
+                },
+            )
+
+    # 1. Word main document part
+    docx_rels = _build_docx_relationship_targets(archive)
+    if docx_rels:
+        doc_bytes = _read_zip_entry_bounded(
+            archive, DOCX_MAIN_DOCUMENT_PART, OFFICE_DOCUMENT_PART_MAX_BYTES
+        )
+        if doc_bytes is not None:
+            try:
+                doc_root = defused_fromstring(doc_bytes)
+                _inspect_containers(doc_root, docx_rels)
+            except (DefusedParseError, ValueError):
+                pass
+
+    # 2. PowerPoint slide parts
+    inspected_slides = 0
+    for entry_name in archive.namelist():
+        if inspected_slides >= OFFICE_ZIP_MAX_RELS_ENTRIES:
+            break
+        slide_match = _PPTX_SLIDE_RELS_PATTERN.match(entry_name)
+        if not slide_match:
+            continue
+        inspected_slides += 1
+        slide_num = int(slide_match.group(1))
+        slide_xml_path = f"ppt/slides/slide{slide_num}.xml"
+
+        rels_bytes = _read_zip_entry_bounded(archive, entry_name, OFFICE_EMBEDDED_RELS_MAX_BYTES)
+        slide_bytes = _read_zip_entry_bounded(archive, slide_xml_path, OFFICE_DOCUMENT_PART_MAX_BYTES)
+        if rels_bytes is None or slide_bytes is None:
+            continue
+        try:
+            rels_root = defused_fromstring(rels_bytes)
+            slide_root = defused_fromstring(slide_bytes)
+        except (DefusedParseError, ValueError):
+            continue
+
+        slide_rels = {}
+        for rel in rels_root:
+            r_id = str(rel.attrib.get('Id') or '').strip()
+            media_name = _normalize_office_media_target(rel.attrib.get('Target'), 'ppt/media/')
+            if r_id and media_name:
+                slide_rels[r_id] = media_name
+        _inspect_containers(slide_root, slide_rels)
+
+    return media_a11y_map
+
+
 def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_pixels=150, max_images=25):
     """Extract embedded images and report what was skipped and why.
 
@@ -482,6 +584,7 @@ def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_p
 
             media_slide_map = _build_pptx_media_slide_map(archive)
             media_word_offsets, total_body_words = build_docx_image_word_offsets(archive)
+            media_a11y_map = _build_office_media_accessibility_map(archive)
             diagnostics['total_body_words'] = total_body_words
 
             candidate_names = [
@@ -566,6 +669,7 @@ def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_p
                     continue
 
                 diagnostics['analyzed'] += 1
+                a11y_info = media_a11y_map.get(media_name) or {}
                 extracted_images.append({
                     'name': base_name,
                     'path': output_path,
@@ -577,6 +681,12 @@ def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_p
                     'source_format': source_extension.lstrip('.'),
                     'rasterized': is_vector,
                     'embedded_text': embedded_text,
+                    'alt_text': a11y_info.get('alt_text', ''),
+                    'title_text': a11y_info.get('title_text', ''),
+                    'is_decorative': bool(a11y_info.get('is_decorative', False)),
+                    'placement': a11y_info.get('placement', 'inline'),
+                    'allow_overlap': bool(a11y_info.get('allow_overlap', False)),
+                    'behind_doc': bool(a11y_info.get('behind_doc', False)),
                 })
     except (zipfile.BadZipFile, FileNotFoundError, OSError):
         return [], diagnostics

@@ -19942,11 +19942,11 @@ def register_route_backend_chats(bp):
 
                     hybrid_citations_list.sort(key=_build_hybrid_citation_sort_key, reverse=True)
 
-                    # --- NEW: Extract metadata (keywords/abstract) for additional citations ---
-                    # Only if extract_metadata is enabled
-                    if settings.get('enable_extract_meta_data', False):
+                    # --- Extract metadata (keywords/abstract/vision/accessibility) for additional citations ---
+                    if search_results:
                         from functions_documents import get_document_metadata_for_citations
 
+                        enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
                         # Track which documents we've already processed to avoid duplicates
                         processed_doc_ids = set()
 
@@ -19968,7 +19968,6 @@ def register_route_backend_chats(bp):
                             doc_group_id = doc.get('group_id')
                             doc_public_workspace_id = doc.get('public_workspace_id')
 
-
                             # Query Cosmos for this document's metadata
                             metadata = get_document_metadata_for_citations(
                                 document_id=doc_id,
@@ -19977,79 +19976,61 @@ def register_route_backend_chats(bp):
                                 public_workspace_id=doc_public_workspace_id if doc_public_workspace_id else None
                             )
 
-
                             # If we have metadata with content, create additional citations
                             if metadata:
                                 file_name = metadata.get('file_name', 'Unknown')
                                 keywords = metadata.get('keywords', [])
                                 abstract = metadata.get('abstract', '')
 
+                                if enable_extract_meta_data:
+                                    # Create citation for keywords if they exist
+                                    if keywords and len(keywords) > 0:
+                                        keywords_text = ', '.join(keywords) if isinstance(keywords, list) else str(keywords)
+                                        keywords_citation_id = f"{doc_id}_keywords"
 
-                                # Create citation for keywords if they exist
-                                if keywords and len(keywords) > 0:
-                                    keywords_text = ', '.join(keywords) if isinstance(keywords, list) else str(keywords)
-                                    keywords_citation_id = f"{doc_id}_keywords"
+                                        keywords_citation = {
+                                            "file_name": file_name,
+                                            "document_id": doc_id,
+                                            "citation_id": keywords_citation_id,
+                                            "page_number": "Metadata",  # Special page identifier
+                                            "chunk_id": keywords_citation_id,
+                                            "chunk_sequence": 9999,  # High number to sort to end
+                                            "score": 0.0,  # No relevance score for metadata
+                                            "group_id": doc_group_id,
+                                            "version": doc.get('version', 'N/A'),
+                                            "classification": doc.get('document_classification'),
+                                            "metadata_type": "keywords",  # Flag this as metadata citation
+                                            "metadata_content": keywords_text
+                                        }
+                                        hybrid_citations_list.append(keywords_citation)
+                                        combined_documents.append(keywords_citation)
 
+                                        keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
+                                        retrieved_texts.append(keywords_context)
 
-                                    keywords_citation = {
-                                        "file_name": file_name,
-                                        "document_id": doc_id,
-                                        "citation_id": keywords_citation_id,
-                                        "page_number": "Metadata",  # Special page identifier
-                                        "chunk_id": keywords_citation_id,
-                                        "chunk_sequence": 9999,  # High number to sort to end
-                                        "score": 0.0,  # No relevance score for metadata
-                                        "group_id": doc_group_id,
-                                        "version": doc.get('version', 'N/A'),
-                                        "classification": doc.get('document_classification'),
-                                        "metadata_type": "keywords",  # Flag this as metadata citation
-                                        "metadata_content": keywords_text
-                                    }
-                                    hybrid_citations_list.append(keywords_citation)
-                                    combined_documents.append(keywords_citation)  # Add to combined_documents too
+                                    # Create citation for abstract if it exists
+                                    if abstract and len(abstract.strip()) > 0:
+                                        abstract_citation_id = f"{doc_id}_abstract"
 
-                                    # Add keywords to retrieved content for the model
-                                    keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
-                                    retrieved_texts.append(keywords_context)
+                                        abstract_citation = {
+                                            "file_name": file_name,
+                                            "document_id": doc_id,
+                                            "citation_id": abstract_citation_id,
+                                            "page_number": "Metadata",  # Special page identifier
+                                            "chunk_id": abstract_citation_id,
+                                            "chunk_sequence": 9998,  # High number to sort to end
+                                            "score": 0.0,  # No relevance score for metadata
+                                            "group_id": doc_group_id,
+                                            "version": doc.get('version', 'N/A'),
+                                            "classification": doc.get('document_classification'),
+                                            "metadata_type": "abstract",  # Flag this as metadata citation
+                                            "metadata_content": abstract
+                                        }
+                                        hybrid_citations_list.append(abstract_citation)
+                                        combined_documents.append(abstract_citation)
 
-                                # Create citation for abstract if it exists
-                                if abstract and len(abstract.strip()) > 0:
-                                    abstract_citation_id = f"{doc_id}_abstract"
-
-
-                                    # Add keywords to retrieved content for the model
-                                    keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
-                                    retrieved_texts.append(keywords_context)
-
-                                # Create citation for abstract if it exists
-                                if abstract and len(abstract.strip()) > 0:
-                                    abstract_citation_id = f"{doc_id}_abstract"
-
-                                    abstract_citation = {
-                                        "file_name": file_name,
-                                        "document_id": doc_id,
-                                        "citation_id": abstract_citation_id,
-                                        "page_number": "Metadata",  # Special page identifier
-                                        "chunk_id": abstract_citation_id,
-                                        "chunk_sequence": 9998,  # High number to sort to end
-                                        "score": 0.0,  # No relevance score for metadata
-                                        "group_id": doc_group_id,
-                                        "version": doc.get('version', 'N/A'),
-                                        "classification": doc.get('document_classification'),
-                                        "metadata_type": "abstract",  # Flag this as metadata citation
-                                        "metadata_content": abstract
-                                    }
-                                    hybrid_citations_list.append(abstract_citation)
-                                    combined_documents.append(abstract_citation)  # Add to combined_documents too
-
-                                    # Add abstract to retrieved content for the model
-                                    abstract_context = f"Document Abstract ({file_name}): {abstract}"
-                                    retrieved_texts.append(abstract_context)
-
-
-                                    # Add abstract to retrieved content for the model
-                                    abstract_context = f"Document Abstract ({file_name}): {abstract}"
-                                    retrieved_texts.append(abstract_context)
+                                        abstract_context = f"Document Abstract ({file_name}): {abstract}"
+                                        retrieved_texts.append(abstract_context)
 
                                 # Create citation for vision analysis if it exists
                                 vision_analysis = metadata.get('vision_analysis')
@@ -20089,6 +20070,30 @@ def register_route_backend_chats(bp):
                                     # Add vision analysis to retrieved content for the model
                                     vision_context = f"AI Vision Analysis ({file_name}): {vision_content}"
                                     retrieved_texts.append(vision_context)
+
+                                # Create citation for accessibility & structural metadata if it exists
+                                accessibility_summary = metadata.get('accessibility_summary', '')
+                                if accessibility_summary and len(accessibility_summary.strip()) > 0:
+                                    a11y_citation_id = f"{doc_id}_accessibility"
+                                    a11y_citation = {
+                                        "file_name": file_name,
+                                        "document_id": doc_id,
+                                        "citation_id": a11y_citation_id,
+                                        "page_number": "Accessibility",
+                                        "chunk_id": a11y_citation_id,
+                                        "chunk_sequence": 9996,
+                                        "score": 0.0,
+                                        "group_id": doc_group_id,
+                                        "version": doc.get('version', 'N/A'),
+                                        "classification": doc.get('document_classification'),
+                                        "metadata_type": "accessibility",
+                                        "metadata_content": accessibility_summary
+                                    }
+                                    hybrid_citations_list.append(a11y_citation)
+                                    combined_documents.append(a11y_citation)
+
+                                    a11y_context = f"Document Accessibility & Structure ({file_name}):\n{accessibility_summary}"
+                                    retrieved_texts.append(a11y_context)
 
 
                         # Update the system prompt with the enhanced content including metadata
@@ -24527,10 +24532,11 @@ def register_route_backend_chats(bp):
                             }
                             hybrid_citations_list.append(citation_data)
 
-                        # --- Extract metadata (keywords/abstract) for additional citations ---
-                        if settings.get('enable_extract_meta_data', False):
+                        # --- Extract metadata (keywords/abstract/vision/accessibility) for additional citations ---
+                        if search_results:
                             from functions_documents import get_document_metadata_for_citations
 
+                            enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
                             processed_doc_ids = set()
 
                             for doc in search_results:
@@ -24562,52 +24568,53 @@ def register_route_backend_chats(bp):
                                     keywords = metadata.get('keywords', [])
                                     abstract = metadata.get('abstract', '')
 
-                                    if keywords and len(keywords) > 0:
-                                        keywords_citation_id = f"{doc_id}_keywords"
-                                        keywords_text = ', '.join(keywords) if isinstance(keywords, list) else str(keywords)
+                                    if enable_extract_meta_data:
+                                        if keywords and len(keywords) > 0:
+                                            keywords_citation_id = f"{doc_id}_keywords"
+                                            keywords_text = ', '.join(keywords) if isinstance(keywords, list) else str(keywords)
 
-                                        keywords_citation = {
-                                            "file_name": file_name,
-                                            "document_id": doc_id,
-                                            "citation_id": keywords_citation_id,
-                                            "page_number": "Metadata",
-                                            "chunk_id": keywords_citation_id,
-                                            "chunk_sequence": 9999,
-                                            "score": 0.0,
-                                            "group_id": doc_group_id,
-                                            "version": doc.get('version', 'N/A'),
-                                            "classification": doc.get('document_classification'),
-                                            "metadata_type": "keywords",
-                                            "metadata_content": keywords_text
-                                        }
-                                        hybrid_citations_list.append(keywords_citation)
-                                        combined_documents.append(keywords_citation)
+                                            keywords_citation = {
+                                                "file_name": file_name,
+                                                "document_id": doc_id,
+                                                "citation_id": keywords_citation_id,
+                                                "page_number": "Metadata",
+                                                "chunk_id": keywords_citation_id,
+                                                "chunk_sequence": 9999,
+                                                "score": 0.0,
+                                                "group_id": doc_group_id,
+                                                "version": doc.get('version', 'N/A'),
+                                                "classification": doc.get('document_classification'),
+                                                "metadata_type": "keywords",
+                                                "metadata_content": keywords_text
+                                            }
+                                            hybrid_citations_list.append(keywords_citation)
+                                            combined_documents.append(keywords_citation)
 
-                                        keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
-                                        retrieved_texts.append(keywords_context)
+                                            keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
+                                            retrieved_texts.append(keywords_context)
 
-                                    if abstract and len(abstract.strip()) > 0:
-                                        abstract_citation_id = f"{doc_id}_abstract"
+                                        if abstract and len(abstract.strip()) > 0:
+                                            abstract_citation_id = f"{doc_id}_abstract"
 
-                                        abstract_citation = {
-                                            "file_name": file_name,
-                                            "document_id": doc_id,
-                                            "citation_id": abstract_citation_id,
-                                            "page_number": "Metadata",
-                                            "chunk_id": abstract_citation_id,
-                                            "chunk_sequence": 9998,
-                                            "score": 0.0,
-                                            "group_id": doc_group_id,
-                                            "version": doc.get('version', 'N/A'),
-                                            "classification": doc.get('document_classification'),
-                                            "metadata_type": "abstract",
-                                            "metadata_content": abstract
-                                        }
-                                        hybrid_citations_list.append(abstract_citation)
-                                        combined_documents.append(abstract_citation)
+                                            abstract_citation = {
+                                                "file_name": file_name,
+                                                "document_id": doc_id,
+                                                "citation_id": abstract_citation_id,
+                                                "page_number": "Metadata",
+                                                "chunk_id": abstract_citation_id,
+                                                "chunk_sequence": 9998,
+                                                "score": 0.0,
+                                                "group_id": doc_group_id,
+                                                "version": doc.get('version', 'N/A'),
+                                                "classification": doc.get('document_classification'),
+                                                "metadata_type": "abstract",
+                                                "metadata_content": abstract
+                                            }
+                                            hybrid_citations_list.append(abstract_citation)
+                                            combined_documents.append(abstract_citation)
 
-                                        abstract_context = f"Document Abstract ({file_name}): {abstract}"
-                                        retrieved_texts.append(abstract_context)
+                                            abstract_context = f"Document Abstract ({file_name}): {abstract}"
+                                            retrieved_texts.append(abstract_context)
 
                                     vision_analysis = metadata.get('vision_analysis')
                                     if vision_analysis:
@@ -24644,6 +24651,29 @@ def register_route_backend_chats(bp):
 
                                         vision_context = f"AI Vision Analysis ({file_name}): {vision_content}"
                                         retrieved_texts.append(vision_context)
+
+                                    accessibility_summary = metadata.get('accessibility_summary', '')
+                                    if accessibility_summary and len(accessibility_summary.strip()) > 0:
+                                        a11y_citation_id = f"{doc_id}_accessibility"
+                                        a11y_citation = {
+                                            "file_name": file_name,
+                                            "document_id": doc_id,
+                                            "citation_id": a11y_citation_id,
+                                            "page_number": "Accessibility",
+                                            "chunk_id": a11y_citation_id,
+                                            "chunk_sequence": 9996,
+                                            "score": 0.0,
+                                            "group_id": doc_group_id,
+                                            "version": doc.get('version', 'N/A'),
+                                            "classification": doc.get('document_classification'),
+                                            "metadata_type": "accessibility",
+                                            "metadata_content": accessibility_summary
+                                        }
+                                        hybrid_citations_list.append(a11y_citation)
+                                        combined_documents.append(a11y_citation)
+
+                                        a11y_context = f"Document Accessibility & Structure ({file_name}):\n{accessibility_summary}"
+                                        retrieved_texts.append(a11y_context)
 
                         retrieved_content = "\n\n".join(retrieved_texts)
                         system_prompt_search = build_search_augmentation_system_prompt(retrieved_content)

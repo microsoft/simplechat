@@ -13975,7 +13975,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "response-unused",
       "contract": "_complete_document_search_sync_pass: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -13994,7 +13994,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "response-unused",
       "contract": "_delete_document_search_sync_record: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -14013,7 +14013,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "_get_document_family_items_from_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14040,7 +14040,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "_process_document_upload_background_impl: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14062,7 +14062,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "_query_current_xsd_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14084,7 +14084,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "_read_document_for_search_sync: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14106,7 +14106,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "_read_document_search_sync_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14128,7 +14128,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "_rebase_document_after_fenced_acl_projection: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14150,7 +14150,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "_replace_document_search_sync_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14187,7 +14187,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "_upsert_document_and_sync_access_index: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14209,7 +14209,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "_workspace_file_name_exists: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14231,7 +14231,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "create_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14278,7 +14278,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "delete_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14305,7 +14305,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "delete_document_revision: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14327,7 +14327,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "delete_from_blob_storage: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14359,7 +14359,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "detect_doc_type: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14381,7 +14381,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "extract_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14403,7 +14403,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "get_chat_upload_workspace_documents_for_collaboration: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14430,7 +14430,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "get_chat_upload_workspace_documents_for_conversation: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14452,7 +14452,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "get_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14464,7 +14464,7 @@
     },
     "application/single_app/functions_documents.py::get_document_metadata_for_citations": {
       "boundary": {
-        "sha256": "719651b8c1b641cb70e21fe348aaa41f7e93b82abe3fc22b6a285fecab0c7b29",
+        "sha256": "a7740bd10f0f7707fb8845a1c5b81093fc8064922814075c5c8d1db63b689f32",
         "points": [
           {
             "method": "read_item",
@@ -14474,7 +14474,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "get_document_metadata_for_citations: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14496,7 +14496,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "get_document_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14518,7 +14518,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "get_document_version: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14540,7 +14540,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "get_document_versions: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14562,7 +14562,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "get_documents_shared_with_group: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14584,7 +14584,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "get_documents_shared_with_user: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14606,7 +14606,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "get_latest_version: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14628,7 +14628,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "get_shared_groups_for_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14650,7 +14650,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "get_shared_users_for_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14672,7 +14672,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "get_workspace_tags: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14694,7 +14694,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "is_document_shared_with_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14716,7 +14716,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "is_document_shared_with_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14738,7 +14738,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "process_due_document_search_metadata_syncs: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14760,7 +14760,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "propagate_tags_to_blob_metadata: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14782,7 +14782,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "response-unused",
       "contract": "queue_group_workspace_upload_from_temp_file: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -14801,7 +14801,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "response-unused",
       "contract": "queue_personal_workspace_upload_from_temp_file: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -14820,7 +14820,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "request_document_search_metadata_sync: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14842,7 +14842,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "share_document_with_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14864,7 +14864,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "share_document_with_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14891,7 +14891,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "sync_chat_upload_workspace_attachment_status: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14913,7 +14913,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "unshare_document_from_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14935,7 +14935,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "unshare_document_from_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14957,7 +14957,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "Workspace-scoped query rows are plain dictionaries. Status predicates only interpret strings; filenames cannot force success/failure or rewrite screening copy. Strict update returns the SDK saved mapping to mapping-compatible callers; read/write ETags, operation guards, access projection and screening holds are preserved. Runtime evidence exercises personal/group/public status writes with installed-SDK point responses and plain query rows.",
@@ -14982,7 +14982,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "upgrade_legacy_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -15004,7 +15004,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f95465673d8a8fbe17af5882f1e0ae3b142e2f4afa2f87facc73ee22cc639b4"
+        "module_sha256": "7b9db3d1d4437b7cd0872af461eee409494076d56c1cc4009b829b0f93276b11"
       },
       "classification": "sdk-compatible",
       "contract": "upload_to_blob: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -26756,7 +26756,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "Workspace document discovery consumes plain query rows and builds bounded related-document metadata; no Cosmos point wrapper enters its document catalog. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -26784,7 +26784,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "response-unused",
       "contract": "Both conversation upsert responses are discarded; the constructed plain conversation is logged and cache-invalidated, with existing persistence failures unchanged. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -26805,7 +26805,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "The user-message point mapping supplies nested plain metadata/thread fields for paired image attribution; only user/thread values escape the boundary. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -26828,7 +26828,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "The user-message point mapping is read through get() into a plain response-context dictionary; nested thread/user metadata stays JSON and read failures retain existing fallback fields. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -26851,7 +26851,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "response-unused",
       "contract": "The local Cosmos delete response is discarded on source-screening rollback; its IfNotModified ETag comes from the persistence owner result. Assistant point normalization remains with persist_chat_reply rather than weakening screening. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -26872,7 +26872,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "Artifact and chunk discovery returns plain query rows to build_message_artifact_payload_map; it is not a point-response normalization boundary. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -26895,7 +26895,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "Partitioned assistant query rows remain plain dictionaries through soft-delete filtering and saved-analysis history sanitization. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -26928,7 +26928,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "response-unused",
       "contract": "Safety/user-message upsert and conversation replace responses are discarded; the browser payload is constructed from plain screened documents and explicit public fields. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -26949,7 +26949,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation point mapping feeds shared-backing and participation authorization using Mapping fields; no raw document reaches an exact-dictionary domain validator or bypasses access checks. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -26972,7 +26972,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "Workspace lookup consumes plain query rows, rechecks document availability and projects only id/name/title/workspace fields into a plain selection DTO. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27006,7 +27006,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "response-unused",
       "contract": "Plain query rows provide chunk IDs; all chunk/artifact delete responses are discarded and rollback failure accounting remains explicit. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27027,7 +27027,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "A new-message upsert may return the SDK mapping to Mapping-compatible chat persistence callers; retry metadata is delegated to patch_chat_message_metadata, which owns conditional update/normalization. No strict top-level DTO is synthesized from arbitrary iterables. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27055,7 +27055,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "response-unused",
       "contract": "Artifact upsert and cancellation-rollback delete responses are discarded; artifact identities are taken from constructed plain documents and cancellation remains visible. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27076,7 +27076,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "A reread SDK message is checked for conversation membership and inspected by Mapping-compatible block revision helpers; conflict/replay JSON consists of explicit revision fields, not the SDK wrapper. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27099,7 +27099,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "The partitioned prior-user query returns plain rows; only the first row content string is used as the originating request. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27122,7 +27122,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "The TOP 1 thread projection is a plain query row; only thread_id is returned, with the existing read-failure fallback unchanged. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27145,7 +27145,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "The point message mapping is checked against the authorized conversation and passed to Mapping-compatible revision readers/persistence; missing messages retain their 404 contract. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27173,7 +27173,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "Existing point mappings are checked for owner/deletion state; newly created SDK conversation mappings feed field-based activity logging and cache invalidation, not exact-dictionary result validation. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27196,7 +27196,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "Chat attachment resolution consumes plain partitioned query rows and emits display-name/context projections; workspace ownership remains with the document resolver. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27219,7 +27219,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "The reload callback returns a partitioned SDK message mapping to the Mapping-compatible image revision owner, which rechecks concurrent versions; the route emits only explicit revision/error fields. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27232,7 +27232,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_api": {
       "boundary": {
-        "sha256": "b150cb561ddb2a67467a8527ab9783b5389757e9322435be3762dbc7ebfd6f82",
+        "sha256": "a29161112a248ae167885f3e011bdd0dee5eb626ab23fb106dc4a734e854dd81",
         "points": [
           {
             "method": "read_item",
@@ -27313,7 +27313,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "Retry/source point mappings supply role/content and nested model/thread metadata through Mapping access; history queries stay plain. Metadata persistence remains with its existing owner and local write responses are discarded. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Added per-answer evidence metadata and stable model-configuration errors; existing point responses still use Mapping-compatible field access and the same save/authorization owners. No exact-dict sink or new storage call is introduced. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27327,7 +27327,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_stream_api.generate": {
       "boundary": {
-        "sha256": "18acb34992a46db6e43c75c464db21ad5b646dac50da9120358435c1b66474f6",
+        "sha256": "ff94c55664c1a6964c3a56d70520e92083b7bcbe08dc468ddde3bbe5fd645d7c",
         "points": [
           {
             "method": "read_item",
@@ -27388,7 +27388,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "Retry point mappings are checked for role/conversation and nested metadata through Mapping access; history queries remain plain, and local create/replace/delete return values are discarded. SSE telemetry does not alter storage contracts. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Added per-answer evidence metadata and stable model-configuration errors; existing point responses still use Mapping-compatible field access and the same save/authorization owners. Streaming publication and cancellation fences remain unchanged. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27412,7 +27412,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "response-unused",
       "contract": "Cancellation refreshes the conversation with a discarded replace response; screened message persistence remains with its existing owner and the stream payload is assembled separately. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: The added evidence metadata is plain request-owned JSON. Direct Cosmos mutation responses remain unused; conditional cancellation/publication behavior is unchanged. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27453,7 +27453,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "The original Analyze point mapping is checked for role/conversation/content and nested thread metadata; local message writes and cleanup deletes discard responses, while retained analysis contracts remain strict. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27507,7 +27507,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "Retry input point mappings supply authorized role/content/thread fields; history queries are plain, and user/system writes and rollback deletes discard responses. Saved-analysis strict result admission remains with its storage owner. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27535,7 +27535,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "The source assistant SDK mapping is authorized by conversation/role and used by Mapping-compatible planned-image lookup; conversation replacement discards its response and public image data is projected explicitly. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27558,7 +27558,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "The partitioned point mapping is returned to find_planned_proposal_image, which inspects message fields; a missing message returns None, without an empty-document or strict-type fallback. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27581,7 +27581,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "Proposal status iterates plain query rows, validates nested proposal dictionaries and emits explicit public image status fields. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27615,7 +27615,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "Point message/conversation mappings and plain fallback query rows use field-based ownership and soft-delete checks; nested mask metadata goes to existing persistence, and public JSON projects mask fields only. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
@@ -27638,7 +27638,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f4cb719ee4764b20658740b4432e138a6a9d72d2b99ffb55432bb957f4d0baf8"
+        "module_sha256": "e545a39c3b6d72293b696bf55590efc5914287a5c564d3c465fce671079ec81b"
       },
       "classification": "sdk-compatible",
       "contract": "The point message mapping is checked for conversation identity and passed to Mapping-compatible visual-style/persistence owners; public JSON projects nested visual_styles rather than the SDK document. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged.",
