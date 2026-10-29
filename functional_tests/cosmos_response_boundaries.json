@@ -23030,7 +23030,7 @@
     "application/single_app/functions_search_service.py::_authorize_chat_upload_conversation": {
       "boundary": {
         "batches": [],
-        "module_sha256": "d626d9b69ab073f728c09e31f80a1b01e851c909d7d44c6fddcd647b4bf6f229",
+        "module_sha256": "446ed5847cb25379011d853f52cc6728a6dcddc2a214490ea97464a65f1ad480",
         "points": [
           {
             "method": "read_item",
@@ -23051,7 +23051,7 @@
     "application/single_app/functions_search_service.py::_resolve_chat_upload_context": {
       "boundary": {
         "batches": [],
-        "module_sha256": "d626d9b69ab073f728c09e31f80a1b01e851c909d7d44c6fddcd647b4bf6f229",
+        "module_sha256": "446ed5847cb25379011d853f52cc6728a6dcddc2a214490ea97464a65f1ad480",
         "points": [
           {
             "method": "read_item",

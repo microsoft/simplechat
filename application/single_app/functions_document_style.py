@@ -24,10 +24,8 @@ accumulator.
 
 import posixpath
 import re
-import zipfile
 from collections import Counter
 
-import fitz
 from defusedxml.ElementTree import ParseError as DefusedParseError
 from defusedxml.ElementTree import fromstring as defused_fromstring
 
@@ -58,7 +56,7 @@ STYLE_DEFAULT_PPTX_FONT_SIZE_PT = 18.0
 
 _PDF_SUBSET_PREFIX = re.compile(r'^[A-Z]{6}\+')
 _FONT_STYLE_SUFFIX = re.compile(
-    r'[-,]\s*(?:Bold|Italic|Oblique|Regular|Roman|Medium|Light|Black|Semibold|Condensed|MT|PSMT|PS)+$',
+    r'[-,][ \t]*(?:Bold|Italic|Oblique|Regular|Roman|Medium|Light|Black|Semibold|Condensed)*(?:PSMT|MT|PS)?$',
     re.IGNORECASE,
 )
 _HEX_COLOR_PATTERN = re.compile(r'^[0-9A-Fa-f]{6}$')
@@ -881,8 +879,8 @@ def build_word_style_inventory(archive, body_elem, style_counts, bucket_size):
         })
 
     notes = [
-        'Formatting is resolved from direct run properties, paragraph and character styles, document '
-        'defaults, and the theme. Table styles and theme colour tint/shade adjustments are not applied.',
+        ('Formatting is resolved from direct run properties, paragraph and character styles, document '
+         'defaults, and the theme. Table styles and theme colour tint/shade adjustments are not applied.'),
         'Word documents have no fixed pages; locations are word offsets into the body text.',
     ]
     inventory = accumulator.build_inventory(
@@ -1107,7 +1105,8 @@ def build_pptx_style_inventory(archive, slide_entries):
                             if kind:
                                 data['tx_styles'][kind] = _parse_dml_level_styles(style_elem, theme)
             except (DefusedParseError, ValueError):
-                pass
+                # A malformed slide master only loses master-level defaults; slide runs still resolve.
+                data['placeholders'] = data.get('placeholders') or []
         master_cache[master_path] = data
         return data
 
@@ -1122,7 +1121,8 @@ def build_pptx_style_inventory(archive, slide_entries):
             try:
                 data['placeholders'] = _collect_placeholder_styles(defused_fromstring(layout_bytes), theme)
             except (DefusedParseError, ValueError):
-                pass
+                # A malformed layout only loses layout-level defaults; slide runs still resolve.
+                data['placeholders'] = []
         layout_cache[layout_path] = data
         return data
 
