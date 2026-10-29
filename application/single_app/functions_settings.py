@@ -3297,7 +3297,7 @@ def normalize_model_endpoints(endpoints):
                     if field_name in connection:
                         connection.pop(field_name, None)
                         changed = True
-            else:
+            elif get_model_endpoint_provider(api_type) is not None:
                 for field_name in (
                     "api_version",
                     "openai_api_version",
@@ -3380,7 +3380,7 @@ def normalize_model_endpoints(endpoints):
                 if model_copy[field_name] != value:
                     model_copy[field_name] = value
                     changed = True
-            if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+            if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM and custom_api_type:
                 if custom_api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI:
                     deployment_name = str(
                         model_copy.get("deploymentName")

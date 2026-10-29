@@ -1560,38 +1560,45 @@ def _model_endpoint_response(saved_endpoints, endpoint_id, status):
     return jsonify({"endpoint": sanitized[0] if sanitized else {}}), status
 
 
-def _persist_global_model_endpoints(normalized, existing):
+def _persist_global_model_endpoints(endpoints, existing, *, updated_endpoint_id=None):
     """Save the global endpoint list, moving Key Vault secrets to match.
 
-    Secrets need three passes because every endpoint can carry them: endpoints being
-    saved write theirs, endpoints whose auth changed have the superseded secret cleaned
-    up, and endpoints that are gone have theirs deleted. Without the last pass a delete
-    would leave an orphaned secret in the vault forever.
-
-    This mirrors what the classic admin form does on submit, so an endpoint saved from
-    either interface ends up stored identically.
+    Only the requested create/update is normalized by its caller, validated here,
+    and stages credentials. Unchanged records must survive even when a legacy
+    connection needs repair. Deletions do not stage remaining credentials.
+    Whole-state embedding checks and default reconciliation still apply, and
+    obsolete secrets are removed only after the settings commit.
     """
     settings = read_embedding_settings()
     if not isinstance(settings, dict):
         raise AIConnectionError("AI connection settings are unavailable.", "settings_unavailable")
-    preflight_embedding_settings(settings, {**settings, "model_endpoints": normalized})
-    validate_custom_model_endpoints(normalized, settings)
+    preflight_embedding_settings(settings, {**settings, "model_endpoints": endpoints})
+    changed = [
+        endpoint for endpoint in endpoints
+        if isinstance(endpoint, dict) and endpoint.get("id") == updated_endpoint_id
+    ] if updated_endpoint_id is not None else []
+    validate_custom_model_endpoints(changed, settings)
     existing_by_id = {
         endpoint.get("id"): endpoint
         for endpoint in existing
         if isinstance(endpoint, dict) and endpoint.get("id")
     }
 
-    saved_endpoints = [
-        keyvault_model_endpoint_save_helper(
-            endpoint,
-            endpoint.get("id"),
-            scope="global",
-            existing_endpoint=existing_by_id.get(endpoint.get("id")),
-            stage_new_secrets=True,
-        )
-        for endpoint in normalized
-    ]
+    saved_endpoints = []
+    for endpoint in endpoints:
+        if (
+            updated_endpoint_id is not None
+            and isinstance(endpoint, dict)
+            and endpoint.get("id") == updated_endpoint_id
+        ):
+            endpoint = keyvault_model_endpoint_save_helper(
+                endpoint,
+                updated_endpoint_id,
+                scope="global",
+                existing_endpoint=existing_by_id.get(updated_endpoint_id),
+                stage_new_secrets=True,
+            )
+        saved_endpoints.append(endpoint)
 
     updates = {"model_endpoints": saved_endpoints}
     multi_endpoint_enabled = bool(settings.get("enable_multi_model_endpoints", False))
@@ -1647,14 +1654,20 @@ def _persist_global_model_endpoints(normalized, existing):
     if not update_settings(updates):
         raise RuntimeError("The settings document could not be updated.")
 
-    saved_endpoint_ids = {endpoint.get("id") for endpoint in saved_endpoints}
+    saved_endpoint_ids = {
+        endpoint.get("id") for endpoint in saved_endpoints if isinstance(endpoint, dict)
+    }
     for endpoint in saved_endpoints:
+        if not isinstance(endpoint, dict):
+            continue
         endpoint_id = endpoint.get("id")
-        if endpoint_id:
+        if endpoint_id and endpoint_id == updated_endpoint_id:
             keyvault_model_endpoint_cleanup_helper(
                 existing_by_id.get(endpoint_id), endpoint, endpoint_id, scope="global"
             )
     for endpoint in existing:
+        if not isinstance(endpoint, dict):
+            continue
         endpoint_id = endpoint.get("id")
         if endpoint_id and endpoint_id not in saved_endpoint_ids:
             keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="global")
@@ -2656,8 +2669,10 @@ def register_route_backend_v2_admin(bp):
                 )
             candidate["id"] = endpoint_id
 
-            normalized, _ = normalize_model_endpoints(list(existing) + [candidate])
-            saved = _persist_global_model_endpoints(normalized, existing)
+            normalized, _ = normalize_model_endpoints([candidate])
+            saved = _persist_global_model_endpoints(
+                list(existing) + normalized, existing, updated_endpoint_id=endpoint_id
+            )
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Created model endpoint {endpoint_id}",
                 level=logging.INFO,
@@ -2724,16 +2739,18 @@ def register_route_backend_v2_admin(bp):
             merged = merge_model_endpoint_payload(
                 current, {**updates, "id": current.get("id")}
             )
+            normalized, _ = normalize_model_endpoints([merged])
             replaced = [
-                merged
+                normalized[0]
                 if isinstance(endpoint, dict)
                 and str(endpoint.get("id") or "") == str(endpoint_id)
                 else endpoint
                 for endpoint in existing
             ]
 
-            normalized, _ = normalize_model_endpoints(replaced)
-            saved = _persist_global_model_endpoints(normalized, existing)
+            saved = _persist_global_model_endpoints(
+                replaced, existing, updated_endpoint_id=current.get("id")
+            )
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Updated model endpoint {endpoint_id}",
                 level=logging.INFO,
@@ -2777,8 +2794,7 @@ def register_route_backend_v2_admin(bp):
                 )
             ]
 
-            normalized, _ = normalize_model_endpoints(remaining)
-            _persist_global_model_endpoints(normalized, existing)
+            _persist_global_model_endpoints(remaining, existing)
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Deleted model endpoint {endpoint_id}",
                 level=logging.INFO,
@@ -2788,6 +2804,8 @@ def register_route_backend_v2_admin(bp):
             return jsonify({"error": exc.public_message, "code": exc.code}), 500
         except AIConnectionError as exc:
             return _ai_connection_error_response(exc)
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message, "code": "invalid_custom_endpoint"}), 400
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Failed to delete model endpoint: {exc}",
