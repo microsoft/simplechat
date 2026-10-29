@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.054)**
+
+#### Bug Fixes
+
+*   **Default System Prompt Remains Active When Files or Images Are Uploaded in Chat**
+    *   Uploading an image, XML file, or other file directly in the chat UI no longer suppresses the configured `default_system_prompt` in standard or streaming chat turns.
+    *   Previously, chat-uploaded image and file context messages (`role: 'image'` and `role: 'file'` converted into `role: 'system'` entries in `conversation_history_for_api`) were mistaken for an existing general system prompt, causing `default_system_prompt` to be skipped.
+    *   `has_general_system_prompt` now checks whether `default_system_prompt` itself is already present in `conversation_history_for_api`.
+    *   (Ref: `route_backend_chats.py`, [Default System Prompt Preservation With Chat Uploads Fix](fixes/DEFAULT_SYSTEM_PROMPT_CHAT_UPLOADS_FIX.md), #1855)
+
 ### **(v0.261.053)**
 
 #### Bug Fixes
