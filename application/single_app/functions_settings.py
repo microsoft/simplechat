@@ -5,6 +5,7 @@ import logging
 import threading
 
 from flask import g, has_request_context, jsonify, request, session
+from azure.core import MatchConditions
 
 from app_settings_store import (
     AppSettingsStore,
@@ -22,6 +23,7 @@ from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
+from functions_model_capabilities import normalize_model_budget_overrides
 from functions_model_endpoint_identity_header import (
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
@@ -44,6 +46,7 @@ from functions_rate_limit import (
     build_rate_limit_message,
 )
 from functions_service_health import get_default_service_health
+from json_schema_validation import validate_legacy_plugin_settings_update
 import app_settings_cache
 import copy
 import os
@@ -1312,6 +1315,46 @@ def normalize_tabular_parity_durable_preflight_defaults(settings):
     return changed
 
 
+# 2025-04-01-preview is the newest dated Azure OpenAI API version, and the one Microsoft documents
+# for gpt-image-1, gpt-image-1.5, and gpt-image-2.
+AZURE_OPENAI_IMAGE_GEN_API_VERSION_DEFAULT = '2025-04-01-preview'
+# The previous shipped default. It predates gpt-image model support.
+AZURE_OPENAI_IMAGE_GEN_API_VERSION_PREVIOUS_DEFAULT = '2024-12-01-preview'
+
+
+def normalize_image_generation_api_version_settings(settings):
+    """Upgrade a stored Azure OpenAI image generation API version the admin never customized.
+
+    deep_merge_dicts() only fills in keys that are *missing* from a persisted settings document,
+    so every deployment that loaded settings before the default changed still stores the old
+    2024-12-01-preview default, which predates gpt-image model support. Raising the code-level
+    default alone would therefore never reach those deployments.
+
+    A stored azure_openai_image_gen_api_version that is exactly the previous default, or blank,
+    was never chosen by an admin, so it is upgraded to AZURE_OPENAI_IMAGE_GEN_API_VERSION_DEFAULT.
+    Any other value is a deliberate admin choice and is left untouched.
+
+    azure_apim_image_gen_api_version is intentionally not migrated. An APIM gateway defines the
+    API version it accepts, which is why that setting has no default at all; rewriting it could
+    break a working gateway.
+
+    Returns True when the settings were changed.
+    """
+    if not isinstance(settings, dict):
+        return False
+
+    stored_version = settings.get('azure_openai_image_gen_api_version')
+    if stored_version is not None and not isinstance(stored_version, str):
+        return False
+
+    normalized_version = (stored_version or '').strip()
+    if normalized_version and normalized_version != AZURE_OPENAI_IMAGE_GEN_API_VERSION_PREVIOUS_DEFAULT:
+        return False
+
+    settings['azure_openai_image_gen_api_version'] = AZURE_OPENAI_IMAGE_GEN_API_VERSION_DEFAULT
+    return True
+
+
 def get_settings(use_cosmos=False, include_source=False):
     default_settings = {
         # External health check
@@ -1326,6 +1369,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'debug_logging_turnoff_time': None,
         # Semantic Kernel plugin/action manifests (MCP, Databricks, RAG, etc.)
         'enable_time_plugin': True,
+        'm365_retrieval_provider': 'auto',
+        'm365_trusted_download_hosts': [],
         'enable_http_plugin': True,
         'enable_wait_plugin': True,
         'enable_math_plugin': True,
@@ -1498,11 +1543,13 @@ def get_settings(use_cosmos=False, include_source=False):
         'model_endpoint_identity_header_name': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
         'model_endpoint_identity_header_value_type': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
         'model_endpoint_identity_header_hmac_secret': secrets.token_urlsafe(48),
+        'enable_default_model_for_new_conversations': False,
         'default_model_selection': {
             'endpoint_id': '',
             'model_id': '',
             'provider': ''
         },
+        'default_reasoning_effort': '',
         'multi_endpoint_migrated_at': None,
         'multi_endpoint_migration_notice': {
             'enabled': False,
@@ -1535,7 +1582,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_image_generation': False,
         'enable_image_gen_apim': False,
         'azure_openai_image_gen_endpoint': '',
-        'azure_openai_image_gen_api_version': '2024-12-01-preview',
+        'azure_openai_image_gen_api_version': AZURE_OPENAI_IMAGE_GEN_API_VERSION_DEFAULT,
         'azure_openai_image_gen_authentication_type': 'key',
         'azure_openai_image_gen_subscription_id': '',
         'azure_openai_image_gen_resource_group': '',
@@ -1998,6 +2045,7 @@ def get_settings(use_cosmos=False, include_source=False):
         normalize_key_vault_reminder_settings(merged)
         normalize_model_endpoint_identity_header_settings(merged)
         normalize_tabular_parity_durable_preflight_defaults(merged)
+        normalize_image_generation_api_version_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
@@ -2622,7 +2670,7 @@ def normalize_model_response_length_from_model(model):
 
 
 def normalize_model_endpoints(endpoints):
-    """Normalize model endpoints with stable IDs and enabled flags."""
+    """Normalize endpoint records without conflating capacity and response length."""
     if not isinstance(endpoints, list):
         return [], False
 
@@ -2635,6 +2683,10 @@ def normalize_model_endpoints(endpoints):
         endpoint_copy = json.loads(json.dumps(endpoint))
         endpoint_copy.pop("has_api_key", None)
         endpoint_copy.pop("has_client_secret", None)
+        for field_name, value in normalize_model_budget_overrides(endpoint_copy).items():
+            if endpoint_copy[field_name] != value:
+                endpoint_copy[field_name] = value
+                changed = True
         connection = endpoint_copy.get("connection") or {}
         provider = str(endpoint_copy.get("provider") or "aoai").strip().lower()
         if endpoint_copy.get("provider") != provider:
@@ -2703,6 +2755,10 @@ def normalize_model_endpoints(endpoints):
             if not isinstance(model, dict):
                 continue
             model_copy = json.loads(json.dumps(model))
+            for field_name, value in normalize_model_budget_overrides(model_copy).items():
+                if model_copy[field_name] != value:
+                    model_copy[field_name] = value
+                    changed = True
             if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
                 if custom_api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI:
                     deployment_name = str(
@@ -2769,7 +2825,7 @@ def normalize_model_endpoints(endpoints):
         endpoint_copy["models"] = normalized_models
         normalized.append(endpoint_copy)
 
-    return normalized, changed
+    return normalized, changed or normalized != endpoints
 
 
 def is_frontend_visible_model_endpoint_provider(provider):
@@ -2813,6 +2869,9 @@ def merge_model_endpoint_payload(existing_endpoint, incoming_endpoint):
         if value in (None, ""):
             continue
         merged[key] = value
+    # Null capacity/identity overrides deliberately restore inheritance, unlike
+    # blank authentication fields which must retain their stored secrets.
+    merged.update(normalize_model_budget_overrides(incoming_endpoint))
     return merged
 
 
@@ -2855,7 +2914,7 @@ def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
 
 
 def sanitize_model_endpoints_for_frontend(endpoints):
-    """Return model endpoint configs with secrets stripped for frontend use."""
+    """Keep editable model metadata while stripping stored auth credentials."""
     normalized, _ = normalize_model_endpoints(endpoints)
     if not isinstance(normalized, list):
         return []
@@ -2870,8 +2929,8 @@ def sanitize_model_endpoints_for_frontend(endpoints):
         auth = endpoint_copy.get("auth") or {}
         has_api_key = bool(auth.get("api_key"))
         has_client_secret = bool(auth.get("client_secret"))
-        auth.pop("api_key", None)
-        auth.pop("client_secret", None)
+        for secret_field in ("api_key", "client_secret", "bearer_token", "access_token", "refresh_token"):
+            auth.pop(secret_field, None)
         endpoint_copy["auth"] = auth
         endpoint_copy["has_api_key"] = has_api_key
         endpoint_copy["has_client_secret"] = has_client_secret
@@ -3105,6 +3164,16 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
             }
 
 
+        try:
+            validate_legacy_plugin_settings_update(doc['settings'], settings_to_update)
+        except ValueError:
+            log_event(
+                "[USER_SETTINGS] Rejected invalid or retired action settings.",
+                extra={"user_id": user_id},
+                level=logging.WARNING,
+            )
+            return False
+
         # --- Merge the new settings into the 'settings' sub-dictionary ---
         doc['settings'].update(settings_to_update)
 
@@ -3208,8 +3277,19 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
         # Use timezone-aware UTC time
         doc['lastUpdated'] = datetime.now(timezone.utc).isoformat()
 
-        # Upsert the modified document
-        cosmos_user_settings_container.upsert_item(body=doc) # Use body=doc for clarity
+        if (
+            {'plugins', 'semantic_kernel_plugins'}.intersection(settings_to_update)
+            or doc['settings'].get('plugins') or doc['settings'].get('semantic_kernel_plugins')
+        ):
+            if doc.get('_etag'):
+                cosmos_user_settings_container.replace_item(
+                    user_id, body=doc,
+                    etag=doc['_etag'], match_condition=MatchConditions.IfNotModified,
+                )
+            else:
+                cosmos_user_settings_container.create_item(body=doc)
+        else:
+            cosmos_user_settings_container.upsert_item(body=doc)
         _set_request_cached_user_settings(user_id, doc)
         _delete_user_ui_settings_cache(user_id)
 
@@ -3289,7 +3369,7 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     sanitized = {}
 
     for k, v in full_settings.items():
-        if k == 'support_feedback_recipient_email':
+        if k in {'support_feedback_recipient_email', 'm365_trusted_download_hosts'}:
             continue
         if k == 'agents_page_promoted_popular_agents':
             continue

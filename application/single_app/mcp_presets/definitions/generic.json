@@ -25,10 +25,9 @@
         "websocketEndpointPlaceholder": "wss://example.com/mcp"
     },
     "constraints": {
-        "allowedTransports": ["streamable_http", "sse", "websocket", "stdio"],
+        "allowedTransports": ["streamable_http", "sse", "websocket"],
         "allowedAuthMethods": ["none", "bearer", "api_key", "basic", "identity"],
-        "customHeadersAllowed": true,
-        "stdioAllowed": true
+        "customHeadersAllowed": true
     },
     "implementation": {
         "id": "generic",

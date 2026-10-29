@@ -4,6 +4,7 @@ title: "Microsoft Graph"
 description: "Full guide for the Microsoft Graph SimpleChat action."
 section: "Reference"
 audience: user
+version: "0.261.038"
 ---
 
 <!-- action-slug: msgraph -->
@@ -11,6 +12,14 @@ audience: user
 {% include media.html src="reference/actions-msgraph-configuration.png" alt="The Microsoft Graph configuration pane noting the action uses the signed-in user's delegated permissions, above capability toggles for reading profile, mailbox timezone, calendar events, and mail, and for creating calendar invites and sending mail with their delivery mode selectors." title="Microsoft Graph action configuration" capture="Capture Default Microsoft Graph Capabilities and mail/calendar delivery settings. Redact user identifiers." %}
 
 ## What this action does
+
+The combined Microsoft Graph action is **legacy-only** from version
+**0.261.029**. Existing records remain editable and runnable, but new combined
+actions, clones, and recreation after deletion are not supported. For a new
+setup, use the separate [Calendar](../m365-calendar/), [Email](../m365-email/),
+[OneDrive](../m365-onedrive/), or [SharePoint Online](../m365-sharepoint/) action.
+Existing Email, Calendar, and OneDrive operations also follow the new
+[sharing acknowledgement rules]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}).
 
 Microsoft Graph uses the signed-in user's delegated permissions and the standard Graph endpoint. Its capabilities include profile, timezone, calendar events, calendar invites, mail read/update/send, directory search, user lookup, OneDrive listing, and security alerts available to the user.
 
@@ -27,7 +36,7 @@ Use Microsoft Graph when an agent should help with Microsoft 365 work in the use
 
 ## Configure the action
 
-1. Choose **Microsoft Graph**.
+1. Open an existing **Microsoft Graph** action for editing.
 2. Review **Default Microsoft Graph Capabilities** and enable only needed operations.
 3. For mail, choose manual draft, delayed draft, or auto-send where allowed.
 4. Set mail delay seconds when using delayed delivery.
@@ -39,6 +48,19 @@ Use Microsoft Graph when an agent should help with Microsoft 365 work in the use
 - "Draft a reply to the latest unread message from Contoso and leave it for my review."
 - "Find free time tomorrow afternoon and create a Teams meeting invite for these attendees."
 - "Search the directory for Alex Chen and show the likely match with email address."
+
+## Outgoing action review
+
+From **0.261.038**, existing combined Graph actions use the same Chat,
+Approvals, and workflow review cards as the separate [Email](../m365-email/)
+and [Calendar](../m365-calendar/) actions. Manual operations require the data
+owner's Send; delayed operations expose Send now and Cancel until claimed.
+Reconnecting refreshes the existing action instead of creating another draft.
+
+Email Send uses the reviewed content and retains the original Outlook draft.
+Cancel also leaves the draft and cannot recall a completed send. Check Outlook
+before preparing another action when the card reports an unknown outcome.
+Historical actions with no trustworthy binding must be prepared again.
 
 ## Troubleshooting
 
@@ -53,4 +75,3 @@ Use Microsoft Graph when an agent should help with Microsoft 365 work in the use
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
 - [Agents administration]({{ '/admin/agents-actions/' | relative_url }})
 - [Governance]({{ '/admin/governance/' | relative_url }})
-

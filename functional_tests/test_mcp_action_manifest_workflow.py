@@ -1,8 +1,10 @@
+# test_mcp_action_manifest_workflow.py
 #!/usr/bin/env python3
 """
 Functional test for MCP action manifest workflow.
-Version: 0.250.100
+Version: 0.261.029
 Implemented in: 0.241.103
+Updated in: 0.261.029
 
 This test ensures that MCP action configuration defaults, validation, and
 plugin metadata creation produce the manifest shape used by the shared action
@@ -40,6 +42,7 @@ sys.modules.setdefault(
     types.SimpleNamespace(
         log_event=_noop,
         get_appinsights_logger=_get_noop_logger,
+        sanitize_log_message=lambda message: message,
     ),
 )
 sys.modules.setdefault(
@@ -59,7 +62,10 @@ sys.modules.setdefault(
 )
 sys.modules.setdefault(
     "functions_blob_storage_operations",
-    types.SimpleNamespace(BLOB_STORAGE_PLUGIN_TYPE="blob_storage"),
+    types.SimpleNamespace(
+        BLOB_STORAGE_PLUGIN_TYPE="blob_storage",
+        derive_blob_endpoint_from_connection_string=_noop,
+    ),
 )
 sys.modules.setdefault(
     "functions_databricks_operations",
@@ -110,6 +116,7 @@ from functions_mcp_operations import (  # noqa: E402
     classify_mcp_exception,
     normalize_mcp_additional_fields,
 )
+from functions_action_manifest import McpActionOrigin
 from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker
 
@@ -179,7 +186,8 @@ def test_mcp_action_manifest_workflow():
     assert headers["X-Splunk-Host"] == "search-head"
     assert "custom-token" not in headers.values()
 
-    plugin = McpPluginFactory.create_from_config(manifest)
+    action_origin = McpActionOrigin("personal", "functional-test-user", "workflow-action")
+    plugin = McpPluginFactory.create_from_config(manifest, origin=action_origin)
     metadata = plugin.metadata
     assert metadata["type"] == MCP_PLUGIN_TYPE
     assert metadata["server_profile"] == "splunk"
@@ -192,7 +200,9 @@ def test_mcp_action_manifest_workflow():
     assert tool_payload["tool_count"] == 1
     assert tool_payload["tools"][0]["original_name"] == "search-repositories"
 
-    async def fake_call_tool_from_config(cls, config, tool_name, arguments=None):
+    async def fake_call_tool_from_config(cls, config, tool_name, arguments=None, *, origin=None):
+        if origin != action_origin:
+            raise AssertionError("The action origin must reach the MCP factory.")
         return {
             "success": True,
             "tool_name": tool_name,

@@ -57,7 +57,7 @@ from functions_activity_logging import (
     log_agent_deletion,
     log_general_admin_action,
 )
-from functions_governance import ensure_governance_access, upsert_item_policy
+from functions_governance import ensure_governance_access, filter_governed_model_endpoints, upsert_item_policy
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 
 bpa = Blueprint('admin_agents', __name__)
@@ -2152,6 +2152,12 @@ def orchestration_settings():
 def build_combined_model_endpoints(settings, user_id=None, group_id=None):
     endpoints = []
     global_endpoints = settings.get("model_endpoints", []) or []
+    if user_id:
+        global_endpoints = filter_governed_model_endpoints(
+            user_id,
+            global_endpoints,
+            "governance_global_endpoints",
+        )
     for endpoint in global_endpoints:
         enriched = dict(endpoint)
         enriched["scope"] = "global"
@@ -2164,7 +2170,11 @@ def build_combined_model_endpoints(settings, user_id=None, group_id=None):
         if allow_group_custom_endpoints:
             try:
                 ensure_governance_access("governance_group_endpoints", user_id)
-                group_endpoints = get_group_model_endpoints(group_id)
+                group_endpoints = filter_governed_model_endpoints(
+                    user_id,
+                    get_group_model_endpoints(group_id),
+                    "governance_group_endpoints",
+                )
                 for endpoint in group_endpoints:
                     enriched = dict(endpoint)
                     enriched["scope"] = "group"
@@ -2177,7 +2187,11 @@ def build_combined_model_endpoints(settings, user_id=None, group_id=None):
             try:
                 ensure_governance_access("governance_user_endpoints", user_id)
                 user_settings = get_user_settings(user_id)
-                personal = user_settings.get("settings", {}).get("personal_model_endpoints", [])
+                personal = filter_governed_model_endpoints(
+                    user_id,
+                    user_settings.get("settings", {}).get("personal_model_endpoints", []),
+                    "governance_user_endpoints",
+                )
                 for endpoint in personal:
                     enriched = dict(endpoint)
                     enriched["scope"] = "user"

@@ -1,8 +1,10 @@
 # MCP Server Preconfigurations
 
-Current documentation version: **0.250.098**
+Current documentation version: **0.261.029**
 
-Related configuration version: `application\single_app\config.py` currently sets `VERSION = "0.250.098"`.
+Remote-only MCP and authorization update implemented in version: **0.261.029**.
+
+Related configuration update: `application\single_app\config.py` advances `VERSION` from `0.261.028` to `0.261.029`.
 
 ## Overview
 
@@ -12,6 +14,8 @@ MCP server preconfigurations are concrete, server-side action templates for know
 * **Preconfiguration**: a curated MCP action template with a specific endpoint, transport, auth requirement, default tool allowlist, documentation link, scope eligibility, and warnings.
 
 The catalog lets organizations ship a drop-down of ready-to-create MCP actions such as Microsoft Learn, Azure documentation, GitHub, Microsoft Sentinel, Azure MCP Server, or a local development MCP fixture while keeping the definitions validated and controlled by the server.
+
+All templates connect through remote streamable HTTP, SSE, or WebSocket. Stdio and local command, argument, and environment configuration are removed for every role and scope, including Admin/global. A template does not launch a server process.
 
 Enterprise templates such as Microsoft Sentinel MCP and Azure MCP Server are stored in the same catalog, but they are hidden by default. They only appear when destination governance is enabled and an admin explicitly allows the matching `preconfiguration:<id>` item policy for the intended scope.
 
@@ -114,9 +118,11 @@ MCP_BLOCK_UNSAFE_DESTINATIONS=false
 
 `SIMPLECHAT_MCP_PRECONFIGURATION_PATHS` uses the OS path separator and can point to one or more directories containing organization-authored JSON definitions.
 
-`ENABLE_LOCAL_MCP_PRECONFIGURATION=true` exposes the bundled local development server entry. It is hidden by default.
+`ENABLE_LOCAL_MCP_PRECONFIGURATION=true` exposes the bundled local development server entry. It is hidden by default. This remains an HTTP-based developer fixture, not a stdio replacement or a command-launching action, and it remains subject to destination policy.
 
-Destination governance is compatibility-off by default. When enabled, configured allowlists are enforced server-side during MCP action save/update, tool discovery, and runtime connector creation.
+Destination governance is compatibility-off by default. When enabled, configured allowlists are enforced server-side during MCP action save/update, tool discovery, connection testing, and runtime use, including cached tools.
+
+Environment-enforced destination restrictions are a non-overridable minimum. Current Admin Settings can tighten those restrictions, but cannot disable environment enforcement, widen an environment allowlist, or undo environment-required unsafe-address blocking. Authorization consistently uses the MCP action type, the action's server-established collection/partition origin, and the current user or established workflow identity. Selecting a catalog template does not grant permission to connect.
 
 Enterprise preconfigurations are additionally hidden unless the matched policy is an explicit `preconfiguration:<id>` rule. Endpoint-reviewed enterprise templates also require a separate specific destination rule for the governed endpoint. Broad rules such as `*`, host wildcards, presets, or transport allowlists are not sufficient to surface enterprise templates.
 
@@ -184,16 +190,25 @@ Bundled enterprise templates are intentionally safe by default:
 | Microsoft Sentinel MCP Server | `microsoft_sentinel` | Hidden | Reusable identity | Disabled | Enable destination governance, add `preconfiguration:microsoft_sentinel`, and add a specific approved Sentinel MCP endpoint rule for the approved scope. |
 | Azure MCP Server | `azure_mcp_server` | Hidden | Reusable identity | Disabled | Enable destination governance, add `preconfiguration:azure_mcp_server`, and add a specific approved Azure MCP endpoint rule for the approved scope. |
 
-Both templates use example organization-hosted endpoints and require endpoint review before use. SimpleChat should not run local package commands such as `npx`, `dnx`, `uvx`, or Docker from user-provided Azure MCP configuration. Operators should replace the example endpoint with a governed remote endpoint that they own, then enable only narrow read-oriented tools until identity, source allowlisting, destination allowlisting, per-tool policy, and audit controls are validated.
+Both templates use example organization-hosted endpoints and require endpoint review before use. SimpleChat does not launch local MCP server commands in any scope. Operators should replace the example endpoint with a governed remote endpoint that they own, then enable only narrow read-oriented tools until identity, source allowlisting, destination allowlisting, per-tool policy, and audit controls are validated.
+
+## Existing Stdio Actions
+
+Choosing or loading a preconfiguration does not silently convert a saved stdio action to HTTP. Retired actions remain visible and non-executable until an owner explicitly configures a supported remote transport and valid endpoint, or deletes them. Reconfiguration must satisfy normal current governance; unsupported and failed legacy records are retained during migration. See [MCP stdio removal and migration](../fixes/MCP_STDIO_REMOVAL_AND_AUTHORIZATION_FIX.md).
 
 ## Testing and Validation
 
 Current coverage:
 
 * `functional_tests/test_mcp_destination_governance_and_preconfigurations.py`
+* `functional_tests/test_mcp_stdio_removal.py`
+* `functional_tests/test_mcp_action_route_security.py`
+* `functional_tests/test_mcp_authorization_context.py`
 * `ui_tests/test_workspace_mcp_action_modal.py`
 
 The tests validate catalog loading, custom definition loading, scope filtering, secret-free defaults, destination allowlist decisions, unsafe literal-IP blocking, modal payload generation, governance-backed destination patterns, per-group destination overrides, destination-governance filtering, the admin MCP destination governance UI, enterprise template metadata, hidden-by-default behavior, explicit `preconfiguration:<id>` policy requirements, implementation-specific schemas, provider-specific `additionalSettings`, identity-backed enterprise defaults, direct-submit enterprise policy enforcement, endpoint-specific policy requirements, opt-in MCP argument validation defaults, and large-result policy behavior.
+
+The 0.261.029 regression scope adds remote-only transports, current execution context and settings, and non-overridable environment restrictions. Coverage references are not a claim that the suites have passed for this change.
 
 ## Known Limitations
 

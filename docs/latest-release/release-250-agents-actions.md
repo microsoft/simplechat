@@ -7,6 +7,8 @@ section: "Latest Release"
 
 Current release version: **0.250.001**
 
+> **Removal notice — 0.261.029:** The stdio note below is historical. MCP actions now support only remote streamable HTTP, SSE, and WebSocket, including Admin/global actions. Existing stdio actions remain visible but non-executable until explicitly reconfigured or deleted. See the [current MCP guide]({{ '/reference/actions/mcp/' | relative_url }}#retired-stdio-actions).
+
 Agents gained Assigned Knowledge, catalog customization, voice-assisted instruction drafting, Databricks, Tableau, Microsoft Graph mail, MCP actions, reusable identities, and better action governance.
 
 ## User Side

@@ -25,6 +25,10 @@ import { autoplayTTSIfEnabled, isTTSAutoplayEnabled, playTTS } from "./chat-tts.
 import { saveUserSetting } from "./chat-layout.js";
 import { sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
+import {
+  restoreAdminDefaultModelSelection,
+  restoreModelSelectionFromConversationMetadata,
+} from './chat-model-selector.js';
 import { areAgentsEnabled } from './chat-agents.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
 import { destroyInlineCharts, extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
@@ -101,6 +105,38 @@ const DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
     workflow_max_documents: 10,
   },
 };
+
+function getMarkdownRenderer() {
+  const purifier = globalThis.DOMPurify;
+  const markdown = globalThis.marked;
+  if (!purifier || typeof purifier.sanitize !== 'function') {
+    return null;
+  }
+  if (!markdown || typeof markdown.parse !== 'function') {
+    return null;
+  }
+  return { purifier, markdown };
+}
+
+function renderMarkdownSafely(markdownText, options = {}) {
+  const text = String(markdownText || '');
+  const renderer = getMarkdownRenderer();
+  if (!renderer) {
+    return escapeHtml(text);
+  }
+
+  const markdownInput = options.escapeInput ? escapeHtml(text) : text;
+  return renderer.purifier.sanitize(renderer.markdown.parse(markdownInput));
+}
+
+function sanitizeHtmlSafely(htmlText) {
+  const html = String(htmlText || '');
+  const purifier = globalThis.DOMPurify;
+  if (!purifier || typeof purifier.sanitize !== 'function') {
+    return escapeHtml(html);
+  }
+  return purifier.sanitize(html);
+}
 
 function getChatWorkspaceProgressValue(value) {
   const numericValue = Number(value);
@@ -2128,7 +2164,23 @@ export function groupGeneratedImageProposalMessages(messages = []) {
   return groupedMessages;
 }
 
+function getLastConversationModelSelection(messages = []) {
+  if (!Array.isArray(messages)) {
+    return null;
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const modelSelection = messages[index]?.metadata?.model_selection;
+    if (modelSelection && typeof modelSelection === 'object') {
+      return modelSelection;
+    }
+  }
+
+  return null;
+}
+
 export function loadMessages(conversationId) {
+    window.SimpleChatM365PendingActions?.setConversation(conversationId);
   // Clear search highlights when loading a different conversation
   clearSearchHighlight();
 
@@ -2153,10 +2205,24 @@ export function loadMessages(conversationId) {
       const chatbox = document.getElementById("chatbox");
       if (!chatbox) return;
 
+        window.SimpleChatM365PendingActions?.prepareHistory(conversationId);
       chatbox.innerHTML = "";
       console.log(`--- Loading messages for ${conversationId} ---`);
       updateConversationTaskDocumentsFromMessages(Array.isArray(data.messages) ? data.messages : [], conversationId);
       updateComparisonChatUploadCatalog(Array.isArray(data.messages) ? data.messages : []);
+      const lastModelSelection = getLastConversationModelSelection(data.messages);
+      if (lastModelSelection) {
+        window.adminNewConversationDefaultsActive = false;
+        restoreModelSelectionFromConversationMetadata(lastModelSelection);
+      } else if ((Array.isArray(data.messages) ? data.messages : []).length === 0) {
+        window.adminNewConversationDefaultsActive = Boolean(
+          window.appSettings?.enable_multi_model_endpoints
+          && window.appSettings?.enable_default_model_for_new_conversations
+        );
+        restoreAdminDefaultModelSelection();
+      } else {
+        window.adminNewConversationDefaultsActive = false;
+      }
       const generatedImageProposalMessages = groupGeneratedImageProposalMessages(data.messages);
       const assistantMessageIds = new Set(
         (Array.isArray(data.messages) ? data.messages : [])
@@ -2249,6 +2315,7 @@ export function loadMessages(conversationId) {
       }
     })
     .finally(() => {
+        void window.SimpleChatM365PendingActions?.refreshConversation(conversationId);
       // Check if there's a search highlight to apply
       if (window.searchHighlight && window.searchHighlight.term) {
         const elapsed = Date.now() - window.searchHighlight.timestamp;
@@ -2760,7 +2827,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
     const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
     const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
-    const sanitizedHtml = DOMPurify.sanitize(marked.parse(withASCIITables));
+    const sanitizedHtml = renderMarkdownSafely(withASCIITables);
     const htmlWithCharts = injectInlineChartHtml(sanitizedHtml, chartExtraction.blocks);
     const htmlWithImageProposals = injectInlineImageProposalHtml(htmlWithCharts, imageProposalExtraction.blocks);
     const copyMarkdown = restoreInlineChartTokens(
@@ -4163,9 +4230,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       return previewBlock;
     }
 
-    const sanitizedHtml = DOMPurify.sanitize(marked.parse(normalizedPreviewText));
+    const sanitizedHtml = renderMarkdownSafely(normalizedPreviewText);
     const linkedHtml = addTargetBlankToExternalLinks(sanitizedHtml);
-    previewBlock.innerHTML = DOMPurify.sanitize(linkedHtml);
+    previewBlock.innerHTML = sanitizeHtmlSafely(linkedHtml);
     return previewBlock;
   }
 
@@ -6001,6 +6068,7 @@ export function appendMessage(
       messageDiv.dataset.messageComplete = 'false';
     }
     chatbox.appendChild(messageDiv); // Append AI message
+    window.SimpleChatM365PendingActions?.trackMessage(messageDiv, fullMessageObject, { history: !isNewMessage });
     renderSuggestedFollowUpButtons(messageDiv, renderedAiContent.followUpSuggestions);
     hydrateGeneratedAnalysisArtifacts(messageDiv, fullMessageObject);
     attachGeneratedImageProposalResults(messageDiv, fullMessageObject?.generated_image_proposals || []);
@@ -6248,9 +6316,7 @@ export function appendMessage(
       }
 
       const renderedMessageContent = stripMentionTextFromMessageContent(messageContent, fullMessageObject);
-      const sanitizedUserHtml = DOMPurify.sanitize(
-        marked.parse(escapeHtml(renderedMessageContent))
-      );
+      const sanitizedUserHtml = renderMarkdownSafely(renderedMessageContent, { escapeInput: true });
       messageContentHtml = addTargetBlankToExternalLinks(sanitizedUserHtml);
     } else if (sender === "Collaborator") {
       messageClass = "collaborator-message";
@@ -6260,9 +6326,7 @@ export function appendMessage(
       avatarAltText = `${senderLabel} Avatar`;
       avatarHtml = createCollaboratorAvatarHtml(fullMessageObject, senderLabel);
       const renderedMessageContent = stripMentionTextFromMessageContent(messageContent, fullMessageObject);
-      const sanitizedCollaboratorHtml = DOMPurify.sanitize(
-        marked.parse(escapeHtml(renderedMessageContent))
-      );
+      const sanitizedCollaboratorHtml = renderMarkdownSafely(renderedMessageContent, { escapeInput: true });
       messageContentHtml = addTargetBlankToExternalLinks(sanitizedCollaboratorHtml);
     } else if (sender === "File") {
       messageClass = "file-message";
@@ -6331,9 +6395,7 @@ export function appendMessage(
       avatarAltText = "Content Safety Avatar";
       avatarImg = "/static/images/alert.png";
       const linkToViolations = `<br><small><a href="/safety_violations" target="_blank" rel="noopener" style="font-size: 0.85em; color: #6c757d;">View My Safety Violations</a></small>`;
-      const sanitizedSafetyHtml = DOMPurify.sanitize(
-        marked.parse(messageContent + linkToViolations)
-      );
+      const sanitizedSafetyHtml = renderMarkdownSafely(messageContent + linkToViolations);
       messageContentHtml = addTargetBlankToExternalLinks(sanitizedSafetyHtml);
     } else if (sender === "Error") {
       messageClass = "error-message";
@@ -6510,6 +6572,7 @@ export function appendMessage(
 
     // Append and scroll (common actions for non-AI)
     chatbox.appendChild(messageDiv);
+    window.SimpleChatM365PendingActions?.trackMessage(messageDiv, fullMessageObject, { history: !isNewMessage });
     hydrateChatWorkspaceAttachmentProgress(messageDiv);
 
     // Attach safe image element and error handler for generated/uploaded images
@@ -7387,7 +7450,10 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
 }
 
 export function shouldUseCollaborativeAiWorkflow(messageData = {}, explicitInvocationTarget = null) {
-  return Boolean(buildCollaborativeInvocationTarget(messageData, explicitInvocationTarget));
+  return Boolean(
+    buildCollaborativeInvocationTarget(messageData, explicitInvocationTarget)
+    || String(messageData.message || '').trim()
+  );
 }
 
 function buildVoiceResponseCompletionHandler(responseModality) {
@@ -7678,6 +7744,7 @@ export function updateUserMessageId(tempId, realId, options = {}) {
   if (messageDiv) {
     // Update the data-message-id attribute
     messageDiv.setAttribute('data-message-id', realId);
+    window.SimpleChatM365PendingActions?.trackMessage(messageDiv, { id: realId });
     console.log(`✅ Updated messageDiv data-message-id to: ${realId}`);
 
     // Update ALL elements with the temporary ID to ensure consistency
@@ -8660,7 +8727,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Save the selected model when it changes
 if (modelSelect) {
-  modelSelect.addEventListener("change", function() {
+  modelSelect.addEventListener("change", function(event) {
+    const userInitiated = event.isTrusted || event.detail?.userInitiated === true;
+    if (userInitiated) {
+      window.adminNewConversationDefaultsActive = false;
+    } else {
+      return;
+    }
     const selectedModel = modelSelect.value;
     if (window.appSettings?.enable_multi_model_endpoints) {
       const selectedOption = modelSelect.options[modelSelect.selectedIndex];
@@ -8671,6 +8744,7 @@ if (modelSelect) {
       console.log(`Saving preferred model deployment: ${selectedModel}`);
       saveUserSetting({ preferredModelDeployment: selectedModel });
     }
+
   });
 }
 

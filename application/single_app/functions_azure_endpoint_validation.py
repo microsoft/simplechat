@@ -197,6 +197,24 @@ def validate_azure_blob_endpoint(value: Any) -> str:
     return _validate_storage_endpoint(value, AZURE_BLOB_SERVICE_LABEL, AZURE_BLOB_ENDPOINT_ERROR)
 
 
+def validate_configured_chat_blob_endpoint(value: Any, custom_suffix: str = "") -> str:
+    """Allow a private-cloud storage suffix only when the deployment supplied it."""
+    if not custom_suffix:
+        return validate_azure_blob_endpoint(value)
+    suffix = str(custom_suffix).strip().strip(".").lower()
+    if not DNS_NAME_PATTERN.fullmatch(suffix) or "." not in suffix:
+        raise ValueError("The custom chat-storage DNS suffix is invalid.")
+    parsed, hostname = parse_azure_https_endpoint(value, AZURE_BLOB_ENDPOINT_ERROR)
+    account, separator, actual_suffix = hostname.partition(".")
+    if (
+        not separator or actual_suffix != suffix
+        or not STORAGE_ACCOUNT_LABEL_PATTERN.fullmatch(account)
+        or parsed.path not in ("", "/")
+    ):
+        raise ValueError("The chat-storage endpoint must match the deployment's configured custom suffix.")
+    return f"https://{hostname}"
+
+
 def validate_azure_queue_endpoint(value: Any) -> str:
     """Return a canonical Azure Queue service origin, or raise ValueError."""
     return _validate_storage_endpoint(value, AZURE_QUEUE_SERVICE_LABEL, AZURE_QUEUE_ENDPOINT_ERROR)

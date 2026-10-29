@@ -660,27 +660,28 @@ def register_route_backend_public_documents(bp):
         
         # Track which fields were updated
         updated_fields = {}
+        document_updates = {}
         
         try:
             if 'title' in data:
-                update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, title=data['title'])
+                document_updates['title'] = data['title']
                 updated_fields['title'] = data['title']
             if 'abstract' in data:
-                update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, abstract=data['abstract'])
+                document_updates['abstract'] = data['abstract']
                 updated_fields['abstract'] = data['abstract']
             if 'keywords' in data:
                 kws = data['keywords'] if isinstance(data['keywords'],list) else [k.strip() for k in data['keywords'].split(',')]
-                update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, keywords=kws)
+                document_updates['keywords'] = kws
                 updated_fields['keywords'] = kws
             if 'authors' in data:
                 auths = data['authors'] if isinstance(data['authors'],list) else [data['authors']]
-                update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, authors=auths)
+                document_updates['authors'] = auths
                 updated_fields['authors'] = auths
             if 'publication_date' in data:
-                update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, publication_date=data['publication_date'])
+                document_updates['publication_date'] = data['publication_date']
                 updated_fields['publication_date'] = data['publication_date']
             if 'document_classification' in data:
-                update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, document_classification=data['document_classification'])
+                document_updates['document_classification'] = data['document_classification']
                 updated_fields['document_classification'] = data['document_classification']
             if 'tags' in data:
                 from functions_documents import validate_tags, get_or_create_tag_definition
@@ -690,8 +691,18 @@ def register_route_backend_public_documents(bp):
                     return jsonify({'error': error_msg}), 400
                 for tag in normalized_tags:
                     get_or_create_tag_definition(user_id, tag, workspace_type='public', public_workspace_id=active_ws)
-                update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, tags=normalized_tags)
+                document_updates['tags'] = normalized_tags
                 updated_fields['tags'] = normalized_tags
+
+            # Save every change in one update; search chunks are synced in the background
+            update_result = {}
+            if document_updates:
+                update_result = update_document(
+                    document_id=doc_id,
+                    public_workspace_id=active_ws,
+                    user_id=user_id,
+                    **document_updates,
+                ) or {}
 
             # Log the metadata update transaction if any fields were updated
             if updated_fields:
@@ -709,9 +720,17 @@ def register_route_backend_public_documents(bp):
                         public_workspace_id=active_ws
                     )
             
-            return jsonify({'message':'Metadata updated'}), 200
+            response_payload = {'message': 'Metadata updated'}
+            if isinstance(update_result, dict) and update_result.get('search_sync'):
+                response_payload['search_sync'] = update_result['search_sync']
+            return jsonify(response_payload), 200
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
+            log_event(
+                '[DOCUMENT_METADATA] Failed to update public document metadata',
+                {'document_id': doc_id, 'public_workspace_id': active_ws, 'error_type': type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Unable to update document metadata'}), 500
 
     @bp.route('/api/public_documents/<doc_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
@@ -1370,7 +1389,7 @@ def register_route_backend_public_documents(bp):
 
         from functions_documents import (
             validate_tags, update_document,
-            propagate_tags_to_chunks, get_or_create_tag_definition
+            get_or_create_tag_definition
         )
 
         is_valid, error_msg, normalized_tags = validate_tags(tags_input)
@@ -1420,17 +1439,13 @@ def register_route_backend_public_documents(bp):
                     elif action == 'set_tags':
                         new_tags = normalized_tags
 
+                    # Search chunks and blob tags sync in the background
                     update_document(
                         document_id=doc_id,
                         public_workspace_id=active_ws,
                         user_id=user_id,
                         tags=new_tags
                     )
-
-                    try:
-                        propagate_tags_to_chunks(doc_id, new_tags, user_id, public_workspace_id=active_ws)
-                    except Exception:
-                        pass
 
                     results['success'].append({
                         'document_id': doc_id,
@@ -1484,7 +1499,7 @@ def register_route_backend_public_documents(bp):
         new_name = data.get('new_name')
         new_color = data.get('color')
 
-        from functions_documents import normalize_tag, validate_tag_color, validate_tags, update_document, propagate_tags_to_chunks
+        from functions_documents import normalize_tag, validate_tag_color, validate_tags, update_document
 
         try:
             normalized_old_tag = normalize_tag(tag_name)
@@ -1516,17 +1531,13 @@ def register_route_backend_public_documents(bp):
                         current_tags = doc['tags']
                         new_tags = [normalized_new_tag if t == normalized_old_tag else t for t in current_tags]
 
+                        # Search chunks and blob tags sync in the background
                         update_document(
                             document_id=doc['id'],
                             public_workspace_id=active_ws,
                             user_id=user_id,
                             tags=new_tags
                         )
-
-                        try:
-                            propagate_tags_to_chunks(doc['id'], new_tags, user_id, public_workspace_id=active_ws)
-                        except Exception:
-                            pass
 
                         updated_count += 1
 
@@ -1596,7 +1607,7 @@ def register_route_backend_public_documents(bp):
                 return jsonify({'error': 'You do not have permission to manage tags'}), 403
             return error_response
 
-        from functions_documents import normalize_tag, update_document, propagate_tags_to_chunks
+        from functions_documents import normalize_tag, update_document
 
         try:
             normalized_tag = normalize_tag(tag_name)
@@ -1620,17 +1631,13 @@ def register_route_backend_public_documents(bp):
                 if normalized_tag in doc.get('tags', []):
                     new_tags = [t for t in doc['tags'] if t != normalized_tag]
 
+                    # Search chunks and blob tags sync in the background
                     update_document(
                         document_id=doc['id'],
                         public_workspace_id=active_ws,
                         user_id=user_id,
                         tags=new_tags
                     )
-
-                    try:
-                        propagate_tags_to_chunks(doc['id'], new_tags, user_id, public_workspace_id=active_ws)
-                    except Exception:
-                        pass
 
                     updated_count += 1
 

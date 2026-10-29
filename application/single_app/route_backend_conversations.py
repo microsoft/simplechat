@@ -55,6 +55,9 @@ from functions_message_artifacts import (
     filter_assistant_artifact_items,
     hydrate_agent_citations_from_artifacts,
 )
+from functions_m365_context import M365PolicyError
+from functions_m365_pending_delivery import cancel_m365_conversation_deliveries
+import functions_msgraph_pending_actions
 from functions_simplechat_operations import (
     ConversationForkConflictError,
     create_personal_conversation_for_current_user,
@@ -70,7 +73,7 @@ from utils_cache import invalidate_personal_search_cache
 def normalize_chat_type(conversation_item):
     chat_type = conversation_item.get('chat_type')
     if chat_type:
-        if chat_type == 'personal':
+        if chat_type in ('personal', 'new'):
             conversation_item['chat_type'] = 'personal_single_user'
             return conversation_item['chat_type'], True
         return chat_type, False
@@ -234,6 +237,41 @@ def _build_replayed_document_context(original_metadata):
         'active_public_workspace_ids': workspace_search.get('active_public_workspace_ids') or [],
     }
 
+def _build_replayed_model_context(original_metadata, request_data=None):
+    """Rebuild model endpoint routing from stored metadata for retry and edit."""
+    metadata = original_metadata if isinstance(original_metadata, dict) else {}
+    model_selection = metadata.get('model_selection')
+    model_selection = model_selection if isinstance(model_selection, dict) else {}
+    request_data = request_data if isinstance(request_data, dict) else {}
+
+    stored_request_model = str(
+        model_selection.get('frontend_requested_model')
+        or model_selection.get('selected_model')
+        or ''
+    ).strip()
+    stored_selected_model = str(model_selection.get('selected_model') or '').strip()
+    requested_model = str(request_data.get('model') or '').strip()
+    replayed_model = requested_model or stored_request_model
+    reuses_stored_selection = not requested_model or requested_model in {
+        stored_request_model,
+        stored_selected_model,
+    }
+
+    def requested_or_stored(request_key, metadata_key):
+        requested_value = request_data.get(request_key)
+        if requested_value not in (None, ''):
+            return requested_value
+        if reuses_stored_selection:
+            return model_selection.get(metadata_key)
+        return None
+
+    return {
+        'model_deployment': replayed_model or None,
+        'model_id': requested_or_stored('model_id', 'model_id'),
+        'model_endpoint_id': requested_or_stored('model_endpoint_id', 'model_endpoint_id'),
+        'model_provider': requested_or_stored('model_provider', 'model_provider'),
+        'model_icon': requested_or_stored('model_icon', 'model_icon'),
+    }
 
 def _get_requested_workspace_document_delete_ids_for_conversation(payload, conversation_id):
     if not isinstance(payload, dict):
@@ -823,6 +861,13 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
     return conversation_item
 
 
+def hydrate_m365_pending_action_cards(messages, viewer_user_id, conversation_id):
+    """Project current cards only after the caller authorizes message history."""
+    return functions_msgraph_pending_actions.hydrate_m365_pending_action_cards(
+        messages, viewer_user_id, conversation_id,
+    )
+
+
 def _rebuild_authorized_personal_conversation_used_documents(
     user_id,
     conversation_id,
@@ -1061,6 +1106,20 @@ def register_route_backend_conversations(bp):
                 all_items,
                 image_url_builder=lambda image_id: f"/api/image/{image_id}",
             )
+
+            try:
+                messages = hydrate_m365_pending_action_cards(messages, user_id, conversation_id)
+            except Exception as error:
+                log_event(
+                    "[CONVERSATION_METADATA] Microsoft 365 action cards could not be loaded.",
+                    extra={"conversation_id": conversation_id, "exception_type": type(error).__name__},
+                    level=logging.ERROR,
+                )
+                status_code = 403 if isinstance(error, (M365PolicyError, PermissionError)) else 503
+                return jsonify({
+                    "error": "m365_pending_actions_unavailable",
+                    "message": "Microsoft 365 action cards could not be loaded. Reload the conversation to try again.",
+                }), status_code
 
             return jsonify({'messages': messages})
         except PermissionError:
@@ -1429,6 +1488,18 @@ def register_route_backend_conversations(bp):
                 "error": str(e)
             }), 500
 
+        try:
+            cancel_m365_conversation_deliveries(conversation_id)
+        except Exception as error:
+            log_event(
+                "[CONVERSATION_DELETE] Unable to stop outgoing Microsoft 365 actions.",
+                extra={"conversation_id": conversation_id, "exception_type": type(error).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({
+                "error": "Pending Microsoft 365 actions could not be stopped. The conversation was not deleted.",
+            }), 503
+
         if archiving_enabled:
             archived_item = dict(conversation_item)
             archived_item["archived_at"] = datetime.utcnow().isoformat()
@@ -1476,7 +1547,7 @@ def register_route_backend_conversations(bp):
                 }), 500
 
         if not archiving_enabled:
-            delete_blob_backed_chat_message_files(results)
+            delete_blob_backed_chat_message_files(results, conversation=conversation_item)
 
         for doc in results:
             if archiving_enabled:
@@ -1553,6 +1624,8 @@ def register_route_backend_conversations(bp):
                 except (LookupError, PermissionError):
                     failed_ids.append(conversation_id)
                     continue
+
+                cancel_m365_conversation_deliveries(conversation_id)
                 
                 # Archive if enabled
                 if archiving_enabled:
@@ -1578,7 +1651,7 @@ def register_route_backend_conversations(bp):
                 ))
 
                 if not archiving_enabled:
-                    delete_blob_backed_chat_message_files(messages)
+                    delete_blob_backed_chat_message_files(messages, conversation=conversation_item)
                 
                 for message in messages:
                     if archiving_enabled:
@@ -1614,8 +1687,12 @@ def register_route_backend_conversations(bp):
                 
                 success_count += 1
                 
-            except Exception as e:
-                print(f"Error deleting conversation {conversation_id}: {str(e)}")
+            except Exception as error:
+                log_event(
+                    "[CONVERSATION_DELETE] Conversation deletion failed.",
+                    extra={"conversation_id": conversation_id, "exception_type": type(error).__name__},
+                    level=logging.ERROR,
+                )
                 failed_ids.append(conversation_id)
 
         if success_count:
@@ -2716,7 +2793,6 @@ def register_route_backend_conversations(bp):
         
         try:
             data = request.get_json() or {}
-            selected_model = data.get('model')
             reasoning_effort = data.get('reasoning_effort')
             agent_info = data.get('agent_info')  # Get agent info if provided
             
@@ -2873,10 +2949,11 @@ def register_route_backend_conversations(bp):
             )
             # Build chat request parameters from original message metadata
             replayed_document_context = _build_replayed_document_context(original_metadata)
+            replayed_model_context = _build_replayed_model_context(original_metadata, data)
             chat_request = {
                 'message': user_content,
                 'conversation_id': conversation_id,
-                'model_deployment': selected_model or original_metadata.get('model_selection', {}).get('selected_model'),
+                **replayed_model_context,
                 'reasoning_effort': reasoning_effort or original_metadata.get('reasoning_effort'),
                 **replayed_document_context,
                 'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
@@ -3097,10 +3174,11 @@ def register_route_backend_conversations(bp):
             # Build chat request parameters from original message metadata
             # Keep all original settings (model, reasoning, doc search, etc.)
             replayed_document_context = _build_replayed_document_context(original_metadata)
+            replayed_model_context = _build_replayed_model_context(original_metadata)
             chat_request = {
                 'message': edited_content,  # Use edited content
                 'conversation_id': conversation_id,
-                'model_deployment': original_metadata.get('model_selection', {}).get('selected_model'),
+                **replayed_model_context,
                 'reasoning_effort': original_metadata.get('reasoning_effort'),
                 **replayed_document_context,
                 'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),

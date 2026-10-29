@@ -2,6 +2,243 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.054)**
+
+#### Bug Fixes
+
+*   **Default System Prompt Remains Active When Files or Images Are Uploaded in Chat**
+    *   Uploading an image, XML file, or other file directly in the chat UI no longer suppresses the configured `default_system_prompt` in standard or streaming chat turns.
+    *   Previously, chat-uploaded image and file context messages (`role: 'image'` and `role: 'file'` converted into `role: 'system'` entries in `conversation_history_for_api`) were mistaken for an existing general system prompt, causing `default_system_prompt` to be skipped.
+    *   `has_general_system_prompt` now checks whether `default_system_prompt` itself is already present in `conversation_history_for_api`.
+    *   (Ref: `route_backend_chats.py`, [Default System Prompt Preservation With Chat Uploads Fix](fixes/DEFAULT_SYSTEM_PROMPT_CHAT_UPLOADS_FIX.md), #1855)
+
+### **(v0.261.053)**
+
+#### Bug Fixes
+
+*   **Search Results Refresh After a Background Metadata Sync**
+    *   When the background search sync finishes merging a tag or metadata change, it now clears cached search results for the document's workspace and for every user or group with an approved share.
+    *   Previously, a chat or search that ran while the sync was still in progress could cache the old values and keep returning them for up to the search cache lifetime (5 minutes by default) after the sync completed.
+    *   (Ref: `run_document_search_metadata_sync()`, `utils_cache.py`, [Document Search Metadata Sync Fix](fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657)
+
+### **(v0.261.052)**
+
+#### Bug Fixes
+
+*   **Metadata and Tag Saves on Large Documents Finish Immediately**
+    *   Saving tags, titles, authors, or classification on a document no longer waits for every search chunk to update. The save returns immediately, and a background sync merges the change into the search index. Group and public workspace saves no longer time out with "invalid JSON" errors, and the personal workspace dialog sends a single request again.
+    *   Bulk tagging, tag rename, and tag delete no longer update every chunk twice inside one request, so they finish quickly in large workspaces.
+    *   The search index update sends only the changed fields instead of re-downloading and re-uploading every chunk with its embedding. A 10,000-chunk document now takes about 40 Azure AI Search calls instead of about 20,000, with far fewer Cosmos write-fence operations, which sharply reduces Search and Cosmos load.
+    *   Failed or interrupted updates retry automatically with backoff until every chunk matches the document, so chat tag filters and citation titles and classifications converge instead of staying partially stale. A brief notice tells users when the search index is still updating.
+    *   (Ref: `functions_documents.py`, `background_tasks.py`, document metadata routes, [Document Search Metadata Sync Fix](fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657)
+
+*   **Group Document Sharing Changes Reach Search**
+    *   Approving, removing, or revoking a group share now updates the search index before the change is saved. Previously these changes never reached the search chunks, so approved shares might not be searchable, and a revoked group could keep search access to chunks rebuilt after an earlier approval.
+    *   Personal share approvals now also update the search index before they are saved, so a failed update can simply be retried instead of reporting "Already approved".
+    *   When the search index cannot apply a sharing change, the change is not saved and users get a clear, retryable error.
+    *   Group shares approved before this update become searchable the next time that document's sharing changes.
+    *   (Ref: `update_document()`, `project_document_acl_to_chunks()`, group and personal sharing routes, #1657)
+
+### **(v0.261.051)**
+
+#### Bug Fixes
+
+*   **Large Document Metadata Saves Continue Across Batches**
+    *   Saving tags or other metadata for large uploaded documents now synchronizes search chunk metadata in bounded batches instead of holding one long request until every chunk is updated.
+    *   The workspace metadata dialog continues the save through short JSON PATCH requests until the chunk sync is complete, avoiding timeout HTML responses that previously appeared in the browser as invalid JSON errors.
+    *   Tag saves no longer run duplicate full-document search chunk propagation, while blob metadata tag updates are still preserved.
+    *   (Ref: document metadata updates, tag propagation, `functions_documents.py`, `route_backend_documents.py`, `workspace-documents.js`, [Document Metadata Chunk Sync Batching Fix](fixes/DOCUMENT_METADATA_CHUNK_SYNC_BATCHING_FIX.md))
+
+### **(v0.261.050)**
+
+#### Bug Fixes
+
+*   **Maps From Agents Load Their Tiles Again**
+    *   Tool results are redacted before they are stored with a reply, and the redaction treated the Azure Maps tile proxy token as a secret. Every stored map lost its token, so maps drew their markers and paths on blank tiles.
+    *   The token in SimpleChat's own tile template is now kept. It is encrypted with the app's secret key, expires, and only works on SimpleChat's signed-in tile proxy. Every other `token=` value and every other secret in a tool result is still redacted.
+    *   Maps stored before this fix keep the redacted token and still show no tiles. Run the request again to get a map with tiles.
+    *   (Ref: `plugin_invocation_logger.py`, [Azure Maps Tile Token Redaction Fix](fixes/AZURE_MAPS_TILE_TOKEN_REDACTION_FIX.md))
+
+### **(v0.261.049)**
+
+#### Bug Fixes
+
+*   **Inline Map Attribution Shown as Text and Tiles Kept on the Tile Proxy**
+    *   Inline maps in the chat now show a tool result's tile attribution as plain text. OpenLayers renders attribution strings as HTML, so the text is escaped first.
+    *   A tool result is drawn as a map only when its tile template points at SimpleChat's Azure Maps tile proxy (`/api/azure-maps/tile`). Maps from the Azure Maps action are unchanged.
+    *   (Ref: `chat-inline-maps.js`, [Inline Map Attribution Text Fix](fixes/INLINE_MAP_ATTRIBUTION_TEXT_FIX.md))
+
+### **(v0.261.048)**
+
+#### Bug Fixes
+
+*   **Agent Model Picker Respects Governance Policies**
+    *   Fixed the persona workspace agent setup modal so its model dropdown now follows the same endpoint governance policies as the chat window model selector.
+    *   Users no longer see restricted global, personal, or group model endpoints when creating or editing agents, and governed multi-endpoint responses no longer fall back to legacy global model lists.
+    *   (Ref: agent model picker, endpoint governance, `route_backend_agents.py`, `agents_common.js`, [Agent Model Governance Filtering Fix](fixes/AGENT_MODEL_GOVERNANCE_FILTERING_FIX.md))
+
+### **(v0.261.047)**
+
+#### Bug Fixes
+
+*   **Images Without OCR Text Are Now Indexed From Their Vision Description**
+    *   Fixed text-free images, such as a photo of an empty room, ending with no search chunk, no title, and nothing chat could use, even though the AI vision model had described them. When OCR finds no text, the vision description is now indexed as the image's chunk, so the image is searchable and final metadata extraction runs as usual.
+    *   Document Intelligence Layout output that is only page-number or page-break annotations, such as a stray `<!-- PageNumber="J" -->` read from floor tape, no longer counts as image text. Header and footer text still does. Failed or empty vision analyses are never indexed.
+    *   Image chunks are now embedded from the same text that is stored, including the vision description, instead of from the OCR text alone. Images with real OCR text keep their existing chunk.
+    *   With Enhanced extraction, a standalone image that the Content Understanding document analyzer returns nothing for is now described by the Content Understanding image analyzer before falling back to Document Intelligence Layout. This applies to workspace uploads and to images uploaded straight into a chat. The image analyzer's `Summary` field is now read, which also replaces the `![image](pages/1)` placeholder that images embedded in DOCX and PPTX files were indexed with.
+    *   The multi-modal vision model is now called through the AI connection that hosts it when multi-endpoint models are enabled, instead of always using the legacy GPT connection, which returned 404 for models deployed on another connection. The Test Vision Analysis button now uses the same connection as ingestion.
+    *   (Ref: #1583, `functions_documents.py`, `functions_content.py`, `functions_content_understanding.py`, `functions_model_endpoint_types.py`, `route_backend_settings.py`, `route_frontend_chats.py`, [Image Description Indexing Without OCR Text Fix](fixes/IMAGE_DESCRIPTION_INDEXING_WITHOUT_OCR_TEXT_FIX.md))
+
+*   **Image Generation Uses The gpt-image API Version By Default**
+    *   The default Azure OpenAI image generation API version is now `2025-04-01-preview`, the newest dated Azure OpenAI API version and the one documented for gpt-image-1, gpt-image-1.5, and gpt-image-2. The previous `2024-12-01-preview` default predates gpt-image support.
+    *   Existing deployments still storing the previous default, or a blank value, are upgraded automatically when settings load. Any other saved version is kept, and the APIM image generation API version is never changed because the gateway defines it.
+    *   (Ref: `functions_settings.py`, `azure_openai_image_gen_api_version`, [Image Generation API Version Default Fix](fixes/IMAGE_GENERATION_API_VERSION_DEFAULT_FIX.md))
+
+*   **Deployers Grant The App Identity Key Vault Secrets Officer**
+    *   Fixed credential saves failing with `ForbiddenByRbac` when Key Vault secret storage is enabled on deployments created by the Bicep, Terraform, or Azure CLI deployers. The deployers gave the application identities **Key Vault Secrets User**, which can read secrets but cannot create, update, or delete the ones SimpleChat writes. **Test Key Vault connection** only lists secrets, so it passed and hid the problem.
+    *   The Bicep (container and native Python), Terraform, and Azure CLI deployers now grant **Key Vault Secrets Officer** at vault scope. On vaults that use access policies, the Azure CLI deployer adds get, list, set, and delete secret permissions instead. Existing Secrets User assignments are left in place, and Terraform stops tracking its old assignment without deleting it.
+    *   Existing environments pick up the new role on their next `azd provision`, Terraform apply, or Azure CLI deployer run; `azd deploy` does not change role assignments. Included in deployer version **1.0.32** as a backport of the deployer portion of [PR #1511](https://github.com/microsoft/simplechat/pull/1511).
+    *   (Ref: [PR #1587](https://github.com/microsoft/simplechat/pull/1587), `setPermissions.bicep`, `setNativeWebAppPermissions.bicep`, `deployers/terraform/main.tf`, `deploy-simplechat.ps1`, `test_deployer_key_vault_secret_permissions.py`)
+
+### **(v0.261.046)**
+
+#### Bug Fixes
+
+*   **Chat Upload File Access Errors Avoid Browser-Realm Checks**
+    *   Hardened chat upload recovery messaging so rejected browser upload requests no longer depend on a realm-specific `TypeError` check.
+    *   Fetch preparation and transport failures now consistently identify the selected file and show the same recovery guidance for locked files, cloud-placeholder files, and interrupted local upload requests.
+    *   Also removed unsafe HTML-string construction from the retry modal's model-option cloning and reasoning-level controls.
+    *   (Ref: chat upload file access handling, retry modal rendering, `chat-input-actions.js`, `chat-retry.js`, `test_chat_clipboard_paste_upload_support.py`)
+
+### **(v0.261.045)**
+
+#### Bug Fixes
+
+*   **Public Workspace Selector Dark Theme Styling**
+    *   Fixed the public workspace selector dropdown so its dark-theme background, border, search area, hover state, and active item styling match the group workspace selector.
+    *   Added the shared workspace selector row class to the public selector row and extended the existing group dropdown dark-theme rules to the public dropdown.
+    *   (Ref: public workspace selector, dark theme dropdown styling, `public_workspaces.html`, `styles.css`)
+
+*   **Revert Premature OneNote Rollout From Development**
+    *   Removed native `.one` and `.onepkg` workspace uploads from Development pending Reactv2 testing, correcting the accidental merge of PR #1525.
+    *   Restored the previous upload formats and container packaging. Existing document formats and the separately adapted Reactv2 OneNote implementation remain unchanged.
+    *   (Ref: `config.py`, `functions_documents.py`, `Dockerfile`, [OneNote Development Rollout Revert](fixes/ONENOTE_DEVELOPMENT_ROLLOUT_REVERT_FIX.md))
+
+### **(v0.261.044)**
+
+#### New Features
+
+*   **Admin Defaults For New Chat Model And Reasoning Effort**
+    *   Added Admin Settings controls that let administrators opt in to a default model and default reasoning effort for new non-agent chats.
+    *   The setting is off by default, preserving each user's existing last-selected model and per-model reasoning preferences until an admin enables the override.
+    *   New-chat defaults use the existing multi-endpoint model selector and continue to leave agent model bindings and existing conversation model history intact.
+    *   (Ref: `enable_default_model_for_new_conversations`, `default_reasoning_effort`, Model Endpoints admin settings, chat model selector)
+
+#### Bug Fixes
+
+*   **New Chat Defaults No Longer Leak Across Conversations**
+    *   Fixed new-chat admin model defaults being overwritten by a user's saved model when a freshly created blank conversation was opened through `/chats?conversationId=...`, including the left-navigation **New Chat** flow.
+    *   Existing conversations now restore their own last-used model from saved message metadata, while blank conversations with no model history apply the admin default model and reasoning effort.
+    *   Programmatic model selector refreshes no longer save the admin default as the user's preferred model or prematurely disable the admin default reasoning state.
+    *   (Ref: `chat-conversations.js`, `chat-model-selector.js`, `chat-messages.js`, `chat-reasoning.js`)
+
+*   **Shared Conversation Prompts Persist After Invite Approval**
+    *   Accepting an invitation now loads the conversation with the authoritative collaborative metadata returned by the approval request, preventing the initial creator prompt from disappearing while the response remains visible.
+    *   (Ref: `chat-collaboration.js`, `chat-conversations.js`)
+
+*   **Shared Conversation Delivery Remains Reliable Across Workers**
+    *   Shared event sessions now use a cross-worker Cosmos fallback when Redis is unavailable, preserve Redis event logs during worker attachment, and retry concurrent Cosmos event writes.
+    *   History supplies an EventSource cursor, so retained events do not replay after history loads and invitees retain the owner's existing prompts.
+    *   Accepting an invite while already viewing the conversation now updates membership and composer state in place instead of clearing the rendered history.
+    *   (Ref: `app_settings_cache.py`, `route_backend_collaboration.py`, `chat-collaboration.js`)
+
+*   **Microsoft 365 Enhancements Do Not Interrupt Shared Chat**
+    *   Optional Microsoft 365 action-card projection failures no longer terminate collaboration events.
+    *   Background action recovery remains silent for ordinary shared conversations, while saved actions retain explicit recovery controls.
+    *   (Ref: `route_backend_collaboration.py`, `chat-streaming.js`, `m365-pending-actions.js`)
+
+### **(v0.261.043)**
+
+#### Bug Fixes
+
+*   **Add Participants Remains Available Before Sharing**
+    *   Ordinary personal conversations no longer lose the Add participants action when a metadata response omits collaboration-only permission fields.
+    *   (Ref: `chat-conversations.js`, `chat-sidebar-conversations.js`)
+
+### **(v0.261.042)**
+
+#### Bug Fixes
+
+*   **Add Participants Appears After the First Shared Exchange**
+    *   Collaboration metadata updates now refresh the conversation menus after prompt/response completion, so the Add participants action appears without a page refresh.
+    *   (Ref: `chat-collaboration.js`, `chat-conversations.js`, `chat-sidebar-conversations.js`)
+
+### **(v0.261.041)**
+
+#### Bug Fixes
+
+*   **Shared Conversation State No Longer Leaks Into New Conversations**
+    *   Starting a new conversation now disconnects the previous shared conversation's event stream and clears its typing state, preventing participant activity and messages from appearing in the new conversation.
+    *   Conversation metadata updates now refresh the Add participants action immediately, without requiring a page refresh after sharing a conversation.
+    *   (Ref: `chat-conversations.js`, `chat-collaboration.js`, `chat-sidebar-conversations.js`, [Collaboration Shared AI Workflow Fix](fixes/COLLABORATION_SHARED_AI_WORKFLOW_FIX.md))
+
+### **(v0.261.040)**
+
+#### Bug Fixes
+
+*   **Collaborative Prompts Now Receive Model Responses**
+    *   Fixed ordinary prompts in conversations shared through **Invite Participants** being saved as human-only messages without invoking the model.
+    *   All non-empty collaborative prompts now use the shared AI streaming workflow, while preserving explicit agent, model, workspace, and tool targeting.
+    *   (Ref: `chat-messages.js`, `chat-collaboration.js`, [Collaboration Shared AI Workflow Fix](fixes/COLLABORATION_SHARED_AI_WORKFLOW_FIX.md))
+
+### **(v0.261.030)**
+
+#### Bug Fixes
+
+*   **Cross-Cloud Account Selection for Access-Denied Users**
+    *   Added a **Sign in with another account** action for authenticated users whose selected Microsoft Entra identity does not have the required SimpleChat app role.
+    *   The alternate flow requests the Entra account picker only through the controlled `/login?select_account=1` path; ordinary sign-in remains prompt-free, and arbitrary OAuth prompt values are ignored.
+    *   The access-denied state now identifies the current account using safe session claims while suppressing resource-tenant `#EXT#` UPNs, helping users distinguish native Azure Government and synchronized commercial identities.
+    *   Improved the action's light- and dark-theme contrast without changing tenant authority, app-role authorization, Easy Auth configuration, or login-hint behavior.
+    *   (Ref: `route_frontend_authentication.py`, `functions_authentication.py`, access-denied landing page, cross-cloud Microsoft Entra B2B sign-in)
+
+*   **ANSI-Encoded CSV Files Are Now Read Correctly**
+    *   CSV metadata extraction, indexing, citations, row searches, and durable tabular replay now support UTF-8, UTF-8 with BOM, Windows-1252, and Latin-1 files, preserving characters that previously made uploaded content appear unreadable.
+    *   Tabular analysis retains the broader automatic-invocation budget for complex questions while detecting repeated equivalent failures and routing the next model pass to a different call shape instead of repeating the same error.
+    *   Repeated tabular tool failures now emit an explicit retry lifecycle thought and server-side diagnostic event, making the failure visible while recovery continues.
+    *   (Ref: `functions_tabular_csv_query.py`, `functions_documents.py`, `tabular_processing_plugin.py`, `route_backend_chats.py`, [Tabular CSV ANSI Encoding and Retry Fix](fixes/TABULAR_CSV_ANSI_ENCODING_AND_RETRY_FIX.md))
+
+*   **Group Chat Uploads Now Recognize Workspace Owners**
+    *   Fixed group-scoped chat uploads incorrectly reporting that no group workspace was available when the signed-in user was the group owner.
+    *   Chat bootstrap data now includes each group's resolved user role, allowing owners, admins, and document managers to use the existing group upload permissions while preserving server-side authorization checks.
+    *   (Ref: `route_frontend_chats.py`, `chat-input-actions.js`, [Chat Group Upload Owner Role Fix](fixes/CHAT_GROUP_UPLOAD_OWNER_ROLE_FIX.md))
+
+### **(v0.261.028)**
+
+Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implementation: [PR #1488](https://github.com/microsoft/simplechat/pull/1488).
+
+#### Bug Fixes
+
+*   **Credential-Aware Cosmos Deployment Checks**
+    *   Managed-identity deployments now use the deployment runner's tenant-scoped Entra credential instead of requiring Cosmos keys. Key-mode deployments report when local authentication is disabled.
+    *   Authentication and network failures no longer trigger automatic firewall changes or misleading propagation waits. Windows environment lookups and POSIX role operations target the selected deployment explicitly.
+    *   **Deployment requirement:** The runner must already have the required data-plane permissions and network access. Post-configuration does not open firewalls, enable key authentication, or create policy exemptions.
+    *   (Ref: [PR #1488](https://github.com/microsoft/simplechat/pull/1488), `deployers/azure.yaml`, `deployment_cosmos.py`, `cosmosDb-postDeployPerms.sh`)
+
+*   **Safe Post-Deployment Settings Publication**
+    *   Post-configuration uses conflict-checked Cosmos writes and the application's shared Redis publication protocol, preserving concurrent unrelated settings changes and reporting publication failures instead of claiming success.
+    *   Consolidated duplicate Redis configuration blocks and preserved external Redis settings when no cache is provisioned. Equivalent connection settings can be normalized; changing an active cache endpoint or authentication mode requires a planned migration.
+    *   **Deployment requirement:** When Redis is enabled, the runner needs Redis data-plane access as well as network connectivity. The service restarts only after post-configuration succeeds.
+    *   (Ref: [PR #1488](https://github.com/microsoft/simplechat/pull/1488), `postconfig.py`, `deployment_configuration.py`, `app_settings_store.py`)
+
+#### New Features
+
+*   **Automatic Missing Search Index Creation**
+    *   Post-configuration creates missing personal, group, and public Search indexes from the same JSON schemas used by the admin setup controls.
+    *   Existing indexes and documents are left unchanged. Authorization and service failures stop initialization rather than being treated as missing indexes; concurrent creation is verified before continuing.
+    *   Included in deployer version **1.0.31**. Existing-index schema upgrades remain administrator-managed operations.
+    *   (Ref: [PR #1488](https://github.com/microsoft/simplechat/pull/1488), `deployment_configuration.py`, `application/single_app/static/json/ai_search-index-*.json`, [deployment prerequisites](../reference/deploy/azd-cli_deploy.md#post-provision-access))
+
 ### **(v0.261.027)**
 
 #### Bug Fixes
@@ -28,6 +265,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Delegated Action-Type Policies Now Override Broad Action Access**
+    *   Fixed a governance gap where an explicit delegated item policy for a personal, group, or global action type could still be bypassed by a broader feature-level allow.
+    *   Action-type governance now treats explicit item policies as authoritative once they exist, so a targeted policy such as `personal_action_type = azure_maps` can block that action type even when the broader action feature remains enabled.
+    *   This resolves cases where action types such as Azure Maps continued to appear in action creation flows after admins saved a delegated item policy intended to block them.
+    *   (Ref: delegated item governance, action-type enforcement, `functions_governance.py`)
 *   **Admin Settings Consistency Across Workers**
     *   Removed worker-local admin settings snapshots so reloads read shared Redis settings, or Cosmos directly when Redis is disabled.
     *   Added conflict-checked writes and coordinated cache publication to prevent stale metadata updates, worker startup, and interrupted saves from restoring older settings.

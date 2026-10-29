@@ -1,11 +1,12 @@
 # test_workspace_msgraph_action_modal.py
 """
-UI test for the workspace Microsoft Graph action modal.
-Version: 0.241.178
+UI test for the workspace Microsoft 365 Email action modal.
+Version: 0.261.029
 Implemented in: 0.241.178
+Updated in: 0.261.029
 
-This test ensures users can select the Microsoft Graph action type,
-configure its default capabilities and mail/calendar delivery modes without
+This test ensures new actions use the source-specific Email type rather than
+the retired combined Graph type, and configure capabilities and mail delivery without
 exposing a user-editable URL, review nested delivery-mode slider settings, and
 complete validation plus save without calling the admin-only validation endpoint.
 """
@@ -36,7 +37,7 @@ def _require_ui_env():
 
 @pytest.mark.ui
 def test_workspace_msgraph_action_modal(playwright):
-    """Validate that the workspace action modal exposes the dedicated Microsoft Graph flow."""
+    """Validate source-specific creation and the existing mail delivery controls."""
     _require_ui_env()
 
     validation_requests = []
@@ -105,37 +106,31 @@ def test_workspace_msgraph_action_modal(playwright):
         modal = page.locator("#plugin-modal")
         expect(modal).to_be_visible()
 
-        msgraph_card = page.locator('.action-type-card[data-type="msgraph"]')
-        expect(msgraph_card).to_have_count(1)
-        msgraph_card.click()
+        expect(page.locator('.action-type-card[data-type="msgraph"]')).to_have_count(0)
+        email_card = page.locator('.action-type-card[data-type="m365_email"]')
+        expect(email_card).to_have_count(1)
+        email_card.click()
 
         modal.get_by_role("button", name="Next").click()
-        page.locator("#plugin-display-name").fill("Microsoft Graph Workspace Tools")
+        page.locator("#plugin-display-name").fill("Microsoft 365 Email Tools")
         modal.get_by_role("button", name="Next").click()
 
         expect(page.locator("#msgraph-config-section")).to_be_visible()
+        expect(page.locator("#m365_email-config-section")).to_be_visible()
         expect(page.locator("#generic-config-section")).to_be_hidden()
         expect(page.locator("#simplechat-config-section")).to_be_hidden()
-        expect(page.locator("#msgraph-config-section")).to_contain_text("delegated permissions")
-        expect(page.locator("#msgraph-mail-send-mode")).to_be_visible()
-        expect(page.locator("#msgraph-calendar-send-mode")).to_be_visible()
+        expect(page.locator("#msgraph-config-section")).to_contain_text("configured cloud endpoint")
+        expect(page.locator("#msgraph-mail-send-mode")).to_be_hidden()
+        expect(page.locator("#msgraph-calendar-send-mode")).to_have_count(0)
 
-        get_profile_toggle = page.locator("#msgraph-capability-get_my_profile")
-        security_alerts_toggle = page.locator("#msgraph-capability-get_my_security_alerts")
-        create_invite_toggle = page.locator("#msgraph-capability-create_calendar_invite")
         send_mail_toggle = page.locator("#msgraph-capability-send_mail")
         read_mail_toggle = page.locator("#msgraph-capability-get_my_messages")
         mail_delivery_options = page.locator("#msgraph-delivery-send_mail-options")
-        calendar_delivery_options = page.locator("#msgraph-delivery-create_calendar_invite-options")
-        get_profile_toggle.uncheck()
-        security_alerts_toggle.uncheck()
-        expect(create_invite_toggle).to_be_checked()
-        expect(send_mail_toggle).to_be_checked()
+        expect(page.locator("#msgraph-capability-get_my_profile")).to_have_count(0)
+        expect(page.locator("#msgraph-capability-get_my_security_alerts")).to_have_count(0)
+        expect(page.locator("#msgraph-capability-create_calendar_invite")).to_have_count(0)
+        expect(send_mail_toggle).not_to_be_checked()
         expect(read_mail_toggle).to_be_checked()
-        expect(mail_delivery_options).to_be_visible()
-        expect(calendar_delivery_options).to_be_visible()
-
-        send_mail_toggle.uncheck()
         expect(mail_delivery_options).to_be_hidden()
         send_mail_toggle.check()
         expect(mail_delivery_options).to_be_visible()
@@ -154,33 +149,17 @@ def test_workspace_msgraph_action_modal(playwright):
         )
         expect(page.locator("#msgraph-mail-delay-seconds-value")).to_have_text("300 seconds")
 
-        page.locator("#msgraph-calendar-send-mode").select_option("draft_delayed")
-        expect(page.locator("#msgraph-calendar-delay-group")).to_be_visible()
-        assert page.locator("#msgraph-calendar-delay-seconds").get_attribute("type") == "range"
-        page.locator("#msgraph-calendar-delay-seconds").evaluate(
-            """
-            element => {
-                element.value = '120';
-                element.dispatchEvent(new Event('input', { bubbles: true }));
-                element.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-            """
-        )
-        expect(page.locator("#msgraph-calendar-delay-seconds-value")).to_have_text("120 seconds")
-
         page.locator("#plugin-modal-skip").click()
 
         expect(page.locator("#summary-msgraph-section")).to_be_visible()
-        expect(page.locator("#summary-plugin-database-type")).to_have_text("Built-in Microsoft Graph action")
+        expect(page.locator("#summary-plugin-database-type")).to_have_text("Microsoft 365 Email")
         expect(page.locator("#summary-plugin-endpoint-row")).to_be_hidden()
-        expect(page.locator("#summary-msgraph-enabled-list")).to_contain_text("Create calendar invites")
+        expect(page.locator("#summary-msgraph-enabled-list")).to_contain_text("Send mail")
         expect(page.locator("#summary-msgraph-enabled-list")).to_contain_text("Read my mail")
-        expect(page.locator("#summary-msgraph-disabled-list")).to_contain_text("Read my profile")
-        expect(page.locator("#summary-msgraph-disabled-list")).to_contain_text("Read my security alerts")
+        expect(page.locator("#summary-msgraph-disabled-list")).to_contain_text("Update message read state")
         expect(page.locator("#summary-msgraph-mail-send-mode")).to_have_text("Draft with delayed send")
         expect(page.locator("#summary-msgraph-mail-delay-seconds")).to_have_text("300 seconds")
-        expect(page.locator("#summary-msgraph-calendar-send-mode")).to_have_text("Draft with delayed send")
-        expect(page.locator("#summary-msgraph-calendar-delay-seconds")).to_have_text("120 seconds")
+        expect(page.locator("#summary-msgraph-calendar-mode-row")).to_be_hidden()
 
         modal.get_by_role("button", name="Save Action").click()
 
@@ -190,20 +169,19 @@ def test_workspace_msgraph_action_modal(playwright):
         assert len(saved_payloads) == 1, "Expected the workspace action save request to be submitted once."
 
         saved_plugin = saved_payloads[0][0]
-        assert saved_plugin["type"] == "msgraph"
-        assert saved_plugin["name"] == "microsoft_graph_workspace_tools"
-        assert saved_plugin["endpoint"] == "https://graph.microsoft.com"
+        assert saved_plugin["type"] == "m365_email"
+        assert saved_plugin["name"] == "microsoft_365_email_tools"
+        assert saved_plugin["endpoint"] == ""
         assert saved_plugin["auth"]["type"] == "user"
-        capabilities = saved_plugin["additionalFields"]["msgraph_capabilities"]
-        assert capabilities["get_my_profile"] is False
-        assert capabilities["get_my_security_alerts"] is False
-        assert capabilities["create_calendar_invite"] is True
+        capabilities = saved_plugin["additionalFields"]["m365_capabilities"]
+        assert "get_my_profile" not in capabilities
+        assert "get_my_security_alerts" not in capabilities
+        assert "create_calendar_invite" not in capabilities
         assert capabilities["send_mail"] is True
         assert capabilities["get_my_messages"] is True
         assert saved_plugin["additionalFields"]["msgraph_mail_send_mode"] == "draft_delayed"
         assert saved_plugin["additionalFields"]["msgraph_mail_delay_seconds"] == 300
-        assert saved_plugin["additionalFields"]["msgraph_calendar_send_mode"] == "draft_delayed"
-        assert saved_plugin["additionalFields"]["msgraph_calendar_delay_seconds"] == 120
+        assert saved_plugin["additionalFields"]["maximum_sharing_acknowledgement"] == "always"
     finally:
         context.close()
         browser.close()

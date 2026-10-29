@@ -39,7 +39,7 @@
     },
     "transport": {
       "type": "string",
-      "enum": ["streamable_http", "sse", "websocket", "stdio"],
+      "enum": ["streamable_http", "sse", "websocket"],
       "default": "streamable_http",
       "description": "MCP transport used to connect to the server."
     },
@@ -115,22 +115,6 @@
       "enum": ["truncate", "error_on_limit"],
       "default": "truncate",
       "description": "How SimpleChat handles MCP tool results that exceed the configured result size limit."
-    },
-    "command": {
-      "type": "string",
-      "description": "Command used when transport is stdio."
-    },
-    "args": {
-      "type": "array",
-      "items": {"type": "string"},
-      "default": [],
-      "description": "Command arguments used when transport is stdio."
-    },
-    "env": {
-      "type": "object",
-      "default": {},
-      "additionalProperties": {"type": "string"},
-      "description": "Environment variables used when transport is stdio."
     },
     "allowed_tool_names": {
       "type": "array",

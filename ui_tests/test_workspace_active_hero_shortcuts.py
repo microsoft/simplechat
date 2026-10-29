@@ -1,7 +1,7 @@
 # test_workspace_active_hero_shortcuts.py
 """
 UI test for active workspace hero shortcuts.
-Version: 0.241.152
+Version: 0.261.003.01
 Implemented in: 0.241.125
 
 This test ensures the group and public workspace pages render the active hero
@@ -9,6 +9,8 @@ card branding at the top of the page and expose the manage shortcut for the
 selected workspace. Updated in 0.241.151 to validate public workspace dropdown
 search and implicit public User role display. Updated in 0.241.152 to validate
 public workspace search remains visible for smaller public workspace lists.
+Updated in 0.261.003.01 to validate the public workspace dropdown dark-theme
+colors match the group workspace selector.
 """
 
 import base64
@@ -431,6 +433,40 @@ def test_public_workspace_active_hero_and_manage_link(playwright):
         assert _selector_row_contains_public_controls(page), (
             "Expected the public selector, role summary, manage button, and My Workspaces button in one row."
         )
+        page.evaluate("document.documentElement.setAttribute('data-bs-theme', 'dark')")
+        selector_row_class = page.locator("#public-selector-row").get_attribute("class") or ""
+        assert "workspace-toolbar-row" in selector_row_class
+        page.locator("#public-dropdown-button").click()
+        first_dropdown_item = page.locator("#public-dropdown-items .dropdown-item").first()
+        first_dropdown_item.evaluate("el => el.classList.remove('active')")
+        first_dropdown_item.hover()
+        hover_background = first_dropdown_item.evaluate("el => getComputedStyle(el).backgroundColor")
+        page.mouse.move(0, 0)
+        dropdown_colors = page.locator("#public-dropdown-menu").evaluate(
+            """
+            menu => {
+                const searchContainer = menu.querySelector('.public-search-container');
+                const firstItem = menu.querySelector('.dropdown-item');
+                firstItem.classList.add('active');
+
+                return {
+                    menuBackground: getComputedStyle(menu).backgroundColor,
+                    menuBorderColor: getComputedStyle(menu).borderColor,
+                    searchBackground: getComputedStyle(searchContainer).backgroundColor,
+                    activeBackground: getComputedStyle(firstItem).backgroundColor,
+                    activeColor: getComputedStyle(firstItem).color,
+                };
+            }
+            """
+        )
+        assert dropdown_colors == {
+            "menuBackground": "rgb(52, 58, 64)",
+            "menuBorderColor": "rgb(73, 80, 87)",
+            "searchBackground": "rgb(52, 58, 64)",
+            "activeBackground": "rgb(13, 110, 253)",
+            "activeColor": "rgb(255, 255, 255)",
+        }
+        assert hover_background == "rgb(73, 80, 87)"
         expect(page.locator("#btn-change-public")).to_have_count(0)
         assert _is_before(page, "#active-public-hero", "#public-dropdown"), (
             "Expected the active public hero to render above the public workspace selector."

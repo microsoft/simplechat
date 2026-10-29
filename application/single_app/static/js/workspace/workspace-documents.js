@@ -802,6 +802,28 @@ function renderWorkspaceDocumentView() {
 
 window.renderWorkspaceDocumentView = renderWorkspaceDocumentView;
 
+const SEARCH_SYNC_PENDING_MESSAGE = "Metadata saved. Search and chat results will reflect the change once the search index finishes updating.";
+
+async function patchDocumentMetadata(documentId, payload) {
+    const response = await fetch(`/api/documents/${documentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+
+    const responseData = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw responseData.error ? responseData : { error: `Server responded with status ${response.status}` };
+    }
+    return responseData;
+}
+
+function notifySearchSyncPending(responseData) {
+    if (responseData?.search_sync?.status === "pending" && typeof window.showToast === "function") {
+        window.showToast(SEARCH_SYNC_PENDING_MESSAGE, "info");
+    }
+}
+
 function getDocumentDeleteModalContent(documentCount) {
     if (documentCount === 1) {
         return {
@@ -1428,14 +1450,10 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
              payload.document_classification = selectedClassification;
         }
 
-        fetch(`/api/documents/${docId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-        })
-            .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
-            .then(updatedDoc => {
+        patchDocumentMetadata(docId, payload)
+            .then((responseData) => {
                 if (docMetadataModalEl) docMetadataModalEl.hide();
+                notifySearchSyncPending(responseData);
                 fetchUserDocuments(); // Refresh the table
                 loadWorkspaceTags(); // Refresh tag counts and grid view
             })

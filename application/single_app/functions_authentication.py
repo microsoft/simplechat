@@ -1095,6 +1095,26 @@ def get_current_user_info():
     }
 
 
+def get_signed_in_account_display(user):
+    """Return safe identity labels for the access-denied account display."""
+    if not isinstance(user, dict):
+        return {"name": "", "account": ""}
+
+    name = user.get("name") if isinstance(user.get("name"), str) else ""
+    account = ""
+    for claim_name in ("email", "mail", "preferred_username"):
+        claim_value = user.get(claim_name)
+        if not isinstance(claim_value, str):
+            continue
+
+        candidate = claim_value.strip()
+        if candidate and "#ext#" not in candidate.lower():
+            account = candidate
+            break
+
+    return {"name": name.strip(), "account": account}
+
+
 def _normalize_authority(authority_base, tenant_id):
     """Normalize an authority URL and append tenant when appropriate."""
     base = (authority_base or "").strip().rstrip("/")

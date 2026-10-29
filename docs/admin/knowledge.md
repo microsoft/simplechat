@@ -147,7 +147,24 @@ The Metadata Extraction section belongs to the Document Extraction tab. Use it w
 
 ### Multi-Modal Vision Analysis {#multimodal-vision-section}
 
-The Multi-Modal Vision Analysis section belongs to the Document Extraction tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Multi-modal vision analysis asks a vision-capable model to describe an uploaded image, list its
+notable objects, and read any visible text. For workspace uploads, the description is added to the
+image's search chunk and embedded with it, so an image can be found by what it shows rather than
+only by the text OCR happens to read. When OCR finds no text at all, as with a photo of an empty
+room, the description becomes the image's only chunk, and metadata extraction, when enabled, runs
+on it. For images attached directly to a chat, the description is added to the file content the
+model receives.
+
+Workspace images are analyzed only when Enhanced Citations is enabled. Images attached directly to
+a chat are analyzed whenever this setting is on.
+
+The Vision Model setting stores a model name. When multi-endpoint models are enabled, SimpleChat
+sends the analysis through the enabled AI connection that hosts an enabled model with that
+deployment name, model name, or id, so a model deployed on a different connection than the primary
+GPT resource works. A deployment name match wins over a model name match, and the first matching
+connection in the list wins over later ones. When no connection matches, or multi-endpoint models
+are off, the GPT connection is used, directly or through APIM. **Test Vision Analysis** uses the
+same connection as ingestion.
 
 #### Settings
 
@@ -167,7 +184,7 @@ The Multi-Modal Vision Analysis section belongs to the Document Extraction tab. 
 | Content Understanding Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_content_understanding_key` |
 | API Version | Default: | Not specified in defaults | `azure_content_understanding_api_version` |
 | Document Analyzer | Default: | Not specified in defaults | `azure_content_understanding_analyzer_id` |
-| Image Analyzer | Default: | Not specified in defaults | `azure_content_understanding_image_analyzer_id` |
+| Image Analyzer | Content Understanding analyzer that describes images embedded in DOCX and PPTX files, and standalone images when the document analyzer finds no text in them. Its `Summary` field is indexed as the image description. | prebuilt-imageSearch | `azure_content_understanding_image_analyzer_id` |
 | Analyze images embedded in DOCX and PPTX files | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_office_embedded_image_analysis`; capability toggle |
 | Minimum Image Size (pixels) | Images narrower or shorter than this are skipped as icons or spacers. | Not specified in defaults | `office_embedded_image_min_pixels` |
 | Maximum Images Per Document | Caps per-document cost. Duplicate images are analyzed once. | Not specified in defaults | `office_embedded_image_max_per_document` |
