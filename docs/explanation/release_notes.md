@@ -4,13 +4,24 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.061)**
 
+#### New Features
+
+*   **Opt-In Tabular Model HTTP-Attempt Diagnostics**
+    *   Added opt-in environment-variable diagnostics (`SIMPLECHAT_TABULAR_HTTP_DIAGNOSTICS`, `SIMPLECHAT_TABULAR_HTTP_BUDGET_SECONDS`, `SIMPLECHAT_TABULAR_HTTP_MAX_RETRIES`, and `SIMPLECHAT_TABULAR_HTTP_TIMEOUT_SECONDS`) for tabular Azure OpenAI calls.
+    *   Records structured `[TABULAR_MODEL_HTTP]` telemetry covering request attempts, retries, elapsed durations, correlation headers, and pre-header transport failures without logging prompts, completions, or credentials.
+    *   (Ref: `functions_tabular_model_diagnostics.py`, `functions_model_endpoint_runtime.py`, `route_backend_chats.py`, `docs/admin/operations.md`)
+
 #### Bug Fixes
 
 *   **Workflow Instruction Drafting Uses the Selected Metadata Endpoint**
     *   The Draft Workflow Instructions button now resolves its client and request model through the same metadata extraction model endpoint resolver used by document metadata extraction.
     *   Workflows and agent instruction drafts no longer send the selected metadata extraction deployment to the legacy global GPT or APIM endpoint when the model is hosted on a configured AI Foundry or multi-endpoint connection.
     *   (Ref: `resolve_metadata_extraction_client()`, `route_backend_agents.py`, `route_backend_workflows.py`, [Workflow Instruction Model Endpoint Fix](fixes/WORKFLOW_INSTRUCTION_MODEL_ENDPOINT_FIX.md))
-    
+
+*   **Tabular Analysis Required-Tool Choice Continuation Fix**
+    *   Tabular analysis rounds now switch tool-choice behavior from `required` to `auto` after the initial tool invocation while preserving function allowlists and invocation limits, allowing the model to either request follow-up tools or return its final answer.
+    *   (Ref: `allow_tabular_completion_after_initial_tools()`, `route_backend_chats.py`, `test_tabular_tool_error_retry_and_thoughts.py`)
+
 ### **(v0.261.060)**
 
 #### Bug Fixes
@@ -36,6 +47,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Admin Settings range sliders now use the same gray tone as an off toggle switch in dark mode, making slider tracks visible against the admin page background.
     *   This includes the Content Safety prompt category threshold sliders, Main Page Logo Size, and document action capability sliders.
     *   (Ref: `content-safety.html`, `branding.html`, `actions.html`, `styles.css`, Admin Settings)
+
+### **(v0.261.054)**
+
+#### Bug Fixes
+
+*   **Default System Prompt Remains Active When Files or Images Are Uploaded in Chat**
+    *   Uploading an image, XML file, or other file directly in the chat UI no longer suppresses the configured `default_system_prompt` in standard or streaming chat turns.
+    *   Previously, chat-uploaded image and file context messages (`role: 'image'` and `role: 'file'` converted into `role: 'system'` entries in `conversation_history_for_api`) were mistaken for an existing general system prompt, causing `default_system_prompt` to be skipped.
+    *   `has_general_system_prompt` now checks whether `default_system_prompt` itself is already present in `conversation_history_for_api`.
+    *   (Ref: `route_backend_chats.py`, [Default System Prompt Preservation With Chat Uploads Fix](fixes/DEFAULT_SYSTEM_PROMPT_CHAT_UPLOADS_FIX.md), #1855)
 
 ### **(v0.261.053)**
 

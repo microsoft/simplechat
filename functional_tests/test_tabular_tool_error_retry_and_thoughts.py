@@ -32,6 +32,13 @@ sys.path.append(ROOT_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'application', 'single_app'))
 
 ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_backend_chats.py')
+PLUGIN_FILE = os.path.join(
+    ROOT_DIR,
+    'application',
+    'single_app',
+    'semantic_kernel_plugins',
+    'tabular_processing_plugin.py',
+)
 TARGET_FUNCTIONS = {
     'allow_tabular_completion_after_initial_tools',
     'get_tabular_discovery_function_names',
@@ -46,6 +53,28 @@ TARGET_FUNCTIONS = {
     'get_tabular_tool_thought_payloads',
     'get_tabular_status_thought_payloads',
 }
+
+
+def load_tabular_plugin_constants():
+    """Extract TabularProcessingPlugin tuple constants from AST without booting config.py."""
+    with open(PLUGIN_FILE, 'r', encoding='utf-8') as file_handle:
+        plugin_content = file_handle.read()
+
+    parsed = ast.parse(plugin_content, filename=PLUGIN_FILE)
+    constants = {}
+    target_names = {
+        'DISCOVERY_FUNCTION_NAMES',
+        'ANALYSIS_FUNCTION_NAMES',
+        'THOUGHT_EXCLUDED_PARAMETER_NAMES',
+    }
+    for node in parsed.body:
+        if isinstance(node, ast.ClassDef) and node.name == 'TabularProcessingPlugin':
+            for item in node.body:
+                if isinstance(item, ast.Assign):
+                    for target in item.targets:
+                        if isinstance(target, ast.Name) and target.id in target_names:
+                            constants[target.id] = list(ast.literal_eval(item.value))
+    return constants
 
 
 def load_tabular_route_helpers():
@@ -63,6 +92,10 @@ def load_tabular_route_helpers():
     module = ast.Module(body=selected_nodes, type_ignores=[])
     namespace = {'json': json}
     exec(compile(module, ROUTE_FILE, 'exec'), namespace)
+    plugin_constants = load_tabular_plugin_constants()
+    namespace['get_tabular_discovery_function_names'] = lambda: list(plugin_constants['DISCOVERY_FUNCTION_NAMES'])
+    namespace['get_tabular_analysis_function_names'] = lambda: list(plugin_constants['ANALYSIS_FUNCTION_NAMES'])
+    namespace['get_tabular_thought_excluded_parameter_names'] = lambda: list(plugin_constants['THOUGHT_EXCLUDED_PARAMETER_NAMES'])
     return namespace, route_content
 
 
