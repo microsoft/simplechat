@@ -30,6 +30,14 @@ from defusedxml.ElementTree import fromstring as defused_fromstring
 from pypdf import PdfReader
 
 from functions_appinsights import log_event
+from functions_document_style import (
+    build_legacy_doc_style_inventory,
+    build_pptx_style_inventory,
+    build_word_style_inventory,
+    extract_pdf_style_inventory,
+    format_style_inventory_for_chat,
+    safe_style_extraction,
+)
 from functions_office_media import (
     DOCX_MAIN_DOCUMENT_PART,
     DOCX_MAIN_DOCUMENT_RELS_PART,
@@ -72,6 +80,8 @@ MAX_COSMOS_FORMS = 150
 MAX_COSMOS_LINKS = 150
 MAX_COSMOS_ISSUES = 100
 MAX_PAGE_TAG_ITEMS = 120
+WORD_CHUNK_MIN_BUCKET_WORDS = 200
+WORD_CHUNK_BUCKET_DIVISOR = 12
 
 _ARTIFACT_PATTERN = re.compile(rb'/Artifact\b')
 _PPTX_SLIDE_XML_PATTERN = re.compile(r'^ppt/slides/slide(\d+)\.xml$', re.IGNORECASE)
@@ -586,6 +596,7 @@ def extract_pdf_accessibility_metadata(pdf_path):
     # 1. Inspect via PyMuPDF for bookmarks, metadata title, and per-page image counts
     fitz_doc = None
     per_page_visual_images = {}
+    pdf_page_style_lines = {}
     try:
         fitz_doc = fitz.open(pdf_path)
         cosmos_meta['page_count'] = len(fitz_doc)
@@ -610,6 +621,10 @@ def extract_pdf_accessibility_metadata(pdf_path):
                 per_page_visual_images[idx] = len(imgs)
             except Exception:
                 per_page_visual_images[idx] = 0
+
+        style_result = safe_style_extraction('pdf', lambda: extract_pdf_style_inventory(fitz_doc))
+        if style_result:
+            cosmos_meta['style_inventory'], pdf_page_style_lines = style_result
     except Exception as exc:
         log_event(
             f"[DOCUMENT_METADATA] PyMuPDF accessibility inspection warning: {type(exc).__name__}",
@@ -746,6 +761,7 @@ def extract_pdf_accessibility_metadata(pdf_path):
                 'visual_image_count': per_page_visual_images.get(page_idx, 0),
                 'form_widgets': page_widgets,
                 'tag_nodes': [],
+                'formatting_line': pdf_page_style_lines.get(page_idx, ''),
                 'formatted_accessibility_block': '',
             }
 
@@ -915,6 +931,17 @@ def extract_pdf_accessibility_metadata(pdf_path):
             'message': f"{cosmos_meta['forms_summary']['missing_tooltip']} interactive form field(s) are missing /TU accessible tooltip descriptions.",
         })
 
+    non_embedded_fonts = (cosmos_meta.get('style_inventory') or {}).get('non_embedded_fonts') or []
+    if non_embedded_fonts:
+        issues.append({
+            'code': 'PDF_FONTS_NOT_EMBEDDED',
+            'severity': 'low',
+            'message': (
+                f"{len(non_embedded_fonts)} font(s) are not embedded ({', '.join(non_embedded_fonts[:8])}); "
+                "assistive technology and PDF/UA require fonts to be embedded so text maps reliably to characters."
+            ),
+        })
+
     cosmos_meta['issues'] = issues[:MAX_COSMOS_ISSUES]
 
     # 4. Build per-page inline accessibility & tag-tree Markdown blocks
@@ -1000,6 +1027,9 @@ def format_pdf_page_accessibility_block(page_number, page_detail, doc_a11y_meta=
             tu = f'TU="{w.get("tooltip_tu")}"' if w.get('has_tooltip') else 'MISSING /TU tooltip'
             w_parts.append(f"{name} ({tu})")
         lines.append(f"- Page {page_number} Form Fields: {'; '.join(w_parts)}")
+
+    if page_detail.get('formatting_line'):
+        lines.append(f"- Page {page_number} {page_detail['formatting_line']}")
 
     return '\n'.join(lines)
 
@@ -1726,6 +1756,15 @@ def _extract_word_ooxml_accessibility(file_path, file_ext):
         cosmos_meta['heading_outline'] = cosmos_meta['heading_outline'][:MAX_COSMOS_HEADINGS]
         cosmos_meta['pseudo_headings'] = cosmos_meta['pseudo_headings'][:50]
 
+        word_style_result = safe_style_extraction(
+            'word',
+            lambda: build_word_style_inventory(
+                archive, body_elem, style_counts, word_chunk_bucket_size(word_count)
+            ),
+        )
+        if word_style_result:
+            cosmos_meta['style_inventory'], formatting_events = word_style_result
+            structural_events[:0] = formatting_events
     # Synthesize Word accessibility issues
     issues = []
     if not cosmos_meta['title_present']:
@@ -2037,6 +2076,15 @@ def _extract_pptx_accessibility(file_path):
                 'formatted_accessibility_block': '\n'.join(block_lines),
             }
 
+        pptx_style_result = safe_style_extraction(
+            'pptx', lambda: build_pptx_style_inventory(archive, slide_entries)
+        )
+        if pptx_style_result:
+            cosmos_meta['style_inventory'], slide_style_lines = pptx_style_result
+            for slide_num, style_line in slide_style_lines.items():
+                slide_detail = per_slide_details.get(slide_num)
+                if slide_detail:
+                    slide_detail['formatted_accessibility_block'] += f"\n- {style_line}"
     issues = []
     if not cosmos_meta['title_present']:
         issues.append({
@@ -2119,7 +2167,27 @@ def _extract_legacy_doc_accessibility(file_path):
         'severity': 'low',
         'message': 'Legacy binary Word 97-2003 (.doc) format lacks modern OOXML accessibility attributes (such as adec:decorative); consider converting to .docx for full accessibility tagging.',
     })
-    return cosmos_meta, []
+
+    def _legacy_doc_style():
+        from functions_content import extract_legacy_doc_character_runs
+
+        character_runs = extract_legacy_doc_character_runs(file_path)
+        if not character_runs or not character_runs['runs']:
+            return None
+        total_words = character_runs['total_body_words']
+        return total_words, build_legacy_doc_style_inventory(
+            character_runs['runs'],
+            word_chunk_bucket_size(total_words),
+            character_runs['notes'],
+        )
+
+    style_outcome = safe_style_extraction('doc', _legacy_doc_style)
+    if not style_outcome:
+        return cosmos_meta, []
+    total_words, (style_inventory, formatting_events) = style_outcome
+    cosmos_meta['total_body_words'] = total_words
+    cosmos_meta['style_inventory'] = style_inventory
+    return cosmos_meta, formatting_events
 
 
 def extract_office_accessibility_metadata(file_path, file_ext=None):
@@ -2141,6 +2209,12 @@ def extract_office_accessibility_metadata(file_path, file_ext=None):
     return {'format': ext.lstrip('.'), 'schema_version': '1.0', 'issues': []}, []
 
 
+def word_chunk_bucket_size(total_body_words):
+    """Return the word-offset span that groups Word structural events into one chunk block."""
+    total_words = max(total_body_words or 1, 1)
+    return max(WORD_CHUNK_MIN_BUCKET_WORDS, total_words // WORD_CHUNK_BUCKET_DIVISOR)
+
+
 def build_word_chunk_accessibility_items(cosmos_meta, structural_events):
     """Build position-anchored structural/accessibility blocks for Word chunks (using ``word_offset``).
 
@@ -2152,9 +2226,8 @@ def build_word_chunk_accessibility_items(cosmos_meta, structural_events):
         return []
 
     grouped_by_bucket = {}
-    total_words = max(cosmos_meta.get('total_body_words') or 1, 1)
-    # Group events into ~250-word spans so each chunk gets a single clean structural block
-    bucket_size = max(200, total_words // 12)
+    # Group events into word spans so each chunk gets a single clean structural block
+    bucket_size = word_chunk_bucket_size(cosmos_meta.get('total_body_words'))
 
     for ev in structural_events:
         offset = ev.get('word_offset') or 0
@@ -2278,6 +2351,8 @@ def format_accessibility_metadata_for_chat(accessibility_metadata):
             f"TextBoxes={fmt_layout.get('textbox_count', 0)}, "
             f"LowContrastRuns={fmt_layout.get('low_contrast_runs', 0)}"
         )
+
+    lines.extend(format_style_inventory_for_chat(accessibility_metadata.get('style_inventory')))
 
     issues = accessibility_metadata.get('issues') or []
     if issues:

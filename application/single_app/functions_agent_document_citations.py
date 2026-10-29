@@ -39,7 +39,7 @@ DOCUMENT_SEARCH_PLUGIN_NAMES = frozenset({
 
 DOCUMENT_SEARCH_RESULT_FUNCTIONS = frozenset({'search_documents'})
 DOCUMENT_CHUNK_FUNCTIONS = frozenset({'retrieve_document_chunks'})
-DOCUMENT_SUMMARY_FUNCTIONS = frozenset({'summarize_document'})
+DOCUMENT_SUMMARY_FUNCTIONS = frozenset({'summarize_document', 'get_document_accessibility_report'})
 
 DOCUMENT_SEARCH_FUNCTIONS = (
     DOCUMENT_SEARCH_RESULT_FUNCTIONS

@@ -1089,6 +1089,113 @@ def get_document_chunks_payload(
     }
 
 
+ACCESSIBILITY_REPORT_SECTIONS = ("accessibility", "style", "issues")
+ACCESSIBILITY_REPORT_STYLE_KEY = "style_inventory"
+ACCESSIBILITY_REPORT_ISSUES_KEY = "issues"
+
+
+def _normalize_accessibility_sections(sections):
+    if isinstance(sections, str):
+        requested = [part.strip().lower() for part in sections.split(",")]
+    else:
+        requested = [str(part or "").strip().lower() for part in (sections or [])]
+    requested = [part for part in requested if part in ACCESSIBILITY_REPORT_SECTIONS]
+    return requested or list(ACCESSIBILITY_REPORT_SECTIONS)
+
+
+def get_document_accessibility_payload(
+    document_id,
+    user_id,
+    doc_scope="all",
+    active_group_ids=None,
+    active_public_workspace_id=None,
+    conversation_id=None,
+    sections=None,
+    page_number=None,
+):
+    """Return the complete stored accessibility, style, and issue metadata for one document.
+
+    The parent document record keeps the uncapped document-wide inventory, so this is the
+    programmatic path for custom style-guide or accessibility checks. ``page_number``
+    additionally returns that page's stored chunk text, which carries the inline per-page
+    structure, formatting, and comment lines.
+    """
+    document_context = resolve_document_context(
+        document_id=document_id,
+        user_id=user_id,
+        doc_scope=doc_scope,
+        active_group_ids=active_group_ids,
+        active_public_workspace_id=active_public_workspace_id,
+        conversation_id=conversation_id,
+    )
+    if not document_context:
+        raise LookupError("Document not found or access denied")
+
+    if document_context.get("scope") == "chat":
+        raise LookupError(
+            "Accessibility metadata is not available for chat uploads. "
+            "Add the file to a workspace to extract it."
+        )
+
+    current_document = assert_document_available(
+        document_context["document"], user_id=user_id,
+        group_id=document_context.get("group_id"),
+        public_workspace_id=document_context.get("public_workspace_id"),
+        purpose="accessibility",
+    )
+    document_context["document"] = current_document
+    source_evidence = {PROVENANCE_FIELD: document_provenance(current_document)}
+
+    stored_metadata = current_document.get("accessibility_metadata")
+    if not isinstance(stored_metadata, dict) or not stored_metadata:
+        raise LookupError(
+            "No accessibility metadata is stored for this document. It may have been uploaded before "
+            "accessibility extraction was available or may be an unsupported file type; "
+            "re-upload the file to extract it."
+        )
+
+    requested_sections = _normalize_accessibility_sections(sections)
+    report = {}
+    if "accessibility" in requested_sections:
+        report["accessibility_metadata"] = {
+            key: value
+            for key, value in stored_metadata.items()
+            if key not in (ACCESSIBILITY_REPORT_STYLE_KEY, ACCESSIBILITY_REPORT_ISSUES_KEY)
+        }
+    if "style" in requested_sections:
+        report["style_inventory"] = stored_metadata.get(ACCESSIBILITY_REPORT_STYLE_KEY) or {}
+    if "issues" in requested_sections:
+        report["issues"] = stored_metadata.get(ACCESSIBILITY_REPORT_ISSUES_KEY) or []
+
+    page_chunks = None
+    if page_number not in (None, ""):
+        resolved_page = _coerce_positive_int(page_number, default_value=1)
+        chunks = get_ordered_document_chunks(
+            document_id=document_id,
+            user_id=user_id,
+            group_id=document_context.get("group_id"),
+            public_workspace_id=document_context.get("public_workspace_id"),
+        )
+        page_chunks = [
+            chunk for chunk in (chunks or [])
+            if chunk.get("page_number") == resolved_page
+        ]
+
+    assert_evidence_available(source_evidence, user_id)
+    payload = {
+        "document": _serialize_document(current_document, document_context.get("scope")),
+        "scope": document_context.get("scope"),
+        "format": stored_metadata.get("format"),
+        "schema_version": stored_metadata.get("schema_version"),
+        "sections": requested_sections,
+        **report,
+    }
+    if page_chunks is not None:
+        payload["page_number"] = _coerce_positive_int(page_number, default_value=1)
+        payload["page_chunks"] = page_chunks
+    return payload
+
+
 def _build_summary_citation_chunk(chunks):
     """Return identifying fields for the first chunk so summaries stay citable."""
     first_chunk = next(
