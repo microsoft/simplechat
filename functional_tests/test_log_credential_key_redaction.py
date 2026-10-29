@@ -2,7 +2,7 @@
 # test_log_credential_key_redaction.py
 """
 Functional test for credential key redaction in application logging.
-Version: 0.250.218
+Version: 0.261.028
 Implemented in: 0.250.218
 
 This test ensures that credential-bearing property names reach the logging sinks
@@ -283,7 +283,7 @@ def test_cosmos_client_imports_are_module_qualified():
         root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         checked_files = (
             os.path.join(root_dir, "scripts", "resolve_multiendpoint_gpt.py"),
-            os.path.join(root_dir, "deployers", "bicep", "postconfig.py"),
+            os.path.join(root_dir, "deployers", "bicep", "deployment_cosmos.py"),
         )
 
         for file_path in checked_files:

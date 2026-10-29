@@ -24,6 +24,11 @@ import re
 import uuid
 
 from functions_appinsights import log_event
+from functions_workflow_alert_safety import (
+    WORKFLOW_ALERT_EVALUATION_ERROR_CODE,
+    WORKFLOW_ALERT_EVALUATION_ERROR_MESSAGE,
+    WORKFLOW_ALERT_EVALUATOR_UNAVAILABLE_MESSAGE,
+)
 
 
 # Severity ladder, ordered from quietest to loudest.
@@ -592,6 +597,7 @@ def build_workflow_alert_facts(workflow, run_record, execution_result=None):
     return {
         'workflow_id': str(workflow.get('id') or '').strip(),
         'workflow_name': str(workflow.get('name') or 'Workflow').strip() or 'Workflow',
+        'run_id': str(run_record.get('id') or '').strip(),
         'run_status': run_status,
         'effective_run_statuses': effective_statuses,
         'success': bool(run_record.get('success')),
@@ -882,7 +888,7 @@ def _build_match(rule, evaluation, source='rule'):
         severity = normalize_alert_severity(severity_floor)
 
     condition = rule.get('condition') if isinstance(rule.get('condition'), dict) else {}
-    return {
+    match = {
         'rule_id': rule.get('id'),
         'rule_name': rule.get('name'),
         'severity': severity,
@@ -893,6 +899,9 @@ def _build_match(rule, evaluation, source='rule'):
         'order': rule.get('order') or 0,
         'source': source,
     }
+    if evaluation.get('reason_code') == WORKFLOW_ALERT_EVALUATION_ERROR_CODE:
+        match['reason_code'] = WORKFLOW_ALERT_EVALUATION_ERROR_CODE
+    return match
 
 
 def _build_decision(should_alert, mode, matches=None, model_evaluation=None, evaluated_rule_count=0):
@@ -1031,10 +1040,11 @@ def evaluate_workflow_alert_rules(workflow, facts, model_evaluator=None):
                         source='model_evaluation',
                     ))
         except Exception as exc:
-            model_evaluation_state['error'] = str(exc)
+            model_evaluation_state['error'] = WORKFLOW_ALERT_EVALUATION_ERROR_MESSAGE
+            model_evaluation_state['error_code'] = WORKFLOW_ALERT_EVALUATION_ERROR_CODE
             log_event(
                 f'[WORKFLOW_ALERTS] Model evaluated alert conditions could not be judged: {exc}',
-                extra={'workflow_id': facts.get('workflow_id')},
+                extra={'workflow_id': facts.get('workflow_id'), 'run_id': facts.get('run_id')},
                 level=logging.WARNING,
                 exceptionTraceback=True,
             )
@@ -1043,13 +1053,14 @@ def evaluate_workflow_alert_rules(workflow, facts, model_evaluator=None):
                     matches.append(_build_match(
                         rule,
                         {
-                            'reason': f'Alert condition could not be evaluated: {exc}',
+                            'reason': WORKFLOW_ALERT_EVALUATION_ERROR_MESSAGE,
+                            'reason_code': WORKFLOW_ALERT_EVALUATION_ERROR_CODE,
                             'category': 'failure',
                         },
                         source='model_evaluation_error',
                     ))
     elif pending_model_rules:
-        model_evaluation_state['error'] = 'No model evaluator was available for this run.'
+        model_evaluation_state['error'] = WORKFLOW_ALERT_EVALUATOR_UNAVAILABLE_MESSAGE
 
     return _build_decision(
         bool(matches),

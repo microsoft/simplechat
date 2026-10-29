@@ -2,41 +2,48 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "title": "SimpleChat model capability catalog",
-  "description": "Schema for static/json/model_capabilities.json. The catalog is the source of truth for per-model capability answers, so that models are described by data rather than guessed at from their names.",
+  "description": "Schema version 3: qualitative capabilities plus independently evidenced token capacities. Root limits describe the publisher-native specification, not every hosting service.",
   "type": "object",
-  "required": ["schemaVersion", "capabilityFields", "models"],
+  "required": ["schemaVersion", "lastUpdated", "capabilityFields", "sources", "models"],
   "properties": {
     "$schema": {
-      "type": "string"
+      "type": "string",
+      "format": "uri"
     },
     "schemaVersion": {
       "type": "integer",
-      "minimum": 2
+      "const": 3
     },
     "lastUpdated": {
-      "type": ["string", "null"]
+      "$ref": "#/$defs/verificationDate"
     },
     "description": {
-      "type": "string"
+      "$ref": "#/$defs/nonemptyString"
     },
     "capabilityFields": {
       "type": "object",
       "description": "Human-readable description of every capability flag a model record may declare.",
+      "required": [
+        "processesText", "generatesText", "processesImages", "generatesImages",
+        "processesAudio", "generatesAudio", "processesVideo", "generatesVideo",
+        "processesBinaryFiles", "optimizedForCoding", "toolCalling",
+        "structuredOutput", "supportsStreaming", "reasoning"
+      ],
+      "propertyNames": {
+        "$ref": "#/$defs/capabilityName"
+      },
       "additionalProperties": {
-        "type": "string",
-        "minLength": 1
+        "$ref": "#/$defs/nonemptyString"
       }
     },
     "coverageNotes": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
+      "$ref": "#/$defs/stringList"
     },
     "sources": {
       "type": "array",
+      "minItems": 1,
       "items": {
-        "type": "object"
+        "$ref": "#/$defs/source"
       }
     },
     "models": {
@@ -47,7 +54,278 @@
       }
     }
   },
+  "additionalProperties": false,
   "$defs": {
+    "nonemptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "stringList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/nonemptyString"
+      }
+    },
+    "sourceIdList": {
+      "allOf": [
+        {"$ref": "#/$defs/stringList"},
+        {"minItems": 1}
+      ]
+    },
+    "verificationDate": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "publicSourceUrl": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "source": {
+      "type": "object",
+      "required": ["id", "provider", "title", "url", "verifiedAt"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "provider": {
+          "enum": ["openai", "azure", "anthropic", "google", "vertex", "xai", "meta", "microsoft", "publisher"]
+        },
+        "title": {
+          "$ref": "#/$defs/nonemptyString"
+        },
+        "url": {
+          "$ref": "#/$defs/publicSourceUrl"
+        },
+        "verifiedAt": {
+          "$ref": "#/$defs/verificationDate"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "archivedFrom": {
+          "$ref": "#/$defs/publicSourceUrl"
+        },
+        "notes": {
+          "$ref": "#/$defs/stringList"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tokenCapacity": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "A documented positive token capacity, or null when not independently verified/applicable. Never a request default, rate quota, or inferred sum."
+    },
+    "outputTokenAccounting": {
+      "enum": ["total_generation", "visible_only", "unknown"],
+      "description": "Whether the native protocol's generation cap includes reasoning and other generated tokens. A visible-only cap cannot reserve all generation."
+    },
+    "toolReasoningEfforts": {
+      "allOf": [
+        {"$ref": "#/$defs/stringList"},
+        {"minItems": 1}
+      ],
+      "description": "Verified request reasoning-effort values permitted with function tools in this profile. A constraint, not a default: preserve explicit none and never silently change effort or protocol. Omit when no additional restriction is verified."
+    },
+    "tokenEvidence": {
+      "type": "object",
+      "required": ["status", "sourceIds", "verifiedAt", "note"],
+      "properties": {
+        "status": {
+          "enum": ["verified", "unknown", "hosting-dependent", "not-applicable", "configuration-only"]
+        },
+        "sourceIds": {
+          "$ref": "#/$defs/sourceIdList"
+        },
+        "verifiedAt": {
+          "$ref": "#/$defs/verificationDate"
+        },
+        "note": {
+          "$ref": "#/$defs/nonemptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tokenEvidenceMap": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "contextWindow": {"$ref": "#/$defs/tokenEvidence"},
+        "inputTokenLimit": {"$ref": "#/$defs/tokenEvidence"},
+        "outputTokenLimit": {"$ref": "#/$defs/tokenEvidence"},
+        "effectiveContextWindow": {"$ref": "#/$defs/tokenEvidence"},
+        "outputTokenAccounting": {"$ref": "#/$defs/tokenEvidence"},
+        "toolReasoningEfforts": {"$ref": "#/$defs/tokenEvidence"}
+      },
+      "additionalProperties": false
+    },
+    "capacityEvidenceConsistency": {
+      "description": "Every declared capacity/accounting override and tool-effort constraint needs matching evidence. Only verified capacities are numeric; configuration-only values belong in evidence notes.",
+      "dependentSchemas": {
+        "contextWindow": {
+          "properties": {"tokenLimitEvidence": {"required": ["contextWindow"]}},
+          "required": ["tokenLimitEvidence"]
+        },
+        "inputTokenLimit": {
+          "properties": {"tokenLimitEvidence": {"required": ["inputTokenLimit"]}},
+          "required": ["tokenLimitEvidence"]
+        },
+        "outputTokenLimit": {
+          "properties": {"tokenLimitEvidence": {"required": ["outputTokenLimit"]}},
+          "required": ["tokenLimitEvidence"]
+        },
+        "effectiveContextWindow": {
+          "properties": {"tokenLimitEvidence": {"required": ["effectiveContextWindow"]}},
+          "required": ["tokenLimitEvidence"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["tokenLimitEvidence"],
+            "properties": {"tokenLimitEvidence": {"required": ["contextWindow"]}}
+          },
+          "then": {
+            "required": ["contextWindow"],
+            "if": {
+              "properties": {"tokenLimitEvidence": {"properties": {"contextWindow": {"properties": {"status": {"const": "verified"}}}}}}
+            },
+            "then": {"properties": {"contextWindow": {"type": "integer"}}},
+            "else": {"properties": {"contextWindow": {"type": "null"}}}
+          }
+        },
+        {
+          "if": {
+            "required": ["tokenLimitEvidence"],
+            "properties": {"tokenLimitEvidence": {"required": ["inputTokenLimit"]}}
+          },
+          "then": {
+            "required": ["inputTokenLimit"],
+            "if": {
+              "properties": {"tokenLimitEvidence": {"properties": {"inputTokenLimit": {"properties": {"status": {"const": "verified"}}}}}}
+            },
+            "then": {"properties": {"inputTokenLimit": {"type": "integer"}}},
+            "else": {"properties": {"inputTokenLimit": {"type": "null"}}}
+          }
+        },
+        {
+          "if": {
+            "required": ["tokenLimitEvidence"],
+            "properties": {"tokenLimitEvidence": {"required": ["outputTokenLimit"]}}
+          },
+          "then": {
+            "required": ["outputTokenLimit"],
+            "if": {
+              "properties": {"tokenLimitEvidence": {"properties": {"outputTokenLimit": {"properties": {"status": {"const": "verified"}}}}}}
+            },
+            "then": {"properties": {"outputTokenLimit": {"type": "integer"}}},
+            "else": {"properties": {"outputTokenLimit": {"type": "null"}}}
+          }
+        },
+        {
+          "if": {
+            "required": ["tokenLimitEvidence"],
+            "properties": {"tokenLimitEvidence": {"required": ["effectiveContextWindow"]}}
+          },
+          "then": {
+            "required": ["effectiveContextWindow"],
+            "if": {
+              "properties": {"tokenLimitEvidence": {"properties": {"effectiveContextWindow": {"properties": {"status": {"const": "verified"}}}}}}
+            },
+            "then": {"properties": {"effectiveContextWindow": {"type": "integer"}}},
+            "else": {"properties": {"effectiveContextWindow": {"type": "null"}}}
+          }
+        },
+        {
+          "if": {
+            "required": ["tokenLimitEvidence"],
+            "properties": {"tokenLimitEvidence": {"required": ["outputTokenAccounting"]}}
+          },
+          "then": {
+            "required": ["outputTokenAccounting"],
+            "if": {
+              "properties": {"tokenLimitEvidence": {"properties": {"outputTokenAccounting": {"properties": {"status": {"const": "verified"}}}}}}
+            },
+            "then": {"properties": {"outputTokenAccounting": {"enum": ["total_generation", "visible_only"]}}},
+            "else": {"properties": {"outputTokenAccounting": {"const": "unknown"}}}
+          }
+        },
+        {
+          "if": {
+            "required": ["tokenLimitEvidence"],
+            "properties": {"tokenLimitEvidence": {"required": ["toolReasoningEfforts"]}}
+          },
+          "then": {
+            "required": ["toolReasoningEfforts"],
+            "properties": {
+              "tokenLimitEvidence": {
+                "properties": {"toolReasoningEfforts": {"properties": {"status": {"const": "verified"}}}}
+              }
+            }
+          }
+        }
+      ]
+    },
+    "tokenLimitProfile": {
+      "type": "object",
+      "description": "Apply a matching generic provider profile before more specific protocol/version profiles. Omitted fields inherit; an explicit null overrides inherited capacity with unknown. Equally specific overlapping profiles are prohibited by offline integrity tests.",
+      "required": ["id", "provider", "tokenLimitEvidence"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "provider": {
+          "enum": ["azure", "openai", "anthropic", "google", "vertex", "xai", "publisher"]
+        },
+        "protocol": {
+          "enum": ["chat_completions", "responses", "messages", "generate_content"]
+        },
+        "modelVersions": {
+          "allOf": [
+            {"$ref": "#/$defs/stringList"},
+            {"minItems": 1}
+          ]
+        },
+        "contextWindow": {"$ref": "#/$defs/tokenCapacity"},
+        "inputTokenLimit": {"$ref": "#/$defs/tokenCapacity"},
+        "outputTokenLimit": {"$ref": "#/$defs/tokenCapacity"},
+        "effectiveContextWindow": {
+          "$ref": "#/$defs/tokenCapacity",
+          "description": "An additional host/protocol combined prompt-and-generation ceiling, not a replacement for advertised context. Preserve any approximation and counting margin in evidence.note."
+        },
+        "outputTokenAccounting": {"$ref": "#/$defs/outputTokenAccounting"},
+        "toolReasoningEfforts": {"$ref": "#/$defs/toolReasoningEfforts"},
+        "tokenLimitEvidence": {"$ref": "#/$defs/tokenEvidenceMap"},
+        "notes": {"$ref": "#/$defs/stringList"}
+      },
+      "anyOf": [
+        {"required": ["contextWindow"]},
+        {"required": ["inputTokenLimit"]},
+        {"required": ["outputTokenLimit"]},
+        {"required": ["effectiveContextWindow"]},
+        {"required": ["outputTokenAccounting"]},
+        {"required": ["toolReasoningEfforts"]}
+      ],
+      "allOf": [
+        {"$ref": "#/$defs/capacityEvidenceConsistency"}
+      ],
+      "dependentSchemas": {
+        "outputTokenAccounting": {
+          "properties": {"tokenLimitEvidence": {"required": ["outputTokenAccounting"]}}
+        },
+        "toolReasoningEfforts": {
+          "properties": {"tokenLimitEvidence": {"required": ["toolReasoningEfforts"]}}
+        }
+      },
+      "additionalProperties": false
+    },
     "modelRecord": {
       "type": "object",
       "required": [
@@ -57,31 +335,36 @@
         "aliases",
         "family",
         "lifecycle",
-        "capabilities"
+        "capabilities",
+        "sourceIds",
+        "verifiedAliases",
+        "contextWindow",
+        "inputTokenLimit",
+        "outputTokenLimit",
+        "tokenLimitsApplicability",
+        "outputTokenAccounting",
+        "tokenLimitEvidence"
       ],
       "properties": {
         "id": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/$defs/nonemptyString"
         },
         "provider": {
-          "type": "string",
-          "minLength": 1
+          "enum": ["openai", "anthropic", "google", "xai", "meta", "microsoft"]
         },
         "displayName": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/$defs/nonemptyString"
         },
         "aliases": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
+          "$ref": "#/$defs/stringList",
+          "description": "Legacy qualitative-capability aliases. Their presence is not evidence for numeric capacity matching."
+        },
+        "verifiedAliases": {
+          "$ref": "#/$defs/stringList",
+          "description": "Only first-party verified identifiers for numeric matching; never display labels, guessed family names or arbitrary deployment suffixes."
         },
         "family": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/$defs/nonemptyString"
         },
         "lifecycle": {
           "type": "string",
@@ -95,33 +378,83 @@
           ]
         },
         "releaseDate": {
-          "type": ["string", "null"]
+          "type": ["string", "null"],
+          "format": "date"
         },
         "capabilities": {
           "$ref": "#/$defs/capabilityMap"
         },
         "notes": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "$ref": "#/$defs/stringList"
         },
         "sourceIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "$ref": "#/$defs/sourceIdList"
+        },
+        "contextWindow": {
+          "$ref": "#/$defs/tokenCapacity",
+          "description": "Shared prompt-plus-generation context in tokens; not an independent input allowance."
         },
         "inputTokenLimit": {
-          "type": ["integer", "null"],
-          "minimum": 1
+          "$ref": "#/$defs/tokenCapacity",
+          "description": "An independently documented maximum input, not context renamed or context minus output."
         },
         "outputTokenLimit": {
-          "type": ["integer", "null"],
-          "minimum": 1
+          "$ref": "#/$defs/tokenCapacity",
+          "description": "The documented generation maximum, not an adjustable API default or requested response length."
+        },
+        "tokenLimitsApplicability": {
+          "enum": ["text", "non-text", "unknown"]
+        },
+        "outputTokenAccounting": {
+          "$ref": "#/$defs/outputTokenAccounting"
+        },
+        "tokenLimitEvidence": {
+          "allOf": [
+            {"$ref": "#/$defs/tokenEvidenceMap"},
+            {"required": ["contextWindow", "inputTokenLimit", "outputTokenLimit"]}
+          ]
+        },
+        "tokenLimitProfiles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/tokenLimitProfile"}
         }
       },
+      "allOf": [
+        {"$ref": "#/$defs/capacityEvidenceConsistency"},
+        {
+          "if": {"properties": {"tokenLimitsApplicability": {"const": "non-text"}}},
+          "then": {
+            "properties": {
+              "outputTokenLimit": {"type": "null"},
+              "outputTokenAccounting": {"const": "unknown"},
+              "tokenLimitEvidence": {
+                "properties": {"outputTokenLimit": {"properties": {"status": {"const": "not-applicable"}}}}
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"tokenLimitsApplicability": {"const": "text"}}},
+          "then": {
+            "properties": {
+              "tokenLimitEvidence": {
+                "properties": {"outputTokenLimit": {"properties": {"status": {"not": {"const": "not-applicable"}}}}}
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
+    },
+    "capabilityName": {
+      "enum": [
+        "processesText", "generatesText", "processesImages", "generatesImages",
+        "processesAudio", "generatesAudio", "processesVideo", "generatesVideo",
+        "processesBinaryFiles", "optimizedForCoding", "toolCalling",
+        "structuredOutput", "supportsStreaming", "reasoning"
+      ]
     },
     "capabilityMap": {
       "type": "object",
@@ -142,6 +475,9 @@
         "supportsStreaming",
         "reasoning"
       ],
+      "propertyNames": {
+        "$ref": "#/$defs/capabilityName"
+      },
       "additionalProperties": {
         "type": "boolean"
       }

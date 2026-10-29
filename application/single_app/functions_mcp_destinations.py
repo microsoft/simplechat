@@ -18,8 +18,15 @@ except ImportError:  # pragma: no cover - supports source-level functional tests
     session = None
 
 from functions_appinsights import log_event
+from functions_action_manifest import (
+    McpActionOrigin,
+    McpConfigurationError,
+    McpStdioRemovedError,
+    get_action_origin,
+    is_mcp_action,
+    is_retired_mcp_stdio,
+)
 from functions_mcp_operations import (
-    MCP_PLUGIN_TYPE,
     MCP_REMOTE_TRANSPORTS,
     normalize_mcp_additional_fields,
     validate_mcp_endpoint_for_transport,
@@ -39,7 +46,6 @@ MCP_DESTINATION_SCOPE_GLOBAL = "global"
 MCP_DESTINATION_SCOPE_ALL = "all"
 
 MCP_DESTINATION_SCOPE_ALIASES = {
-    "": MCP_DESTINATION_SCOPE_PERSONAL,
     "user": MCP_DESTINATION_SCOPE_PERSONAL,
     "personal": MCP_DESTINATION_SCOPE_PERSONAL,
     "workspace": MCP_DESTINATION_SCOPE_PERSONAL,
@@ -72,8 +78,34 @@ class McpDestinationPolicyError(PermissionError):
 
 def normalize_mcp_destination_scope(scope_type):
     """Normalize an outbound MCP destination policy scope."""
-    normalized_scope = str(scope_type or "").strip().lower()
-    return MCP_DESTINATION_SCOPE_ALIASES.get(normalized_scope, MCP_DESTINATION_SCOPE_PERSONAL)
+    normalized_scope = scope_type.strip().lower() if isinstance(scope_type, str) else ""
+    if normalized_scope not in MCP_DESTINATION_SCOPE_ALIASES:
+        raise McpDestinationPolicyError("MCP action requires a valid authorized scope.")
+    return MCP_DESTINATION_SCOPE_ALIASES[normalized_scope]
+
+
+def resolve_mcp_destination_scope(manifest, scope_type=None, scope_id="", *, origin=None):
+    """Resolve only server-bound provenance or an explicitly authorized scope."""
+    stored_origin = get_action_origin(manifest)
+    if origin is not None and stored_origin is not None and origin != stored_origin:
+        raise McpDestinationPolicyError("MCP action scope does not match its authorized origin.")
+    action_origin = origin if origin is not None else stored_origin
+    if action_origin is not None:
+        if not isinstance(action_origin, McpActionOrigin):
+            raise McpDestinationPolicyError("MCP action requires a trusted origin.")
+        if scope_type is not None and normalize_mcp_destination_scope(scope_type) != action_origin.scope_type:
+            raise McpDestinationPolicyError("MCP action scope does not match its authorized origin.")
+        if scope_id not in (None, "") and scope_id != action_origin.scope_id:
+            raise McpDestinationPolicyError("MCP action scope does not match its authorized origin.")
+        return action_origin.scope_type, action_origin.scope_id
+
+    normalized_scope = normalize_mcp_destination_scope(scope_type)
+    if not isinstance(scope_id, str) or not scope_id.strip():
+        raise McpDestinationPolicyError("MCP action requires an authorized scope identifier.")
+    normalized_scope_id = scope_id.strip()
+    if normalized_scope == MCP_DESTINATION_SCOPE_GLOBAL and normalized_scope_id != MCP_DESTINATION_SCOPE_GLOBAL:
+        raise McpDestinationPolicyError("Global MCP actions require the global destination scope.")
+    return normalized_scope, normalized_scope_id
 
 
 def normalize_mcp_policy_id(value):
@@ -152,34 +184,34 @@ def _get_request_user_id():
             return ""
         user = session.get("user")
         if isinstance(user, dict):
-            return str(user.get("oid") or "").strip()
+            user_id = user.get("oid")
+            return user_id.strip() if isinstance(user_id, str) else ""
     except RuntimeError:
         return ""
     return ""
 
 
+def get_mcp_execution_user_id():
+    """Use the current authenticated request, including workflow request contexts."""
+    user_id = _get_request_user_id()
+    if not user_id:
+        raise McpDestinationPolicyError("MCP execution requires an authenticated user.")
+    return user_id
+
+
 def _list_governance_item_policies(entity_type):
+    # Governance owns initialized storage; load it only when evaluating active policy.
     try:
         from functions_governance import list_item_policies
-    except Exception as exc:
-        log_event(
-            "[MCP_DESTINATION_POLICY] Unable to import governance item policies",
-            extra={"entity_type": entity_type, "error": str(exc)},
-            level=logging.WARNING,
-            debug_only=True,
-        )
-        return []
-
-    try:
         return list_item_policies(entity_type=entity_type)
     except Exception as exc:
         log_event(
             "[MCP_DESTINATION_POLICY] Unable to load governance item policies",
-            extra={"entity_type": entity_type, "error": str(exc)},
+            extra={"entity_type": entity_type, "exception_type": type(exc).__name__},
             level=logging.WARNING,
             debug_only=True,
         )
-        return []
+        raise McpDestinationPolicyError("MCP destination policy is currently unavailable.") from exc
 
 
 def _get_governance_group_ids_for_user(user_id):
@@ -187,27 +219,18 @@ def _get_governance_group_ids_for_user(user_id):
     if not normalized_user_id:
         return set()
 
+    # Group grants depend on governance storage initialized by the application owner.
     try:
         from functions_governance import get_user_governance_group_ids
-    except Exception as exc:
-        log_event(
-            "[MCP_DESTINATION_POLICY] Unable to import governance group lookup",
-            extra={"error": str(exc)},
-            level=logging.WARNING,
-            debug_only=True,
-        )
-        return set()
-
-    try:
         return set(get_user_governance_group_ids(normalized_user_id))
     except Exception as exc:
         log_event(
             "[MCP_DESTINATION_POLICY] Unable to load governance group ids",
-            extra={"user_id_present": bool(normalized_user_id), "error": str(exc)},
+            extra={"user_id_present": bool(normalized_user_id), "exception_type": type(exc).__name__},
             level=logging.WARNING,
             debug_only=True,
         )
-        return set()
+        raise McpDestinationPolicyError("MCP destination policy is currently unavailable.") from exc
 
 
 def _governance_item_policy_applies_to_user(policy, user_id, user_group_ids):
@@ -344,40 +367,50 @@ def _append_governance_destination_patterns(policy_config, user_id=""):
     return policy_config
 
 
+def _get_environment_destination_policy_config():
+    """Keep deployment restrictions separate so settings cannot widen them."""
+    def environment_value(key, default=None):
+        value = os.getenv(key)
+        return value if value is not None else _get_current_app_config_value(key, default)
+
+    return {
+        "enabled": _coerce_bool(environment_value(ENABLE_MCP_DESTINATION_GOVERNANCE_ENV)),
+        "block_unsafe_destinations": _coerce_bool(environment_value(MCP_BLOCK_UNSAFE_DESTINATIONS_ENV)),
+        "common_patterns": _coerce_pattern_list(environment_value(MCP_ALLOWED_DESTINATIONS_ENV)),
+        "scope_patterns": {
+            MCP_DESTINATION_SCOPE_PERSONAL: _coerce_pattern_list(
+                environment_value(MCP_ALLOWED_PERSONAL_DESTINATIONS_ENV)
+            ),
+            MCP_DESTINATION_SCOPE_GROUP: _coerce_pattern_list(
+                environment_value(MCP_ALLOWED_GROUP_DESTINATIONS_ENV)
+            ),
+            MCP_DESTINATION_SCOPE_GLOBAL: _coerce_pattern_list(
+                environment_value(MCP_ALLOWED_GLOBAL_DESTINATIONS_ENV)
+            ),
+        },
+        "group_patterns": {},
+        "denied_scope_patterns": {},
+        "denied_group_patterns": {},
+    }
+
+
 def get_mcp_destination_policy_config(settings=None, user_id=""):
-    """Return outbound MCP destination policy config from settings and environment."""
+    """Combine supplied current settings with a non-overridable deployment floor."""
+    environment_policy = _get_environment_destination_policy_config()
     scoped_group_patterns = _get_nested_setting(settings, "mcp_allowed_group_destination_overrides", {})
     if not isinstance(scoped_group_patterns, dict):
         scoped_group_patterns = {}
 
     policy_config = {
         "enabled": _coerce_bool(
-            _get_nested_setting(
-                settings,
-                "enable_mcp_destination_governance",
-                _get_current_app_config_value(
-                    "ENABLE_MCP_DESTINATION_GOVERNANCE",
-                    os.getenv(ENABLE_MCP_DESTINATION_GOVERNANCE_ENV, "false"),
-                ),
-            ),
-            default=False,
-        ),
+            _get_nested_setting(settings, "enable_mcp_destination_governance")
+        ) or environment_policy["enabled"],
         "block_unsafe_destinations": _coerce_bool(
-            _get_nested_setting(
-                settings,
-                "mcp_block_unsafe_destinations",
-                _get_current_app_config_value(
-                    "MCP_BLOCK_UNSAFE_DESTINATIONS",
-                    os.getenv(MCP_BLOCK_UNSAFE_DESTINATIONS_ENV, "false"),
-                ),
-            ),
-            default=False,
-        ),
+            _get_nested_setting(settings, "mcp_block_unsafe_destinations")
+        ) or environment_policy["block_unsafe_destinations"],
         "common_patterns": _coerce_pattern_list(
             _get_nested_setting(
-                settings,
-                "mcp_allowed_destinations",
-                _get_current_app_config_value("MCP_ALLOWED_DESTINATIONS", os.getenv(MCP_ALLOWED_DESTINATIONS_ENV, "")),
+                settings, "mcp_allowed_destinations", environment_policy["common_patterns"]
             )
         ),
         "scope_patterns": {
@@ -385,30 +418,21 @@ def get_mcp_destination_policy_config(settings=None, user_id=""):
                 _get_nested_setting(
                     settings,
                     "mcp_allowed_personal_destinations",
-                    _get_current_app_config_value(
-                        "MCP_ALLOWED_PERSONAL_DESTINATIONS",
-                        os.getenv(MCP_ALLOWED_PERSONAL_DESTINATIONS_ENV, ""),
-                    ),
+                    environment_policy["scope_patterns"][MCP_DESTINATION_SCOPE_PERSONAL],
                 )
             ),
             MCP_DESTINATION_SCOPE_GROUP: _coerce_pattern_list(
                 _get_nested_setting(
                     settings,
                     "mcp_allowed_group_destinations",
-                    _get_current_app_config_value(
-                        "MCP_ALLOWED_GROUP_DESTINATIONS",
-                        os.getenv(MCP_ALLOWED_GROUP_DESTINATIONS_ENV, ""),
-                    ),
+                    environment_policy["scope_patterns"][MCP_DESTINATION_SCOPE_GROUP],
                 )
             ),
             MCP_DESTINATION_SCOPE_GLOBAL: _coerce_pattern_list(
                 _get_nested_setting(
                     settings,
                     "mcp_allowed_global_destinations",
-                    _get_current_app_config_value(
-                        "MCP_ALLOWED_GLOBAL_DESTINATIONS",
-                        os.getenv(MCP_ALLOWED_GLOBAL_DESTINATIONS_ENV, ""),
-                    ),
+                    environment_policy["scope_patterns"][MCP_DESTINATION_SCOPE_GLOBAL],
                 )
             ),
         },
@@ -488,7 +512,7 @@ def _unsafe_host_reason(hostname):
 
 def describe_mcp_destination(manifest):
     """Return normalized MCP destination metadata for a manifest."""
-    if not isinstance(manifest, dict) or manifest.get("type") != MCP_PLUGIN_TYPE:
+    if not isinstance(manifest, dict) or not is_mcp_action(manifest):
         return {
             "is_mcp": False,
             "is_remote": False,
@@ -497,6 +521,8 @@ def describe_mcp_destination(manifest):
             "normalized_endpoint": "",
         }
 
+    if is_retired_mcp_stdio(manifest):
+        raise McpStdioRemovedError()
     additional_fields = normalize_mcp_additional_fields(manifest.get("additionalFields", {}))
     transport = additional_fields.get("transport")
     endpoint = str(manifest.get("endpoint") or "").strip()
@@ -535,9 +561,14 @@ def build_mcp_destination_log_context(manifest):
     try:
         descriptor = describe_mcp_destination(manifest)
     except ValueError as exc:
+        try:
+            mcp_action = is_mcp_action(manifest)
+        except ValueError:
+            mcp_action = False
         return {
-            "is_mcp": isinstance(manifest, dict) and manifest.get("type") == MCP_PLUGIN_TYPE,
-            "destination_error": str(exc),
+            "is_mcp": mcp_action,
+            "destination_error": "MCP destination configuration is invalid.",
+            "error_type": getattr(exc, "code", "validation"),
         }
 
     context = {
@@ -621,28 +652,29 @@ def _denied_patterns_for_scope(policy_config, scope_type, scope_id):
     return patterns
 
 
-def infer_mcp_destination_scope(manifest, fallback_scope=MCP_DESTINATION_SCOPE_PERSONAL):
-    """Infer an action scope from a stored MCP manifest when a caller does not pass one."""
-    if not isinstance(manifest, dict):
-        return normalize_mcp_destination_scope(fallback_scope), ""
-    manifest_scope = str(manifest.get("scope") or "").strip().lower()
-    if manifest_scope:
-        scope_type = normalize_mcp_destination_scope(manifest_scope)
-    elif manifest.get("is_group"):
-        scope_type = MCP_DESTINATION_SCOPE_GROUP
-    elif manifest.get("is_global"):
-        scope_type = MCP_DESTINATION_SCOPE_GLOBAL
-    else:
-        scope_type = normalize_mcp_destination_scope(fallback_scope)
-
-    if scope_type == MCP_DESTINATION_SCOPE_GROUP:
-        return scope_type, manifest.get("group_id") or manifest.get("scope_id") or ""
-    if scope_type == MCP_DESTINATION_SCOPE_GLOBAL:
-        return scope_type, MCP_DESTINATION_SCOPE_GLOBAL
-    return scope_type, manifest.get("user_id") or manifest.get("scope_id") or ""
+def infer_mcp_destination_scope(manifest):
+    """Read server-bound origin; legacy JSON scope flags are not authority."""
+    return resolve_mcp_destination_scope(manifest)
 
 
-def evaluate_mcp_destination_policy(manifest, scope_type=None, scope_id="", policy_config=None, user_id=""):
+def resolve_mcp_execution_context(manifest, *, origin=None):
+    """Require immutable provenance and the caller currently executing the action."""
+    descriptor = describe_mcp_destination(manifest)
+    if not descriptor["is_mcp"]:
+        raise McpConfigurationError("Only an MCP action can use an MCP connector.")
+    action_origin = origin if origin is not None else get_action_origin(manifest)
+    if not isinstance(action_origin, McpActionOrigin):
+        raise McpDestinationPolicyError("MCP execution requires a trusted action origin.")
+    scope_type, scope_id = resolve_mcp_destination_scope(manifest, origin=action_origin)
+    user_id = get_mcp_execution_user_id()
+    if scope_type == MCP_DESTINATION_SCOPE_PERSONAL and user_id != scope_id:
+        raise McpDestinationPolicyError("MCP action is not authorized for this user.")
+    return action_origin, user_id
+
+
+def evaluate_mcp_destination_policy(
+    manifest, scope_type=None, scope_id="", policy_config=None, user_id="", *, origin=None
+):
     """Evaluate whether an MCP manifest may connect to its configured destination."""
     descriptor = describe_mcp_destination(manifest)
     if not descriptor["is_mcp"] or not descriptor["is_remote"]:
@@ -653,11 +685,20 @@ def evaluate_mcp_destination_policy(manifest, scope_type=None, scope_id="", poli
             "matched_pattern": "",
         }
 
-    policy = policy_config or get_mcp_destination_policy_config(user_id=user_id)
-    inferred_scope_type, inferred_scope_id = infer_mcp_destination_scope(manifest)
-    normalized_scope = normalize_mcp_destination_scope(scope_type or inferred_scope_type)
-    normalized_scope_id = scope_id if scope_id not in (None, "") else inferred_scope_id
+    normalized_scope, normalized_scope_id = resolve_mcp_destination_scope(
+        manifest, scope_type, scope_id, origin=origin
+    )
+    policy = policy_config if policy_config is not None else get_mcp_destination_policy_config(user_id=user_id)
+    environment_decision = _evaluate_destination_descriptor_policy(
+        descriptor, normalized_scope, normalized_scope_id, _get_environment_destination_policy_config()
+    )
+    if not environment_decision["allowed"]:
+        environment_decision["reason"] = "MCP destination is blocked by deployment policy."
+        return environment_decision
+    return _evaluate_destination_descriptor_policy(descriptor, normalized_scope, normalized_scope_id, policy)
 
+
+def _evaluate_destination_descriptor_policy(descriptor, normalized_scope, normalized_scope_id, policy):
     unsafe_reason = _unsafe_host_reason(descriptor.get("host"))
     if policy.get("block_unsafe_destinations") and unsafe_reason:
         return {
@@ -721,6 +762,8 @@ def assert_mcp_destination_allowed(
     operation="mcp",
     user_id="",
     mcp_operation_id="",
+    *,
+    origin=None,
 ):
     """Raise when an outbound MCP destination is denied by policy."""
     decision = evaluate_mcp_destination_policy(
@@ -729,6 +772,7 @@ def assert_mcp_destination_allowed(
         scope_id=scope_id,
         policy_config=policy_config,
         user_id=user_id,
+        origin=origin,
     )
     descriptor = decision.get("descriptor") or {}
     destination_context = build_mcp_destination_log_context(manifest)

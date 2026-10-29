@@ -3037,6 +3037,9 @@ async function onSavePublicDocMetadata(e) {
     
     const updatedDoc = await response.json();
     publicDocMetadataModal.hide();
+    if (updatedDoc?.search_sync?.status === "pending" && typeof window.showToast === "function") {
+      window.showToast("Metadata saved. Search and chat results will reflect the change once the search index finishes updating.", "info");
+    }
     fetchPublicDocs(); // Refresh the table
     loadPublicWorkspaceTags(); // Refresh tag counts
   } catch (err) {

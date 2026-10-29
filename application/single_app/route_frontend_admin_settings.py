@@ -15,7 +15,10 @@ from functions_model_endpoint_validation import (
     validate_custom_model_endpoints,
 )
 from functions_settings import *
-from functions_content_safety import normalize_content_safety_violation_message
+from functions_content_safety import (
+    normalize_content_safety_category_threshold,
+    normalize_content_safety_violation_message,
+)
 from functions_rate_limit import normalize_rate_limit_message
 from functions_mcp_server_config import (
     check_inbound_mcp_easy_auth_exclusions,
@@ -46,7 +49,8 @@ from functions_activity_logging import log_web_search_consent_acceptance, log_ge
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
-from functions_model_capabilities import is_vision_capable_model
+from functions_model_capabilities import ModelTokenBudgetError, is_vision_capable_model
+from functions_m365_transport import M365ProviderError, normalize_m365_transport_settings
 from functions_ai_notice import (
     normalize_ai_notice_frequency,
     normalize_ai_notice_message,
@@ -559,6 +563,10 @@ def register_route_frontend_admin_settings(bp):
                 'model_id': '',
                 'provider': ''
             }
+        if 'enable_default_model_for_new_conversations' not in settings:
+            settings['enable_default_model_for_new_conversations'] = False
+        if 'default_reasoning_effort' not in settings:
+            settings['default_reasoning_effort'] = ''
         if 'metadata_extraction_model_selection' not in settings or not isinstance(settings.get('metadata_extraction_model_selection'), dict):
             settings['metadata_extraction_model_selection'] = {
                 'endpoint_id': '',
@@ -1193,6 +1201,20 @@ def register_route_frontend_admin_settings(bp):
             file_download_allowed_public_workspace_ids = normalize_file_download_allowed_public_workspace_ids(
                 form_data.get('file_download_allowed_public_workspace_ids', '')
             )
+            content_safety_category_thresholds = {
+                'Violence': normalize_content_safety_category_threshold(
+                    form_data.get('content_safety_threshold_violence')
+                ),
+                'Hate': normalize_content_safety_category_threshold(
+                    form_data.get('content_safety_threshold_hate')
+                ),
+                'Sexual': normalize_content_safety_category_threshold(
+                    form_data.get('content_safety_threshold_sexual')
+                ),
+                'SelfHarm': normalize_content_safety_category_threshold(
+                    form_data.get('content_safety_threshold_self_harm')
+                ),
+            }
             content_safety_violation_message = normalize_content_safety_violation_message(
                 form_data.get('content_safety_violation_message')
             )
@@ -1732,8 +1754,17 @@ def register_route_frontend_admin_settings(bp):
                 migrated_at = datetime.now(timezone.utc).isoformat()
                 migration_notice['created_at'] = migrated_at
 
-            parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
-            parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
+            try:
+                parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
+                parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
+            except ModelTokenBudgetError as exc:
+                log_event(
+                    "[MODEL_ENDPOINT] Model token-budget validation failed",
+                    extra={"exception_type": type(exc).__name__, "code": exc.code},
+                    level=logging.WARNING,
+                )
+                flash(exc.public_message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
             custom_endpoint_validation_settings = dict(settings)
             custom_endpoint_validation_settings['allow_private_custom_model_endpoints'] = (
                 form_data.get('allow_private_custom_model_endpoints') == 'on'
@@ -1857,6 +1888,19 @@ def register_route_frontend_admin_settings(bp):
                     'model_id': '',
                     'provider': ''
                 }
+
+            enable_default_model_for_new_conversations = (
+                enable_multi_model_endpoints
+                and form_data.get('enable_default_model_for_new_conversations') == 'on'
+            )
+            default_reasoning_effort = (
+                form_data.get('default_reasoning_effort', '').strip().lower()
+            )
+            if default_reasoning_effort not in ('', 'none', 'minimal', 'low', 'medium', 'high'):
+                flash('Default reasoning effort is not valid. Please select a supported value.', 'warning')
+                default_reasoning_effort = ''
+            if not enable_default_model_for_new_conversations:
+                default_reasoning_effort = ''
 
             metadata_selection_json = form_data.get('metadata_extraction_model_selection_json', '{}')
             parsed_metadata_model_selection = {}
@@ -2417,7 +2461,16 @@ def register_route_frontend_admin_settings(bp):
             )
 
             # --- Construct new_settings Dictionary ---
+            try:
+                m365_settings = normalize_m365_transport_settings(
+                    form_data.get('m365_retrieval_provider', settings.get('m365_retrieval_provider', 'auto')),
+                    form_data.get('m365_trusted_download_hosts', settings.get('m365_trusted_download_hosts', [])),
+                )
+            except M365ProviderError as error:
+                flash(error.message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings', _anchor='actions'))
             new_settings = {
+                **m365_settings,
                 # Logging
                 'enable_appinsights_global_logging': enable_appinsights_global_logging,
                 'enable_debug_logging': enable_debug_logging,
@@ -2501,7 +2554,9 @@ def register_route_frontend_admin_settings(bp):
                 'model_endpoint_identity_header_name': model_endpoint_identity_header_name,
                 'model_endpoint_identity_header_value_type': model_endpoint_identity_header_value_type,
                 'model_endpoint_identity_header_hmac_secret': settings.get('model_endpoint_identity_header_hmac_secret', ''),
+                'enable_default_model_for_new_conversations': enable_default_model_for_new_conversations,
                 'default_model_selection': normalized_default_model_selection,
+                'default_reasoning_effort': default_reasoning_effort,
                 'multi_endpoint_migrated_at': migrated_at,
                 'multi_endpoint_migration_notice': migration_notice,
                 'azure_apim_gpt_endpoint': form_data.get('azure_apim_gpt_endpoint', '').strip(),
@@ -2727,6 +2782,7 @@ def register_route_frontend_admin_settings(bp):
 
                 # Safety (Content Safety Direct & APIM)
                 'enable_content_safety': form_data.get('enable_content_safety') == 'on',
+                'content_safety_category_thresholds': content_safety_category_thresholds,
                 'content_safety_violation_message': content_safety_violation_message,
                 'content_safety_include_trigger_information': content_safety_include_trigger_information,
                 'content_safety_endpoint': form_data.get('content_safety_endpoint', '').strip(),

@@ -2,7 +2,7 @@
 # test_postconfig_redis_cache_configuration.py
 """
 Functional test for post-deployment Redis cache configuration.
-Version: 0.261.023
+Version: 0.261.028
 Implemented in: 0.261.023
 
 This test ensures the AZD post-deployment configuration script writes the Redis
@@ -19,6 +19,7 @@ import sys
 REPO_ROOT = Path(__file__).resolve().parents[1]
 POSTCONFIG = REPO_ROOT / "deployers" / "bicep" / "postconfig.py"
 REDIS_CLIENT = REPO_ROOT / "application" / "single_app" / "functions_redis_client.py"
+CONFIGURATION = REPO_ROOT / "deployers" / "bicep" / "deployment_configuration.py"
 
 
 def require_contains(content: str, expected: str, description: str) -> None:
@@ -35,7 +36,11 @@ def test_postconfig_writes_redis_cache_settings() -> bool:
     print("🧪 Testing postconfig Redis cache configuration")
     print("=" * 70)
 
-    content = POSTCONFIG.read_text(encoding="utf-8")
+    content = CONFIGURATION.read_text(encoding="utf-8")
+    entrypoint = POSTCONFIG.read_text(encoding="utf-8")
+    require_contains(entrypoint, "configure_redis(item,", "shared Redis configuration")
+    if entrypoint.count("configure_redis(item,") != 1:
+        raise AssertionError("Redis must be configured exactly once")
 
     require_not_contains(content, "todo support redis cache configuration", "unimplemented Redis configuration")
 
@@ -47,9 +52,9 @@ def test_postconfig_writes_redis_cache_settings() -> bool:
         "redis_port",
         "redis_key",
     ):
-        require_contains(content, f'item["{key}"]', f"Redis setting assignment for {key}")
+        require_contains(content, f'"{key}":', f"Redis setting assignment for {key}")
 
-    require_contains(content, 'if redis_cache_host_name:', "guard so an operator-configured cache is preserved")
+    require_contains(content, 'if not host:\n        return', "guard so an operator-configured cache is preserved")
 
     print("✅ postconfig writes every Redis setting the application reads")
     print("✅ postconfig only overwrites Redis settings when it provisioned a cache")
@@ -66,7 +71,7 @@ def test_service_type_identifiers_match_application() -> bool:
     print("\n🧪 Testing Redis service type identifiers match the application")
     print("=" * 70)
 
-    postconfig = POSTCONFIG.read_text(encoding="utf-8")
+    postconfig = CONFIGURATION.read_text(encoding="utf-8")
     client = REDIS_CLIENT.read_text(encoding="utf-8")
 
     supported = dict(
@@ -88,15 +93,7 @@ def test_service_type_identifiers_match_application() -> bool:
     require_contains(postconfig, f'"{classic}"', "classic Redis service type identifier")
 
     # The Bicep vocabulary must be translated rather than written through unchanged.
-    assigned = re.search(
-        r'item\["redis_service_type"\]\s*=\s*\((.*?)\)',
-        postconfig,
-        flags=re.DOTALL,
-    )
-    if not assigned:
-        raise AssertionError("Could not locate the redis_service_type assignment")
-    if '"managed"' not in assigned.group(1):
-        raise AssertionError("redis_service_type assignment does not branch on the Bicep redisCacheKind value")
+    require_contains(postconfig, 'if kind == "managed" else', "Bicep kind translation")
 
     print(f"✅ deployer emits '{managed}' and '{classic}'")
     print("✅ deployer translates the Bicep redisCacheKind vocabulary")

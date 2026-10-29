@@ -7,6 +7,8 @@ from urllib.parse import urlparse
 from jsonschema import Draft7Validator
 from jsonschema.exceptions import SchemaError
 
+from functions_action_manifest import McpConfigurationError, McpStdioRemovedError
+
 
 MCP_PLUGIN_TYPE = "mcp"
 MCP_DEFAULT_SERVER_PROFILE = "generic"
@@ -16,12 +18,10 @@ MCP_DEFAULT_CONNECT_TIMEOUT_SECONDS = 10
 MCP_DEFAULT_SSE_READ_TIMEOUT_SECONDS = 300
 MCP_DEFAULT_RETRY_COUNT = 0
 MCP_DEFAULT_RETRY_BACKOFF_SECONDS = 1
-MCP_STDIO_ENDPOINT = "stdio://local"
 MCP_SUPPORTED_TRANSPORTS = {
     "streamable_http",
     "sse",
     "websocket",
-    "stdio",
 }
 MCP_REMOTE_TRANSPORTS = {
     "streamable_http",
@@ -87,19 +87,29 @@ class McpRuntimeError(RuntimeError):
 
 def normalize_mcp_transport(value):
     """Normalize supported MCP transport aliases."""
+    if value is not None and not isinstance(value, str):
+        raise McpConfigurationError("MCP transport must be a supported remote transport.")
     normalized_value = str(value or "").strip().lower().replace("-", "_")
+    if not normalized_value:
+        return MCP_DEFAULT_TRANSPORT
+    if normalized_value == "stdio":
+        raise McpStdioRemovedError()
     aliases = {
         "http": "streamable_http",
         "streamablehttp": "streamable_http",
         "streamable_http": "streamable_http",
+        "sse": "sse",
         "server_sent_events": "sse",
         "eventsource": "sse",
         "ws": "websocket",
         "wss": "websocket",
         "websocket": "websocket",
-        "stdio": "stdio",
     }
-    return aliases.get(normalized_value, MCP_DEFAULT_TRANSPORT)
+    if normalized_value not in aliases:
+        raise McpConfigurationError(
+            "Unsupported MCP transport. Choose streamable_http, sse, or websocket."
+        )
+    return aliases[normalized_value]
 
 
 def normalize_mcp_server_profile(value):
@@ -292,11 +302,11 @@ def get_mcp_custom_header_validation_errors(headers):
 
 def validate_mcp_endpoint_for_transport(endpoint, transport):
     """Return validation errors for an MCP endpoint and transport combination."""
-    normalized_transport = normalize_mcp_transport(transport)
-    if normalized_transport not in MCP_REMOTE_TRANSPORTS:
-        return []
-
     endpoint_text = str(endpoint or "").strip()
+    if endpoint_text.lower().startswith("stdio:"):
+        raise McpStdioRemovedError()
+    normalized_transport = normalize_mcp_transport(transport)
+
     if not endpoint_text:
         return ["MCP plugin requires an endpoint for remote transports"]
     if "\r" in endpoint_text or "\n" in endpoint_text:
@@ -331,7 +341,22 @@ def classify_mcp_exception(exc, operation="mcp"):
     message = "MCP operation failed. Check the server endpoint, transport, authentication, and server logs."
     retryable = True
 
-    if isinstance(exc, TimeoutError) or "timeout" in detail_lower or "timed out" in detail_lower:
+    if isinstance(exc, McpConfigurationError):
+        category = exc.code
+        message = exc.public_message
+        detail = message
+        retryable = False
+    elif isinstance(exc, PermissionError):
+        category = "authorization"
+        message = "MCP action is not authorized for this operation."
+        detail = message
+        retryable = False
+    elif isinstance(exc, ValueError):
+        category = "validation"
+        message = "MCP configuration is invalid. Check the action settings."
+        detail = message
+        retryable = False
+    elif isinstance(exc, TimeoutError) or "timeout" in detail_lower or "timed out" in detail_lower:
         category = "timeout"
         message = "MCP operation timed out. Check timeout settings and server responsiveness."
     elif any(term in detail_lower for term in ("certificate", "ssl", "tls", "handshake failure")):
@@ -369,6 +394,10 @@ def classify_mcp_exception(exc, operation="mcp"):
 
 def get_mcp_error_http_status(category):
     """Map an MCP error category to an HTTP status suitable for discovery responses."""
+    if category in {"validation", "mcp_stdio_removed"}:
+        return 400
+    if category == "authorization":
+        return 403
     if category == "authentication":
         return 401
     if category == "timeout":
@@ -532,11 +561,11 @@ def validate_mcp_tool_arguments(tool, arguments):
 def normalize_mcp_additional_fields(additional_fields):
     """Normalize MCP additionalFields while preserving unknown future fields."""
     normalized_fields = dict(additional_fields) if isinstance(additional_fields, dict) else {}
+    normalized_fields["transport"] = normalize_mcp_transport(normalized_fields.get("transport"))
     normalized_fields["server_profile"] = normalize_mcp_server_profile(normalized_fields.get("server_profile"))
     normalized_fields["preconfiguration_id"] = normalize_mcp_preconfiguration_id(
         normalized_fields.get("preconfiguration_id")
     )
-    normalized_fields["transport"] = normalize_mcp_transport(normalized_fields.get("transport"))
     normalized_fields["auth_method"] = normalize_mcp_auth_method(normalized_fields.get("auth_method"))
     normalized_fields["api_key_header_name"] = str(normalized_fields.get("api_key_header_name") or "X-API-Key").strip() or "X-API-Key"
     normalized_fields["load_tools"] = bool(normalized_fields.get("load_tools", True))
@@ -573,9 +602,7 @@ def normalize_mcp_additional_fields(additional_fields):
     )
     normalized_fields["mcp_tools"] = normalize_mcp_tool_metadata(normalized_fields.get("mcp_tools"))
 
-    if not isinstance(normalized_fields.get("args"), list):
-        normalized_fields["args"] = normalize_mcp_string_list(normalized_fields.get("args"), max_items=50)
-    if not isinstance(normalized_fields.get("env"), dict):
-        normalized_fields["env"] = {}
+    for retired_field in ("command", "args", "env"):
+        normalized_fields.pop(retired_field, None)
 
     return normalized_fields

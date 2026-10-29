@@ -45,6 +45,8 @@ flowchart TD
     F -->|Azure Public and configured| G[Content Understanding prebuilt-documentSearch]
     F -->|Gov / custom / unconfigured| J[Document Intelligence prebuilt-layout]
     G -->|Request fails| J
+    G -->|No content for an image| P[Content Understanding image analyzer]
+    P -->|No description| J
 
     H --> K[Extract embedded images from OOXML]
     K --> L{Active engine}
@@ -155,6 +157,25 @@ Layout, which is the cheaper detector, and upgrades to Enhanced when the sample 
 
 Images are always treated as Enhanced in Auto mode because they are single-page inputs that benefit
 most from figure and spatial analysis.
+
+## Standalone Images With No Text
+
+`prebuilt-documentSearch` can return no pages for a photo that contains no text. When that happens
+for an uploaded image, `extract_content_with_extraction_engine(..., is_image=True)` asks the image
+analyzer (`azure_content_understanding_image_analyzer_id`, `prebuilt-imageSearch` by default) to
+describe it, and indexes that description as page 1 with the reason *Content Understanding found no
+text, so its image analyzer description was indexed*. If the image analyzer fails or returns
+nothing, extraction falls back to Document Intelligence Layout as before. Workspace uploads and
+images uploaded straight into a chat both use this path. PDFs and other files are not affected.
+
+Image analyzers return a placeholder such as `![image](pages/1)` as the markdown and put the
+description in the `Summary` field. `analyze_image_with_content_understanding()` returns the
+`Summary` value, any other non-empty string field as `Name: value`, any real markdown, and figure
+descriptions, and ignores placeholder-only markdown. Images embedded in Office files use the same
+function, so they are indexed with the description rather than the placeholder.
+
+Added in 0.261.047 for [#1583](https://github.com/microsoft/simplechat/issues/1583). See the
+[Image Description Indexing Without OCR Text Fix](../fixes/IMAGE_DESCRIPTION_INDEXING_WITHOUT_OCR_TEXT_FIX.md).
 
 ## Images Inside Office Files
 
@@ -304,6 +325,7 @@ Enhanced extraction is disabled.
 | `functional_tests/test_office_embedded_image_extraction.py` | Real DOCX and PPTX zip round-trips: extraction, size and duplicate filtering, per-document cap, slide attribution, natural ordering, graceful handling of legacy and missing files, path-traversal defense against crafted entry names, and rejection of zip bombs and entity-expansion relationship parts |
 | `functional_tests/test_document_intelligence_pdf_image_extraction_mode.py` | Updated for the new engine split |
 | `functional_tests/test_document_intelligence_auto_reprocess_contract.py` | Updated for PDF and image extraction changes |
+| `functional_tests/test_image_description_indexing_without_ocr_text.py` | Image analyzer `Summary` parsing, placeholder-only markdown, and the standalone image fallback before Document Intelligence Layout |
 
 ## Known Limitations
 

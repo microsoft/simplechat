@@ -6,10 +6,10 @@ import logging
 import re
 
 from flask import jsonify, request
+from azure.core.exceptions import AzureError
 
 from functions_appinsights import log_event
 from functions_authentication import (
-    get_current_user_id,
     get_valid_access_token_for_plugins,
     login_required,
     user_required,
@@ -18,10 +18,15 @@ from functions_msgraph_pending_actions import (
     approve_msgraph_pending_action,
     build_pending_action_response,
     cancel_msgraph_pending_action,
+    get_chat_pending_action_cards,
     get_msgraph_pending_action,
-    list_msgraph_pending_actions,
+    get_pending_action_page,
     sanitize_msgraph_pending_action_for_client,
 )
+from functions_m365_context import M365PolicyError
+from functions_m365_pending_delivery import authorize_pending_action_view
+from m365_interaction import M365_AUTH_INTERACTION_CODES
+from route_backend_m365 import _subject, validate_m365_csrf
 from swagger_wrapper import get_auth_security, swagger_route
 
 
@@ -48,10 +53,16 @@ def _error_response(error_payload, default_status=400):
     status_code = default_status
     if error_code == 'not_found':
         status_code = 404
-    elif error_code in {'not_logged_in', 'token_acquisition_failed'}:
+    elif error_code in M365_AUTH_INTERACTION_CODES | {'not_logged_in', 'token_acquisition_failed'}:
         status_code = 401
-    elif error_code in {'permission_denied', 'forbidden'}:
+    elif error_code in {'permission_denied', 'forbidden', 'access_denied', 'm365_principal_mismatch', 'm365_csrf_invalid', 'm365_action_not_authorized', 'm365_action_not_selected'}:
         status_code = 403
+    elif error_code in {'pending_action_changed', 'delivery_in_progress', 'm365_action_review_required', 'm365_action_material_changed', 'delivery_outcome_unknown', 'delivery_failed', 'm365_context_changed', 'm365_action_changed', 'm365_workflow_changed', 'm365_execution_stopped'}:
+        status_code = 409
+    elif error_code == 'throttled':
+        status_code = 429
+    elif error_code in {'service_unavailable', 'm365_delivery_unavailable', 'm365_connection_unavailable'}:
+        status_code = 503
 
     return jsonify({
         'success': False,
@@ -59,6 +70,48 @@ def _error_response(error_payload, default_status=400):
         'message': payload.get('message') or 'Unable to update the Microsoft 365 action.',
         **{key: value for key, value in payload.items() if key not in {'error', 'message'}},
     }), status_code
+
+
+def _pending_exception_response(error):
+    log_event(
+        '[MS_GRAPH_PENDING_ACTION_ROUTES] Pending action request failed.',
+        extra={'exception_type': type(error).__name__, 'error_code': getattr(error, 'code', 'pending_action_unavailable')},
+        level=logging.WARNING,
+    )
+    if isinstance(error, M365PolicyError):
+        return _error_response(error.payload)
+    if isinstance(error, PermissionError):
+        return _error_response({'error': 'forbidden', 'message': 'This action is not available to your account.'})
+    if isinstance(error, LookupError):
+        return _error_response({'error': 'not_found', 'message': 'This pending action was not found.'})
+    if isinstance(error, ValueError):
+        return _error_response({'error': 'invalid_parameters', 'message': 'Refresh the action card and submit a valid request.'})
+    return _error_response({
+        'error': 'pending_action_unavailable',
+        'message': 'Pending actions could not be loaded or updated. Refresh their status before retrying.',
+    }, default_status=503)
+
+
+def _pending_mutation(action_id, *, cancel=False):
+    try:
+        user_id, _ = _subject()
+        validate_m365_csrf()
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or set(payload) != {'expected_version'}:
+            raise ValueError('An action revision is required.')
+        version = payload.get('expected_version')
+        if not isinstance(version, str) or not 1 <= len(version) <= 256:
+            raise ValueError('The action revision is invalid.')
+        operation = cancel_msgraph_pending_action if cancel else approve_msgraph_pending_action
+        action, error = operation(user_id, action_id, expected_version=version)
+        if error:
+            safe_action = sanitize_msgraph_pending_action_for_client(
+                action, viewer_user_id=user_id, include_full_review=True,
+            ) if action else None
+            return _error_response({**error, 'pending_action': safe_action})
+        return jsonify(build_pending_action_response(action, viewer_user_id=user_id, include_full_review=True))
+    except (M365PolicyError, PermissionError, LookupError, ValueError, AzureError) as error:
+        return _pending_exception_response(error)
 
 
 def _normalize_access_test_scopes(raw_scopes):
@@ -137,21 +190,17 @@ def register_route_backend_msgraph_pending_actions(bp):
     @login_required
     @user_required
     def list_user_msgraph_pending_actions():
-        user_id = get_current_user_id()
-        conversation_id = request.args.get('conversation_id', '')
-        workflow_id = request.args.get('workflow_id', '')
-        run_id = request.args.get('run_id', '')
-        actions = list_msgraph_pending_actions(
-            user_id,
-            conversation_id=conversation_id,
-            workflow_id=workflow_id,
-            run_id=run_id,
-            limit=100,
-        )
-        return jsonify({
-            'success': True,
-            'pending_actions': [sanitize_msgraph_pending_action_for_client(action) for action in actions],
-        })
+        try:
+            user_id, _ = _subject()
+            return jsonify(get_pending_action_page(
+                user_id, conversation_id=request.args.get('conversation_id', ''),
+                workflow_id=request.args.get('workflow_id', ''), run_id=request.args.get('run_id', ''),
+                active_only=request.args.get('active_only', '') == '1',
+                continuation_token=request.args.get('continuation_token', ''),
+                limit=int(request.args.get('limit', '50')),
+            ))
+        except (M365PolicyError, PermissionError, LookupError, ValueError, AzureError) as error:
+            return _pending_exception_response(error)
 
 
     @bp.route('/api/msgraph/pending-actions/<action_id>', methods=['GET'])
@@ -159,11 +208,22 @@ def register_route_backend_msgraph_pending_actions(bp):
     @login_required
     @user_required
     def get_user_msgraph_pending_action(action_id):
-        user_id = get_current_user_id()
-        action = get_msgraph_pending_action(user_id, action_id)
-        if not action:
-            return _error_response({'error': 'not_found', 'message': 'Pending Microsoft 365 action was not found.'}, default_status=404)
-        return jsonify(build_pending_action_response(action))
+        try:
+            user_id, _ = _subject()
+            conversation_id = request.args.get('conversation_id', '')
+            if conversation_id:
+                cards = get_chat_pending_action_cards(
+                    user_id, conversation_id, action_ids=[action_id], include_full_review=True,
+                )
+                if not cards:
+                    return _error_response({'error': 'not_found', 'message': 'Pending Microsoft 365 action was not found.'})
+                return jsonify({'success': True, 'pending_action': cards[0]})
+            action = get_msgraph_pending_action(user_id, action_id)
+            if not action or not authorize_pending_action_view(action, user_id):
+                return _error_response({'error': 'not_found', 'message': 'Pending Microsoft 365 action was not found.'})
+            return jsonify(build_pending_action_response(action, viewer_user_id=user_id, include_full_review=True))
+        except (M365PolicyError, PermissionError, LookupError, ValueError, AzureError) as error:
+            return _pending_exception_response(error)
 
 
     @bp.route('/api/msgraph/pending-actions/<action_id>/approve', methods=['POST'])
@@ -171,21 +231,7 @@ def register_route_backend_msgraph_pending_actions(bp):
     @login_required
     @user_required
     def approve_user_msgraph_pending_action(action_id):
-        user_id = get_current_user_id()
-        try:
-            action, error = approve_msgraph_pending_action(user_id, action_id)
-        except Exception as exc:
-            log_event(
-                f'[MS_GRAPH_PENDING_ACTION_ROUTES] Failed to approve pending action: {exc}',
-                extra={'user_id': user_id, 'action_id': action_id},
-                level=logging.ERROR,
-                exceptionTraceback=True,
-            )
-            return _error_response({'error': 'server_error', 'message': 'Unable to approve the Microsoft 365 action right now.'}, default_status=500)
-
-        if error:
-            return _error_response(error)
-        return jsonify(build_pending_action_response(action))
+        return _pending_mutation(action_id)
 
 
     @bp.route('/api/msgraph/pending-actions/<action_id>/send-now', methods=['POST'])
@@ -193,21 +239,7 @@ def register_route_backend_msgraph_pending_actions(bp):
     @login_required
     @user_required
     def send_now_user_msgraph_pending_action(action_id):
-        user_id = get_current_user_id()
-        try:
-            action, error = approve_msgraph_pending_action(user_id, action_id)
-        except Exception as exc:
-            log_event(
-                f'[MS_GRAPH_PENDING_ACTION_ROUTES] Failed to send pending action now: {exc}',
-                extra={'user_id': user_id, 'action_id': action_id},
-                level=logging.ERROR,
-                exceptionTraceback=True,
-            )
-            return _error_response({'error': 'server_error', 'message': 'Unable to send the Microsoft 365 action right now.'}, default_status=500)
-
-        if error:
-            return _error_response(error)
-        return jsonify(build_pending_action_response(action))
+        return _pending_mutation(action_id)
 
 
     @bp.route('/api/msgraph/pending-actions/<action_id>/cancel', methods=['POST'])
@@ -215,18 +247,4 @@ def register_route_backend_msgraph_pending_actions(bp):
     @login_required
     @user_required
     def cancel_user_msgraph_pending_action(action_id):
-        user_id = get_current_user_id()
-        try:
-            action, error = cancel_msgraph_pending_action(user_id, action_id)
-        except Exception as exc:
-            log_event(
-                f'[MS_GRAPH_PENDING_ACTION_ROUTES] Failed to cancel pending action: {exc}',
-                extra={'user_id': user_id, 'action_id': action_id},
-                level=logging.ERROR,
-                exceptionTraceback=True,
-            )
-            return _error_response({'error': 'server_error', 'message': 'Unable to cancel the Microsoft 365 action right now.'}, default_status=500)
-
-        if error:
-            return _error_response(error)
-        return jsonify(build_pending_action_response(action))
+        return _pending_mutation(action_id, cancel=True)

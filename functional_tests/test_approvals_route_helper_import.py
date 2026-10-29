@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for approvals route authorization helper import and requester action boundaries.
-Version: 0.241.030
+Version: 0.261.029
 Implemented in: 0.241.030
 
 This test ensures approval routes explicitly import their authorization helper
@@ -19,6 +19,12 @@ from test_support.versioning import assert_app_version_at_least
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SINGLE_APP_ROOT = os.path.join(ROOT_DIR, 'application', 'single_app')
+if SINGLE_APP_ROOT not in sys.path:
+    sys.path.insert(0, SINGLE_APP_ROOT)
+
+# The test source-path setup must precede importing the pure policy dependency.
+import functions_m365_approvals as m365_approvals
+
 CONFIG_FILE = os.path.join(SINGLE_APP_ROOT, 'config.py')
 FUNCTIONS_FILE = os.path.join(SINGLE_APP_ROOT, 'functions_approvals.py')
 ROUTE_FILE = os.path.join(SINGLE_APP_ROOT, 'route_backend_control_center.py')
@@ -83,6 +89,11 @@ def load_approval_helpers():
         'TYPE_SUSPEND_USER': 'suspend_user',
         'TYPE_BLOCK_USER': 'block_user',
         'SAFETY_USER_APPROVAL_TYPES': {'warn_user', 'suspend_user', 'block_user'},
+        'M365_APPROVAL_TYPES': m365_approvals.M365_APPROVAL_TYPES,
+        'is_m365_approval': m365_approvals.is_m365_approval,
+        'is_m365_approval_subject': m365_approvals.is_m365_approval_subject,
+        'get_m365_approval_service': m365_approvals.get_m365_approval_service,
+        'sanitize_m365_approval': m365_approvals.sanitize_m365_approval,
         'cosmos_approvals_container': None,
         'get_settings': lambda: {'require_member_of_control_center_admin': False},
         'log_event': lambda *args, **kwargs: None,
@@ -113,11 +124,11 @@ def test_route_explicitly_imports_private_approval_helper():
     assert "approval_copy['can_deny'] = _can_user_deny(approval, user_id, user_roles)" in source
 
     def get_function_source(function_name):
-        start_index = source.index(f'def {function_name}')
-        next_route_index = source.find('\n    @app.route', start_index + 1)
-        if next_route_index == -1:
-            return source[start_index:]
-        return source[start_index:next_route_index]
+        function = next(
+            node for node in ast.walk(parsed)
+            if isinstance(node, ast.FunctionDef) and node.name == function_name
+        )
+        return ast.get_source_segment(source, function)
 
     for function_name in ['api_admin_approve_request', 'api_approve_request']:
         function_source = get_function_source(function_name)

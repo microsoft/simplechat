@@ -4,6 +4,18 @@
                    set in one pane is not visible to the next one. #}
                 {% set analyze_capability = settings.document_action_capabilities.analyze %}
                 {% set comparison_capability = settings.document_action_capabilities.comparison %}
+                <div class="card p-3 mb-4" id="m365-retrieval-configuration">
+                    <h5>Microsoft 365 retrieval</h5>
+                    <p class="text-muted">Auto uses Copilot Retrieval only for verified licensed users in supported clouds. Other users use delegated Microsoft Graph. Pay-as-you-go is not used.</p>
+                    <label for="m365_retrieval_provider" class="form-label">Retrieval provider</label>
+                    <select id="m365_retrieval_provider" name="m365_retrieval_provider" class="form-select mb-3">
+                        <option value="auto" {% if settings.m365_retrieval_provider|default('auto') == 'auto' %}selected{% endif %}>Auto</option>
+                        <option value="graph" {% if settings.m365_retrieval_provider == 'graph' %}selected{% endif %}>Microsoft Graph</option>
+                    </select>
+                    <label for="m365_trusted_download_hosts" class="form-label">Additional trusted file-download hosts</label>
+                    <textarea id="m365_trusted_download_hosts" name="m365_trusted_download_hosts" class="form-control" rows="3" aria-describedby="m365-download-hosts-help">{{ settings.m365_trusted_download_hosts|default([])|join('\n') }}</textarea>
+                    <div id="m365-download-hosts-help" class="form-text">For custom clouds, enter deployment-approved DNS host names, one per line. These govern server download redirects, not which folders users can search. Do not add arbitrary Internet hosts.</div>
+                </div>
                 <div class="card p-3 mb-4" id="document-action-capabilities-card">
                     <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
                         <div>

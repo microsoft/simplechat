@@ -43,7 +43,6 @@ const sendBtn = document.getElementById('send-btn');
 let cachedUserSettingsPromise = null;
 let activeCollaborativeConversationId = null;
 let activeCollaborationEventSource = null;
-let activeSubscriptionStartedAt = 0;
 let activeReplyContext = null;
 let typingUsers = new Map();
 let lastTypingState = false;
@@ -176,6 +175,8 @@ function setConversationDataset(conversationId, metadata = {}) {
             element.dataset.currentUserRole = metadata.current_user_role || '';
         }
     });
+
+    applyConversationMetadataUpdate(conversationId, metadata);
 }
 
 function normalizeCollaborator(rawUser) {
@@ -565,43 +566,18 @@ function decorateReplyMessage(message = {}) {
 
 function buildEventKey(eventEnvelope = {}) {
     const payload = eventEnvelope.payload || {};
+    const pendingActionKey = eventEnvelope.event_type === 'collaboration.m365.pending_action'
+        ? JSON.stringify([
+            payload.metadata?.m365_pending_action_ids || payload.m365_pending_action_ids || [],
+            payload.request_id || payload.m365_request_id || payload.metadata?.m365_request_id || '',
+        ])
+        : '';
     return [
         eventEnvelope.conversation_id || payload.conversation?.id || '',
         eventEnvelope.event_type || '',
-        payload.message?.id || payload.message_id || payload.participant?.user_id || payload.user?.user_id || payload.deleted_by_user_id || '',
+        pendingActionKey || payload.message?.id || payload.message_id || payload.participant?.user_id || payload.user?.user_id || payload.deleted_by_user_id || '',
         eventEnvelope.occurred_at || '',
     ].join('|');
-}
-
-function parseCollaborationEventTimestamp(timestamp) {
-    const normalizedTimestamp = String(timestamp || '').trim();
-    if (!normalizedTimestamp) {
-        return Number.NaN;
-    }
-
-    if (/(?:Z|[+-]\d{2}:\d{2})$/i.test(normalizedTimestamp)) {
-        return Date.parse(normalizedTimestamp);
-    }
-
-    const utcTimestamp = Date.parse(`${normalizedTimestamp}Z`);
-    if (!Number.isNaN(utcTimestamp)) {
-        return utcTimestamp;
-    }
-
-    return Date.parse(normalizedTimestamp);
-}
-
-function isReplayEvent(eventEnvelope = {}) {
-    if (!activeSubscriptionStartedAt) {
-        return false;
-    }
-
-    const occurredAt = parseCollaborationEventTimestamp(eventEnvelope.occurred_at || '');
-    if (Number.isNaN(occurredAt)) {
-        return false;
-    }
-
-    return occurredAt < (activeSubscriptionStartedAt - 1000);
 }
 
 async function getCachedUserSettings() {
@@ -649,6 +625,13 @@ async function fetchJson(url, options = {}) {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
+        if (payload.type === 'm365_approval_required' && window.SimpleChatM365Approvals) {
+            const decision = await window.SimpleChatM365Approvals.openApprovals(payload);
+            if (decision.status === 'decided') {
+                return fetchJson(url, options);
+            }
+            throw new Error('Sharing is waiting for your Microsoft 365 acknowledgement.');
+        }
         throw new Error(payload.error || `Request failed (${response.status})`);
     }
     return payload;
@@ -977,13 +960,15 @@ function reapplyPendingSearchHighlight() {
 }
 
 async function loadConversationMessages(conversationId) {
+    window.SimpleChatM365PendingActions?.setConversation(conversationId);
     clearSearchHighlight();
     const payload = await fetchJson(`/api/collaboration/conversations/${conversationId}/messages`);
     const chatbox = document.getElementById('chatbox');
     if (!chatbox) {
-        return [];
+        return { messages: [], eventCursor: 0 };
     }
 
+    window.SimpleChatM365PendingActions?.prepareHistory(conversationId);
     chatbox.innerHTML = '';
     clearTypingState();
     clearMessageCache();
@@ -1013,7 +998,10 @@ async function loadConversationMessages(conversationId) {
         cacheCollaborationMessage(message);
     });
     reapplyPendingSearchHighlight();
-    return messages;
+    return {
+        messages,
+        eventCursor: Math.max(0, Number(payload.event_cursor) || 0),
+    };
 }
 
 function handleTypingEvent(payload = {}) {
@@ -1044,8 +1032,6 @@ function disconnectConversationEvents() {
         activeCollaborationEventSource = null;
     }
 
-    activeSubscriptionStartedAt = 0;
-
     if (typingStopHandle) {
         window.clearTimeout(typingStopHandle);
         typingStopHandle = null;
@@ -1066,6 +1052,17 @@ function handleConversationEvent(eventEnvelope = {}) {
         return;
     }
 
+    const payload = eventEnvelope.payload || {};
+    const eventConversationId = String(
+        eventEnvelope.conversation_id || payload.conversation_id || payload.message?.conversation_id || ''
+    ).trim();
+    if (eventConversationId && (
+        (activeCollaborativeConversationId && eventConversationId !== activeCollaborativeConversationId)
+        || (window.currentConversationId && eventConversationId !== window.currentConversationId)
+    )) {
+        return;
+    }
+
     const eventKey = buildEventKey(eventEnvelope);
     if (eventKey && seenCollaborationEventKeys.has(eventKey)) {
         return;
@@ -1074,11 +1071,9 @@ function handleConversationEvent(eventEnvelope = {}) {
         seenCollaborationEventKeys.add(eventKey);
     }
 
-    if (isReplayEvent(eventEnvelope)) {
+    if (eventEnvelope.event_type === 'collaboration.m365.pending_action') {
         return;
     }
-
-    const payload = eventEnvelope.payload || {};
     if (payload.conversation) {
         const normalizedConversation = cacheCollaborationConversation(payload.conversation);
         setConversationDataset(normalizedConversation.id, normalizedConversation);
@@ -1201,7 +1196,9 @@ function handleConversationEvent(eventEnvelope = {}) {
         return;
     }
 
-    if (eventEnvelope.event_type === 'collaboration.invite.accepted' && payload.participant?.display_name) {
+    if (eventEnvelope.event_type === 'collaboration.invite.accepted'
+        && payload.participant?.display_name
+        && String(payload.participant.user_id || '').trim() !== getCurrentUserId()) {
         showToast(`${payload.participant.display_name} accepted the invite.`, 'success');
         return;
     }
@@ -1215,15 +1212,17 @@ function handleConversationEvent(eventEnvelope = {}) {
     }
 }
 
-function subscribeToConversationEvents(conversationId) {
+function subscribeToConversationEvents(conversationId, eventCursor = 0) {
     if (!isCollaborationEnabled() || !conversationId || typeof EventSource === 'undefined') {
         return;
     }
 
     disconnectConversationEvents();
     activeCollaborativeConversationId = conversationId;
-    activeSubscriptionStartedAt = Date.now();
-    activeCollaborationEventSource = new EventSource(`/api/collaboration/conversations/${encodeURIComponent(conversationId)}/events`);
+    const query = new URLSearchParams({ start_index: String(Math.max(0, Number(eventCursor) || 0)) });
+    activeCollaborationEventSource = new EventSource(
+        `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/events?${query}`
+    );
     activeCollaborationEventSource.onmessage = event => {
         if (!event?.data) {
             return;
@@ -1310,11 +1309,11 @@ async function activateConversation(conversationId, metadata = null) {
         : await fetchConversationMetadata(conversationId);
     updateComposerAvailability(conversationMetadata);
     clearReplyTarget({ focusComposer: false });
-    await loadConversationMessages(conversationId);
+    const { eventCursor } = await loadConversationMessages(conversationId);
     markCollaborationConversationRead(conversationId, { suppressErrorToast: true }).catch(error => {
         console.warn('Failed to clear shared conversation notifications:', error);
     });
-    subscribeToConversationEvents(conversationId);
+    subscribeToConversationEvents(conversationId, eventCursor);
 
     if (conversationMetadata.can_accept_invite && !promptedPendingInviteConversationIds.has(conversationId)) {
         promptedPendingInviteConversationIds.add(conversationId);
@@ -1757,8 +1756,16 @@ function openParticipantConfirmation(userSummary, context = {}) {
     bootstrap.Modal.getOrCreateInstance(confirmModalEl).show();
 }
 
+function normalizeParticipantFlowChatType(chatType) {
+    const normalizedChatType = String(chatType || '').trim();
+    if (normalizedChatType === 'personal' || normalizedChatType === 'new') {
+        return 'personal_single_user';
+    }
+    return normalizedChatType;
+}
+
 function canUseParticipantFlow(conversationId) {
-    const chatType = getConversationChatType(conversationId);
+    const chatType = normalizeParticipantFlowChatType(getConversationChatType(conversationId));
     if (!chatType || !['personal_single_user', 'personal_multi_user', 'group-single-user', 'group_multi_user'].includes(chatType)) {
         return false;
     }
@@ -1877,8 +1884,16 @@ async function respondToInvite(conversationId, action) {
         promptedPendingInviteConversationIds.delete(conversationId);
     }
 
-    if (action === 'accept' && payload.conversation?.id && window.chatConversations?.selectConversation) {
-        await window.chatConversations.selectConversation(payload.conversation.id);
+    if (action === 'accept' && payload.conversation?.id) {
+        const acceptedConversation = cacheCollaborationConversation(payload.conversation);
+        setConversationDataset(acceptedConversation.id, acceptedConversation);
+        applyConversationMetadataUpdate(acceptedConversation.id, acceptedConversation);
+        updateComposerAvailability(acceptedConversation);
+
+        if (window.chatConversations?.getCurrentConversationId?.() !== acceptedConversation.id
+            && window.chatConversations?.selectConversation) {
+            await window.chatConversations.selectConversation(acceptedConversation.id, acceptedConversation);
+        }
     }
 
     window.hideConversationDetails?.();

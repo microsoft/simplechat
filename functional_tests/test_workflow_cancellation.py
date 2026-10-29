@@ -1,7 +1,7 @@
 # test_workflow_cancellation.py
 """
 Functional test for active workflow cancellation.
-Version: 0.250.105
+Version: 0.261.029
 Implemented in: 0.250.062
 
 This test ensures personal and group workflow cancellation requests persist by
@@ -10,13 +10,21 @@ items as cancelled, and return the workflow to an idle schedulable state.
 """
 
 import ast
+from contextlib import nullcontext
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
+import sys
 from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "application" / "single_app"
+sys.path.insert(0, str(APP_ROOT))
+# Policy primitives are dependency-light; no application configuration is loaded.
+from functions_m365_workflow_binding import M365_ACTIVE_STATES
+from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
+from m365_interaction import M365SignInRequired
 RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
 ROUTES_FILE = APP_ROOT / "route_backend_workflows.py"
 BACKGROUND_TASKS_FILE = APP_ROOT / "background_tasks.py"
@@ -84,6 +92,7 @@ def _load_cancellation_route_helpers():
         namespace={
             "datetime": datetime,
             "timezone": timezone,
+            "M365_ACTIVE_STATES": M365_ACTIVE_STATES,
             "_normalize_identifier": lambda value: str(value or "").strip(),
         },
     )
@@ -306,6 +315,15 @@ def test_runner_returns_cancelled_terminal_state_and_clears_active_run():
     cancelled_items = []
     logged_runs = []
     namespace = {
+        "workflow_alert_signal_scope": lambda *args, **kwargs: nullcontext(),
+        "_ensure_execution_context": lambda *args, **kwargs: nullcontext(),
+        "workflow_m365_manifests": lambda workflow: ([], dict(workflow)),
+        "_get_workflow_run_record": lambda workflow, run_id: None,
+        "_get_workflow_conversation_for_alert": lambda run: None,
+        "_create_workflow_priority_alert": lambda *args, **kwargs: None,
+        "M365ApprovalRequired": M365ApprovalRequired,
+        "M365PolicyError": M365PolicyError,
+        "M365SignInRequired": M365SignInRequired,
         "_get_workflow_group_id": lambda workflow: str(workflow.get("group_id") or ""),
         "_get_workflow_scope": lambda workflow: "group" if workflow.get("group_id") else "personal",
         "create_workflow_run_id": lambda: "generated-run",
@@ -323,7 +341,10 @@ def test_runner_returns_cancelled_terminal_state_and_clears_active_run():
     }
     helpers = _load_nodes(
         RUNNER_FILE,
-        function_names=("_finalize_cancelled_workflow_run", "run_personal_workflow"),
+        function_names=(
+            "_finalize_cancelled_workflow_run", "run_personal_workflow",
+            "_run_personal_workflow_impl", "_run_authorized_workflow_impl",
+        ),
         class_names=("WorkflowRunCancelledError",),
         assignment_names=("WORKFLOW_RUN_CANCELLED_MESSAGE",),
         namespace=namespace,
@@ -347,6 +368,37 @@ def test_runner_returns_cancelled_terminal_state_and_clears_active_run():
     assert saved_runs[-1]["status"] == "cancelled"
     assert logged_runs[-1]["status"] == "cancelled"
     assert logged_runs[-1]["workspace_type"] == "group"
+
+
+def test_m365_authorization_denial_finishes_the_run_instead_of_waiting_again():
+    saved = []
+
+    def denied(*args, **kwargs):
+        raise M365PolicyError("m365_workflow_declined", "The account declined this run.")
+
+    helpers = _load_nodes(
+        RUNNER_FILE,
+        function_names=("run_personal_workflow", "_fail_m365_workflow_run"),
+        namespace={
+            "workflow_alert_signal_scope": lambda *args: nullcontext(),
+            "_run_personal_workflow_impl": denied,
+            "_get_workflow_run_record": lambda *args: None,
+            "_save_workflow_run_record": lambda workflow, run: saved.append(dict(run)),
+            "_utc_now_iso": lambda: "2026-09-17T12:00:00+00:00",
+            "M365PolicyError": M365PolicyError,
+            "log_event": lambda *args, **kwargs: None,
+            "logging": logging,
+        },
+    )
+    result = helpers["run_personal_workflow"](
+        {"id": "workflow", "user_id": "owner"}, run_id="run", actor_user_id="caller",
+    )
+    assert result["success"] is False
+    assert result["run"]["status"] == "failed"
+    assert result["run"]["triggered_by"] == "caller"
+    assert result["workflow_updates"]["active_run_id"] == ""
+    assert result["workflow_updates"]["status"] == "idle"
+    assert len(saved) == 1
 
 
 def test_cancellation_contracts_cover_routes_scheduler_activity_and_shared_ui():

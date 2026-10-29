@@ -70,7 +70,22 @@ from functions_generated_file_exports import (
     serialize_generated_json,
     serialize_generated_xml,
 )
-from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_for_model
+from functions_model_budget_runtime import prepare_model_execution_settings
+from functions_model_capabilities import (
+    ModelTokenBudgetError,
+    normalize_token_limit,
+    project_model_budget_metadata,
+    resolve_model_token_budget,
+)
+from functions_model_endpoint_runtime import (
+    build_semantic_kernel_chat_service_for_model,
+    resolve_model_endpoint_from_context,
+)
+from functions_model_endpoint_types import resolve_model_endpoint_request_model
+from model_endpoint_clients import (
+    MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+    infer_model_endpoint_protocol,
+)
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from functions_settings import get_settings
 from functions_simplechat_operations import (
@@ -235,6 +250,11 @@ TABULAR_EXPORT_MAX_SOURCE_BATCH_ROWS = 500
 TABULAR_EXPORT_MAX_SOURCE_BATCH_CHARS = 720000
 TABULAR_EXPORT_DEFAULT_CONTEXT_TOKEN_LIMIT = 128000
 TABULAR_EXPORT_DEFAULT_OUTPUT_TOKEN_LIMIT = 65536
+TABULAR_EXPORT_UNKNOWN_ACCOUNTING_WARNING = (
+    'Output-token accounting is unverified for this protocol. Legacy tabular planning '
+    'and request ceilings are application policy, not provider capacities or a verified '
+    'total-generation reserve.'
+)
 TABULAR_EXPORT_DEFAULT_INPUT_TOKEN_RATIO = 0.5
 TABULAR_EXPORT_LARGE_CONTEXT_INPUT_TOKEN_RATIO = 0.3
 TABULAR_EXPORT_DEFAULT_OUTPUT_TOKEN_RATIO = 0.6
@@ -243,11 +263,13 @@ TABULAR_EXPORT_INPUT_TOKEN_SOFT_CAP = 180000
 TABULAR_EXPORT_PROMPT_TOKEN_RESERVE = 4096
 TABULAR_EXPORT_APPROXIMATE_CHARS_PER_TOKEN = 4.0
 TABULAR_EXPORT_DEFAULT_OUTPUT_EXPANSION_RATIO = 1.5
-TABULAR_EXPORT_MODEL_CONTEXT_LIMIT_FIELDS = (
+TABULAR_EXPORT_MODEL_INPUT_LIMIT_FIELDS = (
     'inputTokenLimit',
     'input_token_limit',
     'maxInputTokens',
     'max_input_tokens',
+)
+TABULAR_EXPORT_MODEL_CONTEXT_LIMIT_FIELDS = (
     'contextWindow',
     'context_window',
     'maxContextTokens',
@@ -260,6 +282,8 @@ TABULAR_EXPORT_MODEL_OUTPUT_LIMIT_FIELDS = (
     'output_token_limit',
     'maxOutputTokens',
     'max_output_tokens',
+)
+TABULAR_EXPORT_MODEL_RESPONSE_LIMIT_FIELDS = (
     'responseLength',
     'response_length',
     'maxCompletionTokens',
@@ -268,17 +292,6 @@ TABULAR_EXPORT_MODEL_OUTPUT_LIMIT_FIELDS = (
     'max_tokens',
 )
 TABULAR_EXPORT_MODEL_LIMIT_CONTAINER_FIELDS = ('tokenLimits', 'token_limits', 'limits')
-TABULAR_EXPORT_MODEL_IDENTIFIER_FIELDS = (
-    'id',
-    'modelId',
-    'model_id',
-    'model_deployment',
-    'modelName',
-    'model_name',
-    'deploymentName',
-    'deployment',
-    'name',
-)
 TABULAR_ANALYSIS_DEFAULT_REDUCE_FAN_IN = 25
 TABULAR_ANALYSIS_MAX_REDUCE_FAN_IN = 50
 TABULAR_ANALYSIS_SUMMARY_MAX_CHARS = 24000
@@ -3593,7 +3606,7 @@ def _stage_tabular_generated_output_source(run, settings):
     max_batch_chars = _safe_int(
         source_descriptor.get('batch_max_chars'),
         default=TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_CHARS,
-        minimum=6000,
+        minimum=1,
         maximum=TABULAR_EXPORT_MAX_SOURCE_BATCH_CHARS,
     )
     resume_source_row = _safe_int(run.get('source_scan_row_count'))
@@ -3953,26 +3966,6 @@ def _resolve_tabular_chunk_model_selection(gpt_model, settings, model_context=No
     return configured_deployment, {}
 
 
-def _normalize_tabular_model_identifier(value):
-    return re.sub(r'[^a-z0-9]+', '-', str(value or '').strip().lower()).strip('-')
-
-
-def _get_tabular_model_record_identifiers(model_record):
-    if not isinstance(model_record, dict):
-        return set()
-
-    identifiers = {
-        _normalize_tabular_model_identifier(model_record.get(field_name))
-        for field_name in TABULAR_EXPORT_MODEL_IDENTIFIER_FIELDS
-        if model_record.get(field_name)
-    }
-    for alias in model_record.get('aliases') or []:
-        normalized_alias = _normalize_tabular_model_identifier(alias)
-        if normalized_alias:
-            identifiers.add(normalized_alias)
-    return {identifier for identifier in identifiers if identifier}
-
-
 def _read_tabular_model_token_limit(model_record, field_names):
     if not isinstance(model_record, dict):
         return None
@@ -3985,110 +3978,289 @@ def _read_tabular_model_token_limit(model_record, field_names):
     )
     for container in containers:
         for field_name in field_names:
-            value = _safe_int(container.get(field_name))
-            if value > 0:
-                return value
+            value = container.get(field_name)
+            if value not in (None, ''):
+                return normalize_token_limit(value, field_name)
     return None
 
 
-def _iter_configured_tabular_model_records(settings):
-    settings = settings or {}
-    gpt_model_settings = settings.get('gpt_model')
-    if isinstance(gpt_model_settings, dict):
-        for model_record in gpt_model_settings.get('selected') or []:
-            if isinstance(model_record, dict):
-                yield model_record
+def _normalize_tabular_model_budget_record(record, *, include_request_limit=True):
+    """Keep legacy capacity aliases separate from requested generation settings."""
+    record = record if isinstance(record, dict) else {}
+    normalized = {
+        field_name: record[field_name]
+        for field_name in (
+            'catalogModelId', 'modelName', 'deploymentName', 'deployment', 'name',
+            'modelVersion', 'version', 'tokenLimitProvider', 'outputTokenAccounting',
+        )
+        if record.get(field_name) not in (None, '')
+    }
+    for canonical, aliases in (
+        ('modelName', ('model_name',)),
+        ('deploymentName', ('model_deployment', 'deployment_name')),
+        ('modelVersion', ('model_version',)),
+    ):
+        if canonical not in normalized:
+            for alias in aliases:
+                if record.get(alias) not in (None, ''):
+                    normalized[canonical] = record[alias]
+                    break
+    limit_fields = [
+        ('contextWindow', TABULAR_EXPORT_MODEL_CONTEXT_LIMIT_FIELDS),
+        ('inputTokenLimit', TABULAR_EXPORT_MODEL_INPUT_LIMIT_FIELDS),
+        ('outputTokenLimit', TABULAR_EXPORT_MODEL_OUTPUT_LIMIT_FIELDS),
+    ]
+    if include_request_limit:
+        limit_fields.append(('responseLength', TABULAR_EXPORT_MODEL_RESPONSE_LIMIT_FIELDS))
+    for canonical, aliases in limit_fields:
+        value = _read_tabular_model_token_limit(record, aliases)
+        if value is not None:
+            normalized[canonical] = value
+    projected = project_model_budget_metadata(normalized)
+    return {field: value for field, value in projected.items() if value is not None}
 
-    for endpoint in settings.get('model_endpoints') or []:
-        if not isinstance(endpoint, dict):
-            continue
-        for model_record in endpoint.get('models') or []:
-            if isinstance(model_record, dict):
-                yield model_record
+
+def _resolve_tabular_budget_model_selection(gpt_model, settings, model_context):
+    """Use only the already selected endpoint, or the legacy Azure selection."""
+    endpoint = {}
+    model = {}
+    requested_endpoint_id = str(model_context.get('endpoint_id') or '').strip()
+    requested_model_id = str(model_context.get('model_id') or '').strip()
+    request_model = str(
+        model_context.get('request_model')
+        or model_context.get('model_deployment')
+        or gpt_model or ''
+    ).strip()
+    if requested_endpoint_id:
+        endpoint = resolve_model_endpoint_from_context(settings, model_context) or {}
+        if str(endpoint.get('id') or '').strip() != requested_endpoint_id:
+            endpoint = {}
+        matches = [
+            candidate
+            for candidate in endpoint.get('models') or []
+            if isinstance(candidate, dict)
+            and candidate.get('enabled', True)
+            and (
+                str(candidate.get('id') or '').strip() == requested_model_id
+                if requested_model_id
+                else resolve_model_endpoint_request_model(endpoint, candidate) == request_model
+            )
+        ]
+        if len(matches) == 1:
+            model = matches[0]
+        else:
+            endpoint = {}
+    elif (
+        not any(model_context.get(field) for field in ('provider', 'endpoint', 'model_id'))
+        or (
+            not settings.get('enable_multi_model_endpoints', False)
+            and str(model_context.get('provider') or 'aoai').strip().lower()
+            in ('aoai', 'azure', 'azure_openai')
+        )
+    ):
+        legacy_models = (settings.get('gpt_model') or {}).get('selected') or []
+        global_endpoint = settings.get('azure_openai_gpt_endpoint')
+        selected_endpoint = model_context.get('endpoint') or global_endpoint
+        matches = [
+            candidate
+            for candidate in legacy_models
+            if isinstance(candidate, dict)
+            and candidate.get('enabled', True)
+            and resolve_model_endpoint_request_model({}, candidate) == request_model
+            and (candidate.get('endpoint') or global_endpoint) == selected_endpoint
+            and (
+                not requested_model_id
+                or not candidate.get('id')
+                or str(candidate['id']).strip() == requested_model_id
+            )
+        ]
+        if len(matches) == 1:
+            model = matches[0]
+    return model, endpoint
 
 
-def _load_tabular_model_limit_catalog():
-    catalog_path = os.path.join(
-        os.path.dirname(__file__),
-        'static',
-        'json',
-        'model_capabilities.json',
+def _get_tabular_input_token_target(settings, planning_input_limit):
+    input_ratio = _settings_float(
+        settings,
+        'tabular_generated_output_input_token_ratio',
+        TABULAR_EXPORT_DEFAULT_INPUT_TOKEN_RATIO,
+        minimum=0.1,
+        maximum=0.8,
     )
-    try:
-        with open(catalog_path, 'r', encoding='utf-8') as catalog_file:
-            catalog = json.load(catalog_file)
-    except (OSError, json.JSONDecodeError):
-        return []
-    return [
-        model_record
-        for model_record in catalog.get('models') or []
-        if isinstance(model_record, dict)
-    ] if isinstance(catalog, dict) else []
+    if planning_input_limit > TABULAR_EXPORT_LARGE_CONTEXT_TOKEN_THRESHOLD:
+        input_ratio = min(
+            input_ratio,
+            _settings_float(
+                settings,
+                'tabular_generated_output_large_context_input_token_ratio',
+                TABULAR_EXPORT_LARGE_CONTEXT_INPUT_TOKEN_RATIO,
+                minimum=0.1,
+                maximum=0.5,
+            ),
+        )
+    input_token_target = int(planning_input_limit * input_ratio)
+    if planning_input_limit > TABULAR_EXPORT_LARGE_CONTEXT_TOKEN_THRESHOLD:
+        input_token_target = min(
+            input_token_target,
+            _settings_int(
+                settings,
+                'tabular_generated_output_input_token_soft_cap',
+                TABULAR_EXPORT_INPUT_TOKEN_SOFT_CAP,
+                minimum=16000,
+                maximum=400000,
+            ),
+        )
+    return input_token_target
+
+
+def _apply_tabular_generation_policy(budget, input_token_target):
+    """Bind a bounded request policy without inventing a provider output maximum."""
+    if budget.applicability != 'text' or budget.output_accounting not in ('total_generation', 'unknown'):
+        budget.remaining_input()
+    legacy_accounting_policy = budget.output_accounting == 'unknown'
+    if budget.request_output_limit is not None:
+        if budget.output_limit is not None and budget.request_output_limit > budget.output_limit:
+            raise ModelTokenBudgetError(
+                'model_context_invalid',
+                'Response Length exceeds this model\'s documented output limit.',
+            )
+        if not legacy_accounting_policy:
+            return budget, 'configured'
+
+    if legacy_accounting_policy:
+        output_limit = min(
+            value for value in (
+                budget.request_output_limit, budget.output_limit, TABULAR_EXPORT_DEFAULT_OUTPUT_TOKEN_LIMIT,
+            )
+            if value is not None
+        )
+        policy_source = 'legacy_accounting_policy'
+    else:
+        output_limit = budget.output_limit or TABULAR_EXPORT_DEFAULT_OUTPUT_TOKEN_LIMIT
+        policy_source = 'model_output_limit' if budget.output_limit is not None else 'fallback_policy'
+    context_bounds = [
+        value for value in (budget.context_window, budget.effective_context_window)
+        if value is not None
+    ]
+    if context_bounds:
+        reserved_input = TABULAR_EXPORT_PROMPT_TOKEN_RESERVE + 1
+        if legacy_accounting_policy or budget.output_limit is None:
+            reserved_input = max(reserved_input, input_token_target)
+        output_limit = min(output_limit, min(context_bounds) - reserved_input)
+    if output_limit <= 0:
+        raise ModelTokenBudgetError(
+            'model_context_exhausted',
+            'The selected context cannot fit the tabular prompt reserve, source input, and generation allowance.',
+        )
+    return budget.with_request_limit(output_limit), policy_source
 
 
 def _resolve_tabular_model_token_limits(gpt_model, settings, model_context=None, catalog_records=None):
+    settings = settings or {}
     chunk_gpt_model, chunk_model_context = _resolve_tabular_chunk_model_selection(
         gpt_model,
         settings,
         model_context=model_context,
     )
     chunk_model_context = chunk_model_context if isinstance(chunk_model_context, dict) else {}
-    requested_identifiers = {
-        _normalize_tabular_model_identifier(identifier)
-        for identifier in (
-            chunk_gpt_model,
-            chunk_model_context.get('model_id'),
-            chunk_model_context.get('model_deployment'),
-        )
-        if identifier
+    selected_model, selected_endpoint = _resolve_tabular_budget_model_selection(
+        chunk_gpt_model, settings, chunk_model_context,
+    )
+    context_overrides = _normalize_tabular_model_budget_record(chunk_model_context)
+    model = {
+        'deploymentName': chunk_gpt_model,
+        **_normalize_tabular_model_budget_record(selected_model),
+        **context_overrides,
     }
-    candidate_groups = [
-        ('context', [chunk_model_context]),
-        ('configured', list(_iter_configured_tabular_model_records(settings))),
-        (
-            'catalog',
-            list(catalog_records) if catalog_records is not None else _load_tabular_model_limit_catalog(),
-        ),
+    endpoint = _normalize_tabular_model_budget_record(selected_endpoint, include_request_limit=False)
+    provider = selected_endpoint.get('provider') or chunk_model_context.get('provider') or 'aoai'
+    connection = selected_endpoint.get('connection') or {}
+    api_type = selected_endpoint.get('api_type') or chunk_model_context.get('api_type')
+    runtime_protocol = infer_model_endpoint_protocol(
+        provider,
+        connection.get('endpoint') or chunk_model_context.get('endpoint'),
+        chunk_model_context.get('request_model') or chunk_gpt_model,
+        api_type,
+    )
+    budget_protocol = (
+        'messages' if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else 'chat_completions'
+    )
+    budget = resolve_model_token_budget(
+        model,
+        endpoint,
+        provider='azure' if api_type == 'azure_openai' else provider,
+        protocol=budget_protocol,
+        request_output_limit=model.get('responseLength'),
+        catalog_records=catalog_records,
+    )
+    accounting_override_source = next((
+        source for source, record in (
+            ('context', context_overrides), ('model', model), ('endpoint', endpoint),
+        )
+        if record.get('outputTokenAccounting') is not None
+    ), None)
+    input_bounds = [
+        value for value in (
+            budget.context_window, budget.input_limit, budget.effective_context_window,
+        )
+        if value is not None
     ]
-    context_token_limit = None
-    output_token_limit = None
-    limit_sources = []
-    for source_name, model_records in candidate_groups:
-        for model_record in model_records:
-            if not isinstance(model_record, dict):
-                continue
-            record_identifiers = _get_tabular_model_record_identifiers(model_record)
-            if requested_identifiers and not requested_identifiers.intersection(record_identifiers):
-                continue
-            requested_identifiers.update(record_identifiers)
-            prior_context_token_limit = context_token_limit
-            prior_output_token_limit = output_token_limit
-            if context_token_limit is None:
-                context_token_limit = _read_tabular_model_token_limit(
-                    model_record,
-                    TABULAR_EXPORT_MODEL_CONTEXT_LIMIT_FIELDS,
-                )
-            if output_token_limit is None:
-                output_token_limit = _read_tabular_model_token_limit(
-                    model_record,
-                    TABULAR_EXPORT_MODEL_OUTPUT_LIMIT_FIELDS,
-                )
-            supplied_limit = (
-                context_token_limit != prior_context_token_limit
-                or output_token_limit != prior_output_token_limit
+    planning_input_limit = min(input_bounds) if input_bounds else TABULAR_EXPORT_DEFAULT_CONTEXT_TOKEN_LIMIT
+    legacy_accounting_policy = budget.output_accounting == 'unknown'
+    if legacy_accounting_policy:
+        planning_input_limit = min(planning_input_limit, TABULAR_EXPORT_DEFAULT_CONTEXT_TOKEN_LIMIT)
+    configured_response_token_limit = budget.request_output_limit
+    budget, request_limit_source = _apply_tabular_generation_policy(
+        budget, _get_tabular_input_token_target(settings, planning_input_limit),
+    )
+    available_input_tokens = None
+    if input_bounds:
+        if legacy_accounting_policy:
+            # This is a tabular planning reserve, not the strict shared evidence budget.
+            planning_bounds = [
+                value for value in (budget.input_limit,) if value is not None
+            ]
+            planning_bounds.extend(
+                window - budget.request_output_limit
+                for window in (budget.context_window, budget.effective_context_window)
+                if window is not None
             )
-            if supplied_limit and source_name not in limit_sources:
-                limit_sources.append(source_name)
-            if context_token_limit and output_token_limit:
-                break
-        if context_token_limit and output_token_limit:
-            break
-
+            available_input_tokens = max(0, min(planning_bounds))
+        else:
+            available_input_tokens = budget.remaining_input()
+        if available_input_tokens <= TABULAR_EXPORT_PROMPT_TOKEN_RESERVE:
+            raise ModelTokenBudgetError(
+                'model_context_exhausted',
+                'The selected input allowance cannot fit the tabular prompt reserve and source input.',
+            )
+    limit_sources = {
+        'context' if field in context_overrides else 'configured'
+        if source in ('model', 'endpoint') else source
+        for field, source in budget.provenance
+    }
     return {
         'model': chunk_gpt_model,
-        'context_token_limit': context_token_limit or TABULAR_EXPORT_DEFAULT_CONTEXT_TOKEN_LIMIT,
-        'output_token_limit': output_token_limit or TABULAR_EXPORT_DEFAULT_OUTPUT_TOKEN_LIMIT,
-        'source': '+'.join(limit_sources) if limit_sources else 'fallback',
+        'model_token_budget': budget,
+        'context_token_limit': budget.context_window,
+        'input_token_limit': budget.input_limit,
+        'effective_context_token_limit': budget.effective_context_window,
+        'output_token_limit': budget.output_limit,
+        'request_output_token_limit': budget.request_output_limit,
+        'configured_response_token_limit': configured_response_token_limit,
+        'request_output_limit_source': request_limit_source,
+        'output_token_accounting': budget.output_accounting,
+        'output_token_accounting_override_source': accounting_override_source,
+        'uses_legacy_accounting_policy': legacy_accounting_policy,
+        'budget_warning': TABULAR_EXPORT_UNKNOWN_ACCOUNTING_WARNING if legacy_accounting_policy else None,
+        # These are legacy batching policies, not claims about provider capacity.
+        'planning_input_token_limit': planning_input_limit,
+        'planning_output_token_limit': budget.request_output_limit,
+        'available_input_tokens': available_input_tokens,
+        'uses_input_fallback_policy': legacy_accounting_policy or not input_bounds,
+        'uses_output_fallback_policy': request_limit_source in ('fallback_policy', 'legacy_accounting_policy'),
+        'source': '+'.join(
+            source for source in ('context', 'configured', 'catalog') if source in limit_sources
+        ) or 'fallback',
     }
 
 
@@ -4107,53 +4279,33 @@ def _build_model_aware_source_batch_budget(
         model_context=model_context,
         catalog_records=catalog_records,
     )
-    context_token_limit = _safe_int(token_limits.get('context_token_limit'), minimum=1)
-    output_token_limit = _safe_int(token_limits.get('output_token_limit'), minimum=1)
-    input_ratio = _settings_float(
-        settings,
-        'tabular_generated_output_input_token_ratio',
-        TABULAR_EXPORT_DEFAULT_INPUT_TOKEN_RATIO,
-        minimum=0.1,
-        maximum=0.8,
-    )
-    if context_token_limit > TABULAR_EXPORT_LARGE_CONTEXT_TOKEN_THRESHOLD:
-        input_ratio = min(
-            input_ratio,
-            _settings_float(
-                settings,
-                'tabular_generated_output_large_context_input_token_ratio',
-                TABULAR_EXPORT_LARGE_CONTEXT_INPUT_TOKEN_RATIO,
-                minimum=0.1,
-                maximum=0.5,
-            ),
-        )
-    input_token_budget = int(context_token_limit * input_ratio)
-    if context_token_limit > TABULAR_EXPORT_LARGE_CONTEXT_TOKEN_THRESHOLD:
-        input_token_budget = min(
-            input_token_budget,
-            _settings_int(
-                settings,
-                'tabular_generated_output_input_token_soft_cap',
-                TABULAR_EXPORT_INPUT_TOKEN_SOFT_CAP,
-                minimum=16000,
-                maximum=400000,
-            ),
-        )
+    planning_input_limit = token_limits['planning_input_token_limit']
+    planning_output_limit = token_limits['planning_output_token_limit']
+    input_token_budget = _get_tabular_input_token_target(settings, planning_input_limit)
     question_token_reserve = math.ceil(len(str(user_question or '')) / TABULAR_EXPORT_APPROXIMATE_CHARS_PER_TOKEN)
     input_token_budget = max(
         input_token_budget - TABULAR_EXPORT_PROMPT_TOKEN_RESERVE - question_token_reserve,
         1500,
     )
-    output_token_budget = max(
-        int(output_token_limit * _settings_float(
-            settings,
-            'tabular_generated_output_output_token_ratio',
-            TABULAR_EXPORT_DEFAULT_OUTPUT_TOKEN_RATIO,
-            minimum=0.1,
-            maximum=0.9,
-        )),
-        1000,
+    available_input_tokens = token_limits['available_input_tokens']
+    if available_input_tokens is not None:
+        input_token_budget = min(
+            input_token_budget,
+            available_input_tokens - TABULAR_EXPORT_PROMPT_TOKEN_RESERVE - question_token_reserve,
+        )
+        if input_token_budget <= 0:
+            raise ModelTokenBudgetError(
+                'model_context_exhausted',
+                'The selected model has no input allowance left for tabular rows. Reduce the instructions or Response Length.',
+            )
+    output_ratio = _settings_float(
+        settings,
+        'tabular_generated_output_output_token_ratio',
+        TABULAR_EXPORT_DEFAULT_OUTPUT_TOKEN_RATIO,
+        minimum=0.1,
+        maximum=0.9,
     )
+    output_token_budget = min(planning_output_limit, max(int(planning_output_limit * output_ratio), 1000))
     input_bound_chars = int(input_token_budget * TABULAR_EXPORT_APPROXIMATE_CHARS_PER_TOKEN)
     max_batch_chars = input_bound_chars
     if _normalize_tabular_run_task_type(task_type) != TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS:
@@ -4172,7 +4324,7 @@ def _build_model_aware_source_batch_budget(
         max_batch_chars = min(max_batch_chars, output_bound_chars)
     max_batch_chars = _safe_int(
         max_batch_chars,
-        minimum=6000,
+        minimum=1,
         maximum=TABULAR_EXPORT_MAX_SOURCE_BATCH_CHARS,
     )
     configured_max_chars = settings.get('tabular_generated_output_max_batch_chars')
@@ -4212,13 +4364,45 @@ def _build_model_aware_source_batch_budget(
     return {
         'max_rows': max_batch_rows,
         'max_chars': max_batch_chars,
-        'context_token_limit': context_token_limit,
-        'output_token_limit': output_token_limit,
+        'context_token_limit': token_limits['context_token_limit'],
+        'input_token_limit': token_limits['input_token_limit'],
+        'effective_context_token_limit': token_limits['effective_context_token_limit'],
+        'output_token_limit': token_limits['output_token_limit'],
+        'request_output_token_limit': token_limits['request_output_token_limit'],
+        'configured_response_token_limit': token_limits['configured_response_token_limit'],
+        'request_output_limit_source': token_limits['request_output_limit_source'],
+        'output_token_accounting': token_limits['output_token_accounting'],
+        'output_token_accounting_override_source': token_limits['output_token_accounting_override_source'],
+        'uses_legacy_accounting_policy': token_limits['uses_legacy_accounting_policy'],
+        'budget_warning': token_limits['budget_warning'],
+        'planning_input_token_limit': planning_input_limit,
+        'planning_output_token_limit': planning_output_limit,
+        'uses_input_fallback_policy': token_limits['uses_input_fallback_policy'],
+        'uses_output_fallback_policy': token_limits['uses_output_fallback_policy'],
         'input_token_budget': input_token_budget,
         'output_token_budget': output_token_budget,
         'limit_source': token_limits.get('source'),
         'model': token_limits.get('model'),
     }
+
+
+class _TabularBudgetedChatService:
+    """Keep per-call generation ceilings aligned with source-batch sizing."""
+
+    def __init__(self, service, budget):
+        self._service = service
+        self._budget = budget
+
+    def __getattr__(self, name):
+        return getattr(self._service, name)
+
+    async def get_chat_message_contents(self, chat_history, settings, **kwargs):
+        execution_settings, _ = prepare_model_execution_settings(
+            settings, self._budget, output_limit=self._budget.request_output_limit,
+        )
+        return await self._service.get_chat_message_contents(
+            chat_history, execution_settings, **kwargs,
+        )
 
 
 def _build_chat_service(gpt_model, settings, model_context=None, preselected=False):
@@ -4231,13 +4415,31 @@ def _build_chat_service(gpt_model, settings, model_context=None, preselected=Fal
             settings,
             model_context=model_context,
         )
+    token_limits = _resolve_tabular_model_token_limits(
+        chunk_gpt_model,
+        {**(settings or {}), 'tabular_generated_output_chunk_model_mode': 'current'},
+        model_context=chunk_model_context,
+    )
+    budget = token_limits['model_token_budget']
+    if token_limits['uses_legacy_accounting_policy']:
+        log_event(
+            f"[TABULAR_GENERATED_OUTPUT] {token_limits['budget_warning']}",
+            {
+                'provider': budget.provider,
+                'protocol': budget.protocol,
+                'output_token_accounting': budget.output_accounting,
+                'planning_input_token_limit': token_limits['planning_input_token_limit'],
+                'request_output_token_limit': budget.request_output_limit,
+            },
+            level=logging.WARNING,
+        )
     chat_service, _ = build_semantic_kernel_chat_service_for_model(
         chunk_gpt_model,
         settings,
         service_id='tabular-generated-output-background',
         model_context=chunk_model_context,
     )
-    return chat_service
+    return _TabularBudgetedChatService(chat_service, budget)
 
 
 def _get_tabular_generation_plan_mode(run):

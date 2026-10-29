@@ -1,5 +1,5 @@
 # postconfig.py
-import azure.cosmos as azure_cosmos
+import copy
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import AzureCliCredential
 import json
@@ -8,7 +8,16 @@ import shutil
 import subprocess
 from urllib.parse import urlparse
 
-credential = AzureCliCredential()
+from deployment_configuration import (
+    configure_redis,
+    configure_search,
+    load_deployment_environment,
+    persist_settings,
+)
+from deployment_cosmos import create_deployment_cosmos_client
+
+load_deployment_environment()
+credential = AzureCliCredential(tenant_id=os.environ["AZURE_TENANT_ID"])
 
 STANDARD_AZURE_OPENAI_HOST_SUFFIXES = (
     ".openai.azure.com",
@@ -348,14 +357,7 @@ def get_core_service_keys(
 
     return keys
 
-cosmosEndpoint = os.getenv("var_cosmosDb_uri")
-cosmosKey = os.getenv("var_cosmosDb_key")
-
-if cosmosKey:
-    client = azure_cosmos.CosmosClient(cosmosEndpoint, cosmosKey)
-else:
-    credential.get_token("https://cosmos.azure.com/.default")
-    client = azure_cosmos.CosmosClient(cosmosEndpoint, credential=credential)
+client = create_deployment_cosmos_client()
 
 database_name = "SimpleChat"
 container_name = "settings"
@@ -375,6 +377,8 @@ except CosmosResourceNotFoundError:
         "id": item_id,
         "partition_key": partition_key
     }
+
+original_item = copy.deepcopy(item)
 
 # Get values from environment variables
 var_authenticationType = os.getenv("var_authenticationType")
@@ -491,20 +495,8 @@ item["enable_semantic_kernel"] = False
 item["enable_appinsights_global_logging"] = True
 
 # Scale > Redis Cache
-# Only written when this deployment provisioned a cache, so an operator-configured
-# external Redis is not overwritten when deployRedisCache is false.
-redis_cache_host_name = (var_redisCacheHostName or "").strip()
-if redis_cache_host_name:
-    item["enable_redis_cache"] = True
-    item["redis_url"] = redis_cache_host_name
-    item["redis_auth_type"] = var_redisAuthenticationType
-    # The application uses different service-type identifiers than the Bicep redisCacheKind parameter.
-    item["redis_service_type"] = (
-        "azure_managed_redis" if var_redisCacheKind == "managed" else "azure_cache_for_redis"
-    )
-    item["redis_port"] = var_redisCachePort
-    # Empty under managed identity, which also clears a stale key from an earlier key-auth deployment.
-    item["redis_key"] = core_service_keys.get("redis_key", "")
+configure_redis(item, var_redisCacheHostName, var_redisCacheKind,
+                var_redisCachePort, var_redisAuthenticationType, core_service_keys)
 
 # Workspaces > Metadata Extraction
 item["enable_extract_meta_data"] = True
@@ -535,20 +527,6 @@ item["content_safety_endpoint"] = var_contentSafetyEndpoint
 item["content_safety_authentication_type"] = var_authenticationType
 if var_authenticationType == "key" and "content_safety_key" in core_service_keys:
     item["content_safety_key"] = core_service_keys["content_safety_key"]
-
-# Redis Cache Configuration
-if var_redisCacheHostName and var_redisCacheHostName.strip():
-    item["enable_redis_cache"] = True
-    # Only assert a service when a cache was actually deployed. Writing a definitive value
-    # here otherwise would override host name detection for an existing cache.
-    item["redis_service_type"] = (
-        "azure_cache_for_redis" if var_redisCacheKind == "classic" else "azure_managed_redis"
-    )
-    item["redis_port"] = var_redisCachePort
-item["redis_url"] = var_redisCacheHostName
-item["redis_auth_type"] = var_redisAuthenticationType
-if var_redisAuthenticationType == "key" and "redis_key" in core_service_keys:
-    item["redis_key"] = core_service_keys["redis_key"]
 
 # Safety > Conversation Archiving
 item["enable_conversation_archiving"] = True
@@ -585,7 +563,8 @@ item["speech_service_location"] = var_speechServiceLocation
 if var_authenticationType == "key" and "speech_service_key" in core_service_keys:
     item["speech_service_key"] = core_service_keys["speech_service_key"]
 
-# 5. Upsert the updated items back into Cosmos DB
-response = container.upsert_item(item)
-print(
-    f"Updated item: {response['id']} with enable_external_healthcheck = {response['enable_external_healthcheck']}")
+created_indexes = configure_search(item, credential)
+response = persist_settings(container, original_item, item, credential)
+print(f"Settings saved and verified. Search indexes created: {', '.join(created_indexes) or 'none (already exist)'}.")
+print("Restart the web service to activate any changed Redis session configuration.")
+client.close()

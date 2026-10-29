@@ -102,7 +102,8 @@ export async function handleRetryButtonClick(messageDiv, messageId, messageType)
     
     if (modelSelect && retryModelSelect) {
         // Clone model options from main select
-        retryModelSelect.innerHTML = modelSelect.innerHTML;
+        const clonedOptions = Array.from(modelSelect.options || []).map((option) => option.cloneNode(true));
+        retryModelSelect.replaceChildren(...clonedOptions);
         retryModelSelect.value = modelSelect.value; // Set to currently selected model
     }
     
@@ -188,14 +189,26 @@ export async function handleRetryButtonClick(messageDiv, messageId, messageType)
                 levels.forEach(level => {
                     const div = document.createElement('div');
                     div.className = 'form-check';
-                    div.innerHTML = `
-                        <input class="form-check-input" type="radio" name="retry-reasoning-effort" 
-                               id="retry-reasoning-${level.value}" value="${level.value}" 
-                               ${level.value === 'medium' ? 'checked' : ''}>
-                        <label class="form-check-label" for="retry-reasoning-${level.value}">
-                            <strong>${level.label}</strong> - ${level.description}
-                        </label>
-                    `;
+
+                    const input = document.createElement('input');
+                    input.className = 'form-check-input';
+                    input.type = 'radio';
+                    input.name = 'retry-reasoning-effort';
+                    input.id = `retry-reasoning-${level.value}`;
+                    input.value = level.value;
+                    input.checked = level.value === 'medium';
+
+                    const label = document.createElement('label');
+                    label.className = 'form-check-label';
+                    label.setAttribute('for', input.id);
+
+                    const strong = document.createElement('strong');
+                    strong.textContent = level.label;
+
+                    label.appendChild(strong);
+                    label.appendChild(document.createTextNode(` - ${level.description}`));
+                    div.appendChild(input);
+                    div.appendChild(label);
                     retryReasoningLevels.appendChild(div);
                 });
             }
@@ -264,8 +277,18 @@ window.executeMessageRetry = function() {
         // Model mode - get model and reasoning effort
         const retryModelSelect = document.getElementById('retry-model-select');
         const selectedOption = retryModelSelect ? retryModelSelect.options[retryModelSelect.selectedIndex] : null;
-        const selectedModel = selectedOption?.dataset?.deploymentName || (retryModelSelect ? retryModelSelect.value : null);
+        const selectedModel = selectedOption?.dataset?.requestModel
+            || selectedOption?.dataset?.deploymentName
+            || (retryModelSelect ? retryModelSelect.value : null);
         requestBody.model = selectedModel;
+        requestBody.model_id = selectedOption?.dataset?.modelId || null;
+        requestBody.model_endpoint_id = selectedOption?.dataset?.endpointId || null;
+        requestBody.model_provider = selectedOption?.dataset?.provider || null;
+        try {
+            requestBody.model_icon = JSON.parse(selectedOption?.dataset?.modelIcon || '{}');
+        } catch (error) {
+            requestBody.model_icon = {};
+        }
         
         let reasoningEffort = null;
         const retryReasoningContainer = document.getElementById('retry-reasoning-container');

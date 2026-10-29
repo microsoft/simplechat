@@ -88,6 +88,7 @@ The Content Safety section belongs to the Content Safety tab. Use it with the ad
 | --- | --- | --- | --- |
 | Enable Content Safety | Routes chat content through Azure AI Content Safety so blocked messages use the configured violation message instead of continuing through the normal chat flow. | Off | `enable_content_safety`; capability toggle |
 | Use APIM instead of direct Content Safety endpoint | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_content_safety_apim`; capability toggle |
+| Prompt Category Block Thresholds | Sets per-category Azure Content Safety prompt thresholds for Violence, Hate, Sexual, and Self-harm. Low blocks Low, Medium, and High; Medium allows Low and blocks Medium and High; High allows Low and Medium and blocks High. | Medium (4) for every category | `content_safety_category_thresholds`; category values are 2, 4, or 6 |
 | Content Safety Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `content_safety_endpoint` |
 | Authentication Type | Chooses whether SimpleChat authenticates to this service with a key, managed identity, or another supported method. | key | `content_safety_authentication_type` |
 | Content Safety Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `content_safety_key` |

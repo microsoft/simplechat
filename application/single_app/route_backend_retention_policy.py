@@ -410,7 +410,7 @@ def register_route_backend_retention_policy(bp):
             # Validate and parse conversation retention
             if 'conversation_retention_days' in data:
                 conv_retention = data['conversation_retention_days']
-                if conv_retention == 'none' or conv_retention is None:
+                if conv_retention == 'none' or conv_retention == 'default' or conv_retention is None:
                     retention_settings['conversation_retention_days'] = 'none'
                 else:
                     try:
@@ -435,7 +435,7 @@ def register_route_backend_retention_policy(bp):
             # Validate and parse document retention
             if 'document_retention_days' in data:
                 doc_retention = data['document_retention_days']
-                if doc_retention == 'none' or doc_retention is None:
+                if doc_retention == 'none' or doc_retention == 'default' or doc_retention is None:
                     retention_settings['document_retention_days'] = 'none'
                 else:
                     try:
@@ -519,7 +519,7 @@ def register_route_backend_retention_policy(bp):
             # Validate and parse conversation retention
             if 'conversation_retention_days' in data:
                 conv_retention = data['conversation_retention_days']
-                if conv_retention == 'none' or conv_retention is None:
+                if conv_retention == 'none' or conv_retention == 'default' or conv_retention is None:
                     retention_settings['conversation_retention_days'] = 'none'
                 else:
                     try:
@@ -544,7 +544,7 @@ def register_route_backend_retention_policy(bp):
             # Validate and parse document retention
             if 'document_retention_days' in data:
                 doc_retention = data['document_retention_days']
-                if doc_retention == 'none' or doc_retention is None:
+                if doc_retention == 'none' or doc_retention == 'default' or doc_retention is None:
                     retention_settings['document_retention_days'] = 'none'
                 else:
                     try:
@@ -629,7 +629,7 @@ def register_route_backend_retention_policy(bp):
             # Validate and parse conversation retention
             if 'conversation_retention_days' in data:
                 conv_retention = data['conversation_retention_days']
-                if conv_retention == 'none' or conv_retention is None:
+                if conv_retention == 'none' or conv_retention == 'default' or conv_retention is None:
                     retention_settings['conversation_retention_days'] = 'none'
                 else:
                     try:
@@ -654,7 +654,7 @@ def register_route_backend_retention_policy(bp):
             # Validate and parse document retention
             if 'document_retention_days' in data:
                 doc_retention = data['document_retention_days']
-                if doc_retention == 'none' or doc_retention is None:
+                if doc_retention == 'none' or doc_retention == 'default' or doc_retention is None:
                     retention_settings['document_retention_days'] = 'none'
                 else:
                     try:

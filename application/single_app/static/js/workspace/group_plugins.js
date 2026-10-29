@@ -5,7 +5,7 @@ import { ensurePluginsTableInRoot, validatePluginManifest } from "../plugin_comm
 import { showToast } from "../chat/chat-toast.js";
 import {
   humanizeName, truncateDescription, escapeHtml as escapeHtmlUtil,
-  setupViewToggle, switchViewContainers, openViewModal, createActionCard
+  setupViewToggle, switchViewContainers, openViewModal, createActionCard, getMcpRetirementStatus
 } from './view-utils.js';
 
 const root = document.getElementById("group-plugins-root");
@@ -186,6 +186,22 @@ function renderPluginsTable(list) {
       <td><strong title="${escapeHtml(rawName)}">${titleHtml}</strong></td>
       <td class="text-muted small" title="${escapeHtml(fullDesc)}">${escapeHtml(shortDesc)}</td>
       <td>${actionsHtml}</td>`;
+
+    const retirementStatus = getMcpRetirementStatus(plugin);
+    if (retirementStatus) {
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-warning text-dark ms-1';
+        badge.textContent = 'Unsupported';
+        tr.children[0].appendChild(badge);
+        const notice = document.createElement('div');
+        notice.className = 'mt-1 text-warning-emphasis mcp-retirement-notice';
+        notice.textContent = retirementStatus.message;
+        tr.children[1].appendChild(notice);
+        const editButton = tr.querySelector('.edit-group-plugin-btn');
+        if (editButton) {
+            editButton.title = 'Reconfigure action';
+        }
+    }
 
     tbody.appendChild(tr);
   });

@@ -322,6 +322,49 @@ Provisioning may take between 5-40 minutes depending on the options selected.
 
 On the completion of the deployment, a URL will be presented, the user may use to access the site.
 
+## Key Vault secret permissions
+
+Implemented in deployer version **1.0.32** (`deployers/version.txt`). This is the deployer portion of the application 0.261.125 fix (#1511), backported to Development.
+
+Whenever `configureApplicationPermissions=true`, the container app and optional native Python app each receive **Key Vault Secrets Officer** at the **vault scope**, regardless of `authenticationType`. Its built-in role ID is `b86a8fe4-44ce-4948-aee5-eccb2c155cd7`. The application writes and deletes secrets when Key Vault secret storage is enabled for agents, actions and model endpoints. **Key Vault Secrets User** only supplies read access, so those saves fail with `ForbiddenByRbac`. Officer permits secret management, including get/list/set/delete, without granting permission to manage vault RBAC. See the [Microsoft Key Vault role reference](https://learn.microsoft.com/azure/key-vault/general/rbac-guide#azure-built-in-roles-for-key-vault-data-plane-operations).
+
+Both Bicep app variants use their own **system-assigned** managed identity. Leave the application's Key Vault client ID blank for that default. Use the identity's **principal/object ID** when reviewing IAM assignments, not the sign-in app registration's client ID or the deploying administrator's identity.
+
+`configureApplicationPermissions=false` still skips both application permission modules. It is not a read-only mode: an administrator must supply all required application grants separately. A code-only upgrade also does not change existing permissions. For manual setup, open the vault's **Access control (IAM)**, assign **Key Vault Secrets Officer** to the correct App Service identity, and keep the scope on that vault, not its resource group or subscription.
+
+**Test Key Vault connection** in **Admin Settings > Secrets** only lists secret properties in this release. It passes for an identity that has only Secrets User, so it does not prove that credential saves can write secrets.
+
+### Upgrading and adopting existing ARM assignments
+
+The new deterministic assignment name is `guid(kv.id, webApp.id, 'kv-secrets-officer')`. It intentionally differs from the old `kv-secrets-user` assignment name: Azure cannot change the role definition on an existing assignment GUID. Normal incremental deployments add Officer and leave the old read-only grant and other administrator-created grants intact. Do not use complete-mode deployment or delete grants to resolve a role-assignment collision.
+
+ARM does not automatically adopt an equivalent assignment that was created manually with another GUID. Before upgrading an already-remediated environment, inspect assignment **metadata only**, once for each deployed App Service:
+
+```powershell
+$vaultId = az keyvault show --name "<vault-name>" --resource-group "<resource-group>" --query id --output tsv
+$principalId = az webapp identity show --name "<app-name>" --resource-group "<resource-group>" --query principalId --output tsv
+$officerRoleId = "b86a8fe4-44ce-4948-aee5-eccb2c155cd7"
+az role assignment list --scope $vaultId --role $officerRoleId `
+    --fill-principal-name false --fill-role-definition-name false `
+    --query "[?principalId=='$principalId'].{name:name,id:id,scope:scope,condition:condition}" --output json
+```
+
+If a matching, unconditional Officer assignment already exists at the exact vault scope:
+
+1. Keep its assignment GUID and grant. An inherited or secret-level assignment is not the same vault-scoped assignment, and a conditional assignment requires administrator review.
+2. In an **environment-specific copy** of `modules/setPermissions.bicep`, change only the Officer resource's `name: guid(kv.id, webApp.id, 'kv-secrets-officer')` to `name: '<existing-officer-assignment-guid>'`. For the native app, do this separately in `modules/setNativeWebAppPermissions.bicep` using that app identity's assignment GUID. Never substitute the old Secrets User GUID or another principal's assignment.
+3. Keep `scope`, `roleDefinitionId`, and `principalId` unchanged. Regenerate the ARM template from that copy, from the repository root:
+
+   ```powershell
+   az bicep build --file .\deployers\bicep\main.bicep --outfile .\deployers\bicep\main.json
+   ```
+
+4. Use the customized Bicep/ARM in your normal reviewed deployment process and retain the same environment-specific names for subsequent runs. The public one-click template does not contain this customization; using it unchanged can return `RoleAssignmentExists`. Do not hand-edit generated `main.json`.
+
+If your platform team owns IAM instead, `configureApplicationPermissions=false` avoids template ownership conflicts, but that team must maintain **all** application permissions, not just Key Vault.
+
+Offline contract coverage is in [test_deployer_key_vault_secret_permissions.py](../../functional_tests/test_deployer_key_vault_secret_permissions.py); it checks both Bicep modules, generated ARM, permission-disable conditions, and runtime principals without deploying resources.
+
 ---
 
 ### Post Deployment Tasks:

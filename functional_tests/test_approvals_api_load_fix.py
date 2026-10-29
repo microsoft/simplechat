@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for approvals API load resilience.
-Version: 0.241.021
+Version: 0.261.029
 Implemented in: 0.241.021
 
 This test ensures the approvals list can load without Cosmos ORDER BY support
@@ -21,6 +21,12 @@ from test_support.versioning import assert_app_version_at_least
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SINGLE_APP_ROOT = os.path.join(ROOT_DIR, 'application', 'single_app')
+if SINGLE_APP_ROOT not in sys.path:
+    sys.path.insert(0, SINGLE_APP_ROOT)
+
+# The test source-path setup must precede importing the pure policy dependency.
+import functions_m365_approvals as m365_approvals
+
 FUNCTIONS_FILE = os.path.join(SINGLE_APP_ROOT, 'functions_approvals.py')
 CONFIG_FILE = os.path.join(SINGLE_APP_ROOT, 'config.py')
 FIX_DOC = os.path.join(
@@ -109,6 +115,11 @@ def load_approval_helpers(container=None):
         'TYPE_SUSPEND_USER': 'suspend_user',
         'TYPE_BLOCK_USER': 'block_user',
         'SAFETY_USER_APPROVAL_TYPES': {'warn_user', 'suspend_user', 'block_user'},
+        'M365_APPROVAL_TYPES': m365_approvals.M365_APPROVAL_TYPES,
+        'is_m365_approval': m365_approvals.is_m365_approval,
+        'is_m365_approval_subject': m365_approvals.is_m365_approval_subject,
+        'get_m365_approval_service': m365_approvals.get_m365_approval_service,
+        'sanitize_m365_approval': m365_approvals.sanitize_m365_approval,
         'cosmos_approvals_container': container,
         'get_settings': lambda: {'require_member_of_control_center_admin': False},
         'log_event': lambda *args, **kwargs: None,

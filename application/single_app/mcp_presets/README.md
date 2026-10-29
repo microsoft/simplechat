@@ -1,6 +1,10 @@
 # MCP Server Presets
 
-Last updated for SimpleChat version: **0.250.067**
+Last updated for SimpleChat version: **0.261.029**
+
+Remote-only preset compatibility implemented in version: **0.261.029**.
+
+Related configuration update: `application\single_app\config.py` advances `VERSION` from `0.261.028` to `0.261.029`.
 
 ## Purpose
 
@@ -26,7 +30,7 @@ The user or preconfiguration still supplies the actual endpoint.
 
 Preset definitions may include:
 
-* Default transport: `streamable_http`, `sse`, `websocket`, or `stdio`.
+* Default transport: `streamable_http`, `sse`, or `websocket`.
 * Default auth method: `none`, `bearer`, `api_key`, `basic`, or `identity`.
 * Timeout and retry defaults.
 * Prompt/tool loading defaults.
@@ -35,6 +39,8 @@ Preset definitions may include:
 * Allowed transports/auth methods.
 * Suggested header names and descriptions.
 * Compatibility warnings.
+
+Stdio and local process command, argument, and environment configuration are unsupported for every role and scope, including Admin/global. Presets cannot opt into local process execution or override remote destination governance.
 
 ## What Does Not Belong Here
 
@@ -57,6 +63,14 @@ Those belong in MCP preconfigurations or in implementation-specific preconfigura
 4. Keep defaults generic and reusable.
 5. Never include credentials or secret-bearing fields.
 6. Use warnings for compatibility caveats, not security policy decisions.
+
+## Upgrading Older Presets
+
+The loader keeps otherwise valid remote custom presets compatible by normalizing a copy before validation. It removes inert `stdioAllowed` and retired process-only fields, filters stdio out of `allowedTransports`, and preserves a valid remote default. Authentication, header guidance, timeouts, and provider-specific remote settings remain intact; similarly named tool arguments or provider fields are not retired MCP process settings.
+
+A stdio-default or stdio-only preset is unavailable with a diagnostic, not converted to HTTP. Other valid presets still load. Revise the source definition explicitly for an approved remote endpoint's transport, or remove the obsolete definition.
+
+New preset definitions should omit retired fields. Loading a preset does not migrate existing stdio actions: those remain visible but non-executable until explicitly reconfigured with a supported remote transport and valid endpoint, or explicitly deleted.
 
 ## Implementation-Specific Settings
 

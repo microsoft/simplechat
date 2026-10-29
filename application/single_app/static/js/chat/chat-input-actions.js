@@ -303,6 +303,18 @@ function buildUploadFileList(filesLike, fallbackPrefix = "clipboard_upload") {
     .filter(Boolean);
 }
 
+async function ensureUploadFileIsReadable(file) {
+  const fileName = String(file?.name || "selected file").trim() || "selected file";
+
+  try {
+    await file.slice(0, Math.min(file.size, 1)).arrayBuffer();
+  } catch (error) {
+    throw new Error(
+      `The browser could not read "${fileName}". Close the file in other apps then try again.`
+    );
+  }
+}
+
 function hasNamedFile(files) {
   return Array.from(files || []).some((file) => String(file?.name || "").trim());
 }
@@ -684,6 +696,7 @@ export async function uploadFileToConversation(file) {
   let uploadingIndicatorEl = null;
 
   try {
+    await ensureUploadFileIsReadable(file);
     const groupUploadContext = await resolveGroupUploadContext();
     uploadingIndicatorEl = showFileUploadingMessage();
 
@@ -706,10 +719,18 @@ export async function uploadFileToConversation(file) {
       });
     }
 
-    const response = await fetch("/upload", {
-      method: "POST",
-      body: formData,
-    });
+    let response;
+    try {
+      response = await fetch("/upload", {
+        method: "POST",
+        body: formData,
+      });
+    } catch (error) {
+      const fileName = String(file?.name || "selected file").trim() || "selected file";
+      throw new Error(
+        `The browser could not upload "${fileName}". The file may be open in another app, unavailable from cloud storage, or the network connection may have been interrupted. Ensure the file is closed and then try again.`
+      );
+    }
 
     hideFileUploadingMessage(uploadingIndicatorEl);
     uploadingIndicatorEl = null;

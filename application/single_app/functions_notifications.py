@@ -14,6 +14,7 @@ Implemented in: 0.234.032
 # Imports (grouped after docstring)
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 from azure.cosmos import exceptions
 from flask import current_app
 import logging
@@ -22,12 +23,15 @@ from functions_appinsights import log_event
 from functions_group import find_group_by_id
 from functions_debug import debug_print
 from functions_public_workspaces import find_public_workspace_by_id, get_user_public_workspaces
+from functions_workflow_alert_safety import sanitize_workflow_alert_record
 
 # Constants
 TTL_60_DAYS = 60 * 24 * 60 * 60  # 60 days in seconds (5184000)
 ASSIGNMENT_NOTIFICATIONS_PARTITION_KEY = 'assignment-notifications'
 WORKFLOW_ALERT_NOTIFICATION_TYPE = 'workflow_priority_alert'
 KEY_VAULT_SECRET_REMINDER_NOTIFICATION_TYPE = 'key_vault_secret_expiring'
+M365_APPROVAL_PENDING_NOTIFICATION_TYPE = 'm365_approval_pending'
+M365_APPROVAL_UPDATED_NOTIFICATION_TYPE = 'm365_approval_updated'
 WORKFLOW_ALERT_PRIORITY_CONFIG = {
     'info': {
         'icon': 'bi-info-circle',
@@ -58,6 +62,14 @@ WORKFLOW_ALERT_DELIVERY_NOTIFY_ONLY = 'notify_only'
 
 # Notification type registry for extensibility
 NOTIFICATION_TYPES = {
+    M365_APPROVAL_PENDING_NOTIFICATION_TYPE: {
+        'icon': 'bi-person-lock',
+        'color': 'warning'
+    },
+    M365_APPROVAL_UPDATED_NOTIFICATION_TYPE: {
+        'icon': 'bi-check2-square',
+        'color': 'info'
+    },
     'document_processing_complete': {
         'icon': 'bi-file-earmark-check',
         'color': 'success'
@@ -438,6 +450,71 @@ def broadcast_system_notification(title, message, metadata=None):
     )
 
 
+def create_m365_approval_notification(approval):
+    """Deliver a deterministic, subject-only notification without source content."""
+    subject_user_id = approval.get('subject_user_id')
+    if (
+        not subject_user_id or approval.get('approval_scope') != 'user'
+        or approval.get('group_id') != subject_user_id
+        or approval.get('request_type') not in {
+            'm365_source_sharing', 'm365_extended_analysis', 'm365_workflow_run_as'
+        }
+    ):
+        raise ValueError("A subject-owned Microsoft 365 approval is required.")
+    status = approval.get('status')
+    if status not in {'pending', 'approved', 'denied', 'expired', 'invalidated', 'revoked', 'cancelled'}:
+        raise ValueError("Invalid Microsoft 365 approval status.")
+    approval_id = approval['id']
+    pending = status == 'pending'
+    notification_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"m365-approval:{approval_id}:{status}"))
+    notification = {
+        'id': notification_id,
+        'user_id': subject_user_id,
+        'group_id': None,
+        'public_workspace_id': None,
+        'scope': 'personal',
+        'assignment': None,
+        'notification_type': M365_APPROVAL_PENDING_NOTIFICATION_TYPE if pending else M365_APPROVAL_UPDATED_NOTIFICATION_TYPE,
+        'title': 'Microsoft 365 approval required' if pending else 'Microsoft 365 approval updated',
+        'message': (
+            'Review the Microsoft 365 request for your data. Only you can decide.'
+            if pending else 'Your Microsoft 365 request changed. Open Approvals to see the decision and continuation state.'
+        ),
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'ttl': TTL_60_DAYS,
+        'read_by': [],
+        'dismissed_by': [],
+        'link_url': f"/approvals?{urlencode({'m365_approval': approval_id})}",
+        'link_context': {'approval_id': approval_id, 'group_id': subject_user_id},
+        'metadata': {
+            'approval_id': approval_id,
+            'request_type': approval['request_type'],
+            'status': status,
+        },
+    }
+    try:
+        try:
+            cosmos_notifications_container.create_item(body=notification)
+        except exceptions.CosmosResourceExistsError:
+            # Deterministic IDs make repeated notification delivery idempotent.
+            pass
+        if not pending:
+            pending_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"m365-approval:{approval_id}:pending"))
+            try:
+                cosmos_notifications_container.delete_item(item=pending_id, partition_key=subject_user_id)
+            except exceptions.CosmosResourceNotFoundError:
+                # Another worker may already have removed the pending notification.
+                pass
+        return notification
+    except exceptions.CosmosHttpResponseError as exc:
+        log_event(
+            "[APPROVALS] Microsoft 365 notification delivery is pending",
+            extra={'approval_id': approval_id, 'exception_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+        return None
+
+
 def create_group_notification(group_id, notification_type, title, message, link_url='', link_context=None, metadata=None):
     """
     Create a notification for all members of a group.
@@ -728,6 +805,7 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
         # Filter based on read/dismissed status
         filtered_notifications = []
         for notif in all_notifications:
+            notif = sanitize_workflow_alert_record(notif)
             notif_id = notif.get('id', 'unknown')
             read_by = notif.get('read_by', [])
             dismissed_by = notif.get('dismissed_by', [])
@@ -867,6 +945,7 @@ def get_unread_workflow_priority_notifications(user_id, limit=5):
 
         unread_notifications = []
         for notification in notifications:
+            notification = sanitize_workflow_alert_record(notification)
             if user_id in notification.get('dismissed_by', []):
                 continue
             if user_id in notification.get('read_by', []):

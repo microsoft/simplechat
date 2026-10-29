@@ -57,6 +57,7 @@ The answer should cite or discuss documents from the selected tag set. The conve
 | --- | --- | --- |
 | The **Tags** dropdown stays disabled | No tags loaded for the selected scope | Choose the correct scope and confirm the workspace has tags. |
 | Expected files are missing | The documents are untagged or unprocessed | Check the workspace Documents tab and **Filter by Tags**. |
+| A document you just tagged or renamed is missing from the results | The search index is still applying the change in the background; very large documents can take a minute or two | Wait briefly and send the message again. Failed updates retry automatically. |
 
 ## Related
 

@@ -46,6 +46,44 @@ main {
     --bs-body-color: #e9ecef;
 }
 
+.account-switch-button,
+.account-switch-button:visited {
+    color: #495057;
+    border-color: #495057;
+}
+
+.account-switch-button:hover,
+.account-switch-button:focus-visible {
+    color: #ffffff;
+    background-color: #495057;
+    border-color: #495057;
+}
+
+.account-switch-button:active {
+    color: #ffffff;
+    background-color: #343a40;
+    border-color: #343a40;
+}
+
+[data-bs-theme="dark"] .account-switch-button,
+[data-bs-theme="dark"] .account-switch-button:visited {
+    color: #f8f9fa;
+    border-color: #f8f9fa;
+}
+
+[data-bs-theme="dark"] .account-switch-button:hover,
+[data-bs-theme="dark"] .account-switch-button:focus-visible {
+    color: #212529;
+    background-color: #f8f9fa;
+    border-color: #f8f9fa;
+}
+
+[data-bs-theme="dark"] .account-switch-button:active {
+    color: #212529;
+    background-color: #e9ecef;
+    border-color: #e9ecef;
+}
+
 /* Theme-based logo visibility */
 [data-bs-theme="light"] .d-dark-mode-only {
     display: none !important;
@@ -86,18 +124,21 @@ main {
     color: #e9ecef !important;
 }
 
-/* Fix for group dropdown in dark mode */
-[data-bs-theme="dark"] #group-dropdown .group-search-container {
+/* Fix for workspace selector dropdowns in dark mode */
+[data-bs-theme="dark"] #group-dropdown .group-search-container,
+[data-bs-theme="dark"] #public-dropdown .public-search-container {
     background-color: #343a40 !important;
     border-bottom: 1px solid #495057 !important;
 }
 
-[data-bs-theme="dark"] #group-dropdown .dropdown-item:hover {
+[data-bs-theme="dark"] #group-dropdown .dropdown-item:hover,
+[data-bs-theme="dark"] #public-dropdown .dropdown-item:hover {
     background-color: #495057 !important;
     color: #e9ecef !important;
 }
 
-[data-bs-theme="dark"] #group-dropdown .dropdown-menu {
+[data-bs-theme="dark"] #group-dropdown .dropdown-menu,
+[data-bs-theme="dark"] #public-dropdown .dropdown-menu {
     background-color: #343a40 !important;
     color: #e9ecef !important;
     border-color: #495057 !important;
@@ -187,6 +228,14 @@ main {
 [data-bs-theme="dark"] .form-check-input:focus {
     border-color: #86b7fe;
     box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+[data-bs-theme="dark"] .form-range::-webkit-slider-runnable-track {
+    background-color: #6c757d;
+}
+
+[data-bs-theme="dark"] .form-range::-moz-range-track {
+    background-color: #6c757d;
 }
 
 /* Fix for badges in dark mode */

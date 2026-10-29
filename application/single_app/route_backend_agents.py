@@ -5,11 +5,8 @@ import uuid
 import logging
 import builtins
 from copy import deepcopy
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from flask import Blueprint, jsonify, request, current_app, session
 from config import (
-    AzureOpenAI,
-    cognitive_services_scope,
     cosmos_global_agents_container,
     cosmos_group_agents_container,
     cosmos_personal_agents_container,
@@ -57,8 +54,8 @@ from functions_activity_logging import (
     log_agent_deletion,
     log_general_admin_action,
 )
-from functions_governance import ensure_governance_access, upsert_item_policy
-from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_governance import ensure_governance_access, filter_governed_model_endpoints, upsert_item_policy
+from functions_documents import resolve_metadata_extraction_client
 
 bpa = Blueprint('admin_agents', __name__)
 bpa.before_request(login_required_blueprint())
@@ -92,63 +89,11 @@ def _normalize_agent_instruction_draft_input(value, max_length=AGENT_INSTRUCTION
     return normalized_value[:max_length]
 
 
-def _resolve_agent_instruction_model(settings):
-    """Resolve the configured GPT deployment for agent instruction drafting."""
-    if settings.get('enable_gpt_apim', False):
-        model_name = settings.get('azure_apim_gpt_deployment') or settings.get('azure_openai_gpt_deployment')
-    else:
-        gpt_model_settings = settings.get('gpt_model') if isinstance(settings.get('gpt_model'), dict) else {}
-        selected_models = gpt_model_settings.get('selected', [])
-        if not isinstance(selected_models, list):
-            selected_models = []
-        selected_model = selected_models[0] if selected_models else {}
-        model_name = (
-            settings.get('metadata_extraction_model')
-            or settings.get('azure_openai_gpt_deployment')
-            or selected_model.get('deploymentName')
-        )
-
-    if isinstance(model_name, str) and ',' in model_name:
-        model_name = model_name.split(',')[0].strip()
-    model_name = str(model_name or '').strip()
-    if not model_name:
-        raise RuntimeError('No GPT deployment is configured for instruction drafting.')
-    return model_name
-
-
-def _create_agent_instruction_client(settings):
-    """Create an Azure OpenAI client from existing app GPT/APIM settings."""
-    extra_headers = build_model_endpoint_identity_headers(
-        settings,
-        identity_context={'user_id': get_current_user_id()},
-    )
-    if settings.get('enable_gpt_apim', False):
-        return AzureOpenAI(
-            api_version=settings.get('azure_apim_gpt_api_version') or settings.get('azure_openai_gpt_api_version'),
-            azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
-            api_key=settings.get('azure_apim_gpt_subscription_key'),
-            default_headers=extra_headers or None,
-        )
-
-    auth_type = str(settings.get('azure_openai_gpt_authentication_type') or 'key').strip().lower()
-    if auth_type == 'managed_identity':
-        token_provider = get_bearer_token_provider(
-            DefaultAzureCredential(),
-            cognitive_services_scope,
-        )
-        return AzureOpenAI(
-            api_version=settings.get('azure_openai_gpt_api_version'),
-            azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-            azure_ad_token_provider=token_provider,
-            default_headers=extra_headers or None,
-        )
-
-    return AzureOpenAI(
-        api_version=settings.get('azure_openai_gpt_api_version'),
-        azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-        api_key=settings.get('azure_openai_gpt_key'),
-        default_headers=extra_headers or None,
-    )
+def _resolve_agent_instruction_client(settings, identity_context=None):
+    """Resolve the instruction drafting client through the metadata extraction model setting."""
+    if identity_context is None:
+        identity_context = {'user_id': get_current_user_id()}
+    return resolve_metadata_extraction_client(settings, identity_context=identity_context)
 
 
 def _truncate_agent_instruction_context_block(block, budget):
@@ -917,8 +862,7 @@ def draft_agent_instructions():
         return jsonify({'error': 'Provide a brief, display name, description, or existing instructions.'}), 400
 
     try:
-        model_name = _resolve_agent_instruction_model(settings)
-        client = _create_agent_instruction_client(settings)
+        client, model_name = _resolve_agent_instruction_client(settings)
         messages = _build_agent_instruction_messages(
             display_name,
             description,
@@ -2152,6 +2096,12 @@ def orchestration_settings():
 def build_combined_model_endpoints(settings, user_id=None, group_id=None):
     endpoints = []
     global_endpoints = settings.get("model_endpoints", []) or []
+    if user_id:
+        global_endpoints = filter_governed_model_endpoints(
+            user_id,
+            global_endpoints,
+            "governance_global_endpoints",
+        )
     for endpoint in global_endpoints:
         enriched = dict(endpoint)
         enriched["scope"] = "global"
@@ -2164,7 +2114,11 @@ def build_combined_model_endpoints(settings, user_id=None, group_id=None):
         if allow_group_custom_endpoints:
             try:
                 ensure_governance_access("governance_group_endpoints", user_id)
-                group_endpoints = get_group_model_endpoints(group_id)
+                group_endpoints = filter_governed_model_endpoints(
+                    user_id,
+                    get_group_model_endpoints(group_id),
+                    "governance_group_endpoints",
+                )
                 for endpoint in group_endpoints:
                     enriched = dict(endpoint)
                     enriched["scope"] = "group"
@@ -2177,7 +2131,11 @@ def build_combined_model_endpoints(settings, user_id=None, group_id=None):
             try:
                 ensure_governance_access("governance_user_endpoints", user_id)
                 user_settings = get_user_settings(user_id)
-                personal = user_settings.get("settings", {}).get("personal_model_endpoints", [])
+                personal = filter_governed_model_endpoints(
+                    user_id,
+                    user_settings.get("settings", {}).get("personal_model_endpoints", []),
+                    "governance_user_endpoints",
+                )
                 for endpoint in personal:
                     enriched = dict(endpoint)
                     enriched["scope"] = "user"

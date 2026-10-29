@@ -77,6 +77,21 @@ The Agent Template Approvals section belongs to the Agents tab. Use it with the 
 
 ## Actions {#actions}
 
+### Microsoft 365 retrieval {#m365-retrieval-configuration}
+
+Choose the file-retrieval provider for all four source-specific Microsoft 365
+actions. This does not grant source access: every fresh call still uses delegated
+user permissions. Global action ownership does not mean application identity.
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Retrieval provider | Auto uses Copilot Retrieval for verified licensed users in supported clouds and ordinary Graph elsewhere. Graph forces the ordinary file-search/read path. | Auto | `m365_retrieval_provider`; no PAYG |
+| Additional trusted file-download hosts | Permits deployment-approved redirect destinations needed by custom-cloud file downloads. | Empty | `m365_trusted_download_hosts`; DNS names, not site/folder restrictions |
+
+Each action also has a maximum sharing-acknowledgement duration. Users manage
+their own source preferences in Profile; action policy can shorten those grants,
+not approve on the user's behalf. See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}).
+
 ### Document Action Capabilities {#document-action-capabilities-card}
 
 The Document Action Capabilities section belongs to the Actions tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.

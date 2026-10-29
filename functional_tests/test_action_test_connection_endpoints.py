@@ -1,15 +1,16 @@
-#!/usr/bin/env python3
 # test_action_test_connection_endpoints.py
+#!/usr/bin/env python3
 """
 Functional test for the action Test Connection endpoints.
-Version: 0.250.217
+Version: 0.261.029
 Implemented in: 0.250.217
+Updated in: 0.261.029
 
 This test ensures the eight action connection test routes are registered on the
 admin_plugins Blueprint with the required Swagger and authentication decorators,
 that every route delegates to a dedicated tester in
-functions_action_connection_tests, and that the MCP route keeps the same stdio
-scope restriction and outbound destination policy as MCP tool discovery.
+functions_action_connection_tests, and that MCP operations reject retired
+transports and authorize trusted scope before credential hydration.
 
 Refs microsoft/simplechat#1267
 """
@@ -180,7 +181,7 @@ def test_every_route_delegates_to_a_dedicated_tester():
 
 
 def test_mcp_route_keeps_discovery_security_parity():
-    """Verify the MCP test route enforces stdio scope limits and destination policy."""
+    """Verify MCP preparation enforces retirement and policy before credentials."""
     print("Testing MCP connection test security parity...")
 
     try:
@@ -194,16 +195,16 @@ def test_mcp_route_keeps_discovery_security_parity():
 
         assert mcp_route_node is not None, "The MCP connection test route was not found."
 
-        mcp_route_source = ast.unparse(mcp_route_node)
-        assert "_reject_non_admin_mcp_stdio" in mcp_route_source, (
-            "The MCP connection test route must reject stdio transport outside global scope."
-        )
-        assert "_enforce_mcp_destination_policy" in mcp_route_source, (
-            "The MCP connection test route must enforce the outbound destination policy."
-        )
-        assert "mcp_connection_test" in mcp_route_source, (
-            "The MCP destination policy call must pass a distinct operation label."
-        )
+        functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+        prepare_source = ast.unparse(functions["_prepare_action_test_manifest"])
+        defaults_source = ast.unparse(functions["_apply_plugin_runtime_defaults"])
+        runner_source = ast.unparse(functions["_run_action_connection_test"])
+        assert "is_retired_mcp_stdio" in defaults_source and "McpStdioRemovedError" in defaults_source
+        assert "_apply_plugin_runtime_defaults(manifest)" in prepare_source
+        assert prepare_source.index("_enforce_mcp_destination_policy") < prepare_source.index("hydrate_action_identity_reference(")
+        assert "mcp_connection_test_prepare" in prepare_source
+        assert "origin=get_action_origin(manifest)" in runner_source
+        assert "_reject_non_admin_mcp_stdio" not in functions
 
         print("MCP connection test route matches discovery security guarantees.")
         print("Test passed!")
@@ -287,8 +288,11 @@ def test_secret_references_are_resolved_within_the_action_scope():
         assert prepare_node is not None, "_prepare_action_test_manifest was not found."
 
         prepare_source = ast.unparse(prepare_node)
-        assert "_resolve_plugin_secret_context(existing_plugin, user_id)" in prepare_source, (
-            "The action test manifest must derive the Key Vault scope from the loaded action, not the request body."
+        assert "_action_test_origin(existing_plugin, scope_type, scope_id)" in prepare_source, (
+            "The action test manifest must retain the origin of the authorized lookup."
+        )
+        assert "_action_origin_secret_context(origin)" in prepare_source, (
+            "The action test manifest must derive Key Vault scope from trusted origin, not request flags."
         )
         assert "ACTION_AUTH_SECRET_SOURCES" in prepare_source, (
             "auth.key must be resolved with the auth secret source."

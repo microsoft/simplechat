@@ -27,6 +27,7 @@ MCP_PRESET_DEFINITIONS_DIR = "definitions"
 MCP_PRESET_PATHS_ENV = "SIMPLECHAT_MCP_PRESET_PATHS"
 MCP_PRESET_BUNDLED_SOURCE = "bundled"
 MCP_PRESET_CUSTOM_SOURCE = "custom"
+MCP_PRESET_REMOTE_TRANSPORTS = {"streamable_http", "sse", "websocket"}
 
 MCP_PRESETS_ROOT = os.path.join(os.path.dirname(__file__), "mcp_presets")
 MCP_PRESET_SCHEMA_PATH = os.path.join(MCP_PRESETS_ROOT, MCP_PRESET_SCHEMA_FILE)
@@ -59,10 +60,9 @@ MCP_FALLBACK_GENERIC_PRESET = {
         "websocketEndpointPlaceholder": "wss://example.com/mcp",
     },
     "constraints": {
-        "allowedTransports": ["streamable_http", "sse", "websocket", "stdio"],
+        "allowedTransports": ["streamable_http", "sse", "websocket"],
         "allowedAuthMethods": ["none", "bearer", "api_key", "basic", "identity"],
         "customHeadersAllowed": True,
-        "stdioAllowed": True,
     },
     "implementation": {
         "id": MCP_DEFAULT_SERVER_PRESET_ID,
@@ -78,6 +78,10 @@ MCP_FALLBACK_GENERIC_PRESET = {
 
 class McpPresetValidationError(ValueError):
     """Raised when an MCP preset definition fails validation."""
+
+
+class McpPresetUnavailableError(McpPresetValidationError):
+    """Raised when a preset requires a retired MCP transport."""
 
 
 def normalize_mcp_preset_id(value):
@@ -143,6 +147,40 @@ def _iter_preset_definition_paths():
                 yield os.path.join(directory, file_name), source
 
 
+def _normalize_remote_mcp_preset(definition):
+    """Sanitize a copy of legacy remote presets without changing their default."""
+    normalized = copy.deepcopy(definition)
+    if not isinstance(normalized, dict):
+        return normalized
+
+    defaults = normalized.get("defaults")
+    default_transport = defaults.get("transport") if isinstance(defaults, dict) else None
+    if isinstance(default_transport, str) and default_transport.strip().lower() == "stdio":
+        raise McpPresetUnavailableError(
+            "MCP preset is unavailable because its default transport is stdio, which is no longer supported."
+        )
+
+    constraints = normalized.get("constraints")
+    if isinstance(constraints, dict):
+        constraints.pop("stdioAllowed", None)
+        transports = constraints.get("allowedTransports")
+        if isinstance(transports, list):
+            remote_transports = [
+                transport for transport in transports
+                if not (isinstance(transport, str) and transport.strip().lower() == "stdio")
+            ]
+            if not any(
+                isinstance(transport, str) and transport in MCP_PRESET_REMOTE_TRANSPORTS
+                for transport in remote_transports
+            ):
+                raise McpPresetUnavailableError(
+                    "MCP preset is unavailable because it has no supported remote transport."
+                )
+            constraints["allowedTransports"] = remote_transports
+
+    return normalized
+
+
 def _validate_mcp_preset(definition, file_path):
     schema = _load_mcp_preset_schema()
     validator = Draft7Validator(schema)
@@ -150,6 +188,9 @@ def _validate_mcp_preset(definition, file_path):
     if errors:
         messages = "; ".join(error.message for error in errors)
         raise McpPresetValidationError(f"{os.path.basename(file_path)} failed schema validation: {messages}")
+
+    if definition["defaults"]["transport"] not in definition["constraints"]["allowedTransports"]:
+        raise McpPresetValidationError("The default MCP transport must be allowed by the preset.")
 
     preset_id = normalize_mcp_preset_id(definition.get("id"))
     if definition.get("id") != preset_id:
@@ -191,7 +232,17 @@ def load_mcp_server_presets():
     for file_path, source in _iter_preset_definition_paths():
         try:
             definition = _load_json_file(file_path)
+            definition = _normalize_remote_mcp_preset(definition)
             _validate_mcp_preset(definition, file_path)
+        except McpPresetUnavailableError as exc:
+            preset_id = definition.get("id") if isinstance(definition, dict) else None
+            safe_preset_id = preset_id if isinstance(preset_id, str) and MCP_PRESET_ID_PATTERN.fullmatch(preset_id) else "unknown"
+            log_event(
+                f"[MCP_PRESETS] Preset '{safe_preset_id}' skipped. {exc}",
+                level=logging.WARNING,
+                debug_only=True,
+            )
+            continue
         except (
             OSError,
             json.JSONDecodeError,
@@ -200,7 +251,7 @@ def load_mcp_server_presets():
             McpPresetValidationError,
         ) as exc:
             log_event(
-                f"[MCP_PRESETS] Failed to load MCP preset definition: {exc}",
+                f"[MCP_PRESETS] Invalid MCP preset definition skipped ({type(exc).__name__}).",
                 level=logging.WARNING,
                 debug_only=True,
             )

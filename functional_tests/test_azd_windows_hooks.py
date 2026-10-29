@@ -2,7 +2,7 @@
 # test_azd_windows_hooks.py
 """
 Functional test for AZD Windows hook coverage.
-Version: 0.237.060
+Version: 0.261.028
 Implemented in: 0.237.060
 
 This test ensures that azure.yaml defines Windows run hooks for the AZD lifecycle
@@ -39,19 +39,9 @@ def test_azd_windows_hooks() -> bool:
     require_contains(content, "function Get-TargetSubscriptionId", "helper function for subscription targeting")
     require_contains(content, "az group exists --name", "resource group validation")
     require_contains(content, "az cosmosdb list", "Cosmos DB RG discovery fallback")
-    require_contains(content, "az cosmosdb keys list", "Cosmos DB key retrieval for postconfig")
-    require_contains(content, "Ensure-CosmosRunnerAccess", "Cosmos firewall helper")
-    require_contains(content, "Test-CosmosRunnerAccess", "Cosmos access probe helper")
-    require_contains(content, "Test-RunnerIpMatchesRules", "Cosmos firewall CIDR coverage helper")
-    require_contains(content, "Wait-ForCosmosRunnerAccess", "Cosmos firewall propagation wait helper")
-    require_contains(content, "api.ipify.org", "deployment runner public IP lookup")
-    require_contains(content, "az cosmosdb update", "Cosmos firewall update command")
-    require_contains(content, "Manually add IP $runnerPublicIp", "manual Cosmos firewall guidance")
-    require_contains(content, "Azure CLI requires multi-factor authentication", "explicit MFA guidance")
-    require_contains(content, "Checking whether CosmosDB access is already available without an Azure CLI firewall update", "Cosmos MFA fallback access check")
-    require_contains(content, "Deployment runner already has CosmosDB data-plane access", "Cosmos access short-circuit")
-    require_contains(content, "Waiting for CosmosDB firewall propagation", "Cosmos propagation wait messaging")
-    require_contains(content, "$env:var_cosmosDb_key", "Cosmos DB key propagation")
+    if "--ip-range-filter" in content or "az cosmosdb keys list" in content:
+        raise AssertionError("Hooks must not mutate Cosmos firewall rules or force key authentication")
+    require_contains(content, "No key-auth fallback will be attempted", "explicit authentication failure")
     require_contains(content, "--subscription $subscriptionId", "subscription-pinned Azure CLI commands")
     require_contains(content, "$env:var_rgName = $resolvedResourceGroup", "resolved RG propagation")
 
@@ -59,11 +49,8 @@ def test_azd_windows_hooks() -> bool:
     print("✅ Windows predeploy hook is present")
     print("✅ Windows postup hook is present")
     print("✅ Windows RG fallback logic is validated")
-    print("✅ Windows postconfig Cosmos key fallback is validated")
-    print("✅ Windows Cosmos firewall runner access handling is validated")
-    print("✅ Windows Cosmos access short-circuit is validated")
-    print("✅ Windows Cosmos firewall propagation handling is validated")
-    print("✅ Windows Cosmos MFA fallback access handling is validated")
+    print("✅ Windows hooks do not force Cosmos key authentication")
+    print("✅ Windows hooks do not mutate Cosmos firewall IP rules")
     print("✅ Windows MFA recovery guidance is validated")
     print("✅ Windows subscription targeting is validated")
     print("✅ Environment variable propagation is covered")

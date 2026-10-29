@@ -1,8 +1,10 @@
 # MCP Current State And Remaining Roadmap
 
-Current documentation version: **0.250.098**
+Current documentation version: **0.261.029**
 
-Related configuration version: `application\single_app\config.py` currently sets `VERSION = "0.250.098"`.
+Remote-only MCP and authorization update implemented in version: **0.261.029**.
+
+Related configuration update: `application\single_app\config.py` advances `VERSION` from `0.261.028` to `0.261.029`.
 
 Detailed inbound server reference: [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
 
@@ -26,11 +28,11 @@ Current kept capabilities:
 - Compatibility presets served from `GET /api/plugins/mcp/presets`.
 - Server-side preconfiguration catalog served from `GET /api/plugins/mcp/preconfigurations`.
 - Destination governance for personal, group, and global/admin MCP actions.
-- Server-side destination enforcement on action save/update, discovery, and runtime invocation.
+- Server-side destination enforcement on action save/update, discovery, connection testing, and runtime invocation, including cached tools.
 - Endpoint normalization and optional unsafe literal-IP blocking.
 - Supported auth methods: none, bearer token, API key, basic auth, and reusable workspace identity.
 - Custom HTTP headers with strict header-name validation and secret-value redaction.
-- Transport-aware endpoint validation for streamable HTTP, SSE, websocket, and admin-managed stdio.
+- Transport-aware endpoint validation for remote streamable HTTP, SSE, and WebSocket only.
 - Bounded timeout, retry, and retry-backoff settings.
 - Optional tool argument validation.
 - Large-result handling through the configured MCP result policy.
@@ -46,6 +48,16 @@ Current governance entity types:
 | Global/admin MCP actions | `mcp_global_destination` | Controls destinations usable by admin-managed global actions. |
 
 Destination policy item IDs can be exact URLs, hostnames, wildcard host/path patterns, `preset:<id>`, `preconfiguration:<id>`, `transport:<transport>`, or `*` for deployments that intentionally allow broad access.
+
+### Retired Stdio Actions
+
+Stdio connectors and local command, argument, and environment configuration are removed for all roles and scopes, including Admin/global. Existing stdio actions remain visible as unsupported and cannot execute. They require explicit reconfiguration to a supported remote transport and valid endpoint, or explicit deletion; there is no silent HTTP fallback.
+
+Legacy stdio records in `settings.plugins` remain in place and appear through a management-only view. An unchanged retired record may pass through a bulk save without being rewritten; omission does not delete it. Migration handles supported records individually and retains unsupported, conflicting, or failed records rather than clearing the legacy list.
+
+Owners can inspect and delete retired records despite MCP-usage restrictions, subject to existing personal ownership, group-management, and Admin boundaries. Reconfiguration still requires current governance. The inbound MCP server and the HTTP-based local development server are unchanged.
+
+See [MCP stdio removal and migration](../fixes/MCP_STDIO_REMOVAL_AND_AUTHORIZATION_FIX.md) for the upgrade workflow.
 
 ### Track B: Inbound SimpleChat MCP Server
 
@@ -101,10 +113,12 @@ The inbound MCP server intentionally exposes a small delegated personal-workspac
 ### Outbound MCP Actions
 
 - Destination governance is enforced server-side; frontend filtering is not trusted.
+- MCP type resolution is consistent across validation and execution. Authorization uses the action's trusted collection/partition origin, the current user or established workflow identity, and current settings.
+- Environment-enforced destination restrictions are a non-overridable minimum. Admin Settings may tighten them, including for cached actions, but cannot relax them.
 - Preconfiguration and preset definitions are validated before being returned to the browser.
 - Catalog definitions must not include secrets, tenant credentials, customer data, or production credential values.
 - Enterprise preconfigurations are hidden by default and require explicit destination governance.
-- Local command execution for Azure MCP Server-style templates is not supported from user input.
+- No MCP action or template can launch a local process, including Admin/global actions.
 - Secret values are redacted in logs, API responses, rendered HTML, browser-visible JSON, and test artifacts.
 
 ### Inbound SimpleChat MCP Server
@@ -177,6 +191,10 @@ Do not include close keywords for #1016, #1019, or #1020 unless their remaining 
 
 Relevant validation coverage includes:
 
+- `functional_tests\test_mcp_stdio_removal.py`
+- `functional_tests\test_mcp_action_route_security.py`
+- `functional_tests\test_mcp_authorization_context.py`
+- `functional_tests\test_mcp_legacy_stdio_management.py`
 - `functional_tests\test_mcp_destination_governance_and_preconfigurations.py`
 - `functional_tests\test_mcp_server_presets.py`
 - `functional_tests\test_mcp_outbound_logging.py`
@@ -185,3 +203,5 @@ Relevant validation coverage includes:
 - `functional_tests\test_inbound_mcp_admin_ui.py`
 - Route policy tests under `functional_tests\route_tests\`
 - Targeted UI tests under `ui_tests\`
+
+The 0.261.029 suites cover universal stdio retirement, current remote authorization, retained-record management, safe migration, remote preset compatibility, and non-mutating modal behavior. This list describes validation scope, not test execution outcomes.

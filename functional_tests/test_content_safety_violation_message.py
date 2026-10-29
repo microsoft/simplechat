@@ -2,11 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test for configurable Content Safety violation messages.
-Version: 0.250.061
+Version: 0.261.059
 Implemented in: 0.250.061
 
-This test ensures that administrators can provide a Markdown safety message
-and choose whether blocked-chat trigger information is included.
+This test ensures that administrators can provide a Markdown safety message,
+choose whether blocked-chat trigger information is included, and configure
+category-specific prompt severity thresholds used for blocking and recording
+violations.
 """
 
 import os
@@ -26,14 +28,22 @@ sys.path.insert(0, APPLICATION_PATH)
 from test_support.templates import read_admin_settings_template
 
 from functions_content_safety import (
+    CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT,
+    CONTENT_SAFETY_CATEGORY_THRESHOLD_HIGH,
+    CONTENT_SAFETY_CATEGORY_THRESHOLD_LOW,
     CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
     CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH,
     build_content_safety_violation_message,
+    get_content_safety_category_label,
+    get_content_safety_category_threshold,
+    get_content_safety_category_thresholds,
+    normalize_content_safety_category_threshold,
+    normalize_content_safety_category_thresholds,
     normalize_content_safety_violation_message,
 )
 
 
-BLOCK_REASONS = ['Max severity >= 4', 'Blocklist match']
+BLOCK_REASONS = ['Hate severity >= 4', 'Blocklist match']
 TRIGGERED_CATEGORIES = [{'category': 'Hate', 'severity': 6}]
 BLOCKLIST_MATCHES = [
     {
@@ -59,10 +69,51 @@ def test_message_normalization_preserves_safe_admin_defaults():
     ) == CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH
 
 
+def test_content_safety_category_thresholds_are_bounded_for_admin_storage():
+    """Prompt category thresholds stay within Low, Medium, and High values."""
+    assert normalize_content_safety_category_threshold(None) == CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT
+    assert normalize_content_safety_category_threshold('1') == CONTENT_SAFETY_CATEGORY_THRESHOLD_LOW
+    assert normalize_content_safety_category_threshold('2') == 2
+    assert normalize_content_safety_category_threshold('3') == 4
+    assert normalize_content_safety_category_threshold('5') == CONTENT_SAFETY_CATEGORY_THRESHOLD_HIGH
+    assert normalize_content_safety_category_threshold('8') == CONTENT_SAFETY_CATEGORY_THRESHOLD_HIGH
+    assert normalize_content_safety_category_thresholds({'Hate': '2'}) == {
+        'Violence': 4,
+        'Hate': 2,
+        'Sexual': 4,
+        'SelfHarm': 4,
+    }
+    assert get_content_safety_category_threshold(
+        {'content_safety_category_thresholds': {'SelfHarm': '6'}},
+        'SelfHarm',
+    ) == 6
+    assert get_content_safety_category_thresholds({'content_safety_block_threshold': '6'}) == {
+        'Violence': 6,
+        'Hate': 6,
+        'Sexual': 6,
+        'SelfHarm': 6,
+    }
+    assert get_content_safety_category_label('self-harm') == 'Self-harm'
+
+
 def test_admin_settings_uses_the_markdown_editor_toolbar():
     """The Content Safety message field uses the standard local Markdown toolbar."""
     admin_settings_template = read_admin_settings_template()
 
+    assert 'id="content-safety-category-thresholds"' in admin_settings_template
+    assert 'Prompt Category Block Thresholds' in admin_settings_template
+    assert 'name="content_safety_threshold_violence"' in admin_settings_template
+    assert 'name="content_safety_threshold_hate"' in admin_settings_template
+    assert 'name="content_safety_threshold_sexual"' in admin_settings_template
+    assert 'name="content_safety_threshold_self_harm"' in admin_settings_template
+    assert 'class="form-range content-safety-category-threshold-range"' in admin_settings_template
+    assert 'min="2"' in admin_settings_template
+    assert 'max="6"' in admin_settings_template
+    assert 'step="2"' in admin_settings_template
+    assert 'Block Low, Medium and High' in admin_settings_template
+    assert 'Allow Low / Block Medium and High' in admin_settings_template
+    assert 'Allow Low and Medium / Block High' in admin_settings_template
+    assert 'Higher threshold levels don’t override the model deployment guardrails.' in admin_settings_template
     assert '<script src="/static/js/simplemde/simplemde.min.js"></script>' in admin_settings_template
     assert 'id="content_safety_violation_message"' in admin_settings_template
     assert 'let contentSafetyViolationMessageEditor = null;' in admin_settings_template
@@ -94,7 +145,7 @@ def test_default_message_preserves_trigger_information():
 
     assert message == (
         'Your message was blocked by Content Safety.\n\n'
-        '**Reason**: Max severity >= 4, Blocklist match\n'
+        '**Reason**: Hate severity >= 4, Blocklist match\n'
         'Triggered categories:\n'
         ' - Hate (severity=6)\n\n'
         'Blocklist Matches:\n'
@@ -149,6 +200,7 @@ def test_trigger_information_can_be_hidden_and_blank_templates_fall_back():
 
 if __name__ == '__main__':
     test_message_normalization_preserves_safe_admin_defaults()
+    test_content_safety_category_thresholds_are_bounded_for_admin_storage()
     test_admin_settings_uses_the_markdown_editor_toolbar()
     test_default_message_preserves_trigger_information()
     test_custom_markdown_message_precedes_trigger_information()

@@ -9,12 +9,19 @@ from typing import Any, Dict, List, Optional
 
 from semantic_kernel.connectors.mcp import (
     MCPSsePlugin,
-    MCPStdioPlugin,
     MCPStreamableHttpPlugin,
     MCPWebsocketPlugin,
 )
 
 from functions_appinsights import log_event
+from functions_action_manifest import (
+    McpActionOrigin,
+    McpConfigurationError,
+    McpStdioRemovedError,
+    copy_action_manifest,
+    is_retired_mcp_stdio,
+    resolve_action_type,
+)
 from functions_debug import debug_print
 from functions_mcp_operations import (
     MCP_CUSTOM_HEADERS_FIELD,
@@ -31,16 +38,41 @@ from functions_mcp_operations import (
     validate_mcp_endpoint_for_transport,
 )
 from functions_mcp_destinations import (
-    assert_mcp_destination_allowed,
+    McpDestinationPolicyError,
     build_mcp_destination_log_context,
-    infer_mcp_destination_scope,
+    resolve_mcp_execution_context,
 )
-from functions_mcp_preconfigurations import assert_mcp_preconfiguration_manifest_allowed
+from functions_mcp_preconfigurations import authorize_mcp_action
 from semantic_kernel_plugins.mcp_plugin import McpPlugin
 
 
 class McpPluginFactory:
     """Factory for MCP plugin instances from stored action manifests."""
+
+    @classmethod
+    def _normalize_manifest(cls, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate the MCP boundary before policy, credentials, or connectors."""
+        if not isinstance(config, dict) or resolve_action_type(config) != MCP_PLUGIN_TYPE:
+            raise McpConfigurationError("Only an MCP action can use an MCP connector.")
+        if is_retired_mcp_stdio(config):
+            raise McpStdioRemovedError()
+        manifest = copy_action_manifest(config)
+        manifest["type"] = MCP_PLUGIN_TYPE
+        manifest["additionalFields"] = normalize_mcp_additional_fields(manifest.get("additionalFields", {}))
+        return manifest
+
+    @staticmethod
+    def _get_current_settings():
+        # Descriptors are imported during discovery; only execution may access the settings owner.
+        from functions_settings import get_settings
+
+        try:
+            settings = get_settings()
+        except Exception as exc:
+            raise McpDestinationPolicyError("MCP destination policy is currently unavailable.") from exc
+        if not isinstance(settings, dict):
+            raise McpDestinationPolicyError("MCP destination policy is currently unavailable.")
+        return settings
 
     @classmethod
     def _build_operation_log_context(
@@ -51,7 +83,7 @@ class McpPluginFactory:
         tool_name: str = "",
     ) -> Dict[str, Any]:
         """Build low-sensitivity structured telemetry for an outbound MCP operation."""
-        manifest = dict(config or {})
+        manifest = copy_action_manifest(config or {})
         additional_fields = normalize_mcp_additional_fields(manifest.get("additionalFields", {}))
         auth = manifest.get("auth") if isinstance(manifest.get("auth"), dict) else {}
         context = {
@@ -91,36 +123,41 @@ class McpPluginFactory:
         log_event(message, extra=context, level=level, debug_only=debug_only)
 
     @classmethod
-    def create_from_config(cls, config: Dict[str, Any]) -> McpPlugin:
+    def create_from_config(cls, config: Dict[str, Any], *, origin: Optional[McpActionOrigin] = None) -> McpPlugin:
         """Create an MCP plugin from an action manifest."""
-        manifest = dict(config or {})
-        manifest["additionalFields"] = normalize_mcp_additional_fields(manifest.get("additionalFields", {}))
-        return McpPlugin(manifest)
+        manifest = cls._normalize_manifest(config)
+        return McpPlugin(manifest, origin=origin)
 
     @classmethod
-    async def discover_tools_from_config(cls, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def discover_tools_from_config(
+        cls, config: Dict[str, Any], *, origin: Optional[McpActionOrigin] = None
+    ) -> List[Dict[str, Any]]:
         """Connect to an MCP server and return normalized tool metadata."""
+        manifest = cls._normalize_manifest(config)
         return await cls._run_with_retries(
-            config,
+            manifest,
             "tool_discovery",
-            lambda: cls._discover_tools_once(config),
+            lambda: cls._discover_tools_once(manifest, origin=origin),
         )
 
     @classmethod
-    async def probe_server_from_config(cls, config: Dict[str, Any]) -> Dict[str, Any]:
+    async def probe_server_from_config(
+        cls, config: Dict[str, Any], *, origin: Optional[McpActionOrigin] = None
+    ) -> Dict[str, Any]:
         """Connect to an MCP server and return tool metadata plus compatibility hints."""
+        manifest = cls._normalize_manifest(config)
         return await cls._run_with_retries(
-            config,
+            manifest,
             "capability_probe",
-            lambda: cls._probe_server_once(config),
+            lambda: cls._probe_server_once(manifest, origin=origin),
         )
 
     @classmethod
-    async def _probe_server_once(cls, config: Dict[str, Any]) -> Dict[str, Any]:
+    async def _probe_server_once(cls, config: Dict[str, Any], *, origin=None) -> Dict[str, Any]:
         """Perform one MCP compatibility probe attempt."""
-        manifest = dict(config or {})
+        manifest = cls._normalize_manifest(config)
         additional_fields = normalize_mcp_additional_fields(manifest.get("additionalFields", {}))
-        connector = cls.create_connector(manifest)
+        connector = cls.create_connector(manifest, origin=origin)
         started_at = time.perf_counter()
         try:
             cls._log_connector_event(
@@ -176,9 +213,9 @@ class McpPluginFactory:
             await connector.close()
 
     @classmethod
-    async def _discover_tools_once(cls, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def _discover_tools_once(cls, config: Dict[str, Any], *, origin=None) -> List[Dict[str, Any]]:
         """Perform one MCP tool discovery attempt."""
-        connector = cls.create_connector(config)
+        connector = cls.create_connector(config, origin=origin)
         started_at = time.perf_counter()
         try:
             cls._log_connector_event(
@@ -248,18 +285,21 @@ class McpPluginFactory:
         config: Dict[str, Any],
         tool_name: str,
         arguments: Optional[Dict[str, Any]] = None,
+        *,
+        origin: Optional[McpActionOrigin] = None,
     ) -> Dict[str, Any]:
         """Connect to an MCP server, invoke one tool, and normalize the result."""
-        configured_tool = cls._find_configured_tool(config, tool_name)
+        manifest = cls._normalize_manifest(config)
+        configured_tool = cls._find_configured_tool(manifest, tool_name)
         normalized_arguments = (
             normalize_mcp_tool_call_arguments(configured_tool, arguments)
             if configured_tool
             else arguments
         )
         return await cls._run_with_retries(
-            config,
+            manifest,
             "tool_call",
-            lambda: cls._call_tool_once(config, tool_name, normalized_arguments),
+            lambda: cls._call_tool_once(manifest, tool_name, normalized_arguments, origin=origin),
         )
 
     @classmethod
@@ -287,14 +327,17 @@ class McpPluginFactory:
         config: Dict[str, Any],
         tool_name: str,
         arguments: Optional[Dict[str, Any]] = None,
+        *,
+        origin=None,
     ) -> Dict[str, Any]:
         """Perform one MCP tool call attempt."""
-        connector = cls.create_connector(config)
+        connector = cls.create_connector(config, origin=origin)
         try:
             debug_print(f"[MCP_PLUGIN_FACTORY] Connecting to MCP server for tool call tool_name={tool_name}.")
             await connector.connect()
             raw_result = await connector.call_tool(tool_name, **(arguments or {}))
-            additional_fields = normalize_mcp_additional_fields((config or {}).get("additionalFields", {}))
+            manifest = cls._normalize_manifest(config)
+            additional_fields = manifest["additionalFields"]
             result = cls._serialize_tool_result(
                 tool_name,
                 raw_result,
@@ -312,7 +355,8 @@ class McpPluginFactory:
     @classmethod
     async def _run_with_retries(cls, config: Dict[str, Any], operation: str, operation_factory):
         """Run an MCP operation with bounded retries and classified failures."""
-        additional_fields = normalize_mcp_additional_fields((config or {}).get("additionalFields", {}))
+        manifest = cls._normalize_manifest(config)
+        additional_fields = manifest["additionalFields"]
         retry_count = int(additional_fields.get("retry_count") or 0)
         retry_backoff_seconds = int(additional_fields.get("retry_backoff_seconds") or 1)
 
@@ -322,14 +366,10 @@ class McpPluginFactory:
                 return await operation_factory()
             except McpRuntimeError:
                 raise
+            except (McpConfigurationError, PermissionError):
+                raise
             except Exception as exc:
                 error_info = classify_mcp_exception(exc, operation)
-                if isinstance(exc, ValueError) and error_info["category"] == "unknown":
-                    error_info.update({
-                        "category": "validation",
-                        "message": error_info["detail"] or "MCP configuration is invalid.",
-                        "retryable": False,
-                    })
 
                 if error_info["retryable"] and attempt < retry_count:
                     delay = retry_backoff_seconds * (2 ** attempt)
@@ -360,16 +400,15 @@ class McpPluginFactory:
                     error_info["message"],
                     category=error_info["category"],
                     operation=operation,
-                    detail=error_info["detail"],
+                    detail=error_info["message"],
                     retryable=error_info["retryable"],
                 ) from exc
 
     @classmethod
-    def create_connector(cls, config: Dict[str, Any]):
+    def create_connector(cls, config: Dict[str, Any], *, origin: Optional[McpActionOrigin] = None):
         """Create the native Semantic Kernel MCP connector for a manifest."""
-        manifest = dict(config or {})
-        additional_fields = normalize_mcp_additional_fields(manifest.get("additionalFields", {}))
-        manifest["additionalFields"] = additional_fields
+        manifest = cls._normalize_manifest(config)
+        additional_fields = manifest["additionalFields"]
         transport = additional_fields.get("transport")
         name = str(manifest.get("name") or MCP_PLUGIN_TYPE).strip() or MCP_PLUGIN_TYPE
         description = str(manifest.get("description") or "Model Context Protocol action").strip()
@@ -377,48 +416,13 @@ class McpPluginFactory:
         load_tools = bool(additional_fields.get("load_tools", True))
         load_prompts = bool(additional_fields.get("load_prompts", False))
 
-        inferred_scope_type, inferred_scope_id = infer_mcp_destination_scope(manifest)
-        mcp_operation_id = str(manifest.get("mcp_operation_id") or "").strip()
-        assert_mcp_destination_allowed(
+        action_origin, _ = resolve_mcp_execution_context(manifest, origin=origin)
+        authorize_mcp_action(
             manifest,
-            scope_type=inferred_scope_type,
-            scope_id=inferred_scope_id,
+            origin=action_origin,
+            settings=cls._get_current_settings(),
             operation="mcp_runtime_connector",
-            user_id=manifest.get("runtime_user_id") or manifest.get("user_id") or "",
-            mcp_operation_id=mcp_operation_id,
         )
-        assert_mcp_preconfiguration_manifest_allowed(
-            manifest,
-            scope_type=inferred_scope_type,
-            scope_id=inferred_scope_id,
-            operation="mcp_runtime_connector",
-            user_id=manifest.get("runtime_user_id") or manifest.get("user_id") or "",
-        )
-
-        if transport == "stdio":
-            command = str(additional_fields.get("command") or "").strip()
-            if not command:
-                raise ValueError("MCP stdio transport requires a command.")
-            log_event(
-                "[MCP_OUTBOUND] Creating MCP stdio connector",
-                extra={
-                    **cls._build_operation_log_context(manifest, "create_connector"),
-                    "command_present": bool(command),
-                    "args_count": len(list(additional_fields.get("args") or [])),
-                },
-                level=logging.INFO,
-                debug_only=True,
-            )
-            return MCPStdioPlugin(
-                name=name,
-                command=command,
-                args=list(additional_fields.get("args") or []),
-                env=dict(additional_fields.get("env") or {}),
-                load_tools=load_tools,
-                load_prompts=load_prompts,
-                request_timeout=request_timeout,
-                description=description,
-            )
 
         endpoint = str(manifest.get("endpoint") or "").strip()
         endpoint_errors = validate_mcp_endpoint_for_transport(endpoint, transport)

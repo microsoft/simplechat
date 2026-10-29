@@ -89,15 +89,15 @@ resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2024-01-01' existi
   name: videoIndexerName
 }
 
-// grant the webApp access to the key vault
-resource kvSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kv.id, webApp.id, 'kv-secrets-user')
+// Use a new assignment name: Azure cannot change the role on the old Secrets User assignment.
+resource kvSecretsOfficerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(kv.id, webApp.id, 'kv-secrets-officer')
   scope: kv
   properties: {
-    // Built-in role definition id for "Key Vault Secrets User"
+    // Secret storage and the connection probe require get/list/set/delete.
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
-      '4633458b-17de-408a-b874-0445c86b69e6'
+      'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
     )
     principalId: webApp.identity.principalId
     principalType: 'ServicePrincipal'
