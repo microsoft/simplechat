@@ -56,11 +56,7 @@ from functions_accessibility import (  # noqa: E402
     format_pdf_page_annotation_block,
     format_pptx_comment_block,
 )
-from functions_office_media import (  # noqa: E402
-    extract_office_embedded_images,
-    format_word_comment_block,
-    strip_appended_word_comments,
-)
+from functions_office_media import extract_office_embedded_images  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 

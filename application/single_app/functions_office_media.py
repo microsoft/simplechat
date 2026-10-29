@@ -512,6 +512,7 @@ def _build_office_media_accessibility_map(archive):
                 doc_root = defused_fromstring(doc_bytes)
                 _inspect_containers(doc_root, docx_rels)
             except (DefusedParseError, ValueError):
+                # Ignore malformed document.xml and continue inspecting slide parts.
                 pass
 
     # 2. PowerPoint slide parts

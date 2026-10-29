@@ -152,6 +152,7 @@ def _build_pdf_page_id_map(reader):
             if raw_obj is not None:
                 page_map[id(raw_obj)] = idx
     except Exception:
+        # Return partial page map if a malformed PDF page list raises during enumeration.
         pass
     return page_map
 
@@ -217,6 +218,7 @@ def _extract_struct_attr_dict(node_dict):
             try:
                 attrs['bbox'] = [round(float(x), 1) for x in bbox]
             except Exception:
+                # Ignore non-numeric bounding box coordinates.
                 pass
 
     return attrs
@@ -492,6 +494,7 @@ def extract_pdf_page_annotations(pdf_path):
             try:
                 doc.close()
             except Exception:
+                # Ignore errors when closing the PyMuPDF document handle.
                 pass
 
     return annotations_by_page
@@ -618,6 +621,7 @@ def extract_pdf_accessibility_metadata(pdf_path):
             try:
                 fitz_doc.close()
             except Exception:
+                # Ignore errors when closing the PyMuPDF document handle.
                 pass
 
     # 2. Inspect Catalog, /MarkInfo, /StructTreeRoot, /AcroForm, and page dictionaries via pypdf
@@ -731,6 +735,7 @@ def extract_pdf_accessibility_metadata(pdf_path):
                                 'has_tooltip': bool(w_tu.strip()),
                             })
             except Exception:
+                # Ignore malformed page /Annots entries and continue inspecting remaining pages.
                 pass
 
             per_page_details[page_idx] = {
@@ -1084,6 +1089,7 @@ def _extract_word_default_language(archive):
                     if val:
                         return val.strip()
         except (DefusedParseError, ValueError):
+            # Fall back to theme1.xml when styles.xml cannot be parsed.
             pass
 
     theme_bytes = _read_zip_entry_bounded(archive, 'word/theme/theme1.xml', OFFICE_EMBEDDED_RELS_MAX_BYTES)
@@ -1096,6 +1102,7 @@ def _extract_word_default_language(archive):
                     if lang:
                         return lang.strip()
         except (DefusedParseError, ValueError):
+            # Ignore malformed theme XML and return empty language fallback.
             pass
 
     return ''
@@ -1225,6 +1232,7 @@ def extract_pptx_comments(file_path):
                                 if a_id:
                                     authors_by_id[a_id] = {'name': a_name, 'initials': a_init}
                     except (DefusedParseError, ValueError):
+                        # Ignore malformed commentAuthors.xml and continue with inline comment attributes.
                         pass
 
             # 2. Map slide_number -> comment XML paths from ppt/slides/_rels/slideN.xml.rels
@@ -2097,6 +2105,7 @@ def _extract_legacy_doc_accessibility(file_path):
                 if keywords:
                     cosmos_meta['keywords'] = [k.strip() for k in re.split(r'[;,]', keywords) if k.strip()]
     except Exception:
+        # Ignore unreadable OLE metadata streams and continue with structural heuristics.
         pass
 
     if not cosmos_meta['title_present']:
