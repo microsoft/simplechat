@@ -28,7 +28,8 @@ def _diagnostic_number(name, default, minimum, maximum, integer=False):
         if math.isfinite(value) and minimum <= value <= maximum:
             return value
     except (ValueError, TypeError, OverflowError):
-        pass
+        # Fall back to the configured default when the environment variable is not numeric.
+        return default
     return default
 
 
@@ -63,7 +64,8 @@ class TabularDiagnosticAsyncClient(DefaultAsyncHttpxClient):
                 level=level,
             )
         except Exception:
-            pass
+            # Diagnostic telemetry is best-effort and must never interrupt model requests.
+            return
 
     async def send(self, request, **kwargs):
         started_at = time.monotonic()
