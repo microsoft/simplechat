@@ -421,17 +421,51 @@ def _build_model_endpoint_client_for_model(
 def resolve_vision_model_endpoint(settings, vision_model):
     """Return the enabled AI connection and model that serve the configured vision model.
 
-    The vision model setting stores only a model name, so it is matched against enabled
-    endpoints and models when multi-endpoint models are enabled. Returns ``(endpoint, model)``
-    from the normalized endpoint list, or ``(None, None)`` when the legacy GPT connection
-    should be used instead.
+    The vision model setting stores a model name and, when configured through V2 Admin
+    Settings, a structured ``multimodal_vision_model_selection`` reference. When an explicit
+    selection reference matches the active vision model, it resolves that exact connection
+    and model (and raises if the selected connection or model is missing or disabled).
+    Otherwise, the model name is matched against enabled endpoints and models when
+    multi-endpoint models are enabled. Returns ``(endpoint, model)`` from the normalized
+    endpoint list, or ``(None, None)`` when the legacy GPT connection should be used instead.
     """
     settings = settings or {}
     if not settings.get("enable_multi_model_endpoints", False):
         return None, None
 
+    requested_name = str(vision_model or "").strip()
+    if not requested_name:
+        return None, None
+
     endpoints, _ = normalize_model_endpoints(settings.get("model_endpoints", []) or [])
-    return find_enabled_model_endpoint_for_model_name(endpoints, vision_model)
+    selection = _normalize_model_endpoint_selection(
+        settings.get("multimodal_vision_model_selection")
+    )
+    stored_vision_model = str(settings.get("multimodal_vision_model") or "").strip()
+    if (
+        (selection["endpoint_id"] or selection["model_id"])
+        and (not stored_vision_model or requested_name == stored_vision_model)
+    ):
+        endpoint_cfg = next(
+            (e for e in endpoints if e.get("id") == selection["endpoint_id"]),
+            None,
+        )
+        if not endpoint_cfg:
+            raise LookupError("Selected vision endpoint could not be found.")
+        if not endpoint_cfg.get("enabled", True):
+            raise ValueError("Selected vision endpoint is disabled.")
+        models = endpoint_cfg.get("models", []) or []
+        model_cfg = next(
+            (m for m in models if m.get("id") == selection["model_id"]),
+            None,
+        )
+        if not model_cfg:
+            raise LookupError("Selected vision model could not be found on the endpoint.")
+        if not model_cfg.get("enabled", True):
+            raise ValueError("Selected vision model is disabled.")
+        return endpoint_cfg, model_cfg
+
+    return find_enabled_model_endpoint_for_model_name(endpoints, requested_name)
 
 
 def _resolve_metadata_extraction_client(settings, identity_context=None):
@@ -439,8 +473,7 @@ def _resolve_metadata_extraction_client(settings, identity_context=None):
 
     if (
         settings.get("enable_multi_model_endpoints", False)
-        and selection["endpoint_id"]
-        and selection["model_id"]
+        and (selection["endpoint_id"] or selection["model_id"])
     ):
         endpoints, _ = normalize_model_endpoints(settings.get("model_endpoints", []) or [])
         endpoint_cfg = next((e for e in endpoints if e.get("id") == selection["endpoint_id"]), None)
@@ -461,6 +494,19 @@ def _resolve_metadata_extraction_client(settings, identity_context=None):
     gpt_model = settings.get('metadata_extraction_model')
     if not gpt_model:
         raise ValueError("No metadata extraction model is selected.")
+
+    if settings.get("enable_multi_model_endpoints", False):
+        endpoints, _ = normalize_model_endpoints(settings.get("model_endpoints", []) or [])
+        endpoint_cfg, model_cfg = find_enabled_model_endpoint_for_model_name(endpoints, gpt_model)
+        if endpoint_cfg and model_cfg:
+            return _build_model_endpoint_client_for_model(
+                settings,
+                endpoint_cfg,
+                model_cfg.get("id"),
+                fallback_endpoint_id=str(endpoint_cfg.get("id") or ""),
+                purpose_label="metadata extraction",
+                identity_context=identity_context,
+            )
 
     extra_headers = build_model_endpoint_identity_headers(settings, identity_context=identity_context)
     if settings.get('enable_gpt_apim', False):

@@ -1624,6 +1624,15 @@ def _persist_global_model_endpoints(endpoints, existing, *, updated_endpoint_id=
     if resolved_metadata != settings.get("metadata_extraction_model_selection"):
         updates["metadata_extraction_model_selection"] = resolved_metadata
 
+    if "multimodal_vision_model_selection" in settings:
+        resolved_vision, _ = resolve_metadata_extraction_model_selection(
+            settings.get("multimodal_vision_model_selection"),
+            saved_endpoints,
+            multi_endpoint_enabled=multi_endpoint_enabled,
+        )
+        if resolved_vision != settings.get("multimodal_vision_model_selection"):
+            updates["multimodal_vision_model_selection"] = resolved_vision
+
     if IMAGE_SELECTION_KEY in settings:
         resolved_image, image_reason = resolve_capability_model_selection(
             settings.get(IMAGE_SELECTION_KEY), saved_endpoints, "image_generation"
@@ -1781,24 +1790,86 @@ def register_route_backend_v2_admin(bp):
         catalog = []
         seen = set()
 
-        for endpoint in settings.get("model_endpoints") or []:
-            if not isinstance(endpoint, dict):
-                continue
-            endpoint_label = endpoint.get("name") or endpoint.get("id") or ""
-
-            for model in endpoint.get("models") or []:
-                if not isinstance(model, dict) or not model.get("enabled", True):
+        use_connections = bool(
+            settings.get("enable_multi_model_endpoints", bool(settings.get("model_endpoints")))
+        )
+        if use_connections:
+            for endpoint in settings.get("model_endpoints") or []:
+                if not isinstance(endpoint, dict) or not endpoint.get("enabled", True):
                     continue
+                endpoint_id = str(endpoint.get("id") or "").strip()
+                endpoint_label = endpoint.get("name") or endpoint_id or ""
+                provider = str(endpoint.get("provider") or "").strip().lower()
 
+                for model in endpoint.get("models") or []:
+                    if not isinstance(model, dict) or not model.get("enabled", True):
+                        continue
+
+                    deployment = str(
+                        model.get("deploymentName")
+                        or model.get("deployment")
+                        or model.get("modelName")
+                        or ""
+                    ).strip()
+                    model_id = str(model.get("id") or "").strip()
+                    dedupe_key = (endpoint_id, model_id or deployment)
+                    if not deployment or dedupe_key in seen:
+                        continue
+
+                    if not supports_model_capability(model, "chat", endpoint.get("provider")):
+                        continue
+                    seen.add(dedupe_key)
+                    supports_vision, vision_source = resolve_model_vision_support(model)
+                    catalog.append(
+                        {
+                            "deployment": deployment,
+                            "label": model.get("displayName")
+                            or model.get("modelName")
+                            or deployment,
+                            "endpoint": endpoint_label,
+                            "endpoint_id": endpoint.get("id"),
+                            "model_id": model_id,
+                            "provider": provider,
+                            "model_name": model.get("modelName") or "",
+                            "supports_vision": supports_vision,
+                            "vision_source": vision_source,
+                        }
+                    )
+        elif settings.get("enable_gpt_apim", False):
+            for raw_deployment in str(settings.get("azure_apim_gpt_deployment") or "").split(","):
+                deployment = raw_deployment.strip()
+                if not deployment or ("", deployment) in seen:
+                    continue
+                if not supports_model_capability(deployment, "chat", "aoai"):
+                    continue
+                seen.add(("", deployment))
+                supports_vision, vision_source = resolve_model_vision_support(deployment)
+                catalog.append(
+                    {
+                        "deployment": deployment,
+                        "label": deployment,
+                        "endpoint": "",
+                        "endpoint_id": "",
+                        "model_id": "",
+                        "provider": "aoai",
+                        "model_name": deployment,
+                        "supports_vision": supports_vision,
+                        "vision_source": vision_source,
+                    }
+                )
+        else:
+            selected_models = (settings.get("gpt_model") or {}).get("selected") or []
+            for model in selected_models:
+                if not isinstance(model, dict):
+                    continue
                 deployment = str(
                     model.get("deploymentName") or model.get("deployment") or ""
                 ).strip()
-                if not deployment or deployment in seen:
+                if not deployment or ("", deployment) in seen:
                     continue
-
-                if not supports_model_capability(model, "chat", endpoint.get("provider")):
+                if not supports_model_capability(model, "chat", "aoai"):
                     continue
-                seen.add(deployment)
+                seen.add(("", deployment))
                 supports_vision, vision_source = resolve_model_vision_support(model)
                 catalog.append(
                     {
@@ -1806,15 +1877,23 @@ def register_route_backend_v2_admin(bp):
                         "label": model.get("displayName")
                         or model.get("modelName")
                         or deployment,
-                        "endpoint": endpoint_label,
-                        "endpoint_id": endpoint.get("id"),
+                        "endpoint": "",
+                        "endpoint_id": "",
+                        "model_id": str(model.get("id") or "").strip(),
+                        "provider": "aoai",
                         "model_name": model.get("modelName") or "",
                         "supports_vision": supports_vision,
                         "vision_source": vision_source,
                     }
                 )
 
-        catalog.sort(key=lambda entry: entry["label"].lower())
+        catalog.sort(
+            key=lambda entry: (
+                entry["label"].lower(),
+                entry["endpoint"].lower(),
+                entry["deployment"].lower(),
+            )
+        )
         return catalog
 
     def _build_status_readouts():

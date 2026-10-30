@@ -145,6 +145,8 @@ export interface AdminModelCatalogEntry {
     label: string;
     endpoint: string;
     endpoint_id?: string | null;
+    model_id?: string | null;
+    provider?: string | null;
     model_name: string;
     supports_vision: boolean;
     supports_chat?: boolean;
@@ -155,6 +157,13 @@ export interface AdminModelCatalogEntry {
      * guessed from the model's name. The last is the one worth reviewing.
      */
     vision_source: 'declared' | 'catalog' | 'inferred';
+}
+
+/** Structured AI Connection reference stored alongside a `model-picker` field. */
+export interface AdminModelSelection {
+    endpoint_id: string;
+    model_id: string;
+    provider: string;
 }
 
 /**
@@ -287,6 +296,8 @@ export interface AdminField {
     >;
     /** `model-picker` components only: restrict the list to models that read images. */
     requires_vision?: boolean;
+    /** `model-picker` components only: companion settings key storing `{endpoint_id, model_id, provider}`. */
+    selection_key?: string;
     /**
      * `resource-id-builder` components only: how to assemble the value.
      *
@@ -902,6 +913,18 @@ function assignPath(target: Json, path: string, value: unknown): void {
  * A payload entry can be conditional, which is how one declaration covers both sides of
  * an APIM-or-direct choice without sending the branch that is not in use.
  */
+export function asModelSelection(value: unknown): AdminModelSelection | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return null;
+    }
+    const record = value as Record<string, unknown>;
+    return {
+        endpoint_id: asString(record.endpoint_id).trim(),
+        model_id: asString(record.model_id).trim(),
+        provider: asString(record.provider).trim().toLowerCase(),
+    };
+}
+
 export function buildConnectionTestPayload(
     field: AdminField,
     settings: Json,
@@ -917,6 +940,19 @@ export function buildConnectionTestPayload(
         }
         const value = source.key !== undefined ? read(source.key) : source.value;
         assignPath(payload, path, value ?? '');
+
+        const sourceField = source.key ? fieldsByKey.get(source.key) : undefined;
+        if (sourceField?.selection_key) {
+            const selection = asModelSelection(read(sourceField.selection_key));
+            if (selection && selection.endpoint_id && selection.model_id) {
+                payload.multi_endpoint = {
+                    endpoint_id: selection.endpoint_id,
+                    model_id: selection.model_id,
+                    provider: selection.provider,
+                    deployment_name: asString(value).trim(),
+                };
+            }
+        }
     }
     return payload;
 }
