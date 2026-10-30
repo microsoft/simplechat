@@ -1700,13 +1700,25 @@ def build_agent_editor_options(user_id, settings, model_endpoints):
         user_id, [endpoint for endpoint in model_endpoints if endpoint.get("scope") == "global"],
         "governance_global_endpoints",
     )
-    allowed_ids = {endpoint.get("id") for endpoint in globals_allowed}
+    personal_allowed = (
+        governance.filter_governed_model_endpoints(
+            user_id,
+            [endpoint for endpoint in model_endpoints if endpoint.get("scope") in {"user", "personal"}],
+            "governance_user_endpoints",
+        )
+        if safe.get("allow_user_custom_endpoints")
+        else []
+    )
+    allowed_global_ids = {endpoint.get("id") for endpoint in globals_allowed}
+    allowed_personal_ids = {endpoint.get("id") for endpoint in personal_allowed}
     endpoints = [
         deepcopy(endpoint) for endpoint in model_endpoints
         if (
-            endpoint.get("scope") == "global" and endpoint.get("id") in allowed_ids
+            endpoint.get("scope") == "global" and endpoint.get("id") in allowed_global_ids
         ) or (
-            endpoint.get("scope") in {"user", "personal"} and safe.get("allow_user_custom_endpoints")
+            endpoint.get("scope") in {"user", "personal"}
+            and safe.get("allow_user_custom_endpoints")
+            and endpoint.get("id") in allowed_personal_ids
         )
     ]
     for endpoint in endpoints:
@@ -1787,13 +1799,25 @@ def build_group_agent_editor_options(user_id, group_id, settings, model_endpoint
         user_id, [endpoint for endpoint in model_endpoints if endpoint.get("scope") == "global"],
         "governance_global_endpoints",
     )
-    allowed_ids = {endpoint.get("id") for endpoint in globals_allowed}
+    group_allowed = (
+        governance.filter_governed_model_endpoints(
+            user_id,
+            [endpoint for endpoint in model_endpoints if endpoint.get("scope") == "group"],
+            "governance_group_endpoints",
+        )
+        if safe.get("allow_group_custom_endpoints")
+        else []
+    )
+    allowed_global_ids = {endpoint.get("id") for endpoint in globals_allowed}
+    allowed_group_ids = {endpoint.get("id") for endpoint in group_allowed}
     endpoints = [
         deepcopy(endpoint) for endpoint in model_endpoints
         if (
-            endpoint.get("scope") == "global" and endpoint.get("id") in allowed_ids
+            endpoint.get("scope") == "global" and endpoint.get("id") in allowed_global_ids
         ) or (
-            endpoint.get("scope") == "group" and safe.get("allow_group_custom_endpoints")
+            endpoint.get("scope") == "group"
+            and safe.get("allow_group_custom_endpoints")
+            and endpoint.get("id") in allowed_group_ids
         )
     ]
     for endpoint in endpoints:

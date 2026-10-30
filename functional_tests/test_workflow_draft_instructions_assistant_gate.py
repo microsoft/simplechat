@@ -251,6 +251,10 @@ class DraftHarness:
             "_assert_personal_workflow_draft_access": helpers["_assert_personal_workflow_draft_access"],
             "_build_workflow_instruction_messages": helpers["_build_workflow_instruction_messages"],
             "_resolve_active_group_for_workflow_management": self.resolve_group,
+            "_resolve_agent_instruction_client": lambda settings: (
+                self.create_client(settings),
+                self.resolve_model(settings),
+            ),
             "_resolve_agent_instruction_model": self.resolve_model,
             "_create_agent_instruction_client": self.create_client,
             "_build_agent_instruction_api_params": lambda model_name, messages: {

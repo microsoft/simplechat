@@ -8,6 +8,17 @@ let pendingLevels = {};
 const shownAdjustments = new Set();
 const levelLabels = { none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh' };
 
+function getAdminDefaultReasoningEffort() {
+    const win = typeof window !== 'undefined' ? window : globalThis;
+    if (!win.appSettings?.enable_default_model_for_new_conversations) {
+        return '';
+    }
+    if (win.adminNewConversationDefaultsActive === false) {
+        return '';
+    }
+    return String(win.appSettings?.default_reasoning_effort || '').trim().toLowerCase();
+}
+
 export function getMessageReasoningAdjustments(message, previous = []) {
     const latest = new Map();
     const entries = [
@@ -291,7 +302,12 @@ export function getCurrentModelReasoningEffort() {
     
     const supportedLevels = getModelSupportedLevels(modelName);
     const savedEffort = reasoningEffortSettings[modelName];
-    
+    const adminDefaultEffort = getAdminDefaultReasoningEffort();
+
+    if (adminDefaultEffort && supportedLevels.includes(adminDefaultEffort)) {
+        return adminDefaultEffort;
+    }
+
     // If saved effort exists and is supported, use it
     if (savedEffort && supportedLevels.includes(savedEffort)) {
         return savedEffort;
@@ -471,6 +487,9 @@ function selectReasoningLevel(level, modelName) {
  * @param {string} effort - The effort level
  */
 export function saveReasoningEffort(modelName, effort) {
+    if (typeof window !== 'undefined') {
+        window.adminNewConversationDefaultsActive = false;
+    }
     reasoningEffortSettings[modelName] = effort;
     if (settingsLoaded) {
         saveUserSetting({ reasoningEffortSettings });

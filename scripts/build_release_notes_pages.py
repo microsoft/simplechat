@@ -187,14 +187,35 @@ def page_body_for_releases(
     return "\n\n".join(body_parts)
 
 
+def estimate_archive_page_size(releases: tuple[ReleaseSection, ...]) -> int:
+    range_label = make_range_label(releases)
+    series_title = f"Release notes {releases[0].minor_series} series"
+    range_title = f"Release notes {range_label}"
+    earlier_description = f"SimpleChat release notes for earlier versions: {range_label}."
+    range_description = f"SimpleChat release notes for {range_label}."
+    return max(
+        len(
+            make_page_content(
+                title,
+                description,
+                page_body_for_releases(title, releases),
+            ).encode("utf-8")
+        )
+        for title, description in (
+            (series_title, range_description),
+            (range_title, range_description),
+            ("Earlier releases", earlier_description),
+        )
+    )
+
+
 def chunk_releases(releases: list[ReleaseSection]) -> list[tuple[ReleaseSection, ...]]:
     chunks: list[tuple[ReleaseSection, ...]] = []
     current: list[ReleaseSection] = []
 
     for release in releases:
         candidate = [*current, release]
-        candidate_body = "\n\n".join(section.content for section in candidate)
-        candidate_size = len(candidate_body.encode("utf-8"))
+        candidate_size = estimate_archive_page_size(tuple(candidate))
         if (
             current
             and (
@@ -390,7 +411,7 @@ def check_output(expected_files: dict[Path, bytes], output_dir: Path) -> int:
     for path in sorted(existing_files - expected_paths):
         differences.append(f"extra: {path}")
     for path in sorted(expected_paths & existing_files):
-        if path.read_bytes() != expected_files[path]:
+        if path.read_bytes().replace(b"\r\n", b"\n") != expected_files[path]:
             differences.append(f"different: {path}")
 
     if differences:

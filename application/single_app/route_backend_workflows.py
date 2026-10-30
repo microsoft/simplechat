@@ -132,8 +132,7 @@ from functions_workflow_assist_runtime import build_workflow_assist_services
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 from route_backend_agents import (
     _build_agent_instruction_api_params,
-    _create_agent_instruction_client,
-    _resolve_agent_instruction_model,
+    _resolve_agent_instruction_client,
 )
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -1342,8 +1341,7 @@ def _stream_group_workflow_activity(user_id, group_id, conversation_id='', workf
 
 def _workflow_assist_client(settings):
     """The draft-instructions deployment's client and model name, for the AI workflow assistant."""
-    model_name = _resolve_agent_instruction_model(settings)
-    return _create_agent_instruction_client(settings), model_name
+    return _resolve_agent_instruction_client(settings)
 
 
 def _read_workflow_assist_body():
@@ -1803,8 +1801,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': 'Provide a task brief, workflow name, description, or existing instructions.'}), 400
 
         try:
-            model_name = _resolve_agent_instruction_model(settings)
-            client = _create_agent_instruction_client(settings)
+            client, model_name = _resolve_agent_instruction_client(settings)
             messages = _build_workflow_instruction_messages(
                 name,
                 description,

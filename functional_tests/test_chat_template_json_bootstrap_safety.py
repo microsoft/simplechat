@@ -1,8 +1,8 @@
 # test_chat_template_json_bootstrap_safety.py
 """
 Functional test for chat template JSON bootstrap safety.
-Version: 0.240.008
-Implemented in: 0.240.008
+Version: 0.261.041
+Implemented in: 0.240.008; updated in 0.261.041
 
 This test ensures the chats template emits bootstrapped chat data as direct
 JavaScript literals rather than wrapping Jinja JSON output in JSON.parse
@@ -37,8 +37,10 @@ SAFE_ASSIGNMENTS = [
     "enable_web_search_user_notice: {{ settings.enable_web_search_user_notice|tojson }},",
     "enforce_workspace_scope_lock: {{ settings.enforce_workspace_scope_lock|tojson }},",
     "enable_multi_model_endpoints: {{ enable_multi_model_endpoints|tojson }},",
+    "enable_default_model_for_new_conversations: {{ settings.enable_default_model_for_new_conversations|default(false, true)|tojson }},",
+    "default_model_selection: {{ settings.default_model_selection|default({}, true)|tojson|safe }},",
+    "default_reasoning_effort: {{ settings.default_reasoning_effort|default('', true)|tojson }},",
     "enable_thoughts: {{ settings.enable_thoughts|tojson }}",
-    "window.multiEndpointNotice = {{ multi_endpoint_notice_data|tojson|safe }};",
 ]
 
 UNSAFE_PARSE_SNIPPETS = [
@@ -55,7 +57,6 @@ UNSAFE_PARSE_SNIPPETS = [
 def test_chat_template_bootstraps_json_with_direct_literals():
     """Verify chats.html emits safe direct literals for bootstrapped JSON data."""
     template_content = CHAT_TEMPLATE.read_text(encoding="utf-8")
-    config_content = CONFIG_FILE.read_text(encoding="utf-8")
 
     assert_app_version_at_least("0.240.008")
 

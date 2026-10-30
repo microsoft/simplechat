@@ -615,20 +615,48 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     // what stops a remounted composer -- leaving the chat and coming back -- from snapping back
     // to the model that was current at startup. The payload still applies when the stored key
     // no longer names a catalog model, since the server falls back to the deployment name.
+    // When `enable_default_model_for_new_conversations` is active, new chats start with the
+    // admin default (`initial_model_selection`) rather than the user's last remembered model.
+    const useAdminNewChatDefaults = Boolean(
+        features.enable_multi_model_endpoints
+        && features.enable_default_model_for_new_conversations,
+    );
+    const [userOverrodeNewChatDefaults, setUserOverrodeNewChatDefaults] = useState(false);
+    const previousConversationIdRef = useRef<string | null>(activeConversationId);
+
     useEffect(() => {
         const models = bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined;
         const preferred = useUserSettingsStore.getState().settings.preferredModelId;
         const remembered =
             typeof preferred === 'string' && findModel(models, preferred) ? preferred : '';
         const initial = bootstrap?.catalogs?.initial_model_selection;
-        const key = remembered || (initial ? modelSelectionKey(initial as ModelCatalogEntry) : '');
+        const initialKey = initial ? modelSelectionKey(initial as ModelCatalogEntry) : '';
+        const key =
+            useAdminNewChatDefaults && !activeConversationId && initialKey
+                ? initialKey
+                : remembered || initialKey;
         if (!key) {
             return;
         }
         setOptions((current) =>
             current.modelDeployment ? current : { ...current, modelDeployment: key },
         );
-    }, [bootstrap]);
+    }, [bootstrap, useAdminNewChatDefaults, activeConversationId]);
+
+    useEffect(() => {
+        const previousConversationId = previousConversationIdRef.current;
+        previousConversationIdRef.current = activeConversationId;
+        if (previousConversationId !== null && activeConversationId === null) {
+            setUserOverrodeNewChatDefaults(false);
+            if (useAdminNewChatDefaults) {
+                const initial = bootstrap?.catalogs?.initial_model_selection;
+                const initialKey = initial ? modelSelectionKey(initial as ModelCatalogEntry) : '';
+                if (initialKey) {
+                    setOptions((current) => ({ ...current, modelDeployment: initialKey }));
+                }
+            }
+        }
+    }, [activeConversationId, bootstrap, useAdminNewChatDefaults]);
 
     /**
      * Tell the other participants that this person is writing.
@@ -886,10 +914,16 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     // Agent mode is deliberately not a condition here. It hides the control and drops the
     // level from the request in `buildSelectionFields`, which is where that rule lives; the
     // level stays derived from the model underneath, so clearing the agent brings it back.
+    const adminDefaultReasoningEffort =
+        useAdminNewChatDefaults && !activeConversationId && !userOverrodeNewChatDefaults &&
+        typeof bootstrap?.settings?.default_reasoning_effort === 'string'
+            ? bootstrap.settings.default_reasoning_effort
+            : null;
     const reasoningResolution = resolveReasoningSelection(
         reasoningKey,
         { ...reasoningEffortSettings, ...pendingLevels.current },
         reasoningPolicy,
+        adminDefaultReasoningEffort,
     );
     const derivedReasoning = reasoningResolution.effective_effort ?? undefined;
 
@@ -950,6 +984,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
     /** Store a chosen level against the current model, for both interfaces to read back. */
     const chooseReasoningLevel = (level: string | undefined) => {
+        setUserOverrodeNewChatDefaults(true);
         setReasoningNotice(null);
         if (!level) {
             // Only reachable where the control is clearable, which is where no level is
@@ -1963,6 +1998,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                                 : undefined
                                         }
                                         onChange={(value) => {
+                                            setUserOverrodeNewChatDefaults(true);
                                             setOptions((current) => ({
                                                 ...current,
                                                 modelDeployment: value,

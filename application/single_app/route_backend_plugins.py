@@ -71,7 +71,7 @@ from functions_editor_assist_runtime import (
     is_session_admin,
 )
 # Action Ask AI uses the same deployment as agent instruction drafting.
-from route_backend_agents import _create_agent_instruction_client, _resolve_agent_instruction_model
+from route_backend_agents import _resolve_agent_instruction_client
 from functions_group_actions import (
     get_group_actions,
     get_governed_group_actions,
@@ -2037,10 +2037,7 @@ def assist_action_editor():
         user_id=user_id,
         settings=settings,
         authorize=authorize,
-        client_factory=lambda: (
-            _create_agent_instruction_client(settings),
-            _resolve_agent_instruction_model(settings),
-        ),
+        client_factory=lambda: _resolve_agent_instruction_client(settings),
     )
 
 

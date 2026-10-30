@@ -173,10 +173,8 @@ def _pending_review_assist_services():
     settings = get_settings()
     if not is_action_assistant_enabled(settings):
         raise EditorAssistError('action_assistant_disabled')
-    from route_backend_agents import _create_agent_instruction_client, _resolve_agent_instruction_model
-    return build_editor_assist_services(client_factory=lambda: (
-        _create_agent_instruction_client(settings), _resolve_agent_instruction_model(settings),
-    ))
+    from route_backend_agents import _resolve_agent_instruction_client
+    return build_editor_assist_services(client_factory=lambda: _resolve_agent_instruction_client(settings))
 
 
 def register_route_backend_msgraph_pending_actions(bp):

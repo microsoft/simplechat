@@ -220,6 +220,7 @@ for availability states and live-UI validation limits.
 - `[OFFICE_EMBEDDED_IMAGES]`
 - `[ONENOTE_INGESTION]`
 - `[RATE_LIMIT]`
+- `[TABULAR_MODEL_HTTP]`
 - `[WORKFLOW_ALERTS]`
 - `[YAMCS_PLUGIN]`
 - `[ACCESS_RESTRICTION]`

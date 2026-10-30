@@ -495,7 +495,14 @@ def _is_chat_agent_allowed_by_governance(user_id, agent, scope_type):
         return False
 
 
-def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_id=None, preferred_model_deployment=None):
+def _build_initial_chat_model_selection(
+    *,
+    chat_model_options,
+    preferred_model_id=None,
+    preferred_model_deployment=None,
+    default_model_selection=None,
+    use_admin_default=False,
+):
     scope_order = {
         'global': 0,
         'personal': 1,
@@ -576,6 +583,16 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
     sorted_options = sorted(valid_options, key=sort_key)
     normalized_preferred_model_id = _normalize_chat_model_value(preferred_model_id)
     normalized_preferred_model_deployment = _normalize_chat_model_value(preferred_model_deployment)
+
+    if use_admin_default and isinstance(default_model_selection, dict):
+        default_endpoint_id = _normalize_chat_model_value(default_model_selection.get('endpoint_id'))
+        default_model_id = _normalize_chat_model_value(default_model_selection.get('model_id'))
+        if default_endpoint_id and default_model_id:
+            for option in sorted_options:
+                endpoint_id = _normalize_chat_model_value(option.get('endpoint_id'))
+                model_id = _normalize_chat_model_value(option.get('model_id'))
+                if endpoint_id == default_endpoint_id and model_id == default_model_id:
+                    return serialize_option(option)
 
     if normalized_preferred_model_id:
         for option in sorted_options:
@@ -916,6 +933,11 @@ def register_route_frontend_chats(bp):
             chat_model_options=chat_model_options,
             preferred_model_id=user_settings_dict.get('preferredModelId'),
             preferred_model_deployment=user_settings_dict.get('preferredModelDeployment'),
+            default_model_selection=settings.get('default_model_selection', {}),
+            use_admin_default=bool(
+                enable_multi_model_endpoints
+                and settings.get('enable_default_model_for_new_conversations', False)
+            ),
         )
 
         return render_template(

@@ -19,6 +19,8 @@ from content_screening.policies import compose_policy, policy_is_active
 from functions_content_safety import (
     analyze_content_safety_text,
     build_content_safety_violation_message,
+    get_content_safety_category_label,
+    get_content_safety_category_threshold,
 )
 
 
@@ -165,10 +167,16 @@ def evaluate_chat_content(
                     log(scanner, "screening_check_failed", type(error).__name__)
         else:
             try:
-                analysis = analyze_content_safety_text(text, safety_client)
+                analysis = analyze_content_safety_text(text, safety_client, settings=settings)
                 results.append({
                     "scanner": scanner, "status": analysis.status, "complete": analysis.complete,
-                    "finding_count": sum(item["severity"] >= 4 for item in analysis.categories)
+                    "finding_count": sum(
+                        item["severity"] >= item.get(
+                            "threshold",
+                            get_content_safety_category_threshold(settings, item.get("category")),
+                        )
+                        for item in analysis.categories
+                    )
                     + analysis.blocklist_match_count,
                     "categories": analysis.categories,
                     "blocklist_match_count": analysis.blocklist_match_count,
@@ -208,9 +216,20 @@ def evaluate_chat_content(
             notice = UNCHECKED_INPUT_MESSAGE
         elif any(item["scanner"] == "content_safety" and item["finding_count"] for item in results):
             safety = next(item for item in results if item["scanner"] == "content_safety")
+            triggered = [
+                item for item in safety.get("categories", [])
+                if item["severity"] >= item.get(
+                    "threshold",
+                    get_content_safety_category_threshold(settings, item.get("category")),
+                )
+            ]
+            reasons = [
+                f"{get_content_safety_category_label(item.get('category'))} severity >= "
+                f"{item.get('threshold', get_content_safety_category_threshold(settings, item.get('category')))}"
+                for item in triggered
+            ] or ["Content Safety policy violation"]
             notice = build_content_safety_violation_message(
-                settings, ["Content Safety policy violation"],
-                [item for item in safety.get("categories", []) if item["severity"] >= 4], [],
+                settings, reasons, triggered, [],
             )
         else:
             notice = BLOCKED_INPUT_MESSAGE
@@ -240,7 +259,7 @@ def check_chat_content(text, checkpoint, *, user_id, settings=None, required_sca
     context = _request_context()
     settings_fingerprint = hash_payload({
         key: value for key, value in settings.items()
-        if key.startswith(("enable_content_", "chat_content_"))
+        if key.startswith(("enable_content_", "chat_content_", "content_safety_"))
     })
     try:
         content_fingerprint = text_fingerprint(text)

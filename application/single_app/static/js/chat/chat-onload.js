@@ -157,8 +157,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   try {
       const userSettings = await userSettingsPromise;
       
-                const preferredModelId = userSettings?.preferredModelId;
-                const preferredModelDeployment = userSettings?.preferredModelDeployment;
+                let preferredModelId = userSettings?.preferredModelId;
+                let preferredModelDeployment = userSettings?.preferredModelDeployment;
+
+                if (window.appSettings?.enable_default_model_for_new_conversations && window.initialChatModelSelection?.selection_key) {
+                    preferredModelId = window.initialChatModelSelection.selection_key;
+                    preferredModelDeployment = null;
+                }
 
             initializeModelSelector();
             await populateModelDropdown({

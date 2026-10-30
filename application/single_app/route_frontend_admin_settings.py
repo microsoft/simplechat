@@ -37,7 +37,10 @@ from functions_ai_connection_migration import (
     preserve_legacy_image_form_settings,
 )
 from functions_embedding_compatibility import preflight_embedding_settings, read_embedding_settings
-from functions_content_safety import normalize_content_safety_violation_message
+from functions_content_safety import (
+    normalize_content_safety_category_threshold,
+    normalize_content_safety_violation_message,
+)
 from functions_chat_content_checks import chat_content_form_updates
 from functions_rate_limit import normalize_rate_limit_message
 from functions_review_assist import normalize_admin_review_guidance
@@ -691,6 +694,10 @@ def register_route_frontend_admin_settings(bp):
                 'model_id': '',
                 'provider': ''
             }
+        if 'enable_default_model_for_new_conversations' not in settings:
+            settings['enable_default_model_for_new_conversations'] = False
+        if 'default_reasoning_effort' not in settings:
+            settings['default_reasoning_effort'] = ''
         if 'metadata_extraction_model_selection' not in settings or not isinstance(settings.get('metadata_extraction_model_selection'), dict):
             settings['metadata_extraction_model_selection'] = {
                 'endpoint_id': '',
@@ -1343,6 +1350,20 @@ def register_route_frontend_admin_settings(bp):
             file_download_allowed_public_workspace_ids = normalize_file_download_allowed_public_workspace_ids(
                 form_data.get('file_download_allowed_public_workspace_ids', '')
             )
+            content_safety_category_thresholds = {
+                'Violence': normalize_content_safety_category_threshold(
+                    form_data.get('content_safety_threshold_violence')
+                ),
+                'Hate': normalize_content_safety_category_threshold(
+                    form_data.get('content_safety_threshold_hate')
+                ),
+                'Sexual': normalize_content_safety_category_threshold(
+                    form_data.get('content_safety_threshold_sexual')
+                ),
+                'SelfHarm': normalize_content_safety_category_threshold(
+                    form_data.get('content_safety_threshold_self_harm')
+                ),
+            }
             content_safety_violation_message = normalize_content_safety_violation_message(
                 form_data.get('content_safety_violation_message')
             )
@@ -1924,6 +1945,19 @@ def register_route_frontend_admin_settings(bp):
             )
             if default_selection_warning:
                 flash(default_selection_warning, 'warning')
+
+            enable_default_model_for_new_conversations = (
+                enable_multi_model_endpoints
+                and form_data.get('enable_default_model_for_new_conversations') == 'on'
+            )
+            default_reasoning_effort = (
+                form_data.get('default_reasoning_effort', '').strip().lower()
+            )
+            if default_reasoning_effort not in ('', 'none', 'minimal', 'low', 'medium', 'high'):
+                flash('Default reasoning effort is not valid. Please select a supported value.', 'warning')
+                default_reasoning_effort = ''
+            if not enable_default_model_for_new_conversations:
+                default_reasoning_effort = ''
 
             metadata_selection_json = form_data.get('metadata_extraction_model_selection_json', '{}')
             parsed_metadata_model_selection = {}
@@ -2544,7 +2578,9 @@ def register_route_frontend_admin_settings(bp):
                 'model_endpoint_identity_header_name': model_endpoint_identity_header_name,
                 'model_endpoint_identity_header_value_type': model_endpoint_identity_header_value_type,
                 'model_endpoint_identity_header_hmac_secret': settings.get('model_endpoint_identity_header_hmac_secret', ''),
+                'enable_default_model_for_new_conversations': enable_default_model_for_new_conversations,
                 'default_model_selection': normalized_default_model_selection,
+                'default_reasoning_effort': default_reasoning_effort,
                 'multi_endpoint_migrated_at': migrated_at,
                 'multi_endpoint_migration_notice': migration_notice,
                 'azure_apim_gpt_endpoint': form_data.get('azure_apim_gpt_endpoint', '').strip(),
@@ -2796,6 +2832,7 @@ def register_route_frontend_admin_settings(bp):
 
                 # Safety (Content Safety Direct & APIM)
                 'enable_content_safety': form_data.get('enable_content_safety') == 'on',
+                'content_safety_category_thresholds': content_safety_category_thresholds,
                 'content_safety_violation_message': content_safety_violation_message,
                 'content_safety_include_trigger_information': content_safety_include_trigger_information,
                 'content_safety_endpoint': form_data.get('content_safety_endpoint', '').strip(),

@@ -854,8 +854,10 @@ def test_editor_settings_are_allowlisted_and_global_endpoint_governance_applies(
     assert options["settings"]["key_vault_secret_expiration_default_lead_days"] == 45
     assert options["settings"]["agent_templates_allow_user_submission"] is False
     assert options["builtin_actions"] == [{"id": "time", "label": "Time"}]
-    env.services.governance.filter_governed_model_endpoints.assert_called_once()
-    assert env.services.governance.filter_governed_model_endpoints.call_args.args[2] == "governance_global_endpoints"
+    assert [call.args[2] for call in env.services.governance.filter_governed_model_endpoints.call_args_list] == [
+        "governance_global_endpoints",
+        "governance_user_endpoints",
+    ]
     assert env.services.settings_module.sanitize_settings_for_user.call_count == 3
     env.namespace["get_global_agent_settings"].assert_not_called()
 

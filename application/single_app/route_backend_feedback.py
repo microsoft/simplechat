@@ -354,8 +354,8 @@ def _review_assist_client(settings):
     # Lazy: route_backend_agents loads the agent stack, which app.py has already imported by the
     # time a request arrives. Importing it when this module loads would make the feedback routes
     # depend on that whole stack.
-    from route_backend_agents import _create_agent_instruction_client, _resolve_agent_instruction_model
-    return _create_agent_instruction_client(settings), _resolve_agent_instruction_model(settings)
+    from route_backend_agents import _resolve_agent_instruction_client
+    return _resolve_agent_instruction_client(settings)
 
 
 def _feedback_write_attempts(expected_etag):

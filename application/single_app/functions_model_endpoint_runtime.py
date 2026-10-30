@@ -1,7 +1,7 @@
 # functions_model_endpoint_runtime.py
 """Runtime helpers for configured model endpoint clients and Semantic Kernel services."""
 
-from openai import AsyncOpenAI, AzureOpenAI, OpenAI
+from openai import AsyncAzureOpenAI, AsyncOpenAI, AzureOpenAI, OpenAI
 from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from model_tool_chat_completion import (
     AzureToolChatCompletion as AzureChatCompletion,
@@ -33,6 +33,7 @@ from functions_model_endpoint_validation import (
     model_endpoint_inference_api,
 )
 from functions_settings import resolve_model_endpoint_foundry_scope
+from functions_tabular_model_diagnostics import build_tabular_model_http_options
 from model_endpoint_clients import (
     AUXILIARY_MODEL_CALL_TIMEOUT_SECONDS,
     DEFAULT_DOCUMENT_ACTION_TIMEOUT_SECONDS,
@@ -80,6 +81,21 @@ MODEL_CONTEXT_AUTH_FIELDS = (
 
 def _build_azure_chat_completion(default_headers=None, **kwargs):
     validate_model_endpoint_api_version("aoai", kwargs.get("endpoint"), kwargs.get("api_version"))
+    diagnostic_options = build_tabular_model_http_options(kwargs.get('service_id'))
+    if diagnostic_options:
+        client = AsyncAzureOpenAI(
+            azure_endpoint=kwargs.get('endpoint'),
+            azure_deployment=kwargs.get('deployment_name'),
+            api_version=kwargs.get('api_version'),
+            api_key=kwargs.get('api_key'),
+            azure_ad_token=kwargs.get('ad_token'),
+            azure_ad_token_provider=kwargs.get('azure_ad_token_provider') or kwargs.get('ad_token_provider'),
+            default_headers=default_headers,
+            **diagnostic_options,
+        )
+        service_options = dict(kwargs)
+        service_options.pop('azure_ad_token_provider', None)
+        return AzureChatCompletion(async_client=client, **service_options)
     if not default_headers:
         return AzureChatCompletion(**kwargs)
     try:

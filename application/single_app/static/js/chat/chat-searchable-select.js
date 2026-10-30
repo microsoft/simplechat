@@ -496,7 +496,10 @@ export function createSearchableSingleSelect({
 
         selectEl.selectedIndex = normalizedIndex;
         renderOptions();
-        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+        selectEl.dispatchEvent(new CustomEvent('change', {
+            bubbles: true,
+            detail: { userInitiated: true }
+        }));
 
         try {
             bootstrap.Dropdown.getOrCreateInstance(buttonEl, resolvedDropdownConfig).hide();

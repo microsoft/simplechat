@@ -188,6 +188,7 @@ class Harness:
             "parse_assist_body": self.parse_assist_body,
             "RequestEntityTooLarge": RequestEntityTooLarge,
             "BadRequest": BadRequest,
+            "_resolve_agent_instruction_client": self.resolve_instruction_client,
             "_resolve_agent_instruction_model": self.resolve_model,
             "_create_agent_instruction_client": self.create_client,
             "session": self.session,
@@ -231,6 +232,10 @@ class Harness:
         self.runs.append(user_id)
         result = core.run_workflow_assist(body, user_id=user_id, services=services)
         return self.result_hook(result) if self.result_hook is not None else result
+
+    def resolve_instruction_client(self, settings):
+        model = self.resolve_model(settings)
+        return self.create_client(settings), model
 
     def resolve_model(self, settings):
         self.factory_calls.append(("model", settings))
