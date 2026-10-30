@@ -205,7 +205,7 @@ def _conversation_delete_failure(error, conversation_id, *, stage, is_bulk=False
 def normalize_chat_type(conversation_item):
     chat_type = conversation_item.get('chat_type')
     if chat_type:
-        if chat_type == 'personal':
+        if chat_type in ('personal', 'new'):
             conversation_item['chat_type'] = 'personal_single_user'
             return conversation_item['chat_type'], True
         return chat_type, False

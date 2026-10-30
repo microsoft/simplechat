@@ -81,6 +81,7 @@ def run_draft(
         "assert_group_role": assert_group_role,
         "require_active_group": require_active_group,
         "group_agents_available": group_agents_available,
+        "_resolve_agent_instruction_client": lambda settings: (_fake_model_client(instructions), "gpt-model"),
         "_resolve_agent_instruction_model": lambda settings: "gpt-model",
         "_create_agent_instruction_client": lambda settings: _fake_model_client(instructions),
         "_build_agent_instruction_messages": lambda *a, **k: [{"role": "user", "content": "x"}],

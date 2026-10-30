@@ -155,7 +155,11 @@ from functions_ai_notice import (
     normalize_ai_notice_message,
 )
 from functions_content_safety import (
+    CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT,
+    CONTENT_SAFETY_CATEGORY_THRESHOLD_HIGH,
+    CONTENT_SAFETY_CATEGORY_THRESHOLD_LOW,
     CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH,
+    normalize_content_safety_category_thresholds,
     normalize_content_safety_violation_message,
 )
 from functions_control_center_schedule import (
@@ -5527,6 +5531,38 @@ ADMIN_SETTINGS_FIELDS = {
                 "next time the connections are saved."
             ),
         },
+        {
+            "key": "enable_default_model_for_new_conversations",
+            "type": "switch",
+            "label": "Apply default model to new chats",
+            "help": (
+                "Starts new non-agent conversations with the default chat model above "
+                "instead of the user's last selected model."
+            ),
+            "default": False,
+        },
+        {
+            "key": "default_reasoning_effort",
+            "type": "select",
+            "label": "Default reasoning effort",
+            "help": (
+                "Applies when new conversation defaults are enabled; unsupported effort "
+                "values are ignored for models that do not accept them."
+            ),
+            "default": "",
+            "options": [
+                {"value": "", "label": "Model default"},
+                {"value": "none", "label": "None"},
+                {"value": "minimal", "label": "Minimal"},
+                {"value": "low", "label": "Low"},
+                {"value": "medium", "label": "Medium"},
+                {"value": "high", "label": "High"},
+            ],
+            "depends_on": {
+                "key": "enable_default_model_for_new_conversations",
+                "equals": True,
+            },
+        },
         # `enable_gpt_apim` deliberately has no field here. It belongs to the classic
         # single endpoint, and a connection now carries its own API Management
         # configuration, so a switch in this section would be a second control for a
@@ -6376,6 +6412,70 @@ ADMIN_SETTINGS_FIELDS = {
                 "Analyses a harmless sample string. Connection failures follow the shared "
                 "chat failure setting and are recorded privately for administrator rechecks."
             ),
+            "depends_on": {"key": "enable_content_safety", "equals": True},
+        },
+        {
+            "key": "content_safety_threshold_violence",
+            "paths": ["content_safety_category_thresholds.Violence"],
+            "type": "range",
+            "group": "Category thresholds",
+            "label": "Violence Threshold",
+            "help": (
+                "2 blocks Low, Medium and High; 4 allows Low and blocks Medium and "
+                "High; 6 allows Low and Medium and blocks High."
+            ),
+            "default": CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT,
+            "min": CONTENT_SAFETY_CATEGORY_THRESHOLD_LOW,
+            "max": CONTENT_SAFETY_CATEGORY_THRESHOLD_HIGH,
+            "step": 2,
+            "depends_on": {"key": "enable_content_safety", "equals": True},
+        },
+        {
+            "key": "content_safety_threshold_hate",
+            "paths": ["content_safety_category_thresholds.Hate"],
+            "type": "range",
+            "group": "Category thresholds",
+            "label": "Hate Threshold",
+            "help": (
+                "2 blocks Low, Medium and High; 4 allows Low and blocks Medium and "
+                "High; 6 allows Low and Medium and blocks High."
+            ),
+            "default": CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT,
+            "min": CONTENT_SAFETY_CATEGORY_THRESHOLD_LOW,
+            "max": CONTENT_SAFETY_CATEGORY_THRESHOLD_HIGH,
+            "step": 2,
+            "depends_on": {"key": "enable_content_safety", "equals": True},
+        },
+        {
+            "key": "content_safety_threshold_sexual",
+            "paths": ["content_safety_category_thresholds.Sexual"],
+            "type": "range",
+            "group": "Category thresholds",
+            "label": "Sexual Threshold",
+            "help": (
+                "2 blocks Low, Medium and High; 4 allows Low and blocks Medium and "
+                "High; 6 allows Low and Medium and blocks High."
+            ),
+            "default": CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT,
+            "min": CONTENT_SAFETY_CATEGORY_THRESHOLD_LOW,
+            "max": CONTENT_SAFETY_CATEGORY_THRESHOLD_HIGH,
+            "step": 2,
+            "depends_on": {"key": "enable_content_safety", "equals": True},
+        },
+        {
+            "key": "content_safety_threshold_self_harm",
+            "paths": ["content_safety_category_thresholds.SelfHarm"],
+            "type": "range",
+            "group": "Category thresholds",
+            "label": "Self-harm Threshold",
+            "help": (
+                "2 blocks Low, Medium and High; 4 allows Low and blocks Medium and "
+                "High; 6 allows Low and Medium and blocks High."
+            ),
+            "default": CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT,
+            "min": CONTENT_SAFETY_CATEGORY_THRESHOLD_LOW,
+            "max": CONTENT_SAFETY_CATEGORY_THRESHOLD_HIGH,
+            "step": 2,
             "depends_on": {"key": "enable_content_safety", "equals": True},
         },
         {
@@ -10194,6 +10294,13 @@ def _normalize_chunk_size_container(container, current_settings):
 # written into them. Keyed by the top-level settings key the container lives at.
 PATH_CONTAINER_NORMALIZERS = {
     "chunk_size": _normalize_chunk_size_container,
+    "content_safety_category_thresholds": lambda container, current_settings: (
+        normalize_content_safety_category_thresholds(
+            container,
+            legacy_threshold=(current_settings or {}).get("content_safety_block_threshold"),
+        ),
+        {},
+    ),
 }
 
 

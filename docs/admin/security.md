@@ -231,6 +231,7 @@ Reviewers act on a user's findings from the Safety Violations review. A warning 
 | Check submitted messages with Content Safety | Screens typed requests before they reach a model or action. | On beneath the master | `enable_content_safety_chat_input`; preserves existing input coverage |
 | Check AI replies with Content Safety | Inspects the complete reply text and removes confirmed violations. | Off | `enable_content_safety_chat_output`; optional output checkpoint |
 | Route through Azure API Management | Sends Content Safety calls to an APIM front end rather than the service endpoint. | Off | `enable_content_safety_apim`; capability toggle |
+| Prompt Category Block Thresholds | Sets per-category Azure Content Safety prompt thresholds for Violence, Hate, Sexual, and Self-harm. Low blocks Low, Medium, and High; Medium allows Low and blocks Medium and High; High allows Low and Medium and blocks High. | Medium (4) for every category | `content_safety_category_thresholds`; category values are 2, 4, or 6 |
 | Content Safety Endpoint | The resource endpoint from the Content Safety resource in Azure. Used for direct connections. | Empty | `content_safety_endpoint` |
 | Authentication Type | Whether a direct connection authenticates with a key or the App Service managed identity. | key | `content_safety_authentication_type` |
 | Content Safety Key | Either key from the Content Safety resource. Stored write-only: the admin surface shows whether a value is stored, never the value. | Empty | `content_safety_key` |

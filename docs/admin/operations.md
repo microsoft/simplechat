@@ -359,6 +359,73 @@ and its links copy the full addresses to share with developers.
 | An external probe is redirected to sign in or gets HTTP 401 | App Service Authentication answered before SimpleChat did. | Use `/external/healthcheckz` and exclude it from authentication. |
 | App Service keeps replacing instances | Health check points at a path that is switched off, or the app is not answering requests at all. | Switch the configured path on here, then check the application log stream. |
 
+### Diagnose slow tabular model requests
+
+An `AutoFunctionInvocationLoop` dependency measures the enclosing Semantic Kernel
+operation, not each HTTP request to the model. To distinguish model HTTP waits
+and SDK retries from fast spreadsheet tools, temporarily enable the diagnostic
+client for the foreground `tabular-analysis` Azure OpenAI service. This does not
+change ordinary chat clients, durable export clients, Custom endpoints, or
+Anthropic clients.
+
+For App Service code deployments, deploy the updated application, then add the
+following environment settings and restart the app:
+
+| Environment setting | Diagnostic default | Accepted values |
+| --- | --- | --- |
+| `SIMPLECHAT_TABULAR_HTTP_DIAGNOSTICS` | Off | `true`, `1`, `yes`, or `on` enables diagnostics |
+| `SIMPLECHAT_TABULAR_HTTP_TIMEOUT_SECONDS` | `60` | Finite seconds from `1` through `600` per HTTP I/O timeout |
+| `SIMPLECHAT_TABULAR_HTTP_MAX_RETRIES` | `0` | Integer from `0` through `2`; retries are in addition to the first attempt |
+| `SIMPLECHAT_TABULAR_HTTP_BUDGET_SECONDS` | `180` | Finite seconds from `1` through `1800`, shared across HTTP attempts and tool rounds in one diagnostic client |
+
+Timeout, retry, and budget overrides apply only when diagnostics is enabled.
+Invalid numeric values use the diagnostic defaults. Set the retry count to `1`
+to observe a controlled retry; leave it at `0` for the first fast-failure test.
+The shared budget starts at the first HTTP attempt, includes elapsed time between
+attempts, and limits an active HTTP send to the remaining budget. It does not
+cancel spreadsheet loading, tool execution, SDK retry backoff, or final chat
+synthesis outside this client. This is not a deadline for the entire chat turn.
+
+Keep the existing Application Insights connection string configured. The new
+events use `log_event` and do not require SimpleChat debug logging or
+`OPENAI_LOG=debug`. Reproduce the request and run:
+
+```kql
+traces
+| where timestamp > ago(1h)
+| where tostring(customDimensions.sc_message) startswith "[TABULAR_MODEL_HTTP]"
+| project timestamp,
+  event = tostring(customDimensions.sc_operation),
+  run_id = tostring(customDimensions.sc_diagnostic_run_id),
+  attempt_id = tostring(customDimensions.sc_http_attempt_id),
+  attempt = toint(customDimensions.sc_attempt_sequence),
+  sdk_retry = toint(customDimensions.sc_retry_count),
+  duration_ms = todouble(customDimensions.sc_duration_ms),
+  status_code = toint(customDimensions.sc_status_code),
+  error_type = tostring(customDimensions.sc_error_type),
+  underlying_error = tostring(customDimensions.sc_reason),
+  budget_exhausted = tobool(customDimensions.sc_budget_exhausted),
+  provider_request_id = tostring(customDimensions.sc_provider_request_id),
+  endpoint_fingerprint = tostring(customDimensions.sc_endpoint_fingerprint),
+  operation_Id
+| order by timestamp asc
+```
+
+Each SDK HTTP attempt has an `attempt_started` event followed by
+`attempt_completed` or `attempt_failed`. Completion does not necessarily mean a
+successful HTTP status: inspect `status_code`. All attempts for one diagnostic
+client share `run_id`, including SDK retries and subsequent tool-result calls.
+An endpoint fingerprint hashes the host, port, and request path to distinguish
+deployment destinations without publishing their names or URLs. Provider request
+IDs are recorded only when an allowlisted response header is available; failures
+before response headers arrive have none. Events never contain request bodies,
+response bodies, tool payloads, authorization headers, or exception messages.
+
+After testing, remove these settings or set
+`SIMPLECHAT_TABULAR_HTTP_DIAGNOSTICS=false` and restart. This restores the existing
+SDK defaults. The focused regression command is
+`python -m pytest functional_tests/test_tabular_model_http_diagnostics.py -q`.
+
 ## Related
 
 - [Administration settings overview]({{ '/admin/' | relative_url }})

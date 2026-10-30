@@ -157,6 +157,66 @@
                         </div>
 
 
+                        {% set content_safety_thresholds = settings.content_safety_category_thresholds | default({}, true) %}
+                        {% macro content_safety_threshold_label(value) -%}
+                            {%- if value | int <= 2 -%}Low{%- elif value | int >= 6 -%}High{%- else -%}Medium{%- endif -%}
+                        {%- endmacro %}
+                        {% macro content_safety_threshold_help(value) -%}
+                            {%- if value | int <= 2 -%}Block Low, Medium and High{%- elif value | int >= 6 -%}Allow Low and Medium / Block High{%- else -%}Allow Low / Block Medium and High{%- endif -%}
+                        {%- endmacro %}
+                        {% set violence_threshold = content_safety_thresholds.get('Violence', 4) | int %}
+                        {% set hate_threshold = content_safety_thresholds.get('Hate', 4) | int %}
+                        {% set sexual_threshold = content_safety_thresholds.get('Sexual', 4) | int %}
+                        {% set self_harm_threshold = content_safety_thresholds.get('SelfHarm', 4) | int %}
+                        <div class="mb-3" id="content-safety-category-thresholds">
+                            <label class="form-label">Prompt Category Block Thresholds</label>
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle mb-2">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">Category</th>
+                                            <th scope="col">Threshold</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <th scope="row">Violence</th>
+                                            <td>
+                                                <div class="fw-semibold" id="content_safety_threshold_violence_label">{{ content_safety_threshold_label(violence_threshold) }}</div>
+                                                <input type="range" class="form-range content-safety-category-threshold-range" id="content_safety_threshold_violence" name="content_safety_threshold_violence" min="2" max="6" step="2" value="{{ violence_threshold }}" data-threshold-label-target="content_safety_threshold_violence_label" data-threshold-help-target="content_safety_threshold_violence_help" aria-describedby="content_safety_threshold_violence_help" />
+                                                <div class="form-text" id="content_safety_threshold_violence_help">{{ content_safety_threshold_help(violence_threshold) }}</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <th scope="row">Hate</th>
+                                            <td>
+                                                <div class="fw-semibold" id="content_safety_threshold_hate_label">{{ content_safety_threshold_label(hate_threshold) }}</div>
+                                                <input type="range" class="form-range content-safety-category-threshold-range" id="content_safety_threshold_hate" name="content_safety_threshold_hate" min="2" max="6" step="2" value="{{ hate_threshold }}" data-threshold-label-target="content_safety_threshold_hate_label" data-threshold-help-target="content_safety_threshold_hate_help" aria-describedby="content_safety_threshold_hate_help" />
+                                                <div class="form-text" id="content_safety_threshold_hate_help">{{ content_safety_threshold_help(hate_threshold) }}</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <th scope="row">Sexual</th>
+                                            <td>
+                                                <div class="fw-semibold" id="content_safety_threshold_sexual_label">{{ content_safety_threshold_label(sexual_threshold) }}</div>
+                                                <input type="range" class="form-range content-safety-category-threshold-range" id="content_safety_threshold_sexual" name="content_safety_threshold_sexual" min="2" max="6" step="2" value="{{ sexual_threshold }}" data-threshold-label-target="content_safety_threshold_sexual_label" data-threshold-help-target="content_safety_threshold_sexual_help" aria-describedby="content_safety_threshold_sexual_help" />
+                                                <div class="form-text" id="content_safety_threshold_sexual_help">{{ content_safety_threshold_help(sexual_threshold) }}</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <th scope="row">Self-harm</th>
+                                            <td>
+                                                <div class="fw-semibold" id="content_safety_threshold_self_harm_label">{{ content_safety_threshold_label(self_harm_threshold) }}</div>
+                                                <input type="range" class="form-range content-safety-category-threshold-range" id="content_safety_threshold_self_harm" name="content_safety_threshold_self_harm" min="2" max="6" step="2" value="{{ self_harm_threshold }}" data-threshold-label-target="content_safety_threshold_self_harm_label" data-threshold-help-target="content_safety_threshold_self_harm_help" aria-describedby="content_safety_threshold_self_harm_help" />
+                                                <div class="form-text" id="content_safety_threshold_self_harm_help">{{ content_safety_threshold_help(self_harm_threshold) }}</div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="form-text">Higher threshold levels don’t override the model deployment guardrails.</div>
+                        </div>
+
                         <div class="mb-3">
                             <label for="content_safety_violation_message" class="form-label">
                                 Safety Violation Message <span class="text-muted fw-normal">(Markdown supported)</span>

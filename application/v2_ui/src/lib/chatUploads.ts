@@ -4,6 +4,8 @@ import { ApiError } from './apiClient';
 import {
     fetchGroupDocument,
     fetchPersonalDocument,
+    uploadDocument,
+    type ChatUploadOptions,
     type ChatUploadResponse,
     type ChatUploadTarget,
 } from './endpoints';
@@ -118,6 +120,39 @@ export function chatUploadValidationError(
         return `This file exceeds the ${limit} MB upload limit.`;
     }
     return null;
+}
+
+export async function ensureChatUploadFileReadable(file: File): Promise<void> {
+    const fileName = String(file?.name || 'selected file').trim() || 'selected file';
+
+    try {
+        await file.slice(0, Math.min(file.size, 1)).arrayBuffer();
+    } catch {
+        throw new Error(
+            `The browser could not read "${fileName}". Close the file in other apps then try again.`,
+        );
+    }
+}
+
+export async function uploadFilesToChat(
+    file: File,
+    conversationId?: string | null,
+    signal?: AbortSignal,
+    options: ChatUploadOptions = {},
+): Promise<ChatUploadResponse> {
+    await ensureChatUploadFileReadable(file);
+
+    try {
+        return await uploadDocument(file, conversationId, signal, options);
+    } catch (error) {
+        if (error instanceof ApiError || (error instanceof DOMException && error.name === 'AbortError')) {
+            throw error;
+        }
+        const fileName = String(file?.name || 'selected file').trim() || 'selected file';
+        throw new Error(
+            `The browser could not upload "${fileName}". The file may be open in another app, unavailable from cloud storage, or the network connection may have been interrupted. Ensure the file is closed and then try again.`,
+        );
+    }
 }
 
 interface LocalPreviewEntry {

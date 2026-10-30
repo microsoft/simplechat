@@ -187,6 +187,7 @@ SAFETY_REQUEST_FIELDS = (
     'action_datetime_to_allow',
 )
 SAFETY_ARCHIVE_FIELDS = (
+    'created_at',
     'is_archived',
     'archived_at',
     'archived_by',
@@ -237,6 +238,47 @@ def _format_triggered_categories(log_item):
             formatted_categories.append(category_name)
 
     return ', '.join(formatted_categories)
+
+
+def _iso_from_cosmos_ts(value):
+    try:
+        return datetime.utcfromtimestamp(float(value)).isoformat()
+    except (TypeError, ValueError, OSError):
+        return ''
+
+
+def _normalize_safety_log_dates(log_item):
+    created_at = (
+        log_item.get('created_at')
+        or log_item.get('timestamp')
+        or _iso_from_cosmos_ts(log_item.get('_ts'))
+    )
+    last_updated = log_item.get('last_updated') or log_item.get('updated_at') or created_at
+    log_item['created_at'] = created_at or ''
+    log_item['last_updated'] = last_updated or ''
+    return log_item
+
+
+def _enrich_safety_log_users(logs):
+    user_cache = {}
+    for log_item in logs:
+        user_id = str(log_item.get('user_id') or '').strip()
+        if not user_id:
+            log_item['user_name'] = 'Unknown User'
+            log_item['user_email'] = ''
+            continue
+        if user_id not in user_cache:
+            try:
+                user_cache[user_id] = resolve_safety_target_user(user_id)
+            except Exception:
+                user_cache[user_id] = {
+                    'display_name': user_id,
+                    'email': '',
+                }
+        user_info = user_cache[user_id]
+        log_item['user_name'] = user_info.get('display_name') or user_id
+        log_item['user_email'] = user_info.get('email') or ''
+    return logs
 
 
 def _get_safety_actor_context():
@@ -339,6 +381,7 @@ def _query_safety_logs(
         # whole, so it must still be exactly the stored document.
         logs = reconcile_pending_safety_logs(logs)
     for log_item in logs:
+        _normalize_safety_log_dates(log_item)
         if user_id:
             # A user reads their own violations; what an AI suggested about them is for reviewers.
             strip_suggestion(log_item)
@@ -566,7 +609,9 @@ def _with_safety_user_names(items, users=None):
         names.update(resolve_review_users(missing))
     for item in items:
         entry = names.get(item.get('user_id')) or {}
+        user_id = str(item.get('user_id') or '').strip()
         item['user_display_name'] = entry.get('display_name') or None
+        item['user_name'] = entry.get('display_name') or user_id or 'Unknown User'
         item['user_email'] = entry.get('email') or None
     return items
 
@@ -710,8 +755,8 @@ def _review_assist_client(settings):
     # Lazy: route_backend_agents loads the agent stack, which app.py has already imported by the
     # time a request arrives. Importing it when this module loads would make the safety routes
     # depend on that whole stack.
-    from route_backend_agents import _create_agent_instruction_client, _resolve_agent_instruction_model
-    return _create_agent_instruction_client(settings), _resolve_agent_instruction_model(settings)
+    from route_backend_agents import _resolve_agent_instruction_client
+    return _resolve_agent_instruction_client(settings)
 
 
 def _write_attempts(expected_etag):
@@ -788,6 +833,7 @@ def _build_safety_export_response(logs, filename_prefix, include_user_id=False):
 
     headers = [
         'Violation ID',
+        'User Name',
         'Status',
         'Action',
         'Message',
@@ -805,9 +851,11 @@ def _build_safety_export_response(logs, filename_prefix, include_user_id=False):
 
     writer.writerow(headers)
 
+    _enrich_safety_log_users(logs)
     for log_item in logs:
         row = [
             log_item.get('id') or '',
+            log_item.get('user_name') or '',
             log_item.get('status') or 'New',
             log_item.get('action') or 'None',
             log_item.get('message') or '',
@@ -883,6 +931,7 @@ def _archive_safety_log(log_id, archived, actor, expected_etag=None):
                 'error': SAFETY_ARCHIVE_IN_PROGRESS_MESSAGE,
                 'code': SAFETY_WARNING_IN_PROGRESS_CODE,
             }, 409
+        _normalize_safety_log_dates(item)
         was_archived = bool(item.get('is_archived'))
         apply_archive_state(item, archived, actor['id'])
         item['last_updated'] = datetime.utcnow().isoformat()
@@ -1846,6 +1895,7 @@ def register_route_backend_safety(bp):
                 filter_action=filter_action,
             )
             paginated_items, page, page_size = _paginate_safety_logs(logs, page, page_size)
+            _enrich_safety_log_users(paginated_items)
 
             return jsonify({
                 "logs": paginated_items,

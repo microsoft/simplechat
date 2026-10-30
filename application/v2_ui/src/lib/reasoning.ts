@@ -56,9 +56,18 @@ export function resolveReasoningSelection(
     modelKey: string | undefined,
     saved?: ReasoningEffortSettings,
     policy?: ReasoningCapabilities,
+    adminDefaultEffort?: string | null,
 ): ReasoningResolution {
-    const requested = modelKey ? saved?.[modelKey] || null : null;
+    const normalizedAdminDefault =
+        typeof adminDefaultEffort === 'string'
+            ? adminDefaultEffort.trim().toLowerCase()
+            : '';
     const levels = getModelSupportedLevels(policy);
+    const savedRequested = modelKey ? saved?.[modelKey] || null : null;
+    const requested =
+        normalizedAdminDefault && levels.includes(normalizedAdminDefault as ReasoningEffort)
+            ? normalizedAdminDefault
+            : savedRequested;
     const fallback = levels.includes('low')
         ? 'low'
         : levels.includes(policy?.default_effort as ReasoningEffort)
@@ -77,8 +86,14 @@ export function resolveReasoningEffort(
     modelKey: string | undefined,
     saved?: ReasoningEffortSettings,
     policy?: ReasoningCapabilities,
+    adminDefaultEffort?: string | null,
 ): ReasoningEffort | undefined {
-    const effective = resolveReasoningSelection(modelKey, saved, policy).effective_effort;
+    const effective = resolveReasoningSelection(
+        modelKey,
+        saved,
+        policy,
+        adminDefaultEffort,
+    ).effective_effort;
     return effective === null ? undefined : effective as ReasoningEffort;
 }
 

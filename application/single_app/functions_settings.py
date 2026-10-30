@@ -39,6 +39,8 @@ from functions_ai_connections import (
 )
 from functions_embedding_profile import normalize_embedding_operation, resolve_embedding_profile
 from functions_content_safety import (
+    CONTENT_SAFETY_CATEGORY_KEYS,
+    CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT,
     CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
 )
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
@@ -1806,11 +1808,13 @@ def get_settings(use_cosmos=False, include_source=False):
         'model_endpoint_identity_header_name': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
         'model_endpoint_identity_header_value_type': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
         'model_endpoint_identity_header_hmac_secret': secrets.token_urlsafe(48),
+        'enable_default_model_for_new_conversations': False,
         'default_model_selection': {
             'endpoint_id': '',
             'model_id': '',
             'provider': ''
         },
+        'default_reasoning_effort': '',
         'multi_endpoint_migrated_at': None,
         'multi_endpoint_migration_notice': {
             'enabled': False,
@@ -2018,6 +2022,10 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
+        'content_safety_category_thresholds': {
+            category_key: CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT
+            for category_key in CONTENT_SAFETY_CATEGORY_KEYS
+        },
         'enable_content_screening': False,
         'enable_content_screening_workspace_uploads': True,
         'enable_content_screening_chat_input': False,

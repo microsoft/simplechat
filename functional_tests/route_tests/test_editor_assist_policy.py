@@ -193,6 +193,7 @@ class Harness:
             "group_agents_available": lambda user_id, settings: self.group_available,
             "group_action_write_roles": lambda settings: ("Owner", "Admin"),
             "group_actions_available": lambda user_id, settings: self.group_available,
+            "_resolve_agent_instruction_client": lambda settings: ("client", "draft-model"),
             "_create_agent_instruction_client": lambda settings: "client",
             "_resolve_agent_instruction_model": lambda settings: "draft-model",
         }

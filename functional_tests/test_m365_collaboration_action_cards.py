@@ -1,8 +1,8 @@
 # test_m365_collaboration_action_cards.py
 """
 Shared-conversation action-card projection and live stream regression tests.
-Version: 0.261.038
-Implemented in: 0.261.038
+Version: 0.261.055
+Implemented in: 0.261.055
 
 The fresh-process probe imports the real routes with network access blocked and
 reuses scoped storage/Graph fixtures. It verifies owner-only details never enter
@@ -144,12 +144,12 @@ def run_scenarios():
             viewers.remove("viewer")
             before = len(harness.container.queries)
             revoked = list(routes._collaboration_events_for_viewer([cached], "viewer", visible_id))
-            check("m365_pending_actions_unavailable" in revoked[0], "Revoked access did not produce a visible recovery signal.")
+            check(revoked == [cached], "Projection failure did not preserve the collaboration event.")
             check("private@example.test" not in revoked[0] and len(harness.container.queries) == before, "Revoked subscriber read pending data.")
             viewers.add("viewer")
             harness.container.query_error = CosmosHttpResponseError(status_code=503, message="private storage details")
             unavailable = list(routes._collaboration_events_for_viewer([cached], "viewer", visible_id))
-            check("m365_pending_actions_unavailable" in unavailable[0], "Storage failure looked like an empty action list.")
+            check(unavailable == [cached], "Storage failure did not preserve the collaboration event.")
             check("private storage details" not in unavailable[0], "Provider diagnostics reached the event stream.")
             check(not harness.writes, "Rendering or replaying a shared card sent an action.")
         finally:

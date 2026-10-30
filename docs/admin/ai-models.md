@@ -271,6 +271,8 @@ The classic single endpoint is configured on the server-rendered admin page. Its
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
 | Default model | The model chat uses when nothing else has chosen one. Cleared automatically if the connection or model it names is deleted or disabled. | Not specified in defaults | `default_model_selection`; connections mode only |
+| Apply to new chats | Starts new non-agent conversations with the admin default model instead of each user's last selected chat model. | Off | `enable_default_model_for_new_conversations`; capability toggle |
+| Default reasoning effort | Sets the reasoning effort sent with new non-agent conversations when the admin default is enabled. | Model default | `default_reasoning_effort` |
 | Send requests through API Management | Routes GPT requests that use the classic endpoint through API Management rather than straight to the Azure OpenAI resource, so a deployment can apply its own governance and monitoring to them. Set on the classic page only — a connection carries its own API Management configuration, so this tab does not offer it. | Off | `enable_gpt_apim`; needs the three APIM values below |
 | Azure OpenAI Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_openai_gpt_endpoint` |
 | Authentication Type | Chooses whether SimpleChat authenticates to this service with a key, managed identity, or another supported method. | key | `azure_openai_gpt_authentication_type` |

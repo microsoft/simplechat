@@ -1,8 +1,8 @@
 # test_chat_collaboration_ui_scaffolding.py
 """
 UI test for chat collaboration scaffolding.
-Version: 0.241.020
-Implemented in: 0.241.020
+Version: 0.261.047
+Implemented in: 0.241.020; expanded in 0.261.047
 
 This test ensures the authenticated chats page loads the collaboration UI
 containers needed for participant management and @-mention suggestions without
@@ -10,7 +10,8 @@ introducing browser-side collaboration boot errors, including the collaboration
 deactivation path used when switching away from a shared conversation and the
 add-participants picker entry point used from existing chat actions. It also
 validates the shared conversation details footer actions and the new delete or
-leave modal flow for both legacy and collaborative chats.
+leave modal flow for both legacy and collaborative chats, including freshly
+created personal chats that still carry the transient `new` chat type.
 """
 
 import os
@@ -109,6 +110,30 @@ def test_chat_collaboration_ui_scaffolding(playwright):
                     window.chatCollaboration.openParticipantPicker({ conversationId: mockConversationId });
                     if (!participantModal.classList.contains('show')) {
                         throw new Error('Participant picker did not open for an eligible personal conversation.');
+                    }
+                } finally {
+                    modalInstance.hide();
+                    mockConversationItem.remove();
+                }
+            }
+        """)
+
+        page.evaluate("""
+            () => {
+                const mockConversationId = 'mock-new-personal-conversation';
+                const mockConversationItem = document.createElement('div');
+                mockConversationItem.className = 'conversation-item';
+                mockConversationItem.dataset.conversationId = mockConversationId;
+                mockConversationItem.dataset.chatType = 'new';
+                document.body.appendChild(mockConversationItem);
+
+                const participantModal = document.getElementById('collaboration-participant-modal');
+                const modalInstance = bootstrap.Modal.getOrCreateInstance(participantModal);
+
+                try {
+                    window.chatCollaboration.openParticipantPicker({ conversationId: mockConversationId });
+                    if (!participantModal.classList.contains('show')) {
+                        throw new Error('Participant picker did not open for a freshly created personal conversation.');
                     }
                 } finally {
                     modalInstance.hide();

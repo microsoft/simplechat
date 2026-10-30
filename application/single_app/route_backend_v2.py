@@ -1165,6 +1165,11 @@ def register_route_backend_v2(bp):
                     preferred_model_deployment=user_settings_dict.get(
                         "preferredModelDeployment"
                     ),
+                    default_model_selection=settings.get("default_model_selection", {}),
+                    use_admin_default=bool(
+                        settings.get("enable_multi_model_endpoints", False)
+                        and settings.get("enable_default_model_for_new_conversations", False)
+                    ),
                 )
             except Exception as exc:
                 logger.warning(f"[V2_BOOTSTRAP] Failed to resolve initial model: {exc}")

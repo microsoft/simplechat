@@ -468,7 +468,8 @@ def resolve_vision_model_endpoint(settings, vision_model):
     return find_enabled_model_endpoint_for_model_name(endpoints, requested_name)
 
 
-def _resolve_metadata_extraction_client(settings, identity_context=None):
+def resolve_metadata_extraction_client(settings, identity_context=None):
+    """Resolve the metadata extraction chat client and request model from configured settings."""
     selection = _normalize_model_endpoint_selection(settings.get("metadata_extraction_model_selection"))
 
     if (
@@ -535,6 +536,9 @@ def _resolve_metadata_extraction_client(settings, identity_context=None):
         api_key=settings.get('azure_openai_gpt_key'),
         default_headers=extra_headers or None,
     ), gpt_model
+
+
+_resolve_metadata_extraction_client = resolve_metadata_extraction_client
 
 
 ARCHIVED_SCOPE_PREFIX = "__archived__::"

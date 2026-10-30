@@ -376,6 +376,7 @@ def record_chat_content_incident(message, user_id, *, stores=None):
         "status": "New", "action": "None", "triggered_categories": categories,
         "blocklist_matches": [], "reason": "Chat content check findings",
         "timestamp": summary.get("attempted_at"), "created_at": summary.get("attempted_at"),
+        "last_updated": summary.get("attempted_at"),
         "metadata": {
             **({"message_id": message["id"]} if message.get("id") else {"attempt_only": True}),
             CHECK_METADATA: deepcopy(summary),

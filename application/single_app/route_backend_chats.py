@@ -125,6 +125,7 @@ from functions_tabular_analysis import (
     orchestrate_tabular_request as _shared_orchestrate_tabular_request,
     queue_direct_tabular_generated_output_from_plan as _shared_queue_direct_tabular_generated_output_from_plan,
 )
+from functions_tabular_model_diagnostics import close_tabular_model_http_client
 from functions_tabular_orchestration import (
     build_tabular_legacy_post_tool_fallback_decision as _shared_build_tabular_legacy_post_tool_fallback_decision,
     get_tabular_generated_output_format as _shared_get_tabular_generated_output_format,
@@ -828,6 +829,42 @@ def _prepare_conversation_context_for_invocation(
 
 def _resolve_reasoning_effort_for_model(reasoning_effort, model_name, provider=None, endpoint=None):
     return ModelEndpointBehavior(provider, model_name).resolve_reasoning_effort(reasoning_effort)
+
+
+def _normalize_default_reasoning_effort(reasoning_effort):
+    normalized_reasoning_effort = str(reasoning_effort or '').strip().lower()
+    if normalized_reasoning_effort in ('', 'none', 'minimal', 'low', 'medium', 'high'):
+        return normalized_reasoning_effort
+    return ''
+
+
+def _apply_admin_new_conversation_model_defaults(settings, data, conversation_id, request_agent_info, *, is_retry=False):
+    """Apply admin model defaults when a normal chat request starts a new conversation."""
+    if (
+        conversation_id
+        or is_retry
+        or _has_chat_agent_selection(request_agent_info)
+        or not settings.get('enable_multi_model_endpoints', False)
+        or not settings.get('enable_default_model_for_new_conversations', False)
+    ):
+        return False
+
+    default_selection = settings.get('default_model_selection', {}) or {}
+    default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
+    default_model_id = str(default_selection.get('model_id') or '').strip()
+    default_provider = str(default_selection.get('provider') or '').strip().lower()
+    if not (default_endpoint_id and default_model_id):
+        return False
+
+    data['model_endpoint_id'] = default_endpoint_id
+    data['model_id'] = default_model_id
+    data['model_provider'] = default_provider
+    data['model_deployment'] = ''
+    default_reasoning_effort = _normalize_default_reasoning_effort(settings.get('default_reasoning_effort'))
+    if default_reasoning_effort:
+        data['reasoning_effort'] = None if default_reasoning_effort == 'none' else default_reasoning_effort
+    data['_admin_default_model_applied'] = True
+    return True
 
 
 def _resolve_legacy_chat_reasoning_model_name(settings, deployment):
@@ -12736,6 +12773,15 @@ def _select_likely_workbook_sheet(sheet_names, question_text, per_sheet=None, sc
     return best_sheet
 
 
+async def allow_tabular_completion_after_initial_tools(context, next):
+    """Require initial evidence gathering without forcing every continuation to call tools."""
+    settings = context.execution_settings
+    if context.request_sequence_index == 0 and settings is not None:
+        if getattr(settings, 'tool_choice', None) == 'required':
+            settings.tool_choice = 'auto'
+    await next(context)
+
+
 async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                    conversation_id, gpt_model, settings,
                                    source_hint="workspace", group_id=None,
@@ -12756,10 +12802,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
     from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
     from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
     from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
+    from semantic_kernel.filters import FilterTypes
     from semantic_kernel_plugins.document_search_plugin import DocumentSearchPlugin
     from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
     from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 
+    chat_service = None
     try:
         plugin_logger = get_plugin_logger()
         execution_mode = execution_mode if execution_mode in {
@@ -12789,6 +12837,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
         # 1. Create lightweight kernel with tabular and document-search plugins
         kernel = SKKernel()
+        kernel.add_filter(FilterTypes.AUTO_FUNCTION_INVOCATION, allow_tabular_completion_after_initial_tools)
         tabular_plugin = TabularProcessingPlugin()
         document_search_plugin = DocumentSearchPlugin()
         kernel.add_plugin(tabular_plugin, plugin_name="tabular_processing")
@@ -13865,6 +13914,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
     except Exception as e:
         log_event(f"[TABULAR_SK_ANALYSIS] Error: {e}", level=logging.WARNING, exceptionTraceback=True)
         return None
+    finally:
+        await close_tabular_model_http_client(chat_service)
 
 def _build_tabular_sk_citations_from_invocations(plugin_invocations):
     """Convert selected tabular invocations to the existing tool-citation shape."""
@@ -15035,7 +15086,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     if requested_endpoint_id:
         if not (requested_model_id or requested_deployment):
             raise ValueError('Selected model information is incomplete for the streaming request.')
-        selection_source = 'request'
+        selection_source = 'default' if data.get('_admin_default_model_applied') else 'request'
     elif allow_default_selection:
         default_selection = settings.get('default_model_selection', {}) or {}
         default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
@@ -18107,6 +18158,14 @@ def register_route_backend_chats(bp):
             conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
             if conversation_id is not None:
                 conversation_id = str(conversation_id).strip() or None
+            request_is_retry = bool(data.get('retry_user_message_id') or data.get('edited_user_message_id'))
+            _apply_admin_new_conversation_model_defaults(
+                settings,
+                data,
+                conversation_id,
+                request_agent_info,
+                is_retry=request_is_retry,
+            )
             hybrid_search_enabled = data.get('hybrid_search')
             web_search_enabled = data.get('web_search_enabled')
             url_access_enabled = data.get('url_access_enabled')
@@ -18207,7 +18266,7 @@ def register_route_backend_chats(bp):
             retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')
             retry_thread_id = data.get('retry_thread_id')
             retry_thread_attempt = data.get('retry_thread_attempt')
-            is_retry = bool(retry_user_message_id)
+            is_retry = request_is_retry
             is_edit = bool(data.get('edited_user_message_id'))
 
             admitted_conversation = None
@@ -19278,6 +19337,7 @@ def register_route_backend_chats(bp):
                     'model_icon': gpt_model_icon,
                     'response_length': gpt_response_length,
                     'reasoning_effort': reasoning_effort or None,
+                    'admin_default_applied': bool(data.get('_admin_default_model_applied')),
                     'streaming': 'Disabled'
                 }
 
@@ -22557,6 +22617,13 @@ def register_route_backend_chats(bp):
         data['active_group_id'] = initial_scope_context['active_group_id']
         data['active_public_workspace_ids'] = list(initial_scope_context['active_public_workspace_ids'])
         data['active_public_workspace_id'] = initial_scope_context['active_public_workspace_id']
+        _apply_admin_new_conversation_model_defaults(
+            settings,
+            data,
+            None if is_new_stream_conversation else finalized_conversation_id,
+            data.get('agent_info'),
+            is_retry=is_retry,
+        )
         stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, finalized_conversation_id)
 
         request_message = (data.get('message') or '').strip()
@@ -23911,6 +23978,7 @@ def register_route_backend_chats(bp):
                         'model_icon': gpt_model_icon,
                         'response_length': gpt_response_length,
                         'reasoning_effort': reasoning_effort or None,
+                        'admin_default_applied': bool(data.get('_admin_default_model_applied')),
                         'streaming': 'Enabled'
                     }
 
