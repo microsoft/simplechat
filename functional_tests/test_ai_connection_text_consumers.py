@@ -41,6 +41,7 @@ from functions_model_endpoint_providers import get_model_endpoint_provider, norm
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
     MODEL_ENDPOINT_PROVIDER_CUSTOM,
+    find_enabled_model_endpoint_for_model_name,
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
@@ -599,9 +600,12 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
     def test_metadata_rejects_incompatible_models_before_loading_credentials(self):
         builder = Mock(return_value=sentinel.client)
         helpers = load_boundaries("functions_documents.py", {
-            "_normalize_model_endpoint_selection", "_resolve_metadata_extraction_client",
+            "_normalize_model_endpoint_selection",
+            "_build_model_endpoint_client_for_model",
+            "_resolve_metadata_extraction_client",
         }, {
             "_build_model_endpoint_client": builder,
+            "find_enabled_model_endpoint_for_model_name": find_enabled_model_endpoint_for_model_name,
             "MODEL_ENDPOINT_PROVIDER_ALLOWLIST": {"aoai", "new_foundry"},
         })
         for record in incompatible_models():
@@ -624,16 +628,50 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         self.assertIs(client, sentinel.client)
         self.assertEqual(deployment, "custom-deployment")
 
+        # Duplicate deployment names across connections resolve to the selected endpoint_id/model_id.
+        first = endpoint(
+            [model("gpt-5.6-terra", id="terra-1", deploymentName="gpt-5.6-terra")],
+            id="endpoint-one",
+        )
+        second = endpoint(
+            [model("gpt-5.6-terra", id="terra-2", deploymentName="gpt-5.6-terra")],
+            id="endpoint-two",
+            provider="new_foundry",
+        )
+        client, deployment = helpers["_resolve_metadata_extraction_client"]({
+            "enable_multi_model_endpoints": True,
+            "model_endpoints": [first, second],
+            "metadata_extraction_model": "gpt-5.6-terra",
+            "metadata_extraction_model_selection": {
+                "endpoint_id": "endpoint-two",
+                "model_id": "terra-2",
+                "provider": "new_foundry",
+            },
+        })
+        self.assertIs(client, sentinel.client)
+        self.assertEqual("gpt-5.6-terra", deployment)
+        self.assertEqual("new_foundry", builder.call_args.args[1])
+
     def test_vision_analysis_requires_both_image_input_and_text_output(self):
         client = Mock()
         client.chat.completions.create.return_value = SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content='{"description":"A drawing."}'))],
         )
-        helpers = load_boundaries("functions_documents.py", {"analyze_image_with_vision_model"}, {
+        endpoint_builder = Mock(return_value=client)
+        helpers = load_boundaries("functions_documents.py", {
+            "_normalize_model_endpoint_selection",
+            "_build_model_endpoint_client_for_model",
+            "resolve_vision_model_endpoint",
+            "analyze_image_with_vision_model",
+        }, {
             "open": lambda *args, **kwargs: io.BytesIO(b"test-image"),
             "base64": base64, "mimetypes": mimetypes, "json": json,
             "traceback": SimpleNamespace(print_exc=Mock()), "print": Mock(),
+            "log_event": Mock(),
             "is_vision_capable_model": is_vision_capable_model,
+            "find_enabled_model_endpoint_for_model_name": find_enabled_model_endpoint_for_model_name,
+            "_build_model_endpoint_client": endpoint_builder,
+            "MODEL_ENDPOINT_PROVIDER_ALLOWLIST": {"aoai", "new_foundry"},
             "clean_json_codeFence": lambda value: value,
             "AzureOpenAI": Mock(return_value=client),
         })
@@ -655,6 +693,49 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         })
         self.assertEqual(result["description"], "A drawing.")
         client.chat.completions.create.assert_called_once()
+
+        # Structured vision selection picks the chosen connection even with duplicate deployment names,
+        # and fails closed instead of falling back when the selected connection is disabled.
+        first = endpoint(
+            [model("gpt-5.6-terra", id="terra-1", deploymentName="gpt-5.6-terra")],
+            id="endpoint-one",
+        )
+        second = endpoint(
+            [model("gpt-5.6-terra", id="terra-2", deploymentName="gpt-5.6-terra")],
+            id="endpoint-two",
+            provider="new_foundry",
+        )
+        resolved_ep, resolved_model = helpers["resolve_vision_model_endpoint"](
+            {
+                "enable_multi_model_endpoints": True,
+                "model_endpoints": [first, second],
+                "multimodal_vision_model": "gpt-5.6-terra",
+                "multimodal_vision_model_selection": {
+                    "endpoint_id": "endpoint-two",
+                    "model_id": "terra-2",
+                    "provider": "new_foundry",
+                },
+            },
+            "gpt-5.6-terra",
+        )
+        self.assertEqual("endpoint-two", resolved_ep["id"])
+        self.assertEqual("terra-2", resolved_model["id"])
+
+        disabled_second = deepcopy(second)
+        disabled_second["enabled"] = False
+        with self.assertRaises(ValueError):
+            helpers["resolve_vision_model_endpoint"](
+                {
+                    "enable_multi_model_endpoints": True,
+                    "model_endpoints": [first, disabled_second],
+                    "multimodal_vision_model": "gpt-5.6-terra",
+                    "multimodal_vision_model_selection": {
+                        "endpoint_id": "endpoint-two",
+                        "model_id": "terra-2",
+                    },
+                },
+                "gpt-5.6-terra",
+            )
 
     def test_summary_resolution_rejects_image_aliases_without_legacy_fallback(self):
         builder = Mock(return_value=sentinel.client)

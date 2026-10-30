@@ -14,12 +14,18 @@
 
 import { clsx } from 'clsx';
 import { Info } from 'lucide-react';
-import { asString, type AdminField, type AdminModelCatalogEntry } from '../../lib/adminFields';
+import {
+    asString,
+    type AdminField,
+    type AdminModelCatalogEntry,
+    type AdminModelSelection,
+} from '../../lib/adminFields';
 import { FieldShell } from './fields';
 
 export function ModelPicker({
     field,
     value,
+    selection,
     error,
     warning,
     disabled,
@@ -28,11 +34,12 @@ export function ModelPicker({
 }: {
     field: AdminField;
     value: unknown;
+    selection?: AdminModelSelection | null;
     error?: string;
     warning?: string;
     disabled?: boolean;
     models: AdminModelCatalogEntry[];
-    onChange: (next: string) => void;
+    onChange: (next: string, selectedModel?: AdminModelCatalogEntry) => void;
 }) {
     const id = `admin-field-${field.key}`;
     const current = asString(value);
@@ -44,12 +51,54 @@ export function ModelPicker({
         (!field.requires_vision || model.supports_vision),
     );
 
-    const selected = eligible.find((model) => model.deployment === current);
+    const deploymentCounts = new Map<string, number>();
+    for (const model of eligible) {
+        deploymentCounts.set(model.deployment, (deploymentCounts.get(model.deployment) ?? 0) + 1);
+    }
+
+    const optionValue = (model: AdminModelCatalogEntry): string => {
+        if (
+            (deploymentCounts.get(model.deployment) ?? 0) > 1 &&
+            (model.endpoint_id || model.model_id)
+        ) {
+            return `${model.endpoint_id ?? ''}::${model.model_id ?? ''}::${model.deployment}`;
+        }
+        return model.deployment;
+    };
+
+    const hasExplicitSelection = Boolean(
+        selection && (selection.endpoint_id || selection.model_id),
+    );
+
+    const selected = hasExplicitSelection
+        ? eligible.find(
+              (model) =>
+                  String(model.endpoint_id ?? '') === selection?.endpoint_id &&
+                  (model.model_id
+                      ? String(model.model_id) === selection?.model_id
+                      : model.deployment === current),
+          )
+        : eligible.find(
+              (model) =>
+                  model.deployment === current ||
+                  (Boolean(current) && model.model_name === current),
+          );
 
     // A previously chosen model can drop out of the list: an endpoint was removed, or a
     // capability was corrected. Silently showing nothing selected would look like the
     // setting had never been configured, so the stale value is kept and named.
-    const staleSelection = Boolean(current) && !selected;
+    const staleLabel =
+        current ||
+        (hasExplicitSelection
+            ? `${selection?.model_id || 'model'} (${selection?.endpoint_id || 'endpoint'})`
+            : '');
+    const staleSelection = Boolean(staleLabel) && !selected;
+    const staleOptionValue = current || '__stale__';
+    const selectValue = selected
+        ? optionValue(selected)
+        : staleSelection
+          ? staleOptionValue
+          : '';
 
     return (
         <FieldShell field={field} error={error} warning={warning} htmlFor={id}>
@@ -60,20 +109,34 @@ export function ModelPicker({
                     'text-sm text-text-1 focus:border-accent focus:outline-none',
                     'disabled:cursor-not-allowed disabled:opacity-60',
                 )}
-                value={current}
+                value={selectValue}
                 disabled={disabled}
-                onChange={(event) => onChange(event.target.value)}
+                onChange={(event) => {
+                    const raw = event.target.value;
+                    if (!raw) {
+                        onChange('', undefined);
+                        return;
+                    }
+                    const chosen = eligible.find((model) => optionValue(model) === raw);
+                    onChange(chosen ? chosen.deployment : raw, chosen);
+                }}
             >
                 <option value="">{field.placeholder ?? 'No model selected'}</option>
                 {staleSelection ? (
-                    <option value={current}>{current} — no longer available</option>
+                    <option value={staleOptionValue}>{staleLabel} — no longer available</option>
                 ) : null}
-                {eligible.map((model) => (
-                    <option key={model.deployment} value={model.deployment}>
-                        {model.label}
-                        {model.endpoint ? ` · ${model.endpoint}` : ''}
-                    </option>
-                ))}
+                {eligible.map((model) => {
+                    const valueKey = optionValue(model);
+                    return (
+                        <option
+                            key={`${model.endpoint_id ?? ''}:${model.model_id ?? model.deployment}`}
+                            value={valueKey}
+                        >
+                            {model.label}
+                            {model.endpoint ? ` · ${model.endpoint}` : ''}
+                        </option>
+                    );
+                })}
             </select>
 
             {!eligible.length ? (

@@ -148,6 +148,7 @@ from admin_settings_secret_utils import (
     ADMIN_SETTINGS_SECRET_REDACTED_VALUE,
     resolve_admin_settings_secret_value,
 )
+from functions_ai_connections import supports_model_capability
 from functions_ai_notice import (
     AI_NOTICE_MAX_MESSAGE_LENGTH,
     normalize_ai_notice_frequency,
@@ -163,12 +164,14 @@ from functions_control_center_schedule import (
     normalize_control_center_auto_refresh_time,
     resolve_control_center_auto_refresh_settings,
 )
+from functions_model_capabilities import is_vision_capable_model
 from functions_model_endpoint_identity_header import (
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
     normalize_model_endpoint_identity_header_name,
     normalize_model_endpoint_identity_header_value_type,
 )
+from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_group_assignment_ids import (
     normalize_group_workflow_allowed_group_ids,
 )
@@ -2770,6 +2773,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "metadata_extraction_model",
+            "selection_key": "metadata_extraction_model_selection",
             "type": "component",
             "component": "model-picker",
             "label": "Extraction Model",
@@ -2802,6 +2806,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "multimodal_vision_model",
+            "selection_key": "multimodal_vision_model_selection",
             "type": "component",
             "component": "model-picker",
             "label": "Vision Model",
@@ -8704,6 +8709,10 @@ LEGACY_FIELD_NAMES = {
     # Same pattern: V1 posts the default model reference as serialized JSON, while V2
     # writes it through /api/v2/admin/default-model.
     "default_model_selection": ["default_model_selection_json"],
+    "metadata_extraction_model": [
+        "metadata_extraction_model",
+        "metadata_extraction_model_selection_json",
+    ],
     "image_gen_model": ["image_gen_model_json"],
     # V1 posts the images as part of the settings form; V2 uploads them
     # separately, so the stored keys are what the schema names.
@@ -9812,6 +9821,32 @@ def _normalize_document_classification_categories(value):
     return categories, None
 
 
+def _validate_extraction_model_name(value):
+    """Return ``(model_name, error)`` for an extraction model picker field."""
+    if value is None:
+        return "", None
+    if not isinstance(value, str):
+        return None, "Select a valid model."
+    return value.strip(), None
+
+
+def _validate_extraction_model_selection(value):
+    """Return ``(selection, error)`` for an extraction model selection reference."""
+    if value is None:
+        return {"endpoint_id": "", "model_id": "", "provider": ""}, None
+    if not isinstance(value, dict):
+        return None, "Model selection must be an object."
+    for field_name in ("endpoint_id", "model_id", "provider"):
+        raw = value.get(field_name)
+        if raw is not None and not isinstance(raw, str):
+            return None, "Model selection identifiers must be text."
+    return {
+        "endpoint_id": str(value.get("endpoint_id") or "").strip(),
+        "model_id": str(value.get("model_id") or "").strip(),
+        "provider": str(value.get("provider") or "").strip().lower(),
+    }, None
+
+
 # Component-backed keys that are saved through the settings PATCH. A component
 # normally owns its own persistence, so the type-driven path refuses a write to one;
 # these are the exceptions. Each validator returns ``(value, error)``, which is what
@@ -9820,6 +9855,10 @@ def _normalize_document_classification_categories(value):
 _COMPONENT_VALUE_VALIDATORS = {
     "retention_policy_execution_hour": _validate_retention_execution_hour,
     "document_classification_categories": _normalize_document_classification_categories,
+    "metadata_extraction_model": _validate_extraction_model_name,
+    "metadata_extraction_model_selection": _validate_extraction_model_selection,
+    "multimodal_vision_model": _validate_extraction_model_name,
+    "multimodal_vision_model_selection": _validate_extraction_model_selection,
 }
 
 
@@ -10492,6 +10531,7 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     _check_minimum_selections(normalized, current, errors)
     _check_content_screening_dependency(normalized, current, errors)
     _check_planner_model_selection(normalized, current, errors)
+    _check_extraction_model_selections(normalized, current, errors)
     _check_cosmos_throughput_policy(normalized, current, errors, warnings)
 
     # Applied last so the checks above still see flat keys, which is the shape
@@ -10648,6 +10688,262 @@ def _check_planner_model_selection(normalized, current_settings, errors):
     if problem:
         key, message = problem
         errors[key] = message
+
+
+EXTRACTION_MODEL_SELECTION_SPECS = (
+    (
+        "metadata_extraction_model",
+        "metadata_extraction_model_selection",
+        False,
+        "Metadata extraction model",
+    ),
+    (
+        "multimodal_vision_model",
+        "multimodal_vision_model_selection",
+        True,
+        "Vision model",
+    ),
+)
+
+
+def _extraction_model_match_rank(endpoint_cfg, model_cfg, requested_name):
+    """Return how strongly an enabled connection model matches ``requested_name``."""
+    deployment_name = str(model_cfg.get("deploymentName") or "").strip()
+    deployment_alias = str(model_cfg.get("deployment") or "").strip()
+    request_model = str(resolve_model_endpoint_request_model(endpoint_cfg, model_cfg) or "").strip()
+    if requested_name in (deployment_name, deployment_alias, request_model):
+        return 0
+    if str(model_cfg.get("modelName") or "").strip() == requested_name:
+        return 1
+    if str(model_cfg.get("id") or "").strip() == requested_name:
+        return 2
+    return None
+
+
+def _find_matching_extraction_endpoint_models(endpoints, requested_name):
+    """Return all enabled ``(endpoint, model)`` pairs at the best match rank for ``requested_name``."""
+    best_rank = None
+    matches = []
+    for endpoint_cfg in endpoints:
+        if not isinstance(endpoint_cfg, dict) or not endpoint_cfg.get("enabled", True):
+            continue
+        for model_cfg in endpoint_cfg.get("models") or []:
+            if not isinstance(model_cfg, dict) or not model_cfg.get("enabled", True):
+                continue
+            rank = _extraction_model_match_rank(endpoint_cfg, model_cfg, requested_name)
+            if rank is None:
+                continue
+            if best_rank is None or rank < best_rank:
+                best_rank = rank
+                matches = [(endpoint_cfg, model_cfg)]
+            elif rank == best_rank:
+                matches.append((endpoint_cfg, model_cfg))
+    return matches
+
+
+def _check_extraction_model_selections(normalized, current_settings, errors):
+    """Validate and resolve metadata extraction and vision model selections."""
+    raw_endpoints = normalized.get("model_endpoints", current_settings.get("model_endpoints"))
+    has_endpoints_key = (
+        "model_endpoints" in normalized or "model_endpoints" in current_settings
+    )
+    endpoints = [ep for ep in (raw_endpoints or []) if isinstance(ep, dict)]
+    if "enable_multi_model_endpoints" in normalized or "enable_multi_model_endpoints" in current_settings:
+        multi_endpoint_enabled = _coerce_bool(
+            normalized.get(
+                "enable_multi_model_endpoints",
+                current_settings.get("enable_multi_model_endpoints", False),
+            )
+        )
+    else:
+        multi_endpoint_enabled = bool(endpoints)
+
+    for model_key, selection_key, requires_vision, label in EXTRACTION_MODEL_SELECTION_SPECS:
+        if model_key not in normalized and selection_key not in normalized:
+            continue
+        if model_key in errors or selection_key in errors:
+            continue
+
+        has_model_key = model_key in normalized
+        has_selection_key = selection_key in normalized
+        requested_model = (
+            str(normalized.get(model_key) or "").strip()
+            if has_model_key
+            else str(current_settings.get(model_key) or "").strip()
+        )
+        incoming_selection = normalized.get(selection_key) if has_selection_key else None
+        sel_endpoint_id = str((incoming_selection or {}).get("endpoint_id") or "").strip()
+        sel_model_id = str((incoming_selection or {}).get("model_id") or "").strip()
+
+        # Clearing the model or clearing the selection reference clears both together.
+        if (
+            has_model_key
+            and not requested_model
+            and not sel_endpoint_id
+            and not sel_model_id
+        ) or (
+            has_selection_key
+            and not has_model_key
+            and not sel_endpoint_id
+            and not sel_model_id
+        ):
+            normalized[model_key] = ""
+            normalized[selection_key] = {"endpoint_id": "", "model_id": "", "provider": ""}
+            continue
+
+        if bool(sel_endpoint_id) != bool(sel_model_id):
+            errors[model_key] = "Choose a connection and one of its enabled models."
+            continue
+
+        if not multi_endpoint_enabled:
+            if sel_endpoint_id or sel_model_id:
+                errors[model_key] = (
+                    "Turn on AI Connections before selecting a connection model."
+                )
+                continue
+
+            enable_apim = _coerce_bool(
+                normalized.get(
+                    "enable_gpt_apim", current_settings.get("enable_gpt_apim", False)
+                )
+            )
+            apim_raw = normalized.get(
+                "azure_apim_gpt_deployment",
+                current_settings.get("azure_apim_gpt_deployment"),
+            )
+            gpt_model_cfg = normalized.get("gpt_model", current_settings.get("gpt_model"))
+            matched_record = requested_model
+            if enable_apim and apim_raw is not None:
+                apim_deployments = [
+                    item.strip() for item in str(apim_raw or "").split(",") if item.strip()
+                ]
+                if apim_deployments and requested_model not in apim_deployments:
+                    errors[model_key] = (
+                        f"{label} '{requested_model}' is not in the configured APIM deployments."
+                    )
+                    continue
+            elif isinstance(gpt_model_cfg, dict) and gpt_model_cfg.get("selected"):
+                selected_models = [
+                    item for item in (gpt_model_cfg.get("selected") or []) if isinstance(item, dict)
+                ]
+                matched_record = next(
+                    (
+                        item
+                        for item in selected_models
+                        if requested_model
+                        in (
+                            str(item.get("deploymentName") or "").strip(),
+                            str(item.get("deployment") or "").strip(),
+                            str(item.get("id") or "").strip(),
+                            str(item.get("modelName") or "").strip(),
+                        )
+                    ),
+                    None,
+                )
+                if matched_record is None:
+                    errors[model_key] = (
+                        f"{label} '{requested_model}' is not in the selected GPT deployments."
+                    )
+                    continue
+
+            if not supports_model_capability(matched_record, "chat", "aoai"):
+                errors[model_key] = (
+                    f"{label} does not support chat. Please select a compatible model."
+                )
+                continue
+            if requires_vision and not is_vision_capable_model(matched_record):
+                errors[model_key] = (
+                    "The selected vision model must support image input and text responses."
+                )
+                continue
+
+            normalized[model_key] = requested_model
+            normalized[selection_key] = {"endpoint_id": "", "model_id": "", "provider": ""}
+            continue
+
+        # Multi-endpoint mode is active.
+        if sel_endpoint_id and sel_model_id:
+            endpoint_cfg = next(
+                (
+                    ep
+                    for ep in endpoints
+                    if str(ep.get("id") or "").strip() == sel_endpoint_id
+                ),
+                None,
+            )
+            if not endpoint_cfg or not endpoint_cfg.get("enabled", True):
+                errors[model_key] = (
+                    f"{label} endpoint is not available. Please select a valid endpoint."
+                )
+                continue
+            model_cfg = next(
+                (
+                    item
+                    for item in (endpoint_cfg.get("models") or [])
+                    if isinstance(item, dict)
+                    and str(item.get("id") or "").strip() == sel_model_id
+                ),
+                None,
+            )
+            if not model_cfg or not model_cfg.get("enabled", True):
+                errors[model_key] = (
+                    f"{label} is not available. Please select a valid model."
+                )
+                continue
+        elif not has_endpoints_key:
+            if not supports_model_capability(requested_model, "chat", "aoai"):
+                errors[model_key] = (
+                    f"{label} does not support chat. Please select a compatible model."
+                )
+                continue
+            if requires_vision and not is_vision_capable_model(requested_model):
+                errors[model_key] = (
+                    "The selected vision model must support image input and text responses."
+                )
+                continue
+            normalized[model_key] = requested_model
+            normalized[selection_key] = {"endpoint_id": "", "model_id": "", "provider": ""}
+            continue
+        else:
+            matches = _find_matching_extraction_endpoint_models(endpoints, requested_model)
+            if not matches:
+                errors[model_key] = (
+                    f"{label} is not available in the configured AI Connections."
+                )
+                continue
+            if len(matches) > 1:
+                errors[model_key] = (
+                    f"Multiple AI Connections publish '{requested_model}'. "
+                    f"Choose the specific connection in the {label.lower()} picker."
+                )
+                continue
+            endpoint_cfg, model_cfg = matches[0]
+
+        provider = str(endpoint_cfg.get("provider") or "").strip().lower()
+        if not supports_model_capability(model_cfg, "chat", provider):
+            errors[model_key] = (
+                f"{label} does not support chat. Please select a compatible model."
+            )
+            continue
+        if requires_vision and not is_vision_capable_model(model_cfg, endpoint_cfg):
+            errors[model_key] = (
+                "The selected vision model must support image input and text responses."
+            )
+            continue
+
+        request_model = str(
+            resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
+            or model_cfg.get("deploymentName")
+            or model_cfg.get("deployment")
+            or model_cfg.get("modelName")
+            or requested_model
+        ).strip()
+        normalized[model_key] = request_model
+        normalized[selection_key] = {
+            "endpoint_id": str(endpoint_cfg.get("id") or "").strip(),
+            "model_id": str(model_cfg.get("id") or "").strip(),
+            "provider": provider,
+        }
 
 
 # Throughput settings held in RU/s, which Cosmos autoscale moves in 1,000 RU/s steps.

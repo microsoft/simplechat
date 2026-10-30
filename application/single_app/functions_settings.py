@@ -1964,6 +1964,11 @@ def get_settings(use_cosmos=False, include_source=False):
         # Multi-Modal Vision Analysis
         'enable_multimodal_vision': False,
         'multimodal_vision_model': '',
+        'multimodal_vision_model_selection': {
+            'endpoint_id': '',
+            'model_id': '',
+            'provider': ''
+        },
 
         # Document Classification
         'enable_document_classification': False,
@@ -3694,6 +3699,13 @@ def resolve_metadata_extraction_model_selection(selection, endpoints, multi_endp
     """Re-resolve the metadata extraction model. See ``resolve_model_selection``."""
     return resolve_model_selection(
         selection, endpoints, multi_endpoint_enabled, label="Metadata extraction model"
+    )
+
+
+def resolve_vision_model_selection(selection, endpoints, multi_endpoint_enabled=True):
+    """Re-resolve the multi-modal vision model. See ``resolve_model_selection``."""
+    return resolve_model_selection(
+        selection, endpoints, multi_endpoint_enabled, label="Vision model"
     )
 
 

@@ -1505,16 +1505,27 @@ def _test_multimodal_vision_connection(payload):
 
     try:
         multi_endpoint_selection = payload.get('multi_endpoint') if isinstance(payload.get('multi_endpoint'), dict) else None
+        has_explicit_multi_endpoint = bool(
+            multi_endpoint_selection
+            and str(multi_endpoint_selection.get('endpoint_id') or '').strip()
+            and str(multi_endpoint_selection.get('model_id') or '').strip()
+        )
         # Ingestion resolves the saved vision model name to the AI connection that hosts it, so the
         # test uses that same connection whenever the lookup succeeds, even if APIM is selected.
-        runtime_endpoint, runtime_model = resolve_vision_model_endpoint(get_settings(), vision_model)
-        if runtime_endpoint and runtime_model:
-            multi_endpoint_selection = {
-                'endpoint_id': str(runtime_endpoint.get('id') or '').strip(),
-                'model_id': str(runtime_model.get('id') or '').strip(),
-                'provider': str(runtime_endpoint.get('provider') or '').strip(),
-                'deployment_name': resolve_model_endpoint_request_model(runtime_endpoint, runtime_model),
-            }
+        if not has_explicit_multi_endpoint:
+            try:
+                runtime_endpoint, runtime_model = resolve_vision_model_endpoint(
+                    get_settings(), vision_model
+                )
+            except (LookupError, ValueError):
+                return jsonify({'error': 'Selected vision model endpoint could not be resolved from saved settings'}), 400
+            if runtime_endpoint and runtime_model:
+                multi_endpoint_selection = {
+                    'endpoint_id': str(runtime_endpoint.get('id') or '').strip(),
+                    'model_id': str(runtime_model.get('id') or '').strip(),
+                    'provider': str(runtime_endpoint.get('provider') or '').strip(),
+                    'deployment_name': resolve_model_endpoint_request_model(runtime_endpoint, runtime_model),
+                }
         if multi_endpoint_selection:
             settings = get_settings()
             identity_context = {'user_id': get_current_user_id()}

@@ -518,11 +518,16 @@ def test_an_unaffected_default_is_left_alone():
 
 
 def test_metadata_extraction_selection_is_revalidated():
-    """A dangling metadata selection makes document ingestion raise, not fall back."""
-    print("Testing metadata extraction selection re-resolution...")
+    """A dangling metadata or vision selection makes document ingestion raise, not fall back."""
+    print("Testing metadata extraction and vision selection re-resolution...")
 
     persist, calls = _load_persistence_helper()
     calls["settings"]["metadata_extraction_model_selection"] = {
+        "endpoint_id": "ep-gone",
+        "model_id": "gpt-4o",
+        "provider": "aoai",
+    }
+    calls["settings"]["multimodal_vision_model_selection"] = {
         "endpoint_id": "ep-gone",
         "model_id": "gpt-4o",
         "provider": "aoai",
@@ -545,8 +550,14 @@ def test_metadata_extraction_selection_is_revalidated():
         "model_id": "",
         "provider": "",
     }, written
+    assert "multimodal_vision_model_selection" in written, written
+    assert written["multimodal_vision_model_selection"] == {
+        "endpoint_id": "",
+        "model_id": "",
+        "provider": "",
+    }, written
 
-    print("  A dangling metadata selection is cleared alongside the default.")
+    print("  Dangling metadata and vision selections are cleared alongside the default.")
     return True
 
 

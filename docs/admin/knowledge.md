@@ -245,6 +245,13 @@ about it -- title, authors, subject, keywords -- which is what makes a citation 
 source rather than as a filename. It runs on upload, so enabling it later does not backfill
 documents that are already indexed.
 
+When AI Connections are enabled, choosing an **Extraction Model** and saving records both the
+request model (`metadata_extraction_model`) and the selected connection and model reference
+(`metadata_extraction_model_selection`), so metadata extraction routes through the chosen
+AI Connection even when multiple connections share a deployment name. When AI Connections are
+off, the picker uses the classic GPT or APIM deployments and clears any stored connection
+reference.
+
 It costs an extra model call per document, and it needs a deployment selected for it, so it
 is off by default.
 
@@ -261,13 +268,14 @@ model receives.
 Workspace images are analyzed only when Enhanced Citations is enabled. Images attached directly to
 a chat are analyzed whenever this setting is on.
 
-The Vision Model setting stores a model name. When multi-endpoint models are enabled, SimpleChat
-sends the analysis through the enabled AI connection that hosts an enabled model with that
-deployment name, model name, or id, so a model deployed on a different connection than the primary
-GPT resource works. A deployment name match wins over a model name match, and the first matching
-connection in the list wins over later ones. When no connection matches, or multi-endpoint models
-are off, the GPT connection is used, directly or through APIM. **Test Vision Analysis** uses the
-same connection as ingestion.
+The Vision Model setting stores the selected request model (`multimodal_vision_model`) and, when
+saved in V2 Admin Settings with AI Connections enabled, the selected connection and model
+reference (`multimodal_vision_model_selection`). When a structured connection reference is saved,
+SimpleChat routes vision analysis and **Test Vision Analysis** through that exact connection and
+fails closed if the selected connection or model is later disabled or removed. For legacy
+name-only configurations, SimpleChat resolves the model name across enabled AI connections (with
+deployment name matches winning over model name matches), or falls back to the classic GPT/APIM
+connection when multi-endpoint models are off.
 
 Which deployments count as vision-capable is resolved in three steps, most authoritative
 first: an explicit choice recorded on the model under [AI Models](ai-models.md), then the

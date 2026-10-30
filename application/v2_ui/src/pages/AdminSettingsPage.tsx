@@ -126,6 +126,7 @@ import {
 import {
     applyEnableEffect,
     asBoolean,
+    asModelSelection,
     asNumber,
     asString,
     buildFieldIndex,
@@ -891,6 +892,9 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                 if (field.requires_acknowledgement) {
                     keys.add(field.requires_acknowledgement.key);
                 }
+                if (field.selection_key) {
+                    keys.add(field.selection_key);
+                }
             }
         }
         return keys;
@@ -1611,19 +1615,57 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                             onOpenConnection={openConnection}
                         />
                     );
-                case 'model-picker':
+                case 'model-picker': {
+                    const selectionRaw = field.selection_key
+                        ? Object.prototype.hasOwnProperty.call(draft, field.selection_key)
+                            ? draft[field.selection_key]
+                            : settings[field.selection_key]
+                        : undefined;
+                    const selectionError =
+                        error ?? (field.selection_key ? fieldErrors[field.selection_key] : undefined);
                     return (
                         <ModelPicker
                             key={key}
                             field={field}
                             value={value}
-                            error={error}
+                            selection={asModelSelection(selectionRaw)}
+                            error={selectionError}
                             warning={warning}
                             disabled={saving}
                             models={data?.model_catalog ?? []}
-                            onChange={(next) => field.key && setValue(field.key, next)}
+                            onChange={(next, chosen) => {
+                                if (!field.key) {
+                                    return;
+                                }
+                                setValue(field.key, next);
+                                if (field.selection_key) {
+                                    const connectionsOn = asBoolean(
+                                        Object.prototype.hasOwnProperty.call(
+                                            draft,
+                                            'enable_multi_model_endpoints',
+                                        )
+                                            ? draft['enable_multi_model_endpoints']
+                                            : (settings['enable_multi_model_endpoints'] ??
+                                              Boolean(chosen?.endpoint_id && chosen?.model_id)),
+                                    );
+                                    if (next && connectionsOn && chosen?.endpoint_id && chosen?.model_id) {
+                                        setValue(field.selection_key, {
+                                            endpoint_id: String(chosen.endpoint_id),
+                                            model_id: String(chosen.model_id),
+                                            provider: String(chosen.provider ?? ''),
+                                        });
+                                    } else {
+                                        setValue(field.selection_key, {
+                                            endpoint_id: '',
+                                            model_id: '',
+                                            provider: '',
+                                        });
+                                    }
+                                }
+                            }}
                         />
                     );
+                }
                 case 'orchestration-planner-model':
                     // One control for the four planner keys, which only make sense together.
                     return (
