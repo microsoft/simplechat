@@ -7,14 +7,12 @@ infra:
 services:
   web:
     project: ../application/single_app
-    language: python
+    language: docker
     host: appservice
-        # Container-based App Service deployment.
-        # Gunicorn startup is provided by application/single_app/Dockerfile,
-        # so no App Service Stack Settings startup command is required.
+    # The predeploy hook builds this image in ACR; azd only rolls it out.
+    image: ${var_containerRegistry}/${var_imageName}:latest
     docker:
-      context: ../../
-      dockerfile: application/single_app/Dockerfile
+      imagePassthrough: true
 
   # ---------------------------------------------------------------------------
   # Optional: host the V2 React UI on its own App Service.
