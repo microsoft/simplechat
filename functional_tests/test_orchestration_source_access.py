@@ -1,7 +1,7 @@
 # test_orchestration_source_access.py
 """
 Strict current-source authority errors for orchestration input reads.
-Version: 0.261.232
+Version: 0.261.395
 Implemented in: 0.261.127
 Authority check reason codes added in: 0.261.141
 Revision conflict reason codes added in: 0.261.143
@@ -127,6 +127,7 @@ def authority_runtime(monkeypatch, *, with_search=False):
             ))
             patcher.delitem(sys.modules, "functions_search_service", raising=False)
             search = importlib.import_module("functions_search_service")
+            patcher.setattr(search, "get_public_source_workspace_ids", lambda user_id: list(fixture.workspace_ids))
         yield SimpleNamespace(fixture=fixture, search=search)
     finally:
         patcher.undo()
@@ -563,7 +564,7 @@ def test_real_scope_enumeration_outages_do_not_turn_requested_sources_into_unres
         def failed(user_id):
             raise ServiceRequestError("PRIVATE membership/visibility outage")
 
-        target = "get_user_groups" if scope == "group" else "get_user_visible_public_workspace_ids_from_settings"
+        target = "get_user_groups" if scope == "group" else "get_public_source_workspace_ids"
         monkeypatch.setattr(runtime.search, target, failed)
         arguments = {"active_group_ids": ["group-1"]} if scope == "group" else {"active_public_workspace_ids": ["workspace-1"]}
         with pytest.raises(SourceAuthorityUnavailableError):

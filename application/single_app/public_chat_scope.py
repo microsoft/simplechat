@@ -7,6 +7,8 @@ import logging
 
 from flask import g, has_request_context, jsonify, request
 from public_source_policy import current_public_source_policy, public_source_policy_context, uses_all_public_sources
+from document_source_selection import DocumentSourceSelectionError, document_source_scope
+from functions_document_source_discovery import prepare_document_source_selection, admit_document_source_selection
 
 from public_chat_scope_state import (
     PublicChatScopeError,
@@ -33,6 +35,14 @@ def public_chat_execution_scope(context, user_id, settings):
     """Bind persisted, admitted scope in workers that do not inherit Flask request state."""
     seeds = (context.get("seeds") if isinstance(context, dict) else getattr(context, "seeds", None)) or {}
     policy = seeds.get("public_source_policy", current_public_source_policy(user_id))
+    if seeds.get("document_source_selection") is not None:
+        _, sources = admit_document_source_selection(
+            seeds["document_source_selection"], user_id, settings=settings,
+            conversation_id=_context_value(context, "conversation_id"),
+        )
+        with public_source_policy_context(user_id, policy), document_source_scope(user_id, sources):
+            yield
+        return
     with public_source_policy_context(user_id, policy):
         with _aggregate_public_chat_execution_scope(context, user_id, settings):
             yield
@@ -122,7 +132,9 @@ def public_chat_scope_required(
         @wraps(function)
         def wrapped(*args, **kwargs):
             data = request.get_json(silent=True)
-            if not isinstance(data, dict) or data.get("public_workspace_selection") is None:
+            if not isinstance(data, dict) or (
+                data.get("public_workspace_selection") is None and data.get("document_source_selection") is None
+            ):
                 return function(*args, **kwargs)
             user_id = get_current_user_id()
             if not user_id:
@@ -130,7 +142,12 @@ def public_chat_scope_required(
             try:
                 conversation_id = data.get("conversation_id")
                 conversation = authorize_conversation(user_id, conversation_id) if conversation_id else None
+                sources = prepare_document_source_selection(data, user_id, get_settings(), conversation_id)
+                if sources is not None:
+                    g.document_source_scope = (user_id, sources)
                 prepare_public_chat_scope(data, user_id, get_settings(), resolve_workspace_ids, conversation)
+            except DocumentSourceSelectionError as error:
+                return jsonify({"error": error.public_message, "field": "document_source_selection"}), 400
             except PublicChatScopeError as error:
                 return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
             except LookupError:

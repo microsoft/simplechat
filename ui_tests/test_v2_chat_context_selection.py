@@ -1,7 +1,7 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.347
+Version: 0.261.395
 Implemented in: 0.261.094
 Single orchestration contract updated in: 0.261.181 (the React V2 branch's 0.261.139)
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
@@ -138,6 +138,12 @@ class ContextApi:
         if request.method == "GET" and path == "/api/action-credentials/pending":
             route.fulfill(json={"success": True, "requests": []})
             return
+        if request.method == "GET" and path == "/api/action-recovery/context":
+            route.fulfill(json={"csrf_token": "synthetic-csrf"})
+            return
+        if request.method == "POST" and path == "/api/chat/action-health":
+            route.fulfill(json={"state": "ready"})
+            return
 
         if request.method == "POST" and path in STREAM_PATHS.values():
             if path == STREAM_PATHS["chat"]:
@@ -187,6 +193,36 @@ class ContextApi:
             return
 
         if request.method == "GET":
+            if path == "/api/v2/document-sources":
+                params = parse_qs(url.query)
+                query = params.get("query", [""])[0].strip().casefold()
+                workspace = params.get("workspace", [None])[0]
+                all_scopes = []
+                result_documents = []
+                scopes = list(SCOPES.items()) + getattr(self, "extra_scopes", [])
+                for kind, scope in scopes:
+                    documents = self.public_documents if kind == "public" else DOCUMENTS[kind] if scope == SCOPES[kind] else []
+                    name_match = bool(query and query in scope["name"].casefold())
+                    matching = [
+                        document for document in documents if not query or name_match
+                        or query in f"{document.get('title', '')} {document.get('file_name', '')} {TAGS[kind]}".casefold()
+                    ]
+                    summary = {**scope, "key": f"{kind}:{scope['id'] or ''}",
+                               "document_count": len(matching),
+                               "match_reason": "workspace name" if name_match else "documents or tags" if query else None}
+                    if not query or matching or name_match:
+                        all_scopes.append(summary)
+                        if not workspace or workspace == summary["key"]:
+                            result_documents.extend({"scope": summary, "document": document} for document in matching)
+                browsed = next((scope for scope in all_scopes if scope["key"] == workspace), None)
+                tags = [TAGS[browsed["kind"]]] if browsed else []
+                route.fulfill(json={
+                    "workspaces": all_scopes, "eligible_workspace_count": len(scopes),
+                    "matching_workspace_count": len(all_scopes), "workspace_next": None,
+                    "documents": result_documents, "tags": tags, "source_total": len(result_documents),
+                    "source_next": None, "complete": True, "browsed_workspace": browsed,
+                })
+                return
             if path == "/api/documents/facets":
                 route.fulfill(
                     json={
@@ -275,7 +311,7 @@ def context_page(page):
         ) else None,
     )
     page.set_viewport_size({"width": 1440, "height": 900})
-    page.goto("http://simplechat.test/harness.html")
+    page.goto("http://localhost/harness.html")
     page.wait_for_function('() => typeof window.OrchHarness === "object"')
     try:
         yield page, api
@@ -351,13 +387,19 @@ def expect_pills(page: Page, *labels):
 def open_picker(page: Page):
     toolbar = page.get_by_title(re.compile(r"^Documents(?: · .+)?$"))
     if not toolbar.is_visible():
-        page.get_by_title("Manual controls", exact=True).click()
+        mobile = page.get_by_role("button", name="Chat tools", exact=True)
+        if mobile.is_visible() and mobile.get_attribute("aria-expanded") == "false":
+            mobile.click()
+        if not toolbar.is_visible():
+            page.get_by_title("Manual controls", exact=True).click()
     toolbar.click()
     expect(page.get_by_role("searchbox", name="Search documents", exact=True)).to_be_visible()
 
 
 def picker_candidate(page: Page, label):
-    return page.get_by_role("button", name=re.compile(f"^{re.escape(label)}")).and_(
+    picker = page.locator("[data-context-picker]")
+    root = picker.locator("[aria-label='Available sources']") if picker.get_attribute("aria-label") == "Document sources" else picker
+    return root.get_by_role("button", name=re.compile(f"^{re.escape(label)}")).and_(
         page.locator("button[aria-pressed]")
     )
 
@@ -365,6 +407,15 @@ def picker_candidate(page: Page, label):
 def pick_context(page: Page, *labels):
     open_picker(page)
     for label in labels:
+        if page.locator("[data-context-picker]").get_attribute("aria-label") == "Document sources":
+            expect(page.locator("[aria-label='Available sources']")).to_be_visible()
+        if label in TAGS.values():
+            scope = next(kind for kind, name in TAGS.items() if name == label)
+            page.get_by_role("navigation", name="Workspaces").get_by_role(
+                "button", name=re.compile(f"^{re.escape(SCOPES[scope]['name'])}"),
+            ).click()
+        elif not picker_candidate(page, label).count() and page.locator("[aria-label='Available sources']").count():
+            page.get_by_role("navigation", name="Workspaces").get_by_role("button", name=re.compile("^All workspaces")).click()
         candidate = picker_candidate(page, label)
         expect(candidate).to_have_attribute("aria-pressed", "false")
         candidate.click()
@@ -417,8 +468,8 @@ def test_public_filename_search_finds_an_older_document(context_page):
 def test_partial_source_failure_keeps_results_and_can_retry(context_page, scope, surface):
     page, api = context_page
     collection = next(path for path, name in COLLECTIONS.items() if name == scope)
-    pattern = f"**{collection}?*"
-    api.expected_resource_errors.add((collection, 503))
+    pattern = "**/api/v2/document-sources?*" if surface == "picker" else f"**{collection}?*"
+    api.expected_resource_errors.add(("/api/v2/document-sources" if surface == "picker" else collection, 503))
     page.route(pattern, lambda route: route.fulfill(status=503, json={"error": "private-server-detail"}))
     mount_workflow(page)
     if surface == "picker":
@@ -427,10 +478,11 @@ def test_partial_source_failure_keeps_results_and_can_retry(context_page, scope,
     else:
         page.get_by_role("textbox", name="Message", exact=True).fill("#")
         menu = page.get_by_role("listbox", name="Context suggestions")
-    expect(menu.get_by_role("alert")).to_contain_text("Other results are still available")
+    expect(menu.get_by_role("alert")).to_contain_text("Could not load document sources" if surface == "picker" else "Other results are still available")
     expect(menu).not_to_contain_text("private-server-detail")
     surviving = "Travel policy" if scope == "personal" else "Quarterly brief"
-    expect(menu.get_by_text(surviving, exact=True)).to_be_visible()
+    if surface != "picker":
+        expect(menu.get_by_text(surviving, exact=True)).to_be_visible()
     page.unroute(pattern)
     menu.get_by_role("button", name="Retry sources", exact=True).click()
     expect(menu.get_by_role("alert")).to_have_count(0)
@@ -494,11 +546,21 @@ def test_pinned_documents_do_not_force_search_in_an_analyze_plan(context_page):
         "Use Analyze on the selected documents. Explain the main risks and provide CSV and Markdown."
     )
     payload = send_draft(page, api, dispatch="plan")
-    assert payload["selected_document_ids"] == ["personal-brief", "personal-budget"]
+    assert [source["id"] for source in payload["document_source_selection"]["sources"]] == ["personal-brief", "personal-budget"]
     assert "document_search" not in payload["required_capabilities"]
 
 
 def expect_context_metadata(payload, *, documents=(), tags=(), group=False, public=False):
+    if payload.get("document_source_selection"):
+        selection = payload["document_source_selection"]
+        assert selection["mode"] == "selected"
+        sources = selection["sources"]
+        assert sorted(source["id"] for source in sources if source["kind"] == "document") == sorted(documents)
+        assert [source["tag"] for source in sources if source["kind"] == "tag"] == list(tags)
+        assert any(source["scope"]["kind"] == "group" for source in sources) == group
+        assert any(source["scope"]["kind"] == "public" for source in sources) == public
+        assert not any(key in payload for key in ("doc_scope", "tags", "active_group_ids", "selected_document_ids"))
+        return
     assert sorted(payload["selected_document_ids"]) == sorted(documents)
     assert payload.get("tags", []) == list(tags)
     assert payload.get("document_filter_mode") == ("union" if documents and tags else None)
@@ -845,7 +907,7 @@ def test_removal_strips_owned_mentions_only_and_preserves_unrelated_prose(contex
             candidate.click()
             expect(candidate).to_have_attribute("aria-pressed", "false")
         else:
-            page.get_by_role("button", name="Clear", exact=True).click()
+            page.get_by_role("button", name="Turn off / clear", exact=True).click()
         page.get_by_role("button", name="Done", exact=True).click()
 
     expect(draft).to_have_value(f"{prefix}for the answer.")
@@ -962,6 +1024,7 @@ def test_shared_editor_prompt_only_send_and_picker_keyboard_remain_safe(context_
 
 def test_shared_editor_upload_requires_destination_and_waits_for_real_group_document(context_page):
     page, api = context_page
+    api.extra_scopes = [("group", {"kind": "group", "id": "group-2", "name": "Legal"})]
     mount_workflow(page)
     page.evaluate(
         """() => {
@@ -1034,9 +1097,10 @@ def test_shared_editor_upload_requires_destination_and_waits_for_real_group_docu
         lambda request: request.method == "POST" and urlsplit(request.url).path == STREAM_PATHS["chat"]
     ) as sent:
         page.get_by_role("button", name="Send message", exact=True).click()
-    assert sent.value.post_data_json["selected_document_ids"] == ["real-group-document"]
-    assert sorted(sent.value.post_data_json["active_group_ids"]) == ["group-1", "group-2"]
-    assert "real-file-message" not in sent.value.post_data_json["selected_document_ids"]
+    sources = sent.value.post_data_json["document_source_selection"]["sources"]
+    assert {"kind": "document", "id": "real-group-document", "scope": {"kind": "group", "id": "group-2"}} in sources
+    assert sorted(source["scope"]["id"] for source in sources if source["kind"] == "workspace") == ["group-1", "group-2"]
+    assert not any(source.get("id") == "real-file-message" for source in sources)
     expect(page.get_by_role("list", name="Attached files", exact=True)).to_have_count(0)
 
 

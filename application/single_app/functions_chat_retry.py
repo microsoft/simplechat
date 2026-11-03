@@ -246,6 +246,7 @@ def build_replay_metadata(source_metadata, request_body):
         'hybrid_search_preference': 'hybrid_search', 'selection_mode': 'selection_mode',
         'document_scope': 'doc_scope', 'public_workspace_selection': 'public_workspace_selection',
         'public_source_policy': 'public_source_policy',
+        'document_source_selection': 'document_source_selection',
         'selected_document_id': 'selected_document_id', 'selected_document_ids': 'selected_document_ids',
         'requested_document_ids': 'selected_document_ids', 'tags': 'tags', 'classifications': 'classifications',
         'active_group_ids': 'active_group_ids', 'active_public_workspace_ids': 'active_public_workspace_ids',

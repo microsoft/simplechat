@@ -13,7 +13,8 @@
 // It has a search box, which the classic dropdowns have and V2's do not. A workspace of any
 // size is unusable without one.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentProps } from 'react';
+import { WorkspaceDocumentPicker } from './WorkspaceDocumentPicker';
 import { clsx } from 'clsx';
 import { Check, FileText, FolderOpen, Loader2, Search, Tag as TagIcon } from 'lucide-react';
 import { isScreeningAvailable } from '../../lib/contentScreening';
@@ -42,7 +43,17 @@ function isReferenceImageDocument(document: WorkspaceDocument): boolean {
     return isReferenceImageFileName(String(document.file_name ?? ''));
 }
 
-export function DocumentPickerPopover({
+export function DocumentPickerPopover(props: ComponentProps<typeof LegacyDocumentPickerPopover>) {
+    if (props.scopeControl && !props.imagesOnly) return <WorkspaceDocumentPicker {...props}
+        disabled={props.scopeControl.disabled}
+        onToggle={(candidate) => {
+            if (props.scope.publicWorkspaceSelection) props.scopeControl?.onChange(null);
+            props.onToggle(candidate);
+        }} />;
+    return <LegacyDocumentPickerPopover {...props} />;
+}
+
+function LegacyDocumentPickerPopover({
     scope,
     searchAll,
     selectedKeys,
@@ -65,6 +76,7 @@ export function DocumentPickerPopover({
     placement?: 'up' | 'down';
     imagesOnly?: boolean;
     scopeControl?: DocumentScopeControl;
+    conversationId?: string | null;
 }) {
     const publicLabels = usePublicWorkspaceLabels();
     const [query, setQuery] = useState('');

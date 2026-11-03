@@ -88,6 +88,8 @@ from functions_authentication import (
 from functions_conversation_contents import is_conversation_contents_drawer_enabled
 from functions_custom_pages import get_custom_pages_nav
 from functions_governance import GOVERNANCE_AUDITED_SETTING_KEYS
+from document_source_selection import DocumentSourceSelectionError
+from functions_document_source_discovery import discover_document_sources
 from functions_group import (
     GROUP_DIRECTORY_DEFAULT_LIMIT,
     GROUP_DIRECTORY_MAX_LIMIT,
@@ -991,6 +993,37 @@ def register_route_backend_v2(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to load agents."}), 500
+
+    @bp.route("/api/v2/document-sources", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def v2_document_sources():
+        """Page the authorized workspace directory independently of matching documents."""
+        try:
+            workspace_offset = int(request.args.get("workspace_offset", 0))
+            source_offset = int(request.args.get("source_offset", 0))
+            page_size = int(request.args.get("page_size", 40))
+            if workspace_offset < 0 or source_offset < 0 or not 1 <= page_size <= 100:
+                return jsonify({"error": "Invalid source page."}), 400
+            query = request.args.get("query", "")
+            if len(query) > 512:
+                return jsonify({"error": "Use a shorter source search."}), 400
+            result = discover_document_sources(
+                get_current_user_id(), get_settings(), query=query,
+                workspace=request.args.get("workspace") or None,
+                conversation_id=request.args.get("conversation_id") or None,
+                workspace_offset=workspace_offset, source_offset=source_offset, page_size=page_size,
+            )
+            return jsonify(result)
+        except DocumentSourceSelectionError as error:
+            return jsonify({"error": error.public_message}), 400
+        except ValueError:
+            return jsonify({"error": "Invalid source page."}), 400
+        except Exception as error:
+            log_event("[V2_BOOTSTRAP] Could not discover document sources.",
+                      extra={"error_type": type(error).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Could not load document sources. Please retry."}), 503
 
     @bp.route("/api/v2/bootstrap", methods=["GET"])
     @swagger_route(security=get_auth_security())

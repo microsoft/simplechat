@@ -1029,6 +1029,7 @@ export function ComposerEditor({
             )}
             {pickerOpen && !disabled && (
                 <DocumentPickerPopover scope={scope} searchAll={searchAll} selectedKeys={contextKeys}
+                    conversationId={conversationId}
                     scopeControl={!shared && !restricted && !referenceUploadsOnly ? documentScopeControl : undefined}
                     onToggleSearchAll={onToggleSearchAll} onToggle={toggleContextCandidate}
                     onClear={() => removeContextChips(draft.contextItems)}

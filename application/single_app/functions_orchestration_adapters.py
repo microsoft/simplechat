@@ -609,6 +609,8 @@ def run_document_search(step, context, *, settings, user_id, emit, cancel_reques
             workspace_results = hybrid_search(
                 query,
                 user_id,
+                document_source_selection=(_ctx(context, 'seeds', {}) or {}).get('document_source_selection'),
+                document_source_conversation_id=_ctx(context, 'conversation_id'),
                 document_ids=scope['document_ids'],
                 top_n=top_n,
                 doc_scope=scope['doc_scope'],

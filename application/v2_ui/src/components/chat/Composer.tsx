@@ -36,6 +36,8 @@ import { buildSelectionFields, hasResolvableAgent } from '../../lib/chatRequestS
 import { modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
 import { promptUrls, resolveGating } from '../../lib/composerGating';
 import { resolveDocumentScope } from '../../lib/documentScope';
+import { documentSourceSelection, restoreDocumentSources, isDocumentSourceSelection } from '../../lib/documentSourceSelection';
+import { fetchDocumentSources } from '../../lib/endpoints';
 import { usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import {
     addContextItem,
@@ -341,6 +343,61 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         urlAccess: false,
         agentSelection: initialAgentSelection,
     });
+    const messagesLoading = useChatStore((state) => state.messagesLoading);
+    const restoredSourcesConversation = useRef<string | null>(null);
+    const [sourceMigrationError, setSourceMigrationError] = useState<string>();
+    const [sourceMigrationRetry, setSourceMigrationRetry] = useState(0);
+    useEffect(() => {
+        if (!activeConversationId) { restoredSourcesConversation.current = null; return; }
+        if (shared || messagesLoading || restoredSourcesConversation.current === activeConversationId) return;
+        restoredSourcesConversation.current = activeConversationId;
+        const latest = [...messages].reverse().find((message) => message.role === 'user');
+        const metadata = latest?.metadata;
+        const workspaceSearch = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+            ? metadata.workspace_search : undefined;
+        const saved = workspaceSearch && typeof workspaceSearch === 'object' && !Array.isArray(workspaceSearch)
+            && 'document_source_selection' in workspaceSearch
+            ? workspaceSearch.document_source_selection : undefined;
+        if (!isDocumentSourceSelection(saved)) return;
+        const workspaces = [
+            ...(bootstrap?.scope?.groups ?? []).map((item) => ({ kind: 'group', ...item })),
+            ...(bootstrap?.scope?.public_workspaces ?? []).map((item) => ({ kind: 'public', ...item })),
+        ];
+        setOptions((current) => ({ ...current, documentSearch: saved.mode === 'all' }));
+        setDraft((current) => ({ ...current, contextItems: restoreDocumentSources(saved, workspaces) }));
+    }, [activeConversationId, messagesLoading, messages, shared, bootstrap?.scope]);
+    useEffect(() => {
+        if (!publicWorkspaceSelection || shared || messagesLoading) return;
+        const controller = new AbortController();
+        setSourceMigrationError(undefined);
+        const migrate = async () => {
+            const workspaces = [];
+            let offset: number | null = 0;
+            do {
+                const page = await fetchDocumentSources({
+                    workspace_offset: offset, conversation_id: activeConversationId ?? undefined,
+                }, controller.signal);
+                workspaces.push(...page.workspaces.filter((item) => item.kind === 'public'));
+                offset = page.workspace_next;
+            } while (offset !== null && !controller.signal.aborted);
+            if (controller.signal.aborted) return;
+            if (!workspaces.length) {
+                setSourceMigrationError('No public workspaces are available. Review your document sources before sending.');
+                return;
+            }
+            const selected = restoreDocumentSources({
+                version: 1, mode: 'selected',
+                sources: workspaces.map((item) => ({ kind: 'workspace', scope: { kind: 'public', id: item.id ?? '' } })),
+            }, workspaces);
+            setDraft((current) => ({ ...current, contextItems: selected }));
+            setOptions((current) => ({ ...current, documentSearch: false }));
+            setPublicWorkspaceSelection(null);
+        };
+        void migrate().catch(() => {
+            if (!controller.signal.aborted) setSourceMigrationError('Could not load public sources. Retry before sending.');
+        });
+        return () => controller.abort();
+    }, [publicWorkspaceSelection, activeConversationId, shared, messagesLoading, sourceMigrationRetry, setPublicWorkspaceSelection]);
     useEffect(() => {
         if (storedResult) {
             setOptions((current) => ({
@@ -648,6 +705,8 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         previousConversationIdRef.current = activeConversationId;
         if (previousConversationId !== null && activeConversationId === null) {
             setUserOverrodeNewChatDefaults(false);
+            setOptions((current) => ({ ...current, documentSearch: false }));
+            setPickerOpen(false);
             if (useAdminNewChatDefaults) {
                 const initial = bootstrap?.catalogs?.initial_model_selection;
                 const initialKey = initial ? modelSelectionKey(initial as ModelCatalogEntry) : '';
@@ -1110,6 +1169,10 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         ]);
 
     const submit = (allowUnfilled = false) => {
+        if (publicWorkspaceSelection && !shared) {
+            toast.error(sourceMigrationError ?? 'Public sources are still loading. Please wait before sending.');
+            return;
+        }
         if (publicWorkspaceSelection && (!features.enable_public_workspaces || publicScopeConflict || answeringFromStoredResult || (options.imageGeneration && !orchestrating))) {
             const recovery = options.imageGeneration && !orchestrating
                 ? 'Turn off Image, then open Documents and choose Current context.'
@@ -1309,6 +1372,15 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         const filterMode = contextFilterMode(contextItems);
         if (filterMode) {
             seeds.document_filter_mode = filterMode;
+        }
+        const sourceSelection = !shared && !publicWorkspaceSelection
+            ? documentSourceSelection(options.documentSearch, contextItems) : undefined;
+        if (sourceSelection) {
+            seeds.document_source_selection = sourceSelection;
+            for (const field of ['doc_scope', 'selected_document_ids', 'tags', 'document_filter_mode',
+                'active_group_id', 'active_group_ids', 'active_public_workspace_id', 'active_public_workspace_ids']) {
+                delete seeds[field];
+            }
         }
         if (options.imageGeneration && draftImageReferences.length > 0) {
             seeds.image_references = draftImageReferences;
@@ -1786,9 +1858,17 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
                     <ActionRecoveryNotice conversationId={activeConversationId} hasAgent={Boolean(options.agentSelection)}
                         agentSelection={options.agentSelection} />
+                    {sourceMigrationError && publicWorkspaceSelection && <div role="alert" className="mb-2 rounded-lg bg-surface-2 p-3 text-sm text-danger">
+                        {sourceMigrationError}
+                        <button type="button" className="ml-2 underline" onClick={() => setSourceMigrationRetry((value) => value + 1)}>Retry sources</button>
+                        <button type="button" className="ml-2 underline" onClick={() => {
+                            setPublicWorkspaceSelection(null);
+                            setPickerOpen(true);
+                        }}>Choose other sources</button>
+                    </div>}
                     <ComposerEditor
                         publicWorkspaceSelection={publicWorkspaceSelection}
-                        documentScopeControl={!shared && (features.enable_public_workspaces || publicWorkspaceSelection) ? {
+                        documentScopeControl={!shared ? {
                             id: 'composer-document-scope',
                             publicEnabled: Boolean(features.enable_public_workspaces),
                             disabled: streaming || !canPost,
@@ -1838,8 +1918,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                             }
                         }}
                         searchAll={options.documentSearch}
-                        onToggleSearchAll={publicWorkspaceSelection ? undefined : () => {
+                        onToggleSearchAll={() => {
                             clearAnalysisResultContext();
+                            if (publicWorkspaceSelection) setPublicWorkspaceSelection(null);
                             setOptions((current) => ({ ...current, documentSearch: !current.documentSearch }));
                         }}
                         mentionsEnabled={shared && canPost}

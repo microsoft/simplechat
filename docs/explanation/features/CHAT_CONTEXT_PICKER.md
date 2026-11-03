@@ -4,7 +4,8 @@ Choosing which documents a message is grounded in, and seeing that choice before
 you send it.
 
 **Implemented in version:** 0.261.089
-**Updated in version:** 0.261.315 (`application/single_app/config.py`)
+**Updated in version:** 0.261.395 (`application/single_app/config.py`)
+**Workspace sidebar implemented in version: 0.261.395.**
 **Inline answers implemented in version:** 0.261.096
 **Interface:** V2 only. The classic interface is unchanged.
 **Dependencies:** `enable_user_workspace` for personal documents,
@@ -80,30 +81,38 @@ index is briefly unavailable does not empty the menu of your personal documents.
 
 ## The Documents picker
 
-From **0.261.315**, the main composer's **Documents** picker contains **Search in**:
-Current context, All public workspaces, or Visible public workspaces.
-There is no standalone scope row above the message editor. In Orchestrate,
-open **Manual controls → Documents** when manual controls are enabled.
-The Documents button indicates an active All or Visible scope when visible.
-In either aggregate mode, Documents and `#`
-offer only public sources and tags; All also retrieves from hidden workspaces.
-The scope stays selected after sending even though this turn's chips clear.
-Return to Current context to use ordinary mixed sources or generate an image.
-An incompatible existing personal/group chip is retained and explained, not
-silently dropped. See [Aggregate public chat](V2_AGGREGATE_PUBLIC_CHAT.md).
-The aggregate choices are opt-in to the main chat editor, not controls on
-inline answers, restricted editors, shared chat or image-reference pickers.
+From **0.261.395**, the main composer's **Documents** panel has a workspace
+directory on the left and available sources on the right. Personal, group and
+eligible public workspaces appear individually, including public collections
+not shown by a classic directory preference. In Orchestrate, open
+**Manual controls → Documents** when those controls are available.
 
-Clicking **Documents** opens a panel upward over the composer containing:
+**Search all documents** searches every accessible workspace, subject to the
+conversation's scope lock. It is not limited to your personal files or the active
+workspace. New chats keep document search off until you enable it or select a
+source. **Choose sources** lets you combine whole workspaces, individual documents
+and tags from a particular workspace. Browsing a workspace does not select it.
+**Turn off / clear** removes selections and disables document search.
 
-- A search box, focused on open.
-- **Search all my documents**, which is the original on/off behaviour: find
-  whatever is most relevant rather than a fixed list.
-- Checkbox lists grouped by workspace.
+Search matches workspace names, document titles, filenames and tags, not document
+contents. Both columns narrow together: a matching document keeps its workspace
+in the directory, and a matching workspace name includes that workspace's
+documents. Editing the query resets browsing to all matching workspaces.
+Clicking a workspace then narrows the right column without hiding the other
+matching workspaces. Choices remain selected while you search, browse or load
+more results.
 
-Ticking specific documents moves the request from relevance search to an explicit
-selection. The button shows a count once anything is chosen. The selection
-appears in the chip row only, leaving an empty or already-written message unchanged.
+On phones, the directory collapses above the results. Workspace and document
+pages load independently, so the complete directory is not limited by the
+smaller `#` suggestion menu. Loading failures show a retry action rather than
+pretending there are no matches. Held documents remain unavailable for selection.
+
+Old public-only conversations and **Chat with all public** launches become
+**Choose sources** with the currently eligible public workspaces selected.
+Those are explicit workspace choices, not a hidden public-only mode.
+See [Public-only chat compatibility](V2_AGGREGATE_PUBLIC_CHAT.md).
+Inline answers, restricted/shared editors and image-reference pickers retain
+their existing selection controls.
 
 ## Handing off from the workspace
 
@@ -121,22 +130,38 @@ reloading does not silently re-apply a selection you have since cleared.
 
 ## How it reaches the server
 
-| Chip kind | Request field |
+The main personal-chat composer sends versioned `document_source_selection`:
+`mode: "all"` with no source entries, or `mode: "selected"` with workspace,
+document and tag entries. Every selected entry carries a personal, group or
+public scope; group/public scopes also carry a workspace ID.
+
+All selected entries form an **additive union**. Selecting a workspace includes
+its currently available documents; selecting two tags includes documents with
+either tag in its owning workspace. A tag never applies across other workspaces
+just because its spelling is the same. Adding a document alongside a workspace
+does not accidentally restrict the whole workspace to that document.
+
+The server reauthorizes the intent before execution and on retrieval. It builds
+per-index union filters inside existing access checks, separates cache identities
+by admitted sources, and constrains direct document reads too. All-accessible
+mode resolves current eligible workspaces again on retry/edit; selected workspace
+sets do not silently acquire newly created workspaces.
+
+Legacy/restricted editors continue using the following compatibility contract:
+
+| Chip kind | Legacy request field |
 | --- | --- |
 | Document | `selected_document_ids` |
 | Tag | `tags`, which becomes `tags_filter` |
 | Workspace | `doc_scope` plus `active_group_ids` / `active_public_workspace_ids` |
 
-Two behaviours are worth knowing about:
-
-**Documents and tags are additive.** When a message carries both, the request
+**Legacy documents and tags are additive.** When a message carries both, the request
 sends `document_filter_mode: "union"`. The server's default is `intersection`,
 which requires a chosen document to *also* carry every chosen tag — so a document
 chip beside an unrelated tag chip would match nothing at all.
 
-**Multiple tags are combined with AND.** A document must carry every tag you
-select. This is the server's existing behaviour (`build_tags_filter`) and is
-unchanged here.
+**Legacy multiple tags are combined with AND.** This remains the behavior of
+`build_tags_filter`; canonical main-composer source unions do not change it.
 
 Any selected context makes the request use document search, including a tag or
 workspace selected without individual documents. The message does not need an
@@ -148,7 +173,7 @@ Chips travel to the planner as seeds, and each kind lands differently:
 
 | Chip kind | Effect on a plan |
 | --- | --- |
-| Document | Replaces the planner's candidate probe. You answered "which documents", so it works from your choice rather than guessing at one. |
+| Document | Replaces the candidate probe only when all selected sources are individual documents. Mixed document/workspace/tag unions retain the scoped probe. |
 | Tag | **Scopes** the probe rather than replacing it. A tag says which shelf; the probe still decides which documents on that shelf are worth naming. |
 | Workspace | Bounds where the probe and every search step in the run may look. |
 
@@ -203,6 +228,10 @@ Covered by `functional_tests/test_v2_elicitation_answers.py` and
 | `components/chat/ComposerHighlight.tsx` | Inline rendering of `#[…]` in the message box |
 | `components/chat/ContextMenu.tsx` | The `#` menu |
 | `components/chat/DocumentPickerPopover.tsx` | The Documents button's picker |
+| `components/chat/WorkspaceDocumentPicker.tsx` | Main-composer synchronized directory/results and independent paging |
+| `lib/documentSourceSelection.ts` | Canonical intent serialization and restoration |
+| `application/single_app/document_source_selection.py` | Strict selection contract, union filters and direct-read scope |
+| `application/single_app/functions_document_source_discovery.py` | Authorized complete metadata discovery and selection admission |
 
 ## Testing
 
@@ -212,6 +241,9 @@ Covered by `functional_tests/test_v2_elicitation_answers.py` and
 | `functional_tests/test_v2_chat_context_request.ts` | Chip-to-request mapping, filter mode, scope resolution |
 | `functional_tests/test_v2_chat_context_picker.py` | Hand-off destination, composer wiring, chat metadata parity; bundles and runs the TypeScript checks |
 | `ui_tests/test_v2_chat_context_selection.py` | Real workspace, picker, inline mention, removal, and send workflows |
+| `functional_tests/test_v2_document_source_selection.py` | Scoped unions, sharing, admission, locks, paging and metadata failure |
+| `functional_tests/test_v2_document_source_runtime.py` | Real retrieval filters/cache identities, SDK-shaped direct reads and replay |
+| `ui_tests/test_v2_public_chat_scope.py` | Public migration, synchronized filtering, disabled state and responsive themed layouts |
 
 See [V2 Context Selection Pills Fix](../fixes/V2_CONTEXT_SELECTION_PILLS_FIX.md)
 for the behavior change introduced in 0.261.094.
@@ -221,7 +253,5 @@ for the behavior change introduced in 0.261.094.
 - Public workspace documents have no single-document endpoint, so resolving one
   by id alone falls back to scanning the visible list. References arriving from
   within the app carry their records directly and are unaffected.
-- V2's group and public workspace *pages* are still placeholders. The picker
-  reaches documents in those workspaces regardless, through their APIs.
 - The inline rendering relies on a backdrop matching the message box's text
   metrics. If it cannot be drawn the box remains fully usable, just unstyled.

@@ -18913,6 +18913,7 @@ def register_route_backend_chats(bp):
             )
             if (
                 current_document_context_available
+                and data.get('document_source_selection') is None
                 and prior_grounded_document_refs
                 and _prior_grounded_source_reference_requested(user_message)
             ):
@@ -19211,6 +19212,7 @@ def register_route_backend_chats(bp):
                         'document_context_requested': document_context_requested,
                         'hybrid_search_preference': bool(hybrid_search_enabled),
                         'document_scope': effective_document_scope,
+                        'document_source_selection': data.get('document_source_selection'),
                         'public_workspace_selection': data.get('public_workspace_selection'),
                         'public_source_policy': current_public_source_policy(user_id),
                         'selected_document_id': effective_selected_document_id,
@@ -19770,6 +19772,8 @@ def register_route_backend_chats(bp):
                     )
 
                     search_args = {
+                        "document_source_selection": data.get("document_source_selection"),
+                        "document_source_conversation_id": conversation_id,
                         "query": search_query,
                         "user_id": user_id,
                         "top_n": top_n,
@@ -23577,6 +23581,7 @@ def register_route_backend_chats(bp):
                 )
                 if (
                     current_document_context_available
+                    and data.get('document_source_selection') is None
                     and prior_grounded_document_refs
                     and _prior_grounded_source_reference_requested(user_message)
                 ):
@@ -23879,6 +23884,7 @@ def register_route_backend_chats(bp):
                             'document_context_requested': document_context_requested,
                             'hybrid_search_preference': bool(hybrid_search_enabled),
                             'document_scope': effective_document_scope,
+                            'document_source_selection': data.get('document_source_selection'),
                             'public_workspace_selection': data.get('public_workspace_selection'),
                             'public_source_policy': current_public_source_policy(user_id),
                             'selected_document_id': effective_selected_document_id,
@@ -24388,6 +24394,8 @@ def register_route_backend_chats(bp):
                         )
                     try:
                         search_args = {
+                            "document_source_selection": data.get("document_source_selection"),
+                            "document_source_conversation_id": conversation_id,
                             "query": search_query,
                             "user_id": user_id,
                             "top_n": 50,
