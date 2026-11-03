@@ -33,7 +33,7 @@ import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { sendCollaborationTyping } from '../../lib/collaboration';
 import { agentSelectionKey } from '../../lib/agents';
 import { buildSelectionFields, hasResolvableAgent } from '../../lib/chatRequestSelection';
-import { modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
+import { modelSearchText, modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
 import { promptUrls, resolveGating } from '../../lib/composerGating';
 import { resolveDocumentScope } from '../../lib/documentScope';
 import { usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
@@ -837,6 +837,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                 (model.display_name as string) ||
                 (model.deployment_name as string) ||
                 'Model',
+            searchText: modelSearchText(model),
         }),
     );
 
@@ -1991,6 +1992,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                         options={modelOptions}
                                         value={options.modelDeployment}
                                         placeholder="Model"
+                                        searchPlaceholder="Search models by name or vendor"
                                         inactive={gating.modelPickerInactive}
                                         title={
                                             activeAgentLabel
@@ -2028,6 +2030,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                         ]}
                                         value={orchestrationModelValue(orchestrationModelChoice)}
                                         placeholder="Orchestration model"
+                                        searchPlaceholder="Search models by name or vendor"
                                         title="Auto chooses by task, then admin priority and favorites. A specific model stays pinned."
                                         onChange={chooseOrchestrationModel}
                                     />
@@ -2039,6 +2042,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                         options={agentOptions}
                                         value={options.agentSelection}
                                         placeholder="Agent"
+                                        searchPlaceholder="Search agents"
                                         clearable
                                         icon={<Bot size={15} />}
                                         onChange={(value) =>
@@ -2059,6 +2063,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                         options={promptOptions}
                                         value={attachedPrompt?.id}
                                         placeholder="Prompt"
+                                        searchPlaceholder="Search prompts"
                                         clearable
                                         icon={<FileText size={15} />}
                                         onChange={onPickPrompt}

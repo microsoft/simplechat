@@ -18,6 +18,8 @@
 // So the fields are sent as a set or not at all.
 
 import type { ReasoningCapabilities } from './reasoning';
+import { publisherLabel } from './modelCatalog';
+import { providerLabel } from './modelConnections';
 
 /** Catalog record fields, as produced by `_build_chat_model_catalog`. */
 export interface ModelCatalogEntry {
@@ -30,6 +32,11 @@ export interface ModelCatalogEntry {
     provider?: string;
     display_name?: string;
     option_value?: string;
+    profile?: {
+        displayName?: string;
+        publisher?: string;
+        [key: string]: unknown;
+    } | null;
     [key: string]: unknown;
 }
 
@@ -43,6 +50,23 @@ export interface ModelIdentity {
 
 function text(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
+}
+
+export function modelSearchText(model: ModelCatalogEntry): string {
+    const publisher = text(model.profile?.publisher);
+    const provider = text(model.provider);
+    // API compatibility does not identify the model's vendor.
+    const providerName = provider && provider !== 'openai_compatible' ? providerLabel(provider) : '';
+    return [
+        text(model.display_name),
+        text(model.model_name),
+        text(model.deployment_name),
+        text(model.request_model),
+        text(model.profile?.displayName),
+        publisher,
+        publisher ? publisherLabel(publisher) : '',
+        providerName,
+    ].filter(Boolean).join(' ');
 }
 
 /**

@@ -1,8 +1,9 @@
 # test_v2_composer_picker_overlays.py
 """
 Real-component regressions for anchored composer picker overlays.
-Version: 0.261.327
+Version: 0.261.395
 Implemented in: 0.261.327
+Searchable picker focus updated in: 0.261.395
 
 Production Composer, Dropdown, stores and theme CSS; only HTTP is synthetic.
 Local Chromium by default, Azure Playwright through the shared connection fixture.
@@ -194,6 +195,8 @@ def test_model_reasoning_keyboard_switching_and_disclosure_lifetime(open_page):
     model.focus()
     page.keyboard.press("ArrowDown")
     check_panel(page, 360, 740)
+    expect(page.get_by_role("searchbox", name="Search models by name or vendor")).to_be_focused()
+    page.keyboard.press("ArrowDown")
     expect(page.get_by_role("option", name="Writer", exact=True)).to_be_focused()
     page.keyboard.press("End")
     expect(page.get_by_role("option", name="Summary", exact=True)).to_be_focused()
@@ -256,6 +259,9 @@ def test_scroll_resize_and_modal_layers(open_page):
     page.keyboard.press("Escape")
     page.set_viewport_size({"width": 393, "height": 852})
     page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.setState({activeConversationId: 'conv-01'})")
+    # A different conversation restores its own mode, defaulting to Orchestrate.
+    open_tools(page, 393)
+    page.get_by_title("Manual controls", exact=True).click()
     page.get_by_role("button", name="Agent", exact=True).click()
     # Opening the real details tour dialog moves focus outside and removes the picker.
     page.evaluate("""() => window.OrchHarness.stores.userSettings.useUserSettingsStore.setState({
@@ -307,6 +313,19 @@ def test_empty_disabled_and_non_composer_defaults(open_page):
     page.get_by_role("button", name="Empty", exact=True).click()
     expect(page.get_by_text("Nothing available", exact=True)).to_be_visible()
     check_panel(page, 320, 450)
+    mount(page, api, rows=0, experience="Dropdown", props={
+        "options": [], "placeholder": "Empty", "floating": True,
+        "searchPlaceholder": "Search empty models",
+    })
+    page.get_by_role("button", name="Empty", exact=True).click()
+    search = page.get_by_role("searchbox", name="Search empty models", exact=True)
+    expect(search).to_be_focused()
+    expect(page.get_by_role("status")).to_have_text("Nothing available")
+    search.fill("unknown")
+    expect(page.get_by_role("status")).to_have_text("Nothing available")
+    search.press("ArrowDown")
+    expect(search).to_be_focused()
+    search.press("Escape")
     mount(page, api, rows=0, experience="Dropdown", props={"options": [], "placeholder": "Default"})
     expect(page.locator(".composer-picker-panel")).to_have_count(0)
     page.get_by_role("button", name="Default", exact=True).click()

@@ -234,7 +234,7 @@ def profile_summary(profile):
     if profile is None:
         return None
     return {key: deepcopy(profile[key]) for key in (
-        "id", "displayName", "summary", "tasks", "preferences", "revision",
+        "id", "displayName", "publisher", "summary", "tasks", "preferences", "revision",
         "origin", "archived", "evidence",
     )}
 
