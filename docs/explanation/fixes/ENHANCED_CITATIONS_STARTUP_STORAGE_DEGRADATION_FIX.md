@@ -43,3 +43,13 @@ Impact analysis:
 Before: enabling Enhanced Citations could cause app boot to depend on storage account reachability because startup checked and created storage containers.
 
 After: startup does not perform live Enhanced Citations storage container checks; admins can explicitly test storage from Admin Settings, and uploads create containers on demand when permissions allow it.
+
+## Result-storage readiness follow-up
+
+In **0.261.396**, the application keeps this network-free startup boundary while
+also covering analysis results and tabular staging. Deployments provision the
+five application containers, result writes can recover a structured
+`ContainerNotFound` with one bounded upload retry, and both admin interfaces offer
+**Create missing containers** using saved settings. The connection test itself
+remains read-only. See the [result-storage readiness fix](CHAT_RESULT_STORAGE_CONTAINER_READINESS_FIX.md)
+for concurrency, cooldown, permissions, and failure-reporting details.

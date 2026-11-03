@@ -236,8 +236,29 @@ prevent the application from booting, which also means a wrong credential is not
 reported until a citation fails to open. Use **Test storage connection** after
 changing these values: it confirms the account is reachable and reports any
 expected container that does not yet exist. Missing containers are usually
-harmless, because they are created on demand during upload when permissions
-allow it.
+recoverable, but can prevent analysis checkpoints, spreadsheet staging, generated
+files, or uploads from being saved.
+
+Since **0.261.396**, **Create missing containers** beside the connection test
+prepares the five private application containers using **saved** storage settings:
+`user-documents`, `group-documents`, `public-documents`, `personal-chat`, and
+`group-chat`. Save connection edits first. The action reports each container as
+created, already existing, or failed; a partial failure remains a failure.
+Existing files and container permissions are not changed. The connection test
+itself remains read-only, and neither action reruns a failed conversation.
+
+Deployment provisioning creates these containers as well. If a result, staging,
+or generated-file write encounters a missing container, the app attempts a
+bounded repair using its configured storage identity and retries only that Blob
+write once. Successful writes add no container checks. Concurrent repairs share
+one attempt per worker, and failed creation is cooled down for 60 seconds before
+another automatic creation attempt. This does not schedule probes or block a
+successful write after an administrator repairs storage elsewhere.
+
+If creation is denied, check the configured identity's container creation/write
+permissions, saved connection settings, and network access. Repair does not
+grant permissions or change credentials. After fixing access, use the repair
+button and deliberately retry the failed analysis.
 
 Storage credentials are write-only in the admin interface. A configured value is
 shown as saved and hidden rather than displayed, and can be replaced or cleared

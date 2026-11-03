@@ -29,6 +29,24 @@ The Azure CLI deployer provisions the main Simple Chat application resources, in
 - Application Insights and Log Analytics
 - Optional Entra security groups
 
+## Required application storage containers
+
+Implemented in application **0.261.396** and deployer **1.0.36**.
+
+The full deployer ensures five private containers even when reusing an existing
+storage account: `user-documents`, `group-documents`, `public-documents`,
+`personal-chat`, and `group-chat`. It lists/provisions them through Azure Resource
+Manager without retrieving account keys. Existing containers and files are left
+in place; a provisioning failure stops the deployment with the failed container
+identified.
+
+The code-only upgrade script does not add infrastructure provisioning. After a
+code-only upgrade, use **Create missing containers** beside the Enhanced
+Citations storage test in Admin Settings if the existing account is incomplete.
+Analysis/result writes can also recover a missing target container when the app
+has permission, without adding checks to successful writes. Repair never grants
+storage access or reruns a failed conversation.
+
 ## Private networking support
 
 This deployer now supports the same core private networking flow as the Bicep deployer for the services it provisions.

@@ -18,6 +18,7 @@ import re
 
 from jsonschema import Draft202012Validator
 
+from blob_container_readiness import STORAGE_FAILURE_CODE, STORAGE_FAILURE_MESSAGE
 from content_screening.contracts import ScreeningError
 from functions_analysis_access import analysis_source_snapshot
 from functions_appinsights import log_event, workflow_log_context
@@ -52,6 +53,7 @@ _MESSAGES = {
     "native_guard_unavailable": "The owning attempt cannot authorize native result retention.",
     "native_result_invalid": "The native computation did not provide all complete declared outputs.",
     "native_execution_failed": "Native computation did not complete successfully.",
+    "native_storage_unavailable": STORAGE_FAILURE_MESSAGE,
     "native_retention_failed": "The complete native output could not be retained. No preview was substituted.",
     "native_cancelled": "Native computation was canceled.",
 }
@@ -403,6 +405,7 @@ def _failure(step, exc, stage, context=None):
         else "context_unavailable" if code == "native_access_unavailable"
         else "ownership_lost" if code == "native_guard_unavailable"
         else "analysis_result_not_saved" if code == "native_retention_failed"
+        else STORAGE_FAILURE_CODE if code == "native_storage_unavailable"
         else "result_invalid"
     )
     step_id = step.get("step_id") if isinstance(step, dict) else None
@@ -424,7 +427,7 @@ def _failure(step, exc, stage, context=None):
         status="cancelled" if code == "native_cancelled" else "failed",
         summary=_MESSAGES[code], error=_MESSAGES[code], failure=build_failure(failure_code),
     )
-    result["failure"].update({"native_code": code, "retryable": False})
+    result["failure"].update({"native_code": code, "retryable": code == "native_storage_unavailable"})
     return result
 
 
@@ -656,6 +659,8 @@ def _finish(native, context, service, producer, snapshots, binding, cancel_reque
     if status == "cancelled":
         raise NativeOrchestrationBridgeError("native_cancelled")
     if status == "failed":
+        if native.get("failure_code") == STORAGE_FAILURE_CODE:
+            raise NativeOrchestrationBridgeError("native_storage_unavailable")
         raise NativeOrchestrationBridgeError("native_execution_failed")
     if status != "completed":
         raise NativeOrchestrationBridgeError("native_result_invalid")

@@ -13,7 +13,7 @@
 
 import { useState } from 'react';
 import { clsx } from 'clsx';
-import { CheckCircle2, Loader2, PlugZap, TriangleAlert, XCircle } from 'lucide-react';
+import { CheckCircle2, Loader2, PlugZap, TriangleAlert, Wrench, XCircle } from 'lucide-react';
 import { ApiError, api } from '../../lib/apiClient';
 import { GlassButton } from '../ui/primitives';
 
@@ -51,17 +51,21 @@ export function EnhancedCitationsStorageTest({
     authenticationType,
     connectionString,
     blobEndpoint,
+    hasUnsavedStorageChanges = false,
+    saving = false,
 }: {
     help?: string;
     authenticationType: string;
     connectionString: string;
     blobEndpoint: string;
+    hasUnsavedStorageChanges?: boolean;
+    saving?: boolean;
 }) {
-    const [testing, setTesting] = useState(false);
+    const [busy, setBusy] = useState<'test' | 'repair' | null>(null);
     const [result, setResult] = useState<TestResult | null>(null);
 
     const runTest = async () => {
-        setTesting(true);
+        setBusy('test');
         setResult(null);
 
         try {
@@ -98,7 +102,38 @@ export function EnhancedCitationsStorageTest({
                 guidance: toStrings(payload?.guidance),
             });
         } finally {
-            setTesting(false);
+            setBusy(null);
+        }
+    };
+
+    const repairContainers = async () => {
+        setBusy('repair');
+        setResult(null);
+        try {
+            const response = await api.post<StorageTestResponse>(
+                '/api/admin/settings/storage/repair-containers', {},
+            );
+            setResult({
+                outcome: response.success === true ? 'success' : 'error',
+                message: response.message ?? response.error ?? (
+                    response.success === true
+                        ? 'Storage containers are ready.'
+                        : 'Storage containers could not be prepared. Check storage access.'
+                ),
+                details: toStrings(response.details),
+                guidance: toStrings(response.guidance),
+            });
+        } catch (repairError) {
+            const payload = repairError instanceof ApiError
+                ? (repairError.payload as StorageTestResponse | undefined) : undefined;
+            setResult({
+                outcome: 'error',
+                message: payload?.error ?? 'Storage containers could not be prepared. Check storage access.',
+                details: toStrings(payload?.details),
+                guidance: toStrings(payload?.guidance),
+            });
+        } finally {
+            setBusy(null);
         }
     };
 
@@ -111,20 +146,41 @@ export function EnhancedCitationsStorageTest({
                 Storage Connection
             </span>
 
-            <GlassButton
-                type="button"
-                variant="subtle"
-                size="sm"
-                disabled={testing}
-                onClick={() => void runTest()}
-            >
-                {testing ? (
-                    <Loader2 size={14} className="animate-spin" />
-                ) : (
-                    <PlugZap size={14} />
-                )}
-                {testing ? 'Testing…' : 'Test storage connection'}
-            </GlassButton>
+            <div className="flex flex-wrap gap-2">
+                <GlassButton
+                    type="button"
+                    variant="subtle"
+                    size="sm"
+                    disabled={busy !== null}
+                    onClick={() => void runTest()}
+                >
+                    {busy === 'test' ? (
+                        <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                        <PlugZap size={14} />
+                    )}
+                    {busy === 'test' ? 'Testing…' : 'Test storage connection'}
+                </GlassButton>
+                <GlassButton
+                    type="button"
+                    variant="subtle"
+                    size="sm"
+                    disabled={busy !== null || saving || hasUnsavedStorageChanges}
+                    onClick={() => void repairContainers()}
+                >
+                    {busy === 'repair' ? (
+                        <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                        <Wrench size={14} />
+                    )}
+                    {busy === 'repair' ? 'Creating…' : 'Create missing containers'}
+                </GlassButton>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-text-3">
+                {hasUnsavedStorageChanges
+                    ? 'Save storage settings before creating containers.'
+                    : 'Uses saved storage settings. Creates private containers without changing existing files or permissions.'}
+            </p>
 
             {help ? <p className="mt-1.5 text-xs leading-relaxed text-text-3">{help}</p> : null}
 

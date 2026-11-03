@@ -29,6 +29,12 @@ from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_
 from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
 from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 
+from blob_container_readiness import (
+    BlobContainerUnavailableError,
+    STORAGE_FAILURE_CODE,
+    STORAGE_FAILURE_MESSAGE,
+    write_blob_with_container_recovery,
+)
 from content_screening.access import (
     PROVENANCE_FIELD,
     assert_blob_available,
@@ -2679,14 +2685,19 @@ def _write_chunk_manifest_for_run(
 
 
 def _upload_json_blob(blob_path, payload, metadata=None, overwrite=True):
-    blob_client = _get_blob_service_client().get_blob_client(
+    service_client = _get_blob_service_client()
+    blob_client = service_client.get_blob_client(
         container=storage_account_personal_chat_container_name,
         blob=blob_path,
     )
-    blob_client.upload_blob(
-        json.dumps(payload, default=str, ensure_ascii=False).encode('utf-8'),
-        overwrite=overwrite,
-        metadata={str(key): str(value) for key, value in (metadata or {}).items()},
+    data = json.dumps(payload, default=str, ensure_ascii=False).encode('utf-8')
+    write_blob_with_container_recovery(
+        service_client, storage_account_personal_chat_container_name,
+        lambda: blob_client.upload_blob(
+            data, overwrite=overwrite,
+            metadata={str(key): str(value) for key, value in (metadata or {}).items()},
+        ),
+        log=log_event,
     )
 
 
@@ -7471,6 +7482,8 @@ def _build_safe_tabular_run_failure(run):
     artifact_manifest = run.get('artifact_set_manifest') if isinstance(run.get('artifact_set_manifest'), dict) else {}
     artifact_lifecycle = str(artifact_manifest.get('lifecycle_state') or '').strip().lower()
 
+    if run.get('failure_code') == STORAGE_FAILURE_CODE:
+        return {'failure_code': STORAGE_FAILURE_CODE, 'failure_detail': STORAGE_FAILURE_MESSAGE}
     if artifact_lifecycle in {
         TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED,
         TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED,
@@ -8413,6 +8426,10 @@ def _mark_run_failed(run, error_message):
         'last_error': str(error_message or 'Unknown error')[:1000],
         'last_message': 'Background structured export failed',
     })
+    if isinstance(error_message, BlobContainerUnavailableError):
+        run['failure_code'] = STORAGE_FAILURE_CODE
+    else:
+        run.pop('failure_code', None)
     run['failure_code'] = _build_safe_tabular_run_failure(run)['failure_code']
     run['performance_summary'] = _build_tabular_generation_performance_summary(run, completed_at=now)
     try:
@@ -11498,6 +11515,8 @@ def process_tabular_generated_output_run(run_id, user_id):
         failed_run = exc.failed_run if isinstance(exc.failed_run, dict) else run
         return _mark_run_failed(failed_run, exc)
     except Exception as exc:
+        if isinstance(exc, BlobContainerUnavailableError):
+            return _mark_run_failed(run, exc)
         if run.get('execution_policy') == 'data_only' and isinstance(exc, (PermissionError, ScreeningError)):
             return _mark_run_failed(run, exc)
         if _is_retryable_export_error(exc):

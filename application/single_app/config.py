@@ -35,6 +35,7 @@ import ffmpeg as ffmpeg_py
 import glob
 import jwt
 import pandas
+from blob_container_readiness import APPLICATION_BLOB_CONTAINERS
 from functions_latest_features_nav import is_development_env_enabled
 from functions_appinsights import log_event
 from functions_azure_endpoint_validation import validate_configured_chat_blob_endpoint
@@ -102,7 +103,7 @@ EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 CHAT_STREAM_EXECUTOR_MAX_WORKERS = max(8, int(os.getenv('SIMPLECHAT_CHAT_STREAM_WORKERS', '32') or '32'))
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.395"
+VERSION = "0.261.396"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -533,13 +534,7 @@ storage_account_content_screening_container_name = "content-screening"
 
 def get_enhanced_citations_storage_container_names():
     """Return the source blob containers used by Enhanced Citations."""
-    return [
-        storage_account_user_documents_container_name,
-        storage_account_group_documents_container_name,
-        storage_account_public_documents_container_name,
-        storage_account_personal_chat_container_name,
-        storage_account_group_chat_container_name,
-    ]
+    return list(APPLICATION_BLOB_CONTAINERS)
 
 
 def _set_enhanced_citations_storage_status(

@@ -50,6 +50,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from openai import APIConnectionError, APITimeoutError
 
+from blob_container_readiness import STORAGE_FAILURE_CODE, STORAGE_FAILURE_MESSAGE
 from agent_execution_context import AgentDelegationTimeout
 from functions_m365_operations import M365_SOURCES
 from functions_model_catalog import ModelCatalogError
@@ -1907,6 +1908,7 @@ FAILURE_MESSAGES = {
         'saved. Ask again to read the current result.'
     ),
     'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
+    STORAGE_FAILURE_CODE: STORAGE_FAILURE_MESSAGE,
     'completeness_incomplete': 'The answer did not satisfy the requested requirements within its correction allowance.',
     'completeness_unavailable': 'The answer could not be verified. Review model availability, access and context limits.',
     'search_result_too_large': (
@@ -2021,6 +2023,7 @@ M365_STEP_FAILURE_CODES = frozenset({
 # Failures an exception may carry by code, through its ``orchestration_failure_code``.
 EXCEPTION_FAILURE_CODES = M365_STEP_FAILURE_CODES | {
     'external_session_required', 'operation_recovery_required', 'integration_input_unavailable',
+    STORAGE_FAILURE_CODE,
 }
 # Steps that hand work to an integration; input-reading failures have their own code.
 INTEGRATION_CAPABILITIES = frozenset({'action_invoke', 'agent_invoke'})

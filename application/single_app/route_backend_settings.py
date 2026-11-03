@@ -1,6 +1,7 @@
 # route_backend_settings.py
 
 from config import *
+from blob_container_readiness import BlobContainerUnavailableError, create_missing_blob_container
 from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
@@ -192,8 +193,8 @@ def _test_enhanced_citations_storage_connection(data):
                     f"Missing containers: {', '.join(missing_containers)}",
                 ],
                 "guidance": [
-                    "Containers are created on demand during upload when permissions allow it.",
-                    "If uploads fail, grant the app identity permission to create or write these containers.",
+                    "Save storage settings, then use Create missing containers to prepare application storage.",
+                    "Result writes also recover missing containers on demand when the app has permission.",
                 ],
                 "containers": container_results,
             }), 200
@@ -245,6 +246,56 @@ def _test_enhanced_citations_storage_connection(data):
                 "Check storage firewall, private endpoint, DNS, and RBAC settings if this app runs in Azure.",
             ],
         }), 400
+
+
+def _repair_enhanced_citations_storage_containers():
+    """Create only application containers using saved, server-owned configuration."""
+    settings = get_settings()
+    try:
+        client = build_enhanced_citations_blob_service_client(settings)
+    except ValueError as exc:
+        log_event(
+            "[ENHANCED_CITATIONS] Admin container repair configuration was invalid.",
+            extra={"error_type": type(exc).__name__}, level=logging.WARNING,
+        )
+        return jsonify({
+            "success": False, "error": "Save valid storage settings before creating containers.",
+        }), 400
+    results = []
+    try:
+        for name in get_enhanced_citations_storage_container_names():
+            try:
+                created = create_missing_blob_container(client, name, log=log_event)
+                results.append({
+                    "container_name": name, "status": "created" if created else "already_exists",
+                })
+            except BlobContainerUnavailableError as exc:
+                results.append({"container_name": name, "status": "failed", "reason": exc.reason})
+    finally:
+        client.close()
+    failed = sum(item["status"] == "failed" for item in results)
+    created = sum(item["status"] == "created" for item in results)
+    message = (
+        "Some storage containers could not be prepared. Check the app's storage access, then try again."
+        if failed else f"Storage is ready. Created {created} missing container(s); existing containers were unchanged."
+    )
+    log_event(
+        "[ENHANCED_CITATIONS] Admin storage container repair completed.",
+        extra={"created": created, "failed": failed, "container_count": len(results)},
+        level=logging.WARNING if failed else logging.INFO,
+    )
+    return jsonify({
+        "success": not failed, "status": "error" if failed else "success",
+        "message": message, "error": message if failed else None, "containers": results,
+        "details": [
+            f"{item['container_name']}: {item['status'].replace('_', ' ')}"
+            for item in results
+        ],
+        "guidance": (
+            ["Verify saved storage settings, app permissions, firewall and private endpoint access."]
+            if failed else ["Retry the failed analysis when you are ready; repair does not rerun it."]
+        ),
+    }), 503 if failed else 200
 
 
 ADMIN_SETTINGS_CONNECTION_TESTS = {
@@ -865,6 +916,21 @@ def register_route_backend_settings(bp):
         to GPT, Embeddings, etc., and returns success/failure.
         """
         return run_admin_settings_connection_test(request.get_json(force=True) or {})
+
+    @bp.route('/api/admin/settings/storage/repair-containers', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def repair_storage_containers():
+        """Create missing private application containers using saved storage settings."""
+        data = request.get_json(silent=True)
+        if type(data) is not dict or data:
+            log_event(
+                "[ENHANCED_CITATIONS] Admin storage repair rejected an invalid request.",
+                level=logging.WARNING,
+            )
+            return jsonify({'error': 'This operation accepts no configuration overrides.'}), 400
+        return _repair_enhanced_citations_storage_containers()
 
     @bp.route('/api/admin/settings/redis-monitoring/status', methods=['GET'])
     @swagger_route(security=get_auth_security())
