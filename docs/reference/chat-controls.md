@@ -250,6 +250,31 @@ arrived during streaming. After granting access, send the message again.
 
 ## Chat tools and composer
 
+### React V2 model, agent, and prompt search
+
+Implemented in version: **0.261.395** (`application/single_app/config.py`).
+The **Model**, **Agent**, and **Prompt** pickers always include a search field,
+even with one available item. Their fields use the same visual treatment as
+**Documents** and stay visible while the results scroll. On phones, open
+**Chat tools** first; in Orchestrate, open **Manual controls** when available.
+
+| Picker | What search matches | Example |
+| --- | --- | --- |
+| Model / Orchestration model | Displayed and underlying model names, plus available publisher/provider labels. | Search `OpenAI` or `Anthropic` for a vendor, or `Grok` or `Llama` for a model family, even when the displayed name is customized. |
+| Agent | Displayed name, description, and scope label. | Search `forecast` to find an agent whose description covers financial forecasting. |
+| Prompt | Name, description, and scope label, not the full saved prompt body. | Search `triage` to find reusable wording described as an incident checklist. |
+
+Matching ignores case and surrounding whitespace. Clearing the search restores
+the original list; filtering never changes the active selection or saved model.
+Reopening a picker starts with an empty search. The field receives focus, arrow
+keys move into results, and Enter selects a focused result, not a chat send.
+The existing `/` prompt shortcut remains available in the message editor.
+
+Vendor matching uses configured public metadata, not guesses about custom
+OpenAI-compatible APIs. Models without publisher information remain searchable
+by their known names and meaningful provider labels. See
+[V2 chat picker search]({{ '/explanation/features/V2_CHAT_PICKER_SEARCH/' | relative_url }}).
+
 ### Source lookup failures and retry
 
 Fixed/Implemented in version: **0.261.347** (`application/single_app/config.py`).

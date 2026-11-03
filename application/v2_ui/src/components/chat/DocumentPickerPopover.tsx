@@ -10,8 +10,7 @@
 // is either clipped or covers the message being written. The classic interface drops its
 // document dropdown down for the same reason V1's toolbar is above the input; V2's is below.
 //
-// It has a search box, which the classic dropdowns have and V2's do not. A workspace of any
-// size is unusable without one.
+// Its search field is also the visual reference for V2's model, agent, and prompt pickers.
 
 import { useEffect, useRef, useState, type ComponentProps } from 'react';
 import { WorkspaceDocumentPicker } from './WorkspaceDocumentPicker';

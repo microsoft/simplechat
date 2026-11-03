@@ -4,7 +4,7 @@
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { clsx } from 'clsx';
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown, Search } from 'lucide-react';
 import { DropdownScopeContext } from './DropdownScope';
 import { dropdownPlacement } from './dropdownPlacement';
 
@@ -22,6 +22,16 @@ export interface DropdownOption {
     label: string;
     description?: string;
     group?: string;
+    /** Additional public catalog metadata, such as a model's publisher. */
+    searchText?: string;
+}
+
+export function filterDropdownOptions(options: DropdownOption[], query: string): DropdownOption[] {
+    const needle = query.trim().toLowerCase();
+    return needle
+        ? options.filter((option) => [option.label, option.description, option.group, option.searchText]
+            .filter(Boolean).join(' ').toLowerCase().includes(needle))
+        : options;
 }
 
 interface DropdownProps {
@@ -51,6 +61,8 @@ interface DropdownProps {
     hint?: React.ReactNode;
     /** Escape a scrolling composer ancestor without changing other dropdown surfaces. */
     floating?: boolean;
+    /** Opts into a search field with this placeholder and accessible name. */
+    searchPlaceholder?: string;
 }
 
 export function Dropdown({
@@ -67,8 +79,11 @@ export function Dropdown({
     compact = false,
     hint,
     floating = false,
+    searchPlaceholder,
 }: DropdownProps) {
     const [localOpen, setLocalOpen] = useState(false);
+    const [query, setQuery] = useState('');
+    const searchable = Boolean(searchPlaceholder);
     const scope = useContext(DropdownScopeContext);
     const scopeSetter = scope?.setActiveId;
     const boundary = scope?.boundary;
@@ -90,9 +105,11 @@ export function Dropdown({
     const containerRef = useRef<HTMLDivElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
+    const searchRef = useRef<HTMLInputElement>(null);
     const [position, setPosition] = useState<ReturnType<typeof dropdownPlacement> | null>(null);
 
     const selected = options.find((option) => option.value === value);
+    const filteredOptions = searchable ? filterDropdownOptions(options, query) : options;
     // What the trigger reads as. An overridden selection is still `selected` for the menu's
     // check mark, but the trigger falls back to the placeholder so the row does not claim a
     // choice that is not in force.
@@ -143,6 +160,10 @@ export function Dropdown({
         }
     }, [disabled, scope, id]);
 
+    useEffect(() => {
+        if (!open) setQuery('');
+    }, [open]);
+
     useEffect(() => () => {
         // Do not close a replacement picker during the old trigger's cleanup.
         if (floating && scopeSetter) {
@@ -151,14 +172,18 @@ export function Dropdown({
     }, [floating, scopeSetter, id]);
 
     useLayoutEffect(() => {
-        if (!open || !floating) return;
+        if (!open || (!floating && !searchable)) return;
         measure();
+        if (searchable) {
+            searchRef.current?.focus({ preventScroll: true });
+            return;
+        }
         const panel = panelRef.current;
         const initial = panel?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')
             ?? panel?.querySelector<HTMLElement>('[role="option"], button');
         (initial ?? panel)?.focus({ preventScroll: true });
         initial?.scrollIntoView({ block: 'nearest' });
-    }, [open, floating, measure]);
+    }, [open, floating, searchable, measure]);
 
     useEffect(() => {
         if (!open) {
@@ -220,21 +245,39 @@ export function Dropdown({
             } : { maxHeight }}
             className={clsx(
                 'glass-modal flex flex-col rounded-2xl p-1.5',
-                floating ? 'composer-picker-panel fixed z-40 overflow-y-auto' : [
+                searchable && 'overflow-hidden',
+                floating ? ['composer-picker-panel fixed z-40', !searchable && 'overflow-y-auto'] : [
                     'absolute z-50 w-72',
                     placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
                     align === 'right' ? 'right-0' : 'left-0',
                 ],
             )}
             onKeyDown={(event) => {
-                if (!floating) return;
+                if (!floating && !searchable) return;
+                const inSearch = event.target === searchRef.current;
+                if (inSearch && event.key === 'Enter') {
+                    if (!event.nativeEvent.isComposing) event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                }
+                if (event.nativeEvent.isComposing) return;
                 const buttons = Array.from(panelRef.current?.querySelectorAll<HTMLButtonElement>('button') ?? []);
                 const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
                 let next: number | undefined;
-                if (event.key === 'ArrowDown') next = (index + 1) % buttons.length;
-                if (event.key === 'ArrowUp') next = (index - 1 + buttons.length) % buttons.length;
-                if (event.key === 'Home') next = 0;
-                if (event.key === 'End') next = buttons.length - 1;
+                if (event.key === 'ArrowDown') {
+                    const firstOption = buttons.findIndex((button) => button.getAttribute('role') === 'option');
+                    next = inSearch ? Math.max(0, firstOption) : (index + 1) % buttons.length;
+                }
+                if (event.key === 'ArrowUp') {
+                    if (searchable && index === 0) {
+                        event.preventDefault();
+                        searchRef.current?.focus({ preventScroll: true });
+                        return;
+                    }
+                    next = inSearch ? buttons.length - 1 : (index - 1 + buttons.length) % buttons.length;
+                }
+                if (!inSearch && event.key === 'Home') next = 0;
+                if (!inSearch && event.key === 'End') next = buttons.length - 1;
                 if (next !== undefined && buttons.length) {
                     event.preventDefault();
                     buttons[next].focus({ preventScroll: true });
@@ -246,6 +289,29 @@ export function Dropdown({
                 }
             }}
         >
+            {searchable && (
+                <div className="relative shrink-0 px-0.5 pb-1.5">
+                    <Search
+                        size={13}
+                        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-3"
+                        aria-hidden="true"
+                    />
+                    <input
+                        ref={searchRef}
+                        type="search"
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        placeholder={searchPlaceholder}
+                        aria-label={searchPlaceholder}
+                        aria-controls={`${id}-options`}
+                        className={clsx(
+                            'w-full rounded-lg border border-edge bg-surface-1 py-1.5 pl-7 pr-2',
+                            'text-sm text-text-1 placeholder:text-text-3',
+                            'focus:border-accent-ring focus:outline-none',
+                        )}
+                    />
+                </div>
+            )}
             {clearable && value !== undefined && (
                 <button
                     type="button"
@@ -261,14 +327,14 @@ export function Dropdown({
             )}
 
             <div id={`${id}-options`} role="listbox" aria-label={`${placeholder} options`}
-                className={floating ? 'shrink-0' : 'min-h-0 overflow-y-auto'}>
-                {options.length === 0 && (
-                    <p className="px-3 py-6 text-center text-sm text-text-3">
-                        Nothing available
+                className={searchable ? 'min-h-0 flex-1 overflow-y-auto overscroll-contain' : floating ? 'shrink-0' : 'min-h-0 overflow-y-auto'}>
+                {filteredOptions.length === 0 && (
+                    <p role={searchable ? 'status' : undefined} className="px-3 py-6 text-center text-sm text-text-3">
+                        {options.length === 0 ? 'Nothing available' : 'Nothing matches that.'}
                     </p>
                 )}
 
-                {options.map((option) => {
+                {filteredOptions.map((option) => {
                     const showGroupHeading = option.group && option.group !== lastGroup;
                     lastGroup = option.group;
                     const isSelected = option.value === value;

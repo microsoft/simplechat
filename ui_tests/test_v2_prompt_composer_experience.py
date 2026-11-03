@@ -1,9 +1,10 @@
 # test_v2_prompt_composer_experience.py
 """
 Focused browser regressions for the approved V2 prompt composer experience.
-Version: 0.261.327
+Version: 0.261.395
 Implemented in: 0.261.096
 Single orchestration contract updated in: 0.261.139
+Picker search regression fixture updated in: 0.261.395
 
 The existing harness bundles the real Composer, MessageList, editors, and stores.
 Only HTTP boundaries are mocked. Canonical messages use the real Python metadata
@@ -143,6 +144,9 @@ class PromptApi:
             return
         if is_pending_actions_list(request.method, path):
             route.fulfill(json=pending_actions_payload())
+            return
+        if request.method == "GET" and path == "/api/action-credentials/pending":
+            route.fulfill(json={"requests": [], "csrf_token": "fixture-csrf"})
             return
 
         self.requests.append((request.method, path))

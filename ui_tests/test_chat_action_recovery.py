@@ -29,6 +29,32 @@ def recovery(page, request):
     fixture.assert_clean()
 
 
+def test_v2_agent_selection_has_no_generic_action_notice(page):
+    recovery = RecoveryFixture(page, "v2")
+    recovery.open()
+    notice = page.locator("#mount-a")
+    expect(notice).to_be_empty()
+    recovery.change_agent()
+    expect(notice).to_be_empty()
+    assert recovery.sends == []
+    recovery.assert_clean()
+
+
+def test_v2_restore_failure_is_visible_without_an_agent(page):
+    recovery = RecoveryFixture(page, "v2")
+    recovery.open()
+    page.route("**/api/action-recovery/incident-1",
+               lambda route: route.fulfill(status=503, content_type="application/json", body="{}"))
+    page.evaluate("""() => {
+        sessionStorage.setItem('simplechat.action-recovery.conversation-2', 'incident-1');
+        window.OrchHarness.mount('mount-a', 'ActionRecoveryNotice', {
+            conversationId: 'conversation-2'
+        });
+    }""")
+    expect(page.get_by_role("alert")).to_have_text("Action recovery could not be confirmed. Retry safely.")
+    recovery.assert_clean()
+
+
 @pytest.mark.parametrize("width", [390, 1440])
 def test_unavailable_actions_require_consent_and_do_not_replay(recovery, width):
     page = recovery.page

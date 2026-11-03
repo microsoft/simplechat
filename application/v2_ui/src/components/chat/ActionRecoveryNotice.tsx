@@ -11,8 +11,8 @@ import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { Modal } from '../ui/Modal';
 import { GlassButton } from '../ui/primitives';
 
-export function ActionRecoveryNotice({ conversationId, hasAgent, agentSelection }: {
-    conversationId: string | null; hasAgent: boolean; agentSelection?: string;
+export function ActionRecoveryNotice({ conversationId, agentSelection }: {
+    conversationId: string | null; agentSelection?: string;
 }) {
     const actorId = useBootstrapStore((state) => state.data?.user?.id);
     const notice = useSyncExternalStore(subscribeActionRecovery, getActionRecovery);
@@ -35,9 +35,9 @@ export function ActionRecoveryNotice({ conversationId, hasAgent, agentSelection 
     useEffect(() => { setReports({}); setError(null); }, [notice?.recovery.id, conversationId]);
 
     if (!notice || notice.recovery.conversation_id !== conversationId || notice.actorId !== actorId) {
-        return hasAgent ? (
-            <p className="px-1 py-2 text-xs text-text-3" role="status">
-                {error ?? 'Actions are checked before sending. Service sign-in and approvals may still be required.'}
+        return error ? (
+            <p className="px-1 py-2 text-xs text-danger" role="alert">
+                {error}
             </p>
         ) : null;
     }

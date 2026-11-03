@@ -169,11 +169,13 @@ class RecoveryFixture(ClassicCredentialFixture):
                 H.reset();
                 H.stores.bootstrap.useBootstrapStore.setState({data: {user: {id: 'actor-1'}}});
                 H.stores.chat.useChatStore.setState({activeConversationId: 'conversation-1', streaming: false});
+                window.__recoveryRevision = H.actionRecovery.getActionRecoveryRevision();
                 H.mount('mount-a', 'ActionRecoveryNotice', {
-                    conversationId: 'conversation-1', hasAgent: true, agentSelection: 'agent-1'
+                    conversationId: 'conversation-1', agentSelection: 'agent-1'
                 });
             }""")
-            self.page.get_by_role("status").first.wait_for()
+            self.page.wait_for_function(
+                "window.OrchHarness.actionRecovery.getActionRecoveryRevision() > window.__recoveryRevision")
         else:
             self.page.wait_for_function("typeof window.__sendOriginal === 'function'")
             self.page.evaluate("window.currentConversationId = 'conversation-1'")
@@ -199,7 +201,7 @@ class RecoveryFixture(ClassicCredentialFixture):
     def change_agent(self):
         if self.flavour == "v2":
             self.page.evaluate("""() => window.OrchHarness.mount('mount-a', 'ActionRecoveryNotice', {
-                conversationId: 'conversation-1', hasAgent: true, agentSelection: 'agent-2'
+                conversationId: 'conversation-1', agentSelection: 'agent-2'
             })""")
             self.page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
         else:
@@ -218,9 +220,10 @@ class RecoveryFixture(ClassicCredentialFixture):
                 user: {id: 'actor-1'},
                 catalogs: {agents: [{id: 'agent-1', name: 'Fixture agent'}]}
             }});
+            window.__recoveryRevision = H.actionRecovery.getActionRecoveryRevision();
             const render = () => H.mount('mount-a', 'ActionRecoveryNotice', {
                 conversationId: H.stores.chat.useChatStore.getState().activeConversationId,
-                hasAgent: true, agentSelection: 'agent-1'
+                agentSelection: 'agent-1'
             });
             window.__unsubscribeRecoveryFixture = H.stores.chat.useChatStore.subscribe(render);
             render();
@@ -234,14 +237,15 @@ class RecoveryFixture(ClassicCredentialFixture):
                 window.__sending.finally(() => { window.__settled = true; });
             };
         }""")
-        self.page.get_by_role("status").first.wait_for()
+        self.page.wait_for_function(
+            "window.OrchHarness.actionRecovery.getActionRecoveryRevision() > window.__recoveryRevision")
 
     def change_conversation(self):
         if self.flavour == "v2":
             self.page.evaluate("""() => {
                 window.OrchHarness.stores.chat.useChatStore.setState({activeConversationId: 'conversation-2'});
                 window.OrchHarness.mount('mount-a', 'ActionRecoveryNotice', {
-                    conversationId: 'conversation-2', hasAgent: true, agentSelection: 'agent-1'
+                    conversationId: 'conversation-2', agentSelection: 'agent-1'
                 });
             }""")
             self.page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")

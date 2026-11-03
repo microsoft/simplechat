@@ -1,9 +1,10 @@
 # test_model_catalog_profiles.py
 """
 Functional tests for reusable profiles and per-step model routing.
-Version: 0.261.139
+Version: 0.261.395
 Implemented in: 0.261.126
 Single orchestration contract updated in: 0.261.139
+Public publisher metadata implemented in: 0.261.395
 
 Exercises real dependency-light profile/routing modules, without network or storage.
 """
@@ -134,9 +135,38 @@ class ProfileTests(unittest.TestCase):
         projection = model_profile_projection({"catalogProfileId": "custom:missing"}, {}, {})
         self.assertFalse(projection["auto_routing_available"])
         self.assertIn("unavailable", projection["profile_error"])
+        self.assertIsNone(projection["profile"])
         valid = model_profile_projection({"modelName": "gpt-5"}, {}, {})
         self.assertTrue(valid["auto_routing_available"])
         self.assertEqual(valid["profile"]["id"], "gpt-5")
+        self.assertEqual(valid["profile"]["publisher"], "openai")
+
+    def test_publisher_projection_keeps_the_public_profile_allowlist(self):
+        settings = change_catalog({}, profile=custom_profile(
+            publisher="Anthropic",
+            aliases=["internal-alias"],
+            sources=["https://example.test/model"],
+        ))
+        profile_id = get_effective_model_profiles(settings)[-1]["id"]
+        projection = model_profile_projection(
+            {"catalogProfileId": profile_id, "api_key": "test-placeholder"},
+            {"endpoint": "https://internal.example.test"},
+            settings,
+        )
+        summary = projection["profile"]
+        self.assertEqual(summary["publisher"], "Anthropic")
+        self.assertEqual(set(summary), {
+            "id", "displayName", "publisher", "summary", "tasks", "preferences",
+            "revision", "origin", "archived", "evidence",
+        })
+        summary["tasks"].clear()
+        fresh = model_profile_projection({"catalogProfileId": profile_id}, {}, settings)
+        self.assertEqual(fresh["profile"]["tasks"]["general"], "suitable")
+
+    def test_unprofiled_models_do_not_invent_a_publisher(self):
+        projection = model_profile_projection({"modelName": "unprofiled-internal-model"}, {}, {})
+        self.assertIsNone(projection["profile"])
+        self.assertNotIn("publisher", projection)
 
     def test_responses_only_models_cannot_be_enabled_for_auto_by_a_custom_link(self):
         settings = change_catalog({}, profile=custom_profile())
