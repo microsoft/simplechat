@@ -62,6 +62,30 @@ resource groupDocumentsContainer 'Microsoft.Storage/storageAccounts/blobServices
   }
 }
 
+resource publicDocumentsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  name: 'public-documents'
+  parent: blobService
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+resource personalChatContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  name: 'personal-chat'
+  parent: blobService
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+resource groupChatContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  name: 'group-chat'
+  parent: blobService
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 // configure diagnostic settings for storage account
 resource storageDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging) {
   name: toLower('${storageAccount.name}-diagnostics')

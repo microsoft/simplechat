@@ -15,6 +15,7 @@ from flask import make_response
 from azure.core import MatchConditions
 from azure.core.exceptions import AzureError, ResourceExistsError
 from azure.storage.blob import ContentSettings
+from blob_container_readiness import create_missing_blob_container
 from content_screening.contracts import (
     ContentUnit,
     SCREENING_EXEMPTION_FIELD,
@@ -1410,33 +1411,8 @@ def _get_blob_service_client():
 
 def _ensure_blob_container_ready(blob_service_client, container_name):
     """Create the Enhanced Citations target container on demand if it is missing."""
-    if not container_name:
-        raise ValueError("Blob container name is required")
-
-    container_client = blob_service_client.get_container_client(container_name)
-    try:
-        container_client.create_container()
-        log_event(
-            "[ENHANCED_CITATIONS] Created blob storage container during upload.",
-            extra={"container_name": container_name},
-            level=logging.INFO,
-        )
-    except ResourceExistsError:
-        pass
-    except HttpResponseError as exc:
-        if getattr(exc, "status_code", None) != 409:
-            log_event(
-                "[ENHANCED_CITATIONS] Blob storage container readiness check failed during upload.",
-                extra={
-                    "container_name": container_name,
-                    "error_type": type(exc).__name__,
-                    "status_code": getattr(exc, "status_code", None),
-                },
-                level=logging.ERROR,
-                exceptionTraceback=True,
-            )
-            raise
-    return container_client
+    create_missing_blob_container(blob_service_client, container_name, log=log_event)
+    return blob_service_client.get_container_client(container_name)
 
 
 def require_xsd_ingestion_capability(

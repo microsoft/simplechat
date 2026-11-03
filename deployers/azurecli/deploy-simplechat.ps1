@@ -1688,6 +1688,27 @@ if (-not $storageAccount) {
 }
 
 
+# --- Ensure private application containers, including on an existing account ---
+$requiredStorageContainers = @(
+    'user-documents', 'group-documents', 'public-documents', 'personal-chat', 'group-chat'
+)
+$existingStorageContainersJson = az storage container-rm list --storage-account $storageAccountName `
+    --resource-group $resourceGroupName --query "[].name" --output json --only-show-errors
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to inspect application storage containers in '$storageAccountName'."
+}
+$existingStorageContainers = @($existingStorageContainersJson | ConvertFrom-Json -ErrorAction Stop)
+foreach ($containerName in $requiredStorageContainers) {
+    if ($existingStorageContainers -notcontains $containerName) {
+        az storage container-rm create --name $containerName --storage-account $storageAccountName `
+            --resource-group $resourceGroupName --public-access off --output none --only-show-errors
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to create private application storage container '$containerName'."
+        }
+        Write-Host "Created private application storage container '$containerName'."
+    }
+}
+
 # --- Create User-Assigned Managed Identity ---
 Write-Host "`n=====> Creating User-Assigned Managed Identity: $($managedIdentityName)..."
 # Check if the managed identity exists

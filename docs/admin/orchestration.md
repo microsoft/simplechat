@@ -787,10 +787,20 @@ provider failure, cancellation, or the applicable application deadline. This
 does not increase either configured budget or add retries. A service that never
 finishes can still time out; this change is not a guarantee of provider success.
 
-Completed step results are saved in the existing orchestration Cosmos containers.
+Run checkpoints are saved in the existing Cosmos containers. Private result
+payloads use the configured Enhanced Citations Blob storage when available,
+including the `personal-chat` container; the presence of workspace source files
+alone does not prove that result storage is ready.
 No new storage connection or settings switch is required. **Retry from failed step**
 uses these results with the same effective plan and current authorization, rather
 than invoking the planner or repeating the whole request.
+
+Since **0.261.396**, a missing result-storage container is repaired at the Blob
+write boundary when permissions allow it, without rerunning the model. If repair
+fails, the step explains that analysis progress/results could not be saved and
+asks an administrator to check storage. In **Admin Settings > Chat > Citations**,
+save the storage configuration and use **Create missing containers** before
+deliberately retrying the failed step. The connection test remains read-only.
 
 Retry is always deliberate, even under Auto approval. If a failed agent/action
 may already have changed an external system, the user must acknowledge that the

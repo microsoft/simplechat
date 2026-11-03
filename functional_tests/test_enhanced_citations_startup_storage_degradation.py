@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Enhanced Citations startup storage degradation.
-Version: 0.250.126
+Version: 0.261.396
 Implemented in: 0.250.126
 
 This test ensures Enhanced Citations storage stays an optional dependency during
@@ -76,10 +76,8 @@ def test_upload_path_owns_container_readiness():
     helper_source = get_function_source(FUNCTIONS_DOCUMENTS_PATH, "_ensure_blob_container_ready")
     upload_source = get_function_source(FUNCTIONS_DOCUMENTS_PATH, "upload_to_blob")
 
-    if "container_client.create_container()" not in helper_source:
-        raise AssertionError("Upload-time helper should create missing containers on demand.")
-    if "ResourceExistsError" not in helper_source:
-        raise AssertionError("Upload-time helper should tolerate containers that already exist.")
+    if "create_missing_blob_container(blob_service_client, container_name, log=log_event)" not in helper_source:
+        raise AssertionError("Upload-time helper should use shared private container creation.")
     if "_ensure_blob_container_ready(blob_service_client, storage_account_container_name)" not in upload_source:
         raise AssertionError("upload_to_blob must ensure the target container is ready before uploading.")
     if "raise RuntimeError" not in upload_source:

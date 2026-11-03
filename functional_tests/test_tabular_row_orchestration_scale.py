@@ -1,7 +1,7 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.261.389
+Version: 0.261.396
 Updated in: 0.261.035 for shared model-budget resolution and scoped batching.
 Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152; Search shared preflight adapter in 0.250.159; aggregate route-helper harness coverage in 0.250.166; Analyze artifact Phase 7A harness compatibility updated in 0.250.178; reviewed correctness planning and semantic validation updated in 0.250.179; artifact publication lifecycle updated in 0.250.180; safe failure helper compatibility updated in 0.250.199; exhaustive Markdown scale compatibility updated in 0.250.200
 
@@ -452,6 +452,17 @@ def _load_contract_helpers():
         )
 
     namespace = {'csv': csv, 'io': io, 're': re, 'uuid': uuid}
+    # Keep extracted contracts bound to the real, bootstrap-free storage helper.
+    from blob_container_readiness import (
+        BlobContainerUnavailableError, STORAGE_FAILURE_CODE, STORAGE_FAILURE_MESSAGE,
+        write_blob_with_container_recovery,
+    )
+    namespace.update({
+        'BlobContainerUnavailableError': BlobContainerUnavailableError,
+        'STORAGE_FAILURE_CODE': STORAGE_FAILURE_CODE,
+        'STORAGE_FAILURE_MESSAGE': STORAGE_FAILURE_MESSAGE,
+        'write_blob_with_container_recovery': write_blob_with_container_recovery,
+    })
     namespace['log_event'] = lambda *args, **kwargs: None
     namespace['logging'] = logging
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])

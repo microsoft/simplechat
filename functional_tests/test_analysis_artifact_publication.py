@@ -1,7 +1,7 @@
 # test_analysis_artifact_publication.py
 """
 Functional tests for explicit existing-artifact publication and retry receipts.
-Version: 0.261.232
+Version: 0.261.396
 Implemented in: 0.261.109
 Saved-result access wording aligned in: 0.261.232
 
@@ -46,6 +46,9 @@ file_policy = import_app_module("functions_orchestration_execution_policy")
 def load_functions(filename, names, namespace):
     if filename == "functions_simplechat_operations.py":
         namespace["require_generated_file_publication_allowed"] = file_policy.require_generated_file_publication_allowed
+        namespace["write_blob_with_container_recovery"] = import_app_module(
+            "blob_container_readiness",
+        ).write_blob_with_container_recovery
     tree = ast.parse((APP / filename).read_text(encoding="utf-8"))
     selected = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in names]
     assert len(selected) == len(names)

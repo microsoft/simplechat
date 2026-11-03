@@ -9,6 +9,7 @@ import re
 
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
+from blob_container_readiness import STORAGE_FAILURE_CODE
 from functions_analysis_access import AnalysisResultUnavailable, authorize_analysis_sources
 from functions_document_analysis_results import (
     apply_document_analysis_options,
@@ -217,7 +218,10 @@ def open_native_tabular_result(
             status = "cancelled"
         elif status != "failed":
             raise ValueError("The native computation state is invalid.")
-        return {"status": status, "handle": deepcopy(handle), "reader": None, "readers": {}}
+        result = {"status": status, "handle": deepcopy(handle), "reader": None, "readers": {}}
+        if status == "failed" and run.get("failure_code") == STORAGE_FAILURE_CODE:
+            result["failure_code"] = STORAGE_FAILURE_CODE
+        return result
     manifest = _validate_native_result_manifest(engine, run)
     readers = {
         name: NativeTabularResultReader(engine, run, name, require_current_sources=require_current_sources)
