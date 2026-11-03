@@ -12,6 +12,7 @@ from functions_cosmos_indexing import (
     COSMOS_INDEXING_POLICY_APPLY_SETTING,
     get_cosmos_indexing_policy_status,
     run_cosmos_indexing_policy_maintenance,
+    sanitize_cosmos_indexing_result,
 )
 from functions_conversation_cache import get_conversation_cache_metrics, get_conversation_cache_settings
 from functions_document_access_index import (
@@ -156,7 +157,14 @@ def _record_completed(run_id, started_at, triggered_by, requested_by, steps):
         'last_steps': steps,
         'app_version': VERSION,
     })
-    return _write_maintenance_state(state)
+    for step in steps:
+        if step.get('name') == 'cosmos_indexing_policy_maintenance' and step.get('apply_requested'):
+            state['last_cosmos_indexing_policy_apply'] = {
+                'run_id': run_id,
+                'completed_at': state['last_completed_at'],
+                'results': sanitize_cosmos_indexing_result(step.get('results')),
+            }
+    return _write_maintenance_state(_sanitize_maintenance_state(state))
 
 
 def _record_failed(run_id, started_at, triggered_by, requested_by, error):
@@ -171,10 +179,10 @@ def _record_failed(run_id, started_at, triggered_by, requested_by, error):
         'last_requested_by': requested_by,
         'last_completed_at': _utc_now_iso(),
         'last_duration_ms': duration_ms,
-        'last_error': str(error),
+        'last_error': 'App maintenance failed. Check the server logs for this run.',
         'app_version': VERSION,
     })
-    return _write_maintenance_state(state)
+    return _write_maintenance_state(_sanitize_maintenance_state(state))
 
 
 def get_app_maintenance_settings(settings):
@@ -303,14 +311,40 @@ def get_cache_version_document_status():
     return statuses
 
 
+def _sanitize_maintenance_state(state):
+    """Sanitize historical index failures on both status and run-response paths."""
+    for step in state.get('last_steps') or []:
+        if step.get('name') == 'cosmos_indexing_policy_maintenance':
+            step['results'] = sanitize_cosmos_indexing_result(step.get('results'))
+    last_index_apply = state.get('last_cosmos_indexing_policy_apply')
+    if not isinstance(last_index_apply, dict):
+        for step in state.get('last_steps') or []:
+            if step.get('name') == 'cosmos_indexing_policy_maintenance' and step.get('apply_requested'):
+                last_index_apply = {
+                    'run_id': state.get('last_run_id'),
+                    'completed_at': state.get('last_completed_at'),
+                    'results': step.get('results'),
+                }
+    if isinstance(last_index_apply, dict):
+        last_index_apply = {
+            'run_id': last_index_apply.get('run_id'),
+            'completed_at': last_index_apply.get('completed_at'),
+            'results': sanitize_cosmos_indexing_result(last_index_apply.get('results')),
+        }
+        state['last_cosmos_indexing_policy_apply'] = last_index_apply
+    if state.get('last_error'):
+        state['last_error'] = 'App maintenance failed. Check the server logs for this run.'
+    return state
+
+
 def get_app_maintenance_status(settings=None):
     """Return the latest app maintenance state and foundation document status."""
-    state = _read_maintenance_state() or {
+    state = _sanitize_maintenance_state(_read_maintenance_state() or {
         'id': APP_MAINTENANCE_STATE_DOC_ID,
         'type': APP_MAINTENANCE_DOC_TYPE,
         'last_status': 'not_run',
         'app_version': VERSION,
-    }
+    })
     maintenance_settings = get_app_maintenance_settings(settings or {})
     document_access_index_status = get_document_access_index_backfill_status(settings=settings or {})
     if isinstance(document_access_index_status.get('maintenance'), dict):
@@ -329,6 +363,7 @@ def get_app_maintenance_status(settings=None):
             'metrics': get_conversation_cache_metrics(),
         },
         'cosmos_indexing_policies': get_cosmos_indexing_policy_status(),
+        'last_cosmos_indexing_policy_apply': state.get('last_cosmos_indexing_policy_apply'),
         'stale_cache_cleanup': build_stale_cache_cleanup_status(
             _extract_last_step_results(state, 'stale_cache_document_cleanup')
         ),
@@ -482,5 +517,5 @@ def run_app_maintenance_once(
             'success': False,
             'run_id': run_id,
             'state': state,
-            'error': str(ex),
+            'error': 'App maintenance failed. Check the server logs for this run.',
         }

@@ -18,8 +18,10 @@ import {
     MAINTENANCE_RUN_PAYLOADS,
     describeCleanupRun,
     describeIndexApply,
+    describeMaintenanceFailure,
     findRunStep,
     indexingPolicyStatus,
+    indexingFailureReason,
     type AppMaintenanceRunResult,
     type CosmosIndexingPolicyStatus,
     type StaleCacheCleanupStatus,
@@ -82,15 +84,21 @@ export function CosmosMaintenancePanel({ field }: { field: AdminField }) {
         let failure: string | null = null;
         try {
             result = await api.post<AppMaintenanceRunResult>(RUN_PATH, payload);
+            if (result.success === false) {
+                failure = describeMaintenanceFailure(result);
+            }
         } catch (error) {
             result = error instanceof ApiError ? (error.payload as AppMaintenanceRunResult | null) : null;
-            failure = error instanceof Error ? error.message : 'Cosmos maintenance failed.';
+            failure = describeMaintenanceFailure(result);
         }
 
         if (action === 'apply-indexes') {
             const indexing = findRunStep(result, 'cosmos_indexing_policy_maintenance') as CosmosIndexingPolicyStatus | null;
             if (indexing) {
-                mergeMaintenance({ cosmos_indexing_policies: indexing });
+                mergeMaintenance({
+                    cosmos_indexing_policies: indexing,
+                    last_cosmos_indexing_policy_apply: { run_id: result?.run_id, results: indexing },
+                });
             }
             if (!failure) {
                 const outcome = describeIndexApply(indexing);
@@ -124,6 +132,8 @@ export function CosmosMaintenancePanel({ field }: { field: AdminField }) {
 
     const indexing = maintenance.data?.cosmos_indexing_policies;
     const cleanup = maintenance.data?.stale_cache_cleanup;
+    const lastApply = maintenance.data?.last_cosmos_indexing_policy_apply;
+    const applyResults = lastApply?.results;
     const hasData = Boolean(indexing || cleanup);
     const loadError: ToneText | null = maintenance.error ? { text: maintenance.error, tone: 'danger' } : null;
 
@@ -154,19 +164,20 @@ export function CosmosMaintenancePanel({ field }: { field: AdminField }) {
                     </OpsButton>
                 </OpsToolbar>
 
-                <OpsMessage message={message ?? loadError} />
+                <OpsMessage message={message} />
+                <OpsMessage message={loadError} />
 
                 {!hasData && maintenance.loading ? <ReadoutSkeleton rows={8} /> : null}
 
                 {hasData ? (
                     <>
-                        <ReadoutGroup title="Indexing policies">
+                        <ReadoutGroup title="Current index inspection">
                             <ReadoutGrid>
                                 <Readout label="Status" state={describeMaintenanceStatus(indexingPolicyStatus(indexing))} />
                                 <Readout label="Indexing mode" value={humanizeStatus(indexing?.mode || 'not_loaded')} />
                                 <Readout label="Containers checked" value={formatCount(indexing?.container_count ?? 0)} />
                                 <Readout
-                                    label="Missing expected indexes"
+                                    label="Containers missing expected indexes"
                                     value={formatCount(indexing?.containers_missing_expected_indexes ?? 0)}
                                 />
                                 <Readout label="Updated containers" value={formatCount(indexing?.updated_container_count ?? 0)} />
@@ -174,6 +185,30 @@ export function CosmosMaintenancePanel({ field }: { field: AdminField }) {
                                 <Readout label="Last evaluated" value={formatTimestamp(indexing?.evaluated_at, 'Not loaded')} wide />
                             </ReadoutGrid>
                         </ReadoutGroup>
+
+                        {applyResults ? (
+                            <ReadoutGroup title="Last index apply result">
+                                <div data-testid="last-index-apply-result">
+                                    <OpsMessage message={{
+                                        text: Number(applyResults.failed_container_count || 0) > 0
+                                            ? `Index updates failed for ${formatCount(applyResults.failed_container_count)} container(s); updates were submitted for ${formatCount(applyResults.updated_container_count ?? 0)}. Successful submissions were not rolled back.`
+                                            : describeIndexApply(applyResults).text,
+                                        tone: Number(applyResults.failed_container_count || 0) > 0 ? 'danger' : 'ok',
+                                    }} />
+                                    {(applyResults.containers ?? []).filter((container) => container.status === 'failed').map((container, index) => (
+                                        <p key={`${container.container_name}-${index}`} className="mb-2 text-sm text-text-2 break-words">
+                                            <strong>{container.container_name || 'Unknown container'}:</strong>{' '}
+                                            {indexingFailureReason(container.error_code)}
+                                        </p>
+                                    ))}
+                                    <p className="text-xs text-text-3 break-words">
+                                        {lastApply?.completed_at ? `Completed: ${formatTimestamp(lastApply.completed_at)}. ` : ''}
+                                        {lastApply?.run_id ? `Run reference: ${lastApply.run_id}. ` : ''}
+                                        Refresh status inspects current policies; it does not retry failed updates.
+                                    </p>
+                                </div>
+                            </ReadoutGroup>
+                        ) : null}
 
                         <ReadoutGroup title="Stale cache cleanup">
                             <ReadoutGrid>

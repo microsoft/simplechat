@@ -1513,9 +1513,7 @@
     },
     "functional_tests/test_cosmos_wave3a_indexing_maintenance.py::FakeCosmosContainer": {
       "boundary": {
-        "imports_sha256": "49c0848672b0644f77ca08272f3d9869216d4e51fbf2e4f78cadbb47322d3f97",
-        "inherited_bases": [],
-        "kind": "class",
+        "sha256": "241bf99d2627ed8cca738a1e4b1a50295146eb1f921cdbed3f5da0664d25e22e",
         "methods": [
           "create_item",
           "delete_item",
@@ -1523,10 +1521,12 @@
           "replace_item",
           "upsert_item"
         ],
-        "sha256": "978b08186ba012d0c8f1b8727f4367153f4288c3d54fc0aad06b39292d6c585b"
+        "kind": "class",
+        "inherited_bases": [],
+        "imports_sha256": "18008d80cf9d671fafcc37867b8583636b646ec1b96d387bccc70d740611d87d"
       },
-      "classification": "legacy-inline",
-      "contract": "Unchanged inline Cosmos-shaped test container outside the migrated shared defaults. Its test-specific response behavior is an explicit staged-migration baseline, not blanket runtime SDK proof.",
+      "classification": "sdk-default",
+      "contract": "Point reads and returned creates/replaces/upserts use the installed SDK CosmosDict; nested data and query rows stay plain dictionaries. ETags, immutable partition keys, and conflict fault injection are enforced.",
       "tests": [
         "functional_tests/test_cosmos_wave3a_indexing_maintenance.py"
       ]
@@ -7141,7 +7141,6 @@
     "functional_tests/test_cosmos_wave2a_custom_pages_cache.py::FakeCosmosContainer": "40578067bab81e4bf886387c2499fcfc82ee95adf4c6717f8cad1bbb23719ede",
     "functional_tests/test_cosmos_wave2b_conversation_cache.py::ConflictOnceFakeCosmosContainer": "fdc506e52743e70e842d81d512f7a7d97f142ddd5bb3a885b7732f61f5758b43",
     "functional_tests/test_cosmos_wave2b_conversation_cache.py::FakeCosmosContainer": "6f3108e5a59d4acc9fa61aa68e81bba061b0b59b856f6116db024244fd3b3731",
-    "functional_tests/test_cosmos_wave3a_indexing_maintenance.py::FakeCosmosContainer": "fd7bb5710516eb27f904c73ec3823bb554fd8ac6caad09ffd1fca2b264a60fde",
     "functional_tests/test_cosmos_wave3b_document_access_index.py::FakeCosmosContainer": "877c2641e7c9db8acc2c582f217014eee0a63219a3d3aaa8595e4772de5bf56a",
     "functional_tests/test_cosmos_wave3b_document_access_index.py::FakeRepairBacklogStateWriteFailContainer": "0cba8e4febf8cd338dfeca127fda2fa469a51f292a27512c4a34df0923534762",
     "functional_tests/test_cosmos_wave4a_document_access_backfill.py::FakeCosmosContainer": "5b3c45c2c094082569b756cb04b739ea3199e3d1ec878b70586b58af14aabfc9",
@@ -9077,13 +9076,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c1ff82c3c5580deeb6c4b015783070f6503cae4f743b534f063329d68bdf00"
+        "module_sha256": "2130a2e4d854c54ecf3a2a977238b15bf82fc1f61e2f38c4e153dd5fb8575292"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_maintenance_state: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Maintenance state point reads remain SDK CosmosDict mappings. Real owner runs retain run identity, nested step results and durable apply diagnostics across writes and read-only refreshes.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_cosmos_wave3a_indexing_maintenance.py::test_failed_apply_survives_report_only_and_background_runs"
       ]
     },
     "application/single_app/functions_app_maintenance.py::_write_maintenance_state": {
@@ -9098,12 +9097,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c1ff82c3c5580deeb6c4b015783070f6503cae4f743b534f063329d68bdf00"
+        "module_sha256": "2130a2e4d854c54ecf3a2a977238b15bf82fc1f61e2f38c4e153dd5fb8575292"
       },
       "classification": "response-unused",
-      "contract": "_write_maintenance_state: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "Maintenance state upsert responses are discarded; the constructed plain state dictionary is returned, and write errors propagate.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_cosmos_wave3a_indexing_maintenance.py::test_failed_apply_survives_report_only_and_background_runs"
+      ]
     },
     "application/single_app/functions_approvals.py::approve_request": {
       "boundary": {
@@ -32863,7 +32864,6 @@
     "application/single_app/functions_agent_delegation.py::_read_agent": "98b0527a67765b824cd1624b3f71b181664ccb8a0a8d47cb1b5ffa43767c9db0",
     "application/single_app/functions_agent_templates.py::get_agent_template": "a79daee0684d9c81bc0deeae07b7c8e0161f39d2ef7cefa0dbb9276f4f826eb8",
     "application/single_app/functions_agent_templates.py::list_agent_templates": "785b9059d2d6b1359565c202284ad9f8ea208a36e790f9a06cc7af2af61b5531",
-    "application/single_app/functions_app_maintenance.py::_read_maintenance_state": "932710e6a35a148fdfffa9fb54d296c286f88f8b8897b16c729ae75c2048cc30",
     "application/single_app/functions_approvals.py::approve_request": "bef5fd51a045d8df621d6cddaf2dbc87e4cf11b30daa7104c77c2d48c393c0f9",
     "application/single_app/functions_approvals.py::auto_deny_expired_approvals": "7c676bd432fc6b5555f969f71b6f8cdb0ce826d1133f53249a37d7f8a55d8271",
     "application/single_app/functions_approvals.py::create_approval_request": "3f5323256bcf4a5ec2bd4edc156d3aeea20ecd23bc6ed4199aa669405544a6bb",

@@ -3,10 +3,10 @@
 
 import copy
 import logging
+from collections.abc import Mapping
 from datetime import datetime, timezone
 
 from azure.core import MatchConditions
-from azure.cosmos import PartitionKey
 
 import config as app_config
 from config import (
@@ -34,6 +34,13 @@ from functions_appinsights import log_event
 COSMOS_INDEXING_POLICY_DEFINITION_VERSION = 3
 COSMOS_INDEXING_POLICY_APPLY_SETTING = 'app_maintenance_apply_cosmos_indexing_policies'
 COSMOS_INDEXING_POLICY_MAX_REPLACE_RETRIES = 3
+COSMOS_INDEXING_FAILURE_MESSAGES = {
+    'invalid_partition_key_definition': 'The existing partition-key definition could not be verified. No update was submitted.',
+    'partition_key_change_rejected': 'Cosmos rejected a partition-key change. Upgrade to the patched application and retry applying indexes.',
+    'indexing_access_denied': 'Cosmos denied access. Ask an administrator to verify the application identity has the required access.',
+    'indexing_conflict': 'The container changed during the update. Refresh status and retry applying indexes.',
+    'indexing_policy_failed': 'Unable to process the indexing policy. Check the server logs before retrying.',
+}
 
 
 def _utc_now_iso():
@@ -257,6 +264,20 @@ def _is_precondition_failed_error(exc):
 
 
 def _replace_container_indexing_policy(definition, container_properties, desired_policy):
+    partition_key = (container_properties or {}).get('partitionKey')
+    if (
+        not isinstance(partition_key, Mapping)
+        or partition_key.get('kind') not in ('Hash', 'MultiHash')
+        or not isinstance(partition_key.get('paths'), list)
+        or not partition_key['paths']
+        or any(not isinstance(path, str) or not path.startswith('/') or len(path) < 2 for path in partition_key['paths'])
+        or (partition_key['kind'] == 'Hash' and len(partition_key['paths']) != 1)
+        or ('version' in partition_key and (
+            type(partition_key['version']) is not int or partition_key['version'] not in (1, 2)
+        ))
+    ):
+        raise ValueError('Container partition-key metadata is missing or invalid.')
+
     replace_kwargs = {}
     etag = (container_properties or {}).get('_etag')
     if etag:
@@ -274,10 +295,44 @@ def _replace_container_indexing_policy(definition, container_properties, desired
 
     cosmos_database.replace_container(
         container=definition['container_name'],
-        partition_key=PartitionKey(path=definition['partition_key_path']),
+        # PartitionKey(path=...) defaults to version 2, changing legacy immutable keys.
+        partition_key=copy.deepcopy(dict(partition_key)),
         indexing_policy=desired_policy,
         **replace_kwargs,
     )
+
+
+def _indexing_failure_details(exc):
+    if isinstance(exc, ValueError):
+        code = 'invalid_partition_key_definition'
+    elif getattr(exc, 'status_code', None) == 400 and 'partition key cannot be changed' in str(exc).lower():
+        code = 'partition_key_change_rejected'
+    elif getattr(exc, 'status_code', None) in (401, 403):
+        code = 'indexing_access_denied'
+    elif _is_precondition_failed_error(exc):
+        code = 'indexing_conflict'
+    else:
+        code = 'indexing_policy_failed'
+    return code, COSMOS_INDEXING_FAILURE_MESSAGES[code]
+
+
+def sanitize_cosmos_indexing_result(result):
+    """Keep historical indexing errors safe when older maintenance state is returned."""
+    sanitized = copy.deepcopy(result)
+    if not isinstance(sanitized, dict):
+        return None
+    for container in sanitized.get('containers') or []:
+        if isinstance(container, dict) and container.get('status') == 'failed':
+            code = container.get('error_code')
+            if code not in COSMOS_INDEXING_FAILURE_MESSAGES:
+                code = (
+                    'partition_key_change_rejected'
+                    if 'partition key cannot be changed' in str(container.get('error', '')).lower()
+                    else 'indexing_policy_failed'
+                )
+            container['error_code'] = code
+            container['error'] = COSMOS_INDEXING_FAILURE_MESSAGES[code]
+    return sanitized
 
 
 def _evaluate_single_indexing_policy(definition, apply_changes=False):
@@ -369,6 +424,7 @@ def run_cosmos_indexing_policy_maintenance(apply_changes=False):
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
+            error_code, error_message = _indexing_failure_details(exc)
             results.append({
                 'container_name': definition.get('container_name'),
                 'partition_key_path': definition.get('partition_key_path'),
@@ -377,7 +433,8 @@ def run_cosmos_indexing_policy_maintenance(apply_changes=False):
                 'apply_requested': bool(apply_changes),
                 'applied': False,
                 'definition_version': COSMOS_INDEXING_POLICY_DEFINITION_VERSION,
-                'error': str(exc),
+                'error_code': error_code,
+                'error': error_message,
             })
 
     failed_count = sum(1 for result in results if result.get('status') == 'failed')

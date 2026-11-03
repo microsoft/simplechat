@@ -271,10 +271,16 @@ restarts the backfill from the beginning and asks for confirmation first.
 
 A recurring background job keeps Cosmos in the shape the application expects: it compares composite index policies against what the current code needs, reconciles the document access index by repairing fail-open projection records and running a bounded backfill batch, and clears stale operational cache documents. Newly upgraded deployments rely on it to converge, since the document access index read path falls back to slower source queries until backfill catches up.
 
-The card shows what maintenance last found. **Indexing policies** reports the mode, how many
+The card shows what maintenance last found. **Current index inspection** reports the mode, how many
 containers were checked, how many are missing expected composite indexes, and how many were
 updated or failed. **Stale cache cleanup** reports candidates, deletions, and failures, with a
 breakdown by category.
+
+As of **0.261.396**, **Last index apply result** separately retains the most recent attempt to
+apply indexes, including failed containers, safe failure explanations, successful submission
+counts, and a run reference for server logs. A read-only refresh can succeed even when a prior
+update failed; its zero failures do not mean the earlier update succeeded. The missing-index
+count is the number of containers missing one or more expected indexes, not individual indexes.
 
 Three actions run the Cosmos tasks on demand:
 
@@ -284,6 +290,19 @@ Three actions run the Cosmos tasks on demand:
 - **Dry run cleanup** lists stale cache documents without deleting anything.
 - **Delete stale cache docs** deletes one bounded batch of obsolete cache documents. It asks
   first.
+
+If an older release reports **“Document collection partition key cannot be changed”**, upgrade
+the application to **0.261.396** or later, then retry **Apply missing indexes**. Earlier index
+maintenance could accidentally submit the SDK's default version-2 partition-key definition
+for an existing legacy container. The fixed code preserves the container's actual definition,
+including an omitted version, and only adds the missing indexes. No database recreation,
+data migration, new permissions, or deployment-script changes are required for this failure.
+Other errors, such as denied access, still require their own resolution.
+
+Deploy the patched application to the web workers and scheduler. Upgrading does not enable
+automatic index application: existing maintenance and apply settings still govern scheduled
+writes. Refreshing status never retries writes. When only some submissions fail, successful
+submissions remain in place; a retry adds only what is still missing.
 
 Both switches below default to on and should stay on. Turning off the scheduler stops repair and backfill from converging at all. Turning off the startup pass only delays convergence to the next scheduled run, which is a reasonable trade when application start time matters more than picking up new index policies immediately after a deployment.
 
