@@ -1784,7 +1784,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         </div>
                     )}
 
-                    <ActionRecoveryNotice conversationId={activeConversationId} hasAgent={Boolean(options.agentSelection)}
+                    <ActionRecoveryNotice conversationId={activeConversationId}
                         agentSelection={options.agentSelection} />
                     <ComposerEditor
                         publicWorkspaceSelection={publicWorkspaceSelection}
