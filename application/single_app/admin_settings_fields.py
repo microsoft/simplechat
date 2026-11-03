@@ -5990,7 +5990,7 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "enable_key_vault_secret_storage",
             "type": "switch",
-            "group": "Vault connection",
+            "role": "capability",
             "label": "Store agent and action secrets in Key Vault",
             "help": (
                 "API keys and secrets attached to agents and actions are written to "
@@ -6009,13 +6009,18 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "key_vault_name",
             "type": "text",
-            "group": "Vault connection",
+            "group": {
+                "id": "vault-connection",
+                "label": "Vault connection",
+                "variant": "connection",
+            },
             "label": "Key Vault Name",
             "help": (
                 "The vault resource name only, not a URL. The endpoint suffix comes "
                 "from the AZURE_ENVIRONMENT App Service setting."
             ),
             "default": "",
+            "required": True,
             "max_length": 120,
             "placeholder": "my-simplechat-vault",
             "depends_on": {"key": "enable_key_vault_secret_storage", "equals": True},
@@ -6023,7 +6028,11 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "key_vault_identity",
             "type": "text",
-            "group": "Vault connection",
+            "group": {
+                "id": "vault-connection",
+                "label": "Vault connection",
+                "variant": "connection",
+            },
             "label": "Managed Identity Client ID",
             "help": (
                 "Client ID of the user-assigned managed identity. Leave blank to use "
@@ -6043,7 +6052,11 @@ ADMIN_SETTINGS_FIELDS = {
                 "vault_name": {"key": "key_vault_name"},
                 "client_id": {"key": "key_vault_identity"},
             },
-            "group": "Vault connection",
+            "group": {
+                "id": "vault-connection",
+                "label": "Vault connection",
+                "variant": "connection",
+            },
             "label": "Test Key Vault connection",
             "help": (
                 "Lists secrets, writes and reads a unique synthetic test secret, then "

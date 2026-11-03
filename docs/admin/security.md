@@ -116,6 +116,16 @@ Treat enabling this as one-way. Secrets saved afterwards are referenced by name,
 
 Assign **Key Vault Secrets Officer at the vault scope** to the application's selected managed identity. **Key Vault Secrets User is read-only**: it can read existing secrets but cannot save new credentials. Leave the managed identity client ID blank for the App Service system-assigned identity, or supply the client ID of the attached user-assigned identity. Permissions on the deploying administrator do not give the application access. A vault using legacy access policies needs **Get, List, Set, and Delete** secret permissions.
 
+**V2 configuration (0.261.396).** The storage switch and its one-way warning remain visible
+outside the collapsible connection group. Enabling storage reveals **Vault connection**;
+an empty vault name opens it automatically and is marked **Required**. Enter the resource
+name, not a vault URL, and leave **Managed Identity Client ID** blank for the system-assigned
+identity unless an attached user-assigned identity should be used. **Test Key Vault
+connection** uses these unsaved values, so you can check access before **Save changes**.
+A configured connection stays in an expandable summary when you return. Disabling storage
+hides its inputs without clearing the saved vault or identity; it does not migrate secrets
+out of the vault or make disabling safe for existing references.
+
 **Permission test (0.261.125).** Before saving a vault change, run **Test Key Vault connection** in either interface. The test uses the draft vault and identity, lists secret properties, writes a uniquely named `simplechat-connection-test-*` secret containing a synthetic value, reads it back, and deletes it. Success requires every stage, including cleanup; it never changes existing secrets or purges deleted secrets.
 
 **Microsoft 365 workflow key (0.261.302).** Saved Microsoft 365 workflow connections, the sign-ins that workflows run as, are encrypted with one key for the whole deployment, not one per user. SimpleChat keeps it in this vault as the secret `simplechat-m365-workflow-token-key` and creates it itself: the first time anyone connects for workflows, and on any settings save while Key Vault storage is on. There is nothing to generate by hand. Creating it needs the same Secrets Officer access as other secrets; if that is missing, the save reports it beside the Key Vault settings and users see that workflow connections are not ready. Do not delete the secret or its older versions: each saved connection can only be read with the version that encrypted it, so deleting it forces every user to reconnect. The optional `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME` app setting chooses a different secret name.

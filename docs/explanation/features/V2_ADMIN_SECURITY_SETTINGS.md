@@ -13,6 +13,8 @@ and closes a secret exposure in the V2 settings endpoint.
 
 **Implemented in version:** 0.261.063
 
+**Updated in version:** 0.261.396 (`application/single_app/config.py`).
+
 **Dependencies:** `admin_settings_nav.py` for section ids, the existing
 `/api/admin/settings/test_connection` and `/api/admin/settings/key-vault/secret-reminders`
 endpoints, and the `ADMIN_SETTINGS_SECRET_FIELDS` redaction helpers in
@@ -88,6 +90,23 @@ keys change with configuration:
 `evaluateSectionStatus` in `adminFields.ts` reduces that to one of three words, reading
 unsaved edits in preference to stored values so the pill tracks the draft.
 
+### Key Vault configuration
+
+Since 0.261.396, the storage switch declares `role: capability` and sits outside
+**Vault connection**, keeping both the switch and its one-way warning reachable while
+storage is off. The existing vault-name, optional identity and connection-test fields
+share a `connection` group. Enabling storage mounts that group, and an empty vault name
+opens it automatically. The name is marked as required for configuration; a blank identity
+still means the App Service system-assigned identity.
+
+The test posts the unsaved vault and identity to
+`POST /api/v2/admin/settings/test-connection`. **Save changes** sends only the draft to
+`PATCH /api/v2/admin/settings`. Neither operation requires the classic settings page.
+Disabling storage hides the dependent controls without clearing their saved values or
+changing existing secret references. See the
+[visibility fix](../fixes/V2_KEY_VAULT_CONFIGURATION_VISIBILITY_FIX.md) for the root cause
+and regression coverage.
+
 ### App role registry
 
 `admin_app_roles.py` declares each role requirement with the Entra role value, the section
@@ -142,7 +161,7 @@ what removes a secret.
 | --- | --- | --- |
 | `app-role-requirements-roster` | `AppRoleRoster.tsx` | none; registry in the settings payload |
 | `key-vault-secret-reminders` | `KeyVaultReminders.tsx` | `/api/admin/settings/key-vault/secret-reminders` |
-| `connection-test` | `ConnectionTest.tsx` | `/api/admin/settings/test_connection` |
+| `connection-test` | `ConnectionTest.tsx` | `/api/v2/admin/settings/test-connection` (shared classic dispatcher) |
 | `front-door-redirect-preview` | `FrontDoorRedirectPreview.tsx` | none; derived from the draft |
 
 `connection-test` fields carry a `test_type`, and the component builds the payload shape
@@ -204,6 +223,8 @@ application/v2_ui/src/
 | `test_v2_admin_settings_secret_redaction.py` | The endpoint redacts, resolves and re-redacts; the API list covers every known credential; API-only keys stay out of the form list |
 | `test_v2_admin_capability_placement.py` | Neither Appearance nor Security receives a guessed row; relocations stay declared; V2-only fields are documented |
 | `test_v2_admin_field_renderer_coverage.py` | Every field type and named component has a renderer branch |
+| `test_v2_admin_key_vault_configuration.py` | Reachable capability and connection metadata, vault/identity normalization, partial updates, and credential redaction |
+| `ui_tests/test_v2_admin_key_vault_configuration.py` | Disabled and enabled states, draft connection tests, system/user identity saves, reload, search, errors, and desktop/mobile layouts |
 | `test_docs_app_surface_coverage.py` | Every capability toggle is documented or justified as exempt |
 
 Run them together:

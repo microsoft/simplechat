@@ -1,8 +1,9 @@
 # admin_diagnostics.py
 """
 Classic/V2 admin diagnostic fixtures using real templates, schemas, and local assets.
-Version: 0.261.125
+Version: 0.261.396
 Implemented in: 0.261.125
+Key Vault section selection updated in: 0.261.396
 
 All API outcomes are synthetic. The shared Azure Playwright fixture authenticates
 to an existing workspace; no application settings or Azure secrets are changed.
@@ -17,8 +18,6 @@ from playwright.sync_api import expect
 
 from classic_ai_connections_admin import ClassicAIConnectionsFixture
 from v2_admin_settings import AdminSettingsFixture, ORIGIN, REPO_ROOT
-from test_support.app_stubs import import_app_module
-from test_support.nav import ADMIN_NAV
 
 
 TEMPLATES = REPO_ROOT / "application" / "single_app" / "templates"
@@ -166,25 +165,18 @@ class ClassicAdminDiagnosticsFixture(ProbeBoundary, ClassicAIConnectionsFixture)
 
 class V2KeyVaultFixture(ProbeBoundary, AdminSettingsFixture):
     def __init__(self, page):
-        super().__init__(page)
+        super().__init__(page, sections={"security": ("keyvault-section",)})
         self.configure_probe()
-        fields = import_app_module("admin_settings_fields")
-        group = copy.deepcopy(next(
-            group for group in ADMIN_NAV if any(tab["id"] == "secrets" for tab in group["tabs"])
-        ))
-        tab = next(tab for tab in group["tabs"] if tab["id"] == "secrets")
-        tab["sections"] = [section for section in tab["sections"] if section["id"] == "keyvault-section"]
-        group["tabs"] = [tab]
-        self.schema = {"keyvault-section": [
-            field for field in fields.get_admin_settings_fields()["keyvault-section"]
-            if field.get("group") == "Vault connection"
-        ]}
-        self.settings = {
+        connection_keys = {"enable_key_vault_secret_storage", "key_vault_name", "key_vault_identity"}
+        self.schema["keyvault-section"] = [
+            field for field in self.schema["keyvault-section"]
+            if field.get("key") in connection_keys or field.get("test_type") == "key_vault"
+        ]
+        self.settings.update({
             "enable_key_vault_secret_storage": True,
             "key_vault_name": "saved-vault",
             "key_vault_identity": "",
-        }
-        self.payload.update({"admin_nav": [group], "field_schema": self.schema, "settings": self.settings})
+        })
 
     def _route(self, route):
         if (
@@ -196,7 +188,6 @@ class V2KeyVaultFixture(ProbeBoundary, AdminSettingsFixture):
             super()._route(route)
 
     def open(self):
-        self.page.goto(f"{ORIGIN}/v2/admin", wait_until="networkidle")
-        expect(self.page.get_by_role("heading", name="Key Vault", exact=True)).to_be_visible()
+        super().open(ready_region="Key Vault")
         self.page.get_by_role("button", name=re.compile(r"Vault connection")).click()
         expect(self.page.get_by_label("Key Vault Name", exact=True)).to_be_visible()
