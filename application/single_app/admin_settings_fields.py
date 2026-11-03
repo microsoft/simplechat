@@ -10039,6 +10039,8 @@ _DELEGATED_NORMALIZERS = {
     ),
     "rate_limit_message": lambda value, field: normalize_rate_limit_message(value),
     "admin_review_ai_guidance": lambda value, field: normalize_admin_review_guidance(value),
+    # This component builds an editable text setting, not a separately persisted resource.
+    "speech_service_resource_id": lambda value, field: _normalize_text(value, field),
     # Declared as a component field, so it never reaches the type-driven
     # normalization below and would otherwise be written through unvalidated.
     "agents_page_promoted_popular_agents": lambda value, field: (
