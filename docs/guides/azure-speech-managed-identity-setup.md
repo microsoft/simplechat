@@ -248,6 +248,14 @@ az role assignment list \
 
 ### Step 3: Configure Admin Settings
 
+In V2, open **Knowledge > AI Voice Conversations > Speech resource**. Enter the
+Subscription ID, Resource Group, and Resource Name, then use **Build**, or paste
+the full **Speech Resource ID**. Starting with **0.261.397**, **Save changes**
+persists that ID with the rest of the main settings draft. A rejected save keeps
+the draft on screen; resolve the reported error and retry rather than discarding
+other unsaved settings. Saving the ID does not verify Azure permissions or prove
+that synthesis succeeds.
+
 In the Admin Settings → Search & Extract → Multimedia Support section:
 
 - Use the **Setup Guide** button on the **AI Voice Conversations** card if you want an in-app walkthrough while filling the Speech fields.
