@@ -3080,6 +3080,9 @@ function renderCosmosMaintenanceStatus(statusPayload) {
     setElementText('cosmos-indexing-policy-updated-count', formatNumber(indexingPolicy.updated_container_count || 0));
     setElementText('cosmos-indexing-policy-failed-count', formatNumber(indexingPolicy.failed_container_count || 0));
     setElementText('cosmos-indexing-policy-last-evaluated', indexingPolicy.evaluated_at || 'Not loaded');
+    if (Object.prototype.hasOwnProperty.call(statusPayload || {}, 'last_cosmos_indexing_policy_apply')) {
+        renderLastCosmosIndexApply(statusPayload.last_cosmos_indexing_policy_apply);
+    }
 
     setDocumentAccessIndexBadge(
         'stale-cache-cleanup-status',
@@ -3093,6 +3096,63 @@ function renderCosmosMaintenanceStatus(statusPayload) {
     setElementText('stale-cache-cleanup-more-candidates', cleanup.has_more_candidates ? 'Yes' : 'No');
     setElementText('stale-cache-cleanup-categories', formatStaleCacheCleanupCategories(cleanup.categories));
     setElementText('stale-cache-cleanup-last-evaluated', cleanup.evaluated_at || 'Not run yet');
+}
+
+function getCosmosIndexingFailureReason(code) {
+    switch (code) {
+        case 'partition_key_change_rejected':
+            return 'Cosmos rejected a partition-key change. Upgrade to the patched application and retry applying indexes.';
+        case 'invalid_partition_key_definition':
+            return 'The existing partition-key definition could not be verified. No update was submitted.';
+        case 'indexing_access_denied':
+            return 'Cosmos denied access. Ask an administrator to verify the application identity has the required access.';
+        case 'indexing_conflict':
+            return 'The container changed during the update. Refresh status and retry applying indexes.';
+        default:
+            return 'Unable to process the indexing policy. Check the server logs before retrying.';
+    }
+}
+
+function renderLastCosmosIndexApply(lastApply) {
+    const element = document.getElementById('cosmos-indexing-last-apply');
+    if (!element) {
+        return;
+    }
+    element.replaceChildren();
+    const result = lastApply?.results;
+    element.classList.toggle('d-none', !result);
+    if (!result) {
+        return;
+    }
+    const failed = Number(result.failed_container_count || 0);
+    element.className = `alert alert-${failed ? 'danger' : 'success'} small mb-3`;
+    const heading = document.createElement('p');
+    heading.className = 'fw-semibold mb-2';
+    heading.textContent = `Last index apply result: ${formatNumber(failed)} failed container(s); updates submitted for ${formatNumber(result.updated_container_count || 0)}.`;
+    element.appendChild(heading);
+    for (const container of (Array.isArray(result.containers) ? result.containers : [])) {
+        if (container.status === 'failed') {
+            const detail = document.createElement('p');
+            detail.className = 'mb-2 text-break';
+            detail.textContent = `${container.container_name || 'Unknown container'}: ${getCosmosIndexingFailureReason(container.error_code)}`;
+            element.appendChild(detail);
+        }
+    }
+    const context = document.createElement('p');
+    context.className = 'mb-0 text-break';
+    context.textContent = `${lastApply.run_id ? `Run reference: ${lastApply.run_id}. ` : ''}Successful submissions were not rolled back. Refresh status inspects current policies; it does not retry failed updates.`;
+    element.appendChild(context);
+}
+
+function getCosmosMaintenanceFailureMessage(result) {
+    const indexing = getCosmosIndexingPolicyStatusFromRunResult(result);
+    if (indexing?.success === false || Number(indexing?.failed_container_count || 0) > 0) {
+        return 'Index maintenance failed for one or more containers. Review the last index apply result.';
+    }
+    if (indexing?.success === true) {
+        return 'Index maintenance succeeded, but another maintenance step failed. Check the server logs for this run.';
+    }
+    return 'Cosmos maintenance could not be completed. Refresh status and check the server logs before retrying.';
 }
 
 function getStaleCacheCleanupStatusFromRunResult(result) {
@@ -3504,9 +3564,12 @@ async function runCosmosIndexingPolicyApply(options = {}) {
         const indexingResult = getCosmosIndexingPolicyStatusFromRunResult(data);
         if (indexingResult) {
             renderCosmosMaintenanceStatus({ cosmos_indexing_policies: indexingResult });
+            renderLastCosmosIndexApply({ run_id: data.run_id, results: indexingResult });
         }
         if (!response.ok || !data.success) {
-            throw new Error(data.error || 'Cosmos indexing policy update failed.');
+            setCosmosMaintenanceMessage(getCosmosMaintenanceFailureMessage(data), 'danger');
+            showToast(getCosmosMaintenanceFailureMessage(data), 'danger');
+            return;
         }
 
         const updated = formatNumber(indexingResult?.updated_container_count || 0);
@@ -3523,8 +3586,9 @@ async function runCosmosIndexingPolicyApply(options = {}) {
         }
         await loadCosmosMaintenanceStatus(null, { showLoading: false });
     } catch (error) {
-        setCosmosMaintenanceMessage(error.message || 'Cosmos indexing policy update failed.', 'danger');
-        showToast(error.message || 'Cosmos indexing policy update failed.', 'danger');
+        const message = 'Cosmos maintenance could not be completed. Refresh status and check the server logs before retrying.';
+        setCosmosMaintenanceMessage(message, 'danger');
+        showToast(message, 'danger');
     } finally {
         if (triggerButton) {
             setButtonBusy(triggerButton, false);

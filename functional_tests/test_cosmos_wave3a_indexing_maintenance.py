@@ -2,13 +2,14 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 3A indexing policy maintenance.
-Version: 0.261.284
+Version: 0.261.396
 Implemented in: 0.250.008
 Maintenance cleanup integration updated in: 0.250.038
 Manual admin apply override updated in: 0.250.039
 Data Management history pagination index updated in: 0.250.103
 CodeQL remediation version alignment updated in: 0.250.104
 Activity Logs keyset index updated in: 0.261.284
+Partition-key preservation and durable apply diagnostics updated in: 0.261.396
 
 This test ensures expected Cosmos indexing policies can be compared, safely
 merged, and invoked through the app maintenance framework without live Azure
@@ -17,10 +18,17 @@ resources.
 
 import copy
 import importlib
+import json
 import os
 import sys
 import types
 from contextlib import contextmanager
+from unittest.mock import patch
+
+from azure.core import MatchConditions
+from azure.cosmos import PartitionKey
+from azure.cosmos._cosmos_responses import CosmosDict
+from azure.cosmos.database import DatabaseProxy
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -42,6 +50,14 @@ class FakeCosmosContainer:
         self._etag_counter = 0
         self.container_properties = {
             "id": container_name,
+            "partitionKey": {
+                "paths": [{
+                    "activity_logs": "/user_id",
+                    "messages": "/conversation_id",
+                    "collaboration_messages": "/conversation_id",
+                }.get(container_name, "/id")],
+                "kind": "Hash",
+            },
             "_etag": f"{container_name}-etag-0",
             "indexingPolicy": copy.deepcopy(indexing_policy or {
                 "indexingMode": "consistent",
@@ -63,7 +79,7 @@ class FakeCosmosContainer:
         return item
 
     def read(self):
-        return copy.deepcopy(self.container_properties)
+        return CosmosDict(copy.deepcopy(self.container_properties), response_headers={})
 
     def replace_properties(self, kwargs):
         self._etag_counter += 1
@@ -87,18 +103,18 @@ class FakeCosmosContainer:
     def read_item(self, item, partition_key):
         if item not in self.items:
             raise FakeCosmosError(404, f"Missing item {item}")
-        return copy.deepcopy(self.items[item])
+        return CosmosDict(copy.deepcopy(self.items[item]), response_headers={})
 
     def create_item(self, body):
         item_id = body["id"]
         if item_id in self.items:
             raise FakeCosmosError(409, f"Duplicate item {item_id}")
         self.items[item_id] = self._copy_with_new_etag(body)
-        return copy.deepcopy(self.items[item_id])
+        return CosmosDict(copy.deepcopy(self.items[item_id]), response_headers={})
 
     def upsert_item(self, body):
         self.items[body["id"]] = self._copy_with_new_etag(body)
-        return copy.deepcopy(self.items[body["id"]])
+        return CosmosDict(copy.deepcopy(self.items[body["id"]]), response_headers={})
 
     def replace_item(self, item, body, etag=None, match_condition=None, **kwargs):
         if item not in self.items:
@@ -106,7 +122,7 @@ class FakeCosmosContainer:
         if etag and self.items[item].get("_etag") != etag:
             raise FakeCosmosError(412, f"ETag mismatch for item {item}")
         self.items[item] = self._copy_with_new_etag(body)
-        return copy.deepcopy(self.items[item])
+        return CosmosDict(copy.deepcopy(self.items[item]), response_headers={})
 
     def delete_item(self, item, partition_key, **kwargs):
         if item not in self.items:
@@ -141,6 +157,12 @@ class FakeCosmosDatabase:
     def replace_container(self, **kwargs):
         self.replace_calls.append(copy.deepcopy(kwargs))
         container_name = kwargs["container"]
+        properties = self.containers[container_name].container_properties
+        if kwargs["partition_key"] != properties["partitionKey"]:
+            raise FakeCosmosError(400, "Document collection partition key cannot be changed.")
+        if kwargs.get("etag") != properties["_etag"]:
+            raise FakeCosmosError(412, "Container changed.")
+        assert kwargs["match_condition"] == MatchConditions.IfNotModified
         self.containers[container_name].replace_properties(kwargs)
         return self.containers[container_name]
 
@@ -193,6 +215,7 @@ def _load_wave3_modules():
         "functions_document_access_index",
         "functions_app_maintenance",
         "functions_settings",
+        "functions_conversation_cache",
     ]
     for module_name in module_names:
         if module_name in sys.modules:
@@ -358,12 +381,187 @@ def test_app_maintenance_manual_indexing_apply_override():
     assert backfill_step["run_requested"] is False
 
 
+def test_partition_key_serialization_uses_actual_definition():
+    """Run the real SDK replacement method offline, not just a permissive database fake."""
+    definitions = [
+        {"paths": ["/id"], "kind": "Hash"},
+        {"paths": ["/id"], "kind": "Hash", "version": 1},
+        {"paths": ["/id"], "kind": "Hash", "version": 2},
+        {"paths": ["/tenant", "/id"], "kind": "MultiHash", "version": 2},
+    ]
+    assert dict(PartitionKey(path="/id")) != definitions[0]
+    with _load_wave3_modules() as (indexing, _maintenance, _database, containers):
+        for partition_key in definitions:
+            captured = []
+            connection = types.SimpleNamespace(
+                ReplaceContainer=lambda link, collection, options, **kwargs: (
+                    captured.append(json.loads(json.dumps(collection))) or {"id": collection["id"]}
+                ),
+                _set_container_properties_cache=lambda *args: None,
+            )
+            sdk_database = DatabaseProxy(connection, "SimpleChat")
+            properties = containers["documents"].read()
+            properties["partitionKey"] = copy.deepcopy(partition_key)
+            definition = next(
+                value for value in indexing.COSMOS_INDEXING_POLICY_DEFINITIONS
+                if value["container_name"] == "documents"
+            )
+            with patch.object(indexing, "cosmos_database", sdk_database):
+                indexing._replace_container_indexing_policy(definition, properties, properties["indexingPolicy"])
+            assert captured[0]["partitionKey"] == partition_key
+            assert properties["partitionKey"] == partition_key
+
+
+def test_invalid_partition_key_never_submits_a_replacement():
+    """Fail closed instead of guessing immutable metadata."""
+    with _load_wave3_modules() as (indexing, _maintenance, database, containers):
+        definition = indexing.COSMOS_INDEXING_POLICY_DEFINITIONS[0]
+        for partition_key in (None, {}, {"paths": [], "kind": "Hash"}, {"paths": [42], "kind": "Hash"}):
+            containers["activity_logs"].container_properties["partitionKey"] = partition_key
+            with patch.object(indexing, "COSMOS_INDEXING_POLICY_DEFINITIONS", [definition]):
+                result = indexing.run_cosmos_indexing_policy_maintenance(apply_changes=True)
+            assert result["success"] is False
+            assert result["containers"][0]["error_code"] == "invalid_partition_key_definition"
+        assert database.replace_calls == []
+
+
+def test_conflict_retry_preserves_reread_metadata_and_indexes():
+    """A competing update must not be overwritten using the original snapshot."""
+    with _load_wave3_modules() as (indexing, _maintenance, database, containers):
+        definition = indexing.COSMOS_INDEXING_POLICY_DEFINITIONS[0]
+        original_replace = database.replace_container
+        attempts = []
+
+        def conflict_once(**kwargs):
+            attempts.append(kwargs)
+            if len(attempts) == 1:
+                properties = containers["activity_logs"].container_properties
+                properties["_etag"] = "concurrent-etag"
+                properties["indexingPolicy"]["compositeIndexes"].append([
+                    {"path": "/custom", "order": "ascending"},
+                    {"path": "/timestamp", "order": "descending"},
+                ])
+                raise FakeCosmosError(412, "Container changed.")
+            return original_replace(**kwargs)
+
+        with patch.object(database, "replace_container", side_effect=conflict_once):
+            result = indexing._evaluate_single_indexing_policy(definition, apply_changes=True)
+        second = indexing._evaluate_single_indexing_policy(definition, apply_changes=True)
+        assert result["applied"] is True
+        assert attempts[1]["etag"] == "concurrent-etag"
+        assert attempts[1]["partition_key"] == {"paths": ["/user_id"], "kind": "Hash"}
+        assert attempts[1]["indexing_policy"]["compositeIndexes"][0][0]["path"] == "/custom"
+        assert second["status"] == "aligned"
+        assert len(database.replace_calls) == 1
+
+
+def test_failed_apply_survives_report_only_and_background_runs():
+    """A new read or unrelated maintenance run must not erase the last apply result."""
+    with _load_wave3_modules() as (indexing, maintenance, database, _containers):
+        original_replace = database.replace_container
+
+        def reject_one(**kwargs):
+            if kwargs["container"] == "documents":
+                raise FakeCosmosError(400, "Document collection partition key cannot be changed. SECRET_PROVIDER_PATH")
+            return original_replace(**kwargs)
+
+        with patch.object(database, "replace_container", side_effect=reject_one):
+            result = maintenance.run_app_maintenance_once(
+                settings={}, apply_indexing_policies=True, run_document_access_backfill=False,
+            )
+        report_run = maintenance.run_app_maintenance_once(settings={}, apply_indexing_policies=False)
+        status = maintenance.get_app_maintenance_status(settings={})
+        assert result["success"] is False
+        assert report_run["success"] is True
+        assert status["cosmos_indexing_policies"]["failed_container_count"] == 0
+        last_apply = status["last_cosmos_indexing_policy_apply"]
+        assert last_apply["run_id"] == result["run_id"]
+        assert last_apply["results"]["failed_container_count"] == 1
+        assert last_apply["results"]["updated_container_count"] > 0
+        assert "SECRET_PROVIDER_PATH" not in json.dumps(result)
+        assert "SECRET_PROVIDER_PATH" not in json.dumps(status)
+        retry = maintenance.run_app_maintenance_once(settings={}, apply_indexing_policies=True)
+        retry_status = maintenance.get_app_maintenance_status(settings={})
+        assert retry["success"] is True
+        assert retry_status["last_cosmos_indexing_policy_apply"]["run_id"] == retry["run_id"]
+        assert retry_status["last_cosmos_indexing_policy_apply"]["results"]["failed_container_count"] == 0
+
+
+def test_historical_indexing_errors_are_sanitized():
+    """Old persisted SDK errors never become browser diagnostics after upgrading."""
+    with _load_wave3_modules() as (indexing, _maintenance, _database, _containers):
+        result = indexing.sanitize_cosmos_indexing_result({
+            "containers": [{
+                "status": "failed",
+                "error": "Document collection partition key cannot be changed. SECRET_PROVIDER_PATH",
+            }],
+        })
+    assert result["containers"][0]["error_code"] == "partition_key_change_rejected"
+    assert "SECRET_PROVIDER_PATH" not in json.dumps(result)
+
+
+def test_historical_apply_state_is_safe_on_status_and_failed_run():
+    """Upgrade-era raw errors stay server-side even if a later maintenance task raises."""
+    with _load_wave3_modules() as (_indexing, maintenance, _database, _containers):
+        state = {
+            "id": maintenance.APP_MAINTENANCE_STATE_DOC_ID,
+            "last_run_id": "old-apply-run",
+            "last_error": "SECRET_PROVIDER_PATH",
+            "last_steps": [{
+                "name": "cosmos_indexing_policy_maintenance", "apply_requested": True,
+                "results": {
+                    "failed_container_count": 1,
+                    "containers": [{
+                        "container_name": "documents", "status": "failed",
+                        "error": "Document collection partition key cannot be changed. SECRET_PROVIDER_PATH",
+                    }],
+                },
+            }],
+        }
+        saved = maintenance.cosmos_settings_container.upsert_item(state)
+        assert isinstance(saved, CosmosDict)
+        status = maintenance.get_app_maintenance_status(settings={})
+        assert status["last_cosmos_indexing_policy_apply"]["run_id"] == "old-apply-run"
+        assert "SECRET_PROVIDER_PATH" not in json.dumps(status)
+        with patch.object(maintenance, "initialize_cache_version_documents", side_effect=RuntimeError("SECRET_PROVIDER_PATH")):
+            result = maintenance.run_app_maintenance_once(settings={})
+        assert result["success"] is False
+        assert "SECRET_PROVIDER_PATH" not in json.dumps(result)
+
+
+def test_indexing_service_failures_are_safe_and_logged():
+    """Keep useful server diagnostics without exposing provider messages to clients."""
+    for status_code, expected_code in (
+        (403, "indexing_access_denied"), (412, "indexing_conflict"), (500, "indexing_policy_failed"),
+    ):
+        with _load_wave3_modules() as (indexing, _maintenance, database, _containers):
+            with (
+                patch.object(database, "replace_container", side_effect=FakeCosmosError(status_code, "SECRET_PROVIDER_PATH")),
+                patch.object(indexing, "log_event") as log_event,
+            ):
+                result = indexing.run_cosmos_indexing_policy_maintenance(apply_changes=True)
+            assert result["success"] is False
+            assert all(container["error_code"] == expected_code for container in result["containers"])
+            assert "SECRET_PROVIDER_PATH" not in json.dumps(result)
+            assert any(
+                call.kwargs.get("extra", {}).get("error") == "SECRET_PROVIDER_PATH"
+                for call in log_event.call_args_list
+            )
+
+
 if __name__ == "__main__":
     tests = [
         test_indexing_policy_report_is_read_only,
         test_indexing_policy_apply_merges_without_removing_existing_paths,
         test_app_maintenance_runs_indexing_policy_step,
         test_app_maintenance_manual_indexing_apply_override,
+        test_partition_key_serialization_uses_actual_definition,
+        test_invalid_partition_key_never_submits_a_replacement,
+        test_conflict_retry_preserves_reread_metadata_and_indexes,
+        test_failed_apply_survives_report_only_and_background_runs,
+        test_historical_indexing_errors_are_sanitized,
+        test_historical_apply_state_is_safe_on_status_and_failed_run,
+        test_indexing_service_failures_are_safe_and_logged,
     ]
     results = []
     for test in tests:

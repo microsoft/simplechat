@@ -112,12 +112,24 @@ export interface ConversationCacheStatus {
 }
 
 export interface CosmosIndexingPolicyStatus {
+    success?: boolean;
     mode?: string;
     container_count?: number;
     containers_missing_expected_indexes?: number;
     updated_container_count?: number;
     failed_container_count?: number;
     evaluated_at?: string | null;
+    containers?: {
+        container_name?: string;
+        status?: string;
+        error_code?: string;
+    }[];
+}
+
+export interface CosmosIndexApplyResult {
+    run_id?: string;
+    completed_at?: string;
+    results?: CosmosIndexingPolicyStatus | null;
 }
 
 export interface StaleCacheCleanupCategory {
@@ -143,15 +155,18 @@ export interface AppMaintenanceStatus {
     document_access_index_backfill?: DocumentAccessIndexStatus;
     conversation_cache?: ConversationCacheStatus;
     cosmos_indexing_policies?: CosmosIndexingPolicyStatus;
+    last_cosmos_indexing_policy_apply?: CosmosIndexApplyResult | null;
     stale_cache_cleanup?: StaleCacheCleanupStatus;
 }
 
 export interface AppMaintenanceRunStep {
     name?: string;
+    status?: string;
     results?: Record<string, unknown> | null;
 }
 
 export interface AppMaintenanceRunResult {
+    run_id?: string;
     success?: boolean;
     error?: string;
     steps?: AppMaintenanceRunStep[];
@@ -328,8 +343,34 @@ export function findRunStep(
     result: AppMaintenanceRunResult | null | undefined,
     name: string,
 ): Record<string, unknown> | null {
-    const step = (result?.steps ?? []).find((candidate) => candidate?.name === name);
+    const step = (Array.isArray(result?.steps) ? result.steps : []).find((candidate) => candidate?.name === name);
     return step?.results && typeof step.results === 'object' ? step.results : null;
+}
+
+export function describeMaintenanceFailure(result: AppMaintenanceRunResult | null): string {
+    const indexing = findRunStep(result, 'cosmos_indexing_policy_maintenance') as CosmosIndexingPolicyStatus | null;
+    if (indexing?.success === false || Number(indexing?.failed_container_count || 0) > 0) {
+        return 'Index maintenance failed for one or more containers. Review the last index apply result below.';
+    }
+    if (indexing?.success === true) {
+        return 'Index maintenance succeeded, but another maintenance step failed. Check the server logs for this run.';
+    }
+    return 'Cosmos maintenance could not be completed. Refresh status and check the server logs before retrying.';
+}
+
+export function indexingFailureReason(code: string | undefined): string {
+    switch (code) {
+        case 'partition_key_change_rejected':
+            return 'Cosmos rejected a partition-key change. Upgrade to the patched application and retry applying indexes.';
+        case 'invalid_partition_key_definition':
+            return 'The existing partition-key definition could not be verified. No update was submitted.';
+        case 'indexing_access_denied':
+            return 'Cosmos denied access. Ask an administrator to verify the application identity has the required access.';
+        case 'indexing_conflict':
+            return 'The container changed during the update. Refresh status and retry applying indexes.';
+        default:
+            return 'Unable to process the indexing policy. Check the server logs before retrying.';
+    }
 }
 
 /** The DAI status a backfill run returned, which it nests under `current_status`. */
