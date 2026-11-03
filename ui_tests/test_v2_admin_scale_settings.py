@@ -1,8 +1,9 @@
 # test_v2_admin_scale_settings.py
 """
 Browser coverage for the V2 Admin Settings Scale group.
-Version: 0.261.274
+Version: 0.261.396
 Implemented in: 0.261.274
+Durable indexing failure diagnostics updated in: 0.261.396
 
 Exercise the built application with the real field schema and in-memory admin
 APIs. Check that the Redis connection reads the way the server-rendered page does
@@ -19,6 +20,7 @@ dark, phone and desktop, at large text, without overflow or console errors.
 import copy
 import re
 import sys
+from pathlib import Path
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -321,10 +323,18 @@ class ScaleApi:
             current["state"]["status"] = "completed"
             steps.append({"name": "document_access_index_backfill", "results": {"current_status": current}})
         if body.get("apply_cosmos_indexing_policies"):
+            result = {
+                **MAINTENANCE_STATUS["cosmos_indexing_policies"],
+                "mode": "apply", "success": True,
+                "updated_container_count": 2, "containers_missing_expected_indexes": 0,
+            }
             steps.append({
                 "name": "cosmos_indexing_policy_maintenance",
-                "results": {**MAINTENANCE_STATUS["cosmos_indexing_policies"], "updated_container_count": 2},
+                "results": result,
             })
+            self.maintenance["last_cosmos_indexing_policy_apply"] = {
+                "run_id": "successful-apply", "results": result,
+            }
         if body.get("run_stale_cache_cleanup"):
             applied = bool(body.get("apply_stale_cache_cleanup"))
             steps.append({
@@ -586,7 +596,7 @@ def test_maintenance_changes_ask_first_and_send_the_v1_requests(scale_ui):
     api = scale_ui.api
     maintenance = _region(page, "Cosmos Maintenance")
     maintenance.scroll_into_view_if_needed()
-    expect(_readout(maintenance, "Missing expected indexes")).to_have_text("2")
+    expect(_readout(maintenance, "Containers missing expected indexes")).to_have_text("2")
 
     # A dry run changes nothing, so it runs at once.
     maintenance.get_by_role("button", name="Dry run cleanup").click()
@@ -615,6 +625,157 @@ def test_maintenance_changes_ask_first_and_send_the_v1_requests(scale_ui):
         "run_stale_cache_cleanup": False,
     }
     expect(maintenance).to_contain_text("Index updates were submitted for 2 container(s).")
+
+
+@pytest.mark.parametrize("width", [390, 1920])
+def test_maintenance_apply_failure_survives_refresh_and_successful_retry(scale_ui, width):
+    """The failed run remains visible beside a successful read-only inspection."""
+    api = scale_ui.api
+    result = {
+        "success": False, "mode": "apply", "failed_container_count": 1,
+        "updated_container_count": 1, "container_count": 2,
+        "containers": [{
+            "container_name": "documents", "status": "failed",
+            "error_code": "partition_key_change_rejected",
+            "error": "SECRET_PROVIDER_PATH <img src=x onerror=alert(1)>",
+        }],
+    }
+
+    def fail_apply(route):
+        api._record(route)
+        api.maintenance["last_cosmos_indexing_policy_apply"] = {
+            "run_id": "failed-apply-reference", "results": result,
+        }
+        route.fulfill(status=500, json={
+            "success": False, "run_id": "failed-apply-reference",
+            "error": "SECRET_PROVIDER_PATH",
+            "steps": [{"name": "cosmos_indexing_policy_maintenance", "status": "failed", "results": result}],
+        })
+
+    scale_ui.extra_routes[("POST", f"{SETTINGS_API}/app-maintenance/run")] = fail_apply
+    scale_ui.open(width=width, height=1080, ready_region="Redis Cache")
+    page = scale_ui.page
+    panel = _region(page, "Cosmos Maintenance")
+    panel.scroll_into_view_if_needed()
+    panel.get_by_role("button", name="Apply missing indexes").click()
+    page.get_by_role("dialog").get_by_role("button", name="Apply indexes").click()
+    last_apply = panel.get_by_test_id("last-index-apply-result")
+    expect(last_apply).to_contain_text("documents:")
+    expect(last_apply).to_contain_text("Cosmos rejected a partition-key change")
+    expect(last_apply).to_contain_text("failed-apply-reference")
+    expect(_readout(panel, "Failures")).to_have_text("0")
+    panel.get_by_role("button", name="Refresh status").click()
+    expect(last_apply).to_contain_text("failed for 1 container(s)")
+    expect(last_apply).to_contain_text("submitted for 1")
+    expect(panel).not_to_contain_text("SECRET_PROVIDER_PATH")
+    expect(panel.locator("img")).to_have_count(0)
+    dimensions = last_apply.evaluate("(element) => ({width: element.scrollWidth, available: element.clientWidth})")
+    assert dimensions["width"] <= dimensions["available"] + 1
+
+    scale_ui.extra_routes[("POST", f"{SETTINGS_API}/app-maintenance/run")] = api._maintenance_run
+    panel.get_by_role("button", name="Dry run cleanup").click()
+    expect(panel).to_contain_text("dry run found")
+    expect(last_apply).to_contain_text("failed-apply-reference")
+    panel.get_by_role("button", name="Apply missing indexes").click()
+    page.get_by_role("dialog").get_by_role("button", name="Apply indexes").click()
+    expect(last_apply).to_contain_text("successful-apply")
+    expect(last_apply).not_to_contain_text("failed-apply-reference")
+    scale_ui.errors[:] = [
+        error for error in scale_ui.errors
+        if error != "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+    ]
+
+
+@pytest.mark.parametrize("failure", ["non-json", "other-step", "refresh"])
+def test_maintenance_failure_messages_do_not_expose_provider_errors(scale_ui, failure):
+    """Transport, unrelated-step, and refresh failures never masquerade as index failures."""
+    api = scale_ui.api
+
+    def fail_run(route):
+        api._record(route)
+        if failure == "non-json":
+            route.fulfill(status=500, content_type="text/html", body="<h1>SECRET_PROVIDER_PATH</h1>")
+        else:
+            indexing = {"success": True, "failed_container_count": 0, "updated_container_count": 0}
+            api.maintenance["last_cosmos_indexing_policy_apply"] = {"run_id": "other-step-run", "results": indexing}
+            route.fulfill(status=500, json={
+                "success": False, "error": "SECRET_PROVIDER_PATH",
+                "steps": [{"name": "cosmos_indexing_policy_maintenance", "results": indexing}],
+            })
+
+    scale_ui.extra_routes[("POST", f"{SETTINGS_API}/app-maintenance/run")] = fail_run
+    scale_ui.open(width=1920, height=1080, ready_region="Redis Cache")
+    page = scale_ui.page
+    panel = _region(page, "Cosmos Maintenance")
+    panel.scroll_into_view_if_needed()
+    expect(_readout(panel, "Containers missing expected indexes")).to_have_text("2")
+    if failure == "refresh":
+        scale_ui.extra_routes[("GET", f"{SETTINGS_API}/app-maintenance/status")] = lambda route: route.fulfill(
+            status=500, json={"error": "Failed to load app maintenance status."},
+        )
+    panel.get_by_role("button", name="Apply missing indexes").click()
+    page.get_by_role("dialog").get_by_role("button", name="Apply indexes").click()
+    expected = "could not be completed" if failure == "non-json" else "another maintenance step failed"
+    expect(panel).to_contain_text(expected)
+    expect(panel).not_to_contain_text("SECRET_PROVIDER_PATH")
+    if failure == "refresh":
+        expect(panel.get_by_test_id("last-index-apply-result")).to_be_visible()
+        expect(panel).to_contain_text("Failed to load app maintenance status.")
+    scale_ui.errors[:] = [
+        error for error in scale_ui.errors
+        if error != "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+    ]
+
+
+def test_classic_maintenance_keeps_safe_apply_details_after_inspection(page):
+    """Execute the classic renderer with its real pane, including hostile error text."""
+    app = Path(__file__).resolve().parents[1] / "application" / "single_app"
+    template = (app / "templates" / "admin" / "_panes" / "cosmos.html").read_text(encoding="utf-8")
+    start = template.index('<div class="card p-3 mb-3" id="cosmos-maintenance-section"')
+    end = template.index('<div class="card p-3 mb-3" id="cosmos-throughput-section"', start)
+    markup = re.sub(r"\{\{.*?\}\}|\{%.*?%\}", "", template[start:end], flags=re.DOTALL)
+    page.set_content(markup)
+    source = (app / "static" / "js" / "admin" / "admin_settings.js").read_text(encoding="utf-8")
+    start = source.index("function setCosmosMaintenanceMessage(")
+    end = source.index("function getNormalizedDocumentAccessIndexStatus(", start)
+    page.add_script_tag(content="""
+        function formatNumber(value) { return String(value); }
+        function formatDocumentAccessIndexStatus(value) { return value; }
+        function getDocumentAccessIndexStatusVariant() { return 'secondary'; }
+        function setElementText(id, value) {
+            const element = document.getElementById(id);
+            if (element) element.textContent = value;
+        }
+        function setDocumentAccessIndexBadge(id, text) { setElementText(id, text); }
+    """ + source[start:end])
+    page.evaluate("""() => renderCosmosMaintenanceStatus({
+        cosmos_indexing_policies: {mode: 'report_only', failed_container_count: 0},
+        last_cosmos_indexing_policy_apply: {
+            run_id: 'classic-failed-run',
+            results: {failed_container_count: 1, updated_container_count: 1, containers: [{
+                container_name: '<img src=x onerror=alert(1)>',
+                status: 'failed', error_code: 'indexing_conflict', error: 'SECRET_PROVIDER_PATH'
+            }]}
+        }
+    })""")
+    details = page.locator("#cosmos-indexing-last-apply")
+    expect(details).to_contain_text("1 failed container(s)")
+    expect(details).to_contain_text("classic-failed-run")
+    expect(details).to_contain_text("Refresh status and retry applying indexes")
+    expect(details).not_to_contain_text("SECRET_PROVIDER_PATH")
+    expect(details.locator("img")).to_have_count(0)
+    expect(page.locator("#cosmos-indexing-policy-failed-count")).to_have_text("0")
+    page.evaluate("""() => renderCosmosMaintenanceStatus({
+        cosmos_indexing_policies: {mode: 'report_only', failed_container_count: 0}
+    })""")
+    expect(details).to_contain_text("classic-failed-run")
+    page.evaluate("""() => renderCosmosMaintenanceStatus({
+        last_cosmos_indexing_policy_apply: {
+            run_id: 'classic-successful-run', results: {failed_container_count: 0, updated_container_count: 1}
+        }
+    })""")
+    expect(details).to_contain_text("classic-successful-run")
+    expect(details).not_to_contain_text("classic-failed-run")
 
 
 def test_validate_access_checks_the_values_on_screen(scale_ui):
