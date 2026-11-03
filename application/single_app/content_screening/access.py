@@ -33,6 +33,7 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
+from document_source_selection import assert_document_in_source_scope
 from functools import wraps
 import hashlib
 from importlib import import_module
@@ -318,6 +319,8 @@ def _read_authorized_document(
         _authorize_document(document, user_id, group_id, public_workspace_id, metadata_only=metadata_only)
         if not metadata_only and SCREENING_FIELD in document:
             _require_release_proof(document, config.cosmos_content_screening_container)
+        if not metadata_only:
+            assert_document_in_source_scope(document, user_id)
         return dict(document)
     raise LookupError("Document not found or access denied.")
 
@@ -488,6 +491,7 @@ def assert_document_available(
             _malformed_source_authority("document_record_invalid")
         _require_available_metadata(document)
         _check_source_revision(document_or_id, document)
+        assert_document_in_source_scope(document, user_id)
     except (DocumentHeldError, ScreeningConflictError, LookupError, PermissionError) as error:
         if strict_source_authority_enabled():
             raise_source_authority_error(error)

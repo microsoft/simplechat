@@ -1371,6 +1371,7 @@ export interface ChatStreamEvent {
 
 /** Request body for POST /api/chat/stream. Field names verified against the Flask route. */
 export interface ChatStreamRequest {
+    document_source_selection?: import('./documentSourceSelection').DocumentSourceSelection;
     public_workspace_selection?: PublicWorkspaceSelection;
     message: string;
     conversation_id?: string | null;

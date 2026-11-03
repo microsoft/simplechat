@@ -371,7 +371,7 @@ def _build_replayed_document_context(original_metadata):
         if isinstance(item, dict) and item.get('kind') == 'conversation' and str(item.get('id') or '').strip()
     ]
 
-    return {
+    context = {
         'hybrid_search': bool(
             workspace_search.get('hybrid_search_preference')
             if 'hybrid_search_preference' in workspace_search
@@ -383,6 +383,8 @@ def _build_replayed_document_context(original_metadata):
         'selected_document_id': selected_document_ids[0] if selected_document_ids else None,
         'selected_document_ids': selected_document_ids,
         'doc_scope': workspace_search.get('document_scope') or workspace_search.get('scope'),
+        **({'document_source_selection': workspace_search['document_source_selection']}
+           if workspace_search.get('document_source_selection') is not None else {}),
         'public_workspace_selection': workspace_search.get('public_workspace_selection'),
         **({'public_source_policy': workspace_search['public_source_policy']}
            if 'public_source_policy' in workspace_search else {}),
@@ -405,6 +407,15 @@ def _build_replayed_document_context(original_metadata):
         'active_group_ids': workspace_search.get('active_group_ids') or [],
         'active_public_workspace_ids': workspace_search.get('active_public_workspace_ids') or [],
     }
+    if context.get('document_source_selection') is not None:
+        for field in (
+            'selected_document_id', 'selected_document_ids', 'doc_scope', 'tags',
+            'active_group_ids', 'active_public_workspace_ids', 'document_filter_mode',
+        ):
+            context.pop(field, None)
+        context['hybrid_search'] = True
+        context['document_context_requested'] = True
+    return context
 
 
 def _build_authorized_message_replay_request(user_id, source, options, settings, *, allow_auto_selection=False):
@@ -442,13 +453,14 @@ def _build_authorized_message_replay_request(user_id, source, options, settings,
                 'governance_group_agents' if agent.get('is_group') else 'governance_user_agents',
                 user_id,
             )
-    requested_groups = set(body.get('active_group_ids') or [])
-    if body.get('active_group_id'):
+    canonical = body.get('document_source_selection') is not None
+    requested_groups = set(body.get('active_group_ids') or []) if not canonical else set()
+    if body.get('active_group_id') and not canonical:
         requested_groups.add(body['active_group_id'])
     if requested_groups - {group['id'] for group in groups if group.get('id')}:
         raise ChatRetryError('An original group workspace is unavailable. Review the message sources.', code='retry_source_unavailable')
-    requested_public = set(body.get('active_public_workspace_ids') or [])
-    if body.get('active_public_workspace_id'):
+    requested_public = set(body.get('active_public_workspace_ids') or []) if not canonical else set()
+    if body.get('active_public_workspace_id') and not canonical:
         requested_public.add(body['active_public_workspace_id'])
     if requested_public:
         available_public = (

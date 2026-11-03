@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.389"
+version: "0.261.395"
 ---
 
 ## How to use this reference
@@ -42,6 +42,27 @@ See [Reference and send between conversations]({{ '/guides/reference-and-send-co
 and [Conversation references and queued AI handoffs]({{ '/explanation/features/CONVERSATION_REFERENCES_AND_HANDOFFS/' | relative_url }}).
 
 ## Conversation header and status
+
+### React V2 document-source picker
+
+Implemented in version: **0.261.395** (`application/single_app/config.py`).
+The main composer's **Documents** panel lists personal, group and eligible
+public workspaces individually. Search narrows the workspace directory and
+document results together by workspace name, document title/filename or tag.
+It does not search document contents.
+
+| V2 control | Purpose | Availability |
+| --- | --- | --- |
+| Search all documents | Searches every accessible workspace, including public collections, within the conversation's scope lock. | Main personal-chat composer |
+| Choose sources | Combines selected workspaces, individual documents and workspace-specific tags as an additive union. | Main personal-chat composer |
+| Workspace directory | Browses matching documents without changing selections; collapses above results on phones. | Documents panel |
+| Search documents | Filters both columns; editing the query returns browsing to all matching workspaces. | Documents panel |
+| Load more workspaces / Load more documents | Pages each list independently without losing existing selections. | When another page is available |
+| Turn off / clear | Removes selected sources and disables document search for the draft. | Documents panel |
+
+Fresh chats keep document search off. Old public-only launches become selected
+public workspace chips rather than a separate aggregate-public mode.
+See [Chat Context Picker]({{ '/explanation/features/CHAT_CONTEXT_PICKER/' | relative_url }}).
 
 ### React V2 document-evidence status
 

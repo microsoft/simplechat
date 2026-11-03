@@ -204,6 +204,8 @@ def resolve_seeds(request_data):
     return {
         'conversation_references': normalize_conversation_references(request_data.get('conversation_references')),
         **({'model_routing': 'auto'} if routing == 'auto' else {}),
+        **({'document_source_selection': request_data['document_source_selection']}
+           if request_data.get('document_source_selection') is not None else {}),
         'public_workspace_selection': public_selection,
         'public_source_policy': source_policy,
         'document_ids': document_ids,
@@ -503,6 +505,11 @@ def seeds_are_explicit(seeds):
     documents on that shelf are worth naming. Treating a tag as explicit would hand the
     planner every document carrying it, which is the opposite of narrowing.
     """
+    selection = (seeds or {}).get('document_source_selection')
+    if selection and (selection['mode'] == 'all' or any(
+        source['kind'] != 'document' for source in selection['sources']
+    )):
+        return False
     return bool((seeds or {}).get('document_ids'))
 
 
@@ -1373,6 +1380,8 @@ def resolve_candidate_documents(
         results = hybrid_search(
             query,
             user_id,
+            document_source_selection=seeds.get('document_source_selection'),
+            document_source_conversation_id=conversation_id,
             top_n=CANDIDATE_PROBE_TOP_N,
             doc_scope=seeds.get('doc_scope') or 'all',
             active_group_ids=seeds.get('active_group_ids') or None,

@@ -1,7 +1,7 @@
 // test_v2_chat_context_request.ts
 //
 // Runtime test for how the V2 composer's context chips become a chat request.
-// Version: 0.261.368
+// Version: 0.261.395
 // Implemented in: 0.261.089
 // Independent context selection implemented in: 0.261.094
 // Shared editor implemented in: 0.261.096
@@ -45,6 +45,7 @@ import {
 } from '../application/v2_ui/src/lib/chatContext';
 import { reconcileContextItems } from '../application/v2_ui/src/lib/chatContextTokens';
 import { resolveDocumentScope } from '../application/v2_ui/src/lib/documentScope';
+import { documentSourceSelection } from '../application/v2_ui/src/lib/documentSourceSelection';
 import {
     composerDraftContextItems,
     composerDraftHasContent,
@@ -68,6 +69,22 @@ import { uploadDocument } from '../application/v2_ui/src/lib/endpoints';
 const MARKETING = groupScope({ id: 'grp-1', name: 'Marketing' });
 const LEGAL = groupScope({ id: 'grp-2', name: 'Legal' });
 const HANDBOOK = publicScope({ id: 'pub-1', name: 'Handbook' });
+
+assert.equal(documentSourceSelection(false, []), undefined);
+assert.deepEqual(documentSourceSelection(true, []), { version: 1, mode: 'all', sources: [] });
+assert.deepEqual(documentSourceSelection(false, [
+    scopeContextItem(MARKETING),
+    documentContextItem({ id: 'public-doc', file_name: 'Policy.pdf' }, HANDBOOK),
+    tagContextItem('policy', PERSONAL_SCOPE),
+    tagContextItem('policy', HANDBOOK),
+]), {
+    version: 1, mode: 'selected', sources: [
+        { kind: 'workspace', scope: { kind: 'group', id: 'grp-1' } },
+        { kind: 'document', id: 'public-doc', scope: { kind: 'public', id: 'pub-1' } },
+        { kind: 'tag', tag: 'policy', scope: { kind: 'personal' } },
+        { kind: 'tag', tag: 'policy', scope: { kind: 'public', id: 'pub-1' } },
+    ],
+});
 
 const checks: Array<[string, () => void | Promise<void>]> = [];
 function check(name: string, run: () => void | Promise<void>) {

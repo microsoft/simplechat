@@ -249,7 +249,7 @@ def test_single_entry_search_and_the_prompt_slash_shortcut(approval_ui):
 
 
 @pytest.mark.parametrize("width,theme", [(360, "light"), (360, "dark"), (1280, "light"), (1280, "dark")])
-def test_search_stays_visible_during_scrolling_and_matches_documents_style(approval_ui, width, theme):
+def test_search_stays_visible_during_scrolling_and_matches_legacy_documents_style(approval_ui, width, theme):
     agents = [dict(AGENTS[0], id=f"agent-{index}", display_name=f"Agent {index:02d}") for index in range(40)]
     page, _api = prepare(approval_ui, width=width, agents=agents, theme=theme)
     page.get_by_role("button", name="Agent", exact=True).click()
@@ -277,7 +277,17 @@ def test_search_stays_visible_during_scrolling_and_matches_documents_style(appro
     page.keyboard.press("Escape")
     context_api = ContextApi()
     page.route(re.compile(r"https://simplechat\.test/api/documents(?:/[^?]+)?(?:\?.*)?$"), context_api.handle)
-    page.get_by_title("Documents", exact=True).click()
+    # Restricted/inline editors retain the compact Documents field this picker mirrors.
+    # The main composer intentionally uses the independently approved workspace sidebar.
+    page.evaluate("""() => {
+        const H = window.OrchHarness;
+        H.unmount('mount-a');
+        H.mount('mount-a', 'ComposerEditor', {
+            id: 'legacy-picker-reference', label: 'Answer', conversationId: null,
+            draft: {text: '', contextItems: [], attachedPrompt: null, promptValues: {}, uploads: [], imageReferences: []},
+            onChange: () => {}, pickerOpen: true, allowContext: true,
+        });
+    }""")
     documents_search = page.locator("[data-context-picker]").get_by_role("searchbox")
     expect(documents_search).to_be_focused()
     assert documents_search.evaluate(style) == search_style

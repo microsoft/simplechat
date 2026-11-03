@@ -12,7 +12,8 @@
 //
 // Its search field is also the visual reference for V2's model, agent, and prompt pickers.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentProps } from 'react';
+import { WorkspaceDocumentPicker } from './WorkspaceDocumentPicker';
 import { clsx } from 'clsx';
 import { Check, FileText, FolderOpen, Loader2, Search, Tag as TagIcon } from 'lucide-react';
 import { isScreeningAvailable } from '../../lib/contentScreening';
@@ -41,7 +42,17 @@ function isReferenceImageDocument(document: WorkspaceDocument): boolean {
     return isReferenceImageFileName(String(document.file_name ?? ''));
 }
 
-export function DocumentPickerPopover({
+export function DocumentPickerPopover(props: ComponentProps<typeof LegacyDocumentPickerPopover>) {
+    if (props.scopeControl && !props.imagesOnly) return <WorkspaceDocumentPicker {...props}
+        disabled={props.scopeControl.disabled}
+        onToggle={(candidate) => {
+            if (props.scope.publicWorkspaceSelection) props.scopeControl?.onChange(null);
+            props.onToggle(candidate);
+        }} />;
+    return <LegacyDocumentPickerPopover {...props} />;
+}
+
+function LegacyDocumentPickerPopover({
     scope,
     searchAll,
     selectedKeys,
@@ -64,6 +75,7 @@ export function DocumentPickerPopover({
     placement?: 'up' | 'down';
     imagesOnly?: boolean;
     scopeControl?: DocumentScopeControl;
+    conversationId?: string | null;
 }) {
     const publicLabels = usePublicWorkspaceLabels();
     const [query, setQuery] = useState('');

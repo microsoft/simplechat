@@ -1631,6 +1631,39 @@ export const fetchGroupDocumentTags = (signal?: AbortSignal, groupId?: string) =
         groupId ? `/api/group_documents/tags?group_id=${encodeURIComponent(groupId)}` : '/api/group_documents/tags', signal,
     );
 
+export interface DocumentSourceWorkspace {
+    kind: 'personal' | 'group' | 'public';
+    id: string | null;
+    name: string;
+    key: string;
+    document_count: number;
+    match_reason: string | null;
+}
+
+export interface DocumentSourcesPage {
+    browsed_workspace: DocumentSourceWorkspace | null;
+    workspaces: DocumentSourceWorkspace[];
+    eligible_workspace_count: number;
+    matching_workspace_count: number;
+    workspace_next: number | null;
+    documents: { scope: DocumentSourceWorkspace; document: WorkspaceDocument }[];
+    tags: string[];
+    source_total: number;
+    source_next: number | null;
+    complete: boolean;
+}
+
+export const fetchDocumentSources = (
+    options: { query?: string; workspace?: string; workspace_offset?: number; source_offset?: number; conversation_id?: string },
+    signal?: AbortSignal,
+) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(options)) {
+        if (value !== undefined) params.set(key, String(value));
+    }
+    return api.get<DocumentSourcesPage>(`/api/v2/document-sources?${params}`, signal);
+};
+
 export interface TaskDocumentPreview {
     count: number;
     count_exact: boolean;

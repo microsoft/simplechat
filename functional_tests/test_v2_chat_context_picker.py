@@ -2,7 +2,7 @@
 # test_v2_chat_context_picker.py
 """
 Functional test for the V2 chat context picker.
-Version: 0.261.315
+Version: 0.261.395
 Implemented in: 0.261.089
 Independent context selection implemented in: 0.261.094
 Shared editor implemented in: 0.261.096
@@ -129,8 +129,11 @@ def test_scope_editing_is_opt_in_and_only_inside_the_documents_picker():
     assert "documentScopeControl={!shared" in composer
     assert "documentScopeControl?: DocumentScopeControl" in editor
     assert "scopeControl={!shared && !restricted && !referenceUploadsOnly" in editor
-    assert "!imagesOnly && scopeControl" in picker
-    assert "Search in" in picker
+    assert "props.scopeControl && !props.imagesOnly" in picker
+    assert "WorkspaceDocumentPicker" in picker
+    sidebar = (V2_DIR / "src" / "components" / "chat" / "WorkspaceDocumentPicker.tsx").read_text(encoding="utf-8")
+    assert "Search all documents" in sidebar and "Choose sources" in sidebar
+    assert "Current context" not in sidebar and "Search all my documents" not in sidebar
     return True
 
 

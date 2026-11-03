@@ -333,11 +333,12 @@ def test_empty_disabled_and_non_composer_defaults(open_page):
     assert page.get_by_role("listbox").evaluate("element => Boolean(element.closest('#mount-a'))")
 
 
-@pytest.mark.parametrize("width,height", [(320, 740), (1280, 800)])
+@pytest.mark.parametrize("width,height", [(320, 450), (320, 740), (1280, 800)])
 def test_separate_document_picker_is_not_clipped_by_tools(open_page, width, height):
     page, api = open_page({"width": width, "height": height})
     context_api = ContextApi()
     page.route(re.compile(r"https://simplechat\.test/api/documents(?:/[^?]+)?(?:\?.*)?$"), context_api.handle)
+    page.route("**/api/v2/document-sources*", context_api.handle)
     mount(page, api, rows=0)
     populate(page)
     open_tools(page, width)

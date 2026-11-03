@@ -1,7 +1,10 @@
 # functions_search.py
 
 import hashlib
+import json
 import logging
+from document_source_selection import selection_scope_fields, source_union_filter
+from functions_document_source_discovery import admit_document_source_selection
 from public_chat_scope_state import aggregate_public_workspace_ids, current_public_chat_scope
 from typing import List, Dict, Any
 from search_scope_utils import (
@@ -373,7 +376,7 @@ def iter_document_query_search_pages(
         raise
 
 
-def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None, document_filter_mode="intersection", enforce_public_workspace_visibility=True):
+def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None, document_filter_mode="intersection", enforce_public_workspace_visibility=True, document_source_selection=None, document_source_conversation_id=None):
     """
     Hybrid search that queries the user doc index, group doc index, or public doc index
     depending on doc type.
@@ -391,6 +394,18 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     """
 
     top_n = normalize_search_top_n(top_n)
+    admitted_sources = None
+    if document_source_selection is not None:
+        _, admitted_sources = admit_document_source_selection(
+            document_source_selection, user_id, conversation_id=document_source_conversation_id,
+        )
+        projection = selection_scope_fields(admitted_sources)
+        doc_scope = projection["doc_scope"]
+        active_group_ids = projection["active_group_ids"]
+        active_group_id = None
+        active_public_workspace_id = projection["active_public_workspace_ids"]
+        enforce_public_workspace_visibility = False
+        document_id, document_ids, tags_filter = None, [], None
     doc_scope = normalize_search_scope(doc_scope)
     if current_public_chat_scope(user_id):
         doc_scope = "public"
@@ -472,6 +487,11 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         document_filter_mode=document_filter_mode,
         embedding_profile_id=embedding_profile.profile_id,
     )
+    if admitted_sources is not None:
+        identity = json.dumps(sorted(
+            (json.dumps(source, sort_keys=True) for source in admitted_sources),
+        ), sort_keys=True)
+        cache_key = hashlib.sha256(f"{cache_key}:{user_id}:{identity}".encode("utf-8")).hexdigest()
 
     # Check cache first (pass scope parameters for correct partition key)
     cached_results = None
@@ -564,8 +584,11 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
 
     def _run_scoped_index_queries(*, use_semantic_ranker=True):
         def _search_index(client, scope_filter_clause, scope_name, semantic_config_name):
+            selection_filter = source_union_filter(admitted_sources, scope_name) if admitted_sources is not None else None
+            if selection_filter == "false":
+                return []
             combined_filter = _combine_odata_filters(
-                scope_filter_clause, content_filter,
+                scope_filter_clause, content_filter, selection_filter,
                 embedding_search_filter(client, embedding_profile, embedding_settings),
             )
             search_kwargs = {

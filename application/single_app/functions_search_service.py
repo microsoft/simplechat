@@ -710,6 +710,8 @@ def build_search_request(
     active_public_workspace_id=None,
     enable_file_sharing=True,
     include_all_public_workspaces=False,
+    document_source_selection=None,
+    document_source_conversation_id=None,
 ):
     normalized_query = str(query or "").strip()
     if not normalized_query:
@@ -730,6 +732,9 @@ def build_search_request(
         "doc_scope": normalized_scope,
         "enable_file_sharing": bool(enable_file_sharing),
     }
+    if document_source_selection is not None:
+        search_request["document_source_selection"] = document_source_selection
+        search_request["document_source_conversation_id"] = document_source_conversation_id
 
     if normalized_document_ids:
         search_request["document_ids"] = normalized_document_ids
@@ -772,6 +777,8 @@ def search_documents(
     active_public_workspace_id=None,
     enable_file_sharing=True,
     include_all_public_workspaces=False,
+    document_source_selection=None,
+    document_source_conversation_id=None,
 ):
     if current_public_chat_scope(user_id) and not aggregate_public_workspace_ids(user_id):
         return {"query": query, "scope": "public", "results": [], "result_count": 0, "document_count": 0}
@@ -787,6 +794,8 @@ def search_documents(
         active_public_workspace_id=active_public_workspace_id,
         enable_file_sharing=enable_file_sharing,
         include_all_public_workspaces=include_all_public_workspaces,
+        document_source_selection=document_source_selection,
+        document_source_conversation_id=document_source_conversation_id,
     )
     results = hybrid_search(**search_request) or []
     results = [

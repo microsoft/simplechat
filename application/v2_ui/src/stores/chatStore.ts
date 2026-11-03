@@ -128,6 +128,7 @@ import {
 } from '../lib/conversationSelection';
 import type { ModelCatalogEntry } from '../lib/models';
 import { resolveDocumentScope } from '../lib/documentScope';
+import { documentSourceSelection } from '../lib/documentSourceSelection';
 import { publicChatScopeFromMessages, readPublicWorkspaceSelection, type PublicWorkspaceSelection } from '../lib/publicChatScope';
 import {
     contextDocumentIds,
@@ -3475,6 +3476,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
             deep_research_enabled: options.deepResearch,
             url_access_enabled: options.urlAccess,
         };
+        if (!collaborative && !directImageMode && !options.publicWorkspaceSelection) {
+            const selection = documentSourceSelection(options.documentSearch, searchContextItems);
+            if (selection) {
+                requestBody.document_source_selection = selection;
+                delete requestBody.doc_scope;
+                delete requestBody.selected_document_ids;
+                delete requestBody.active_group_id;
+                delete requestBody.active_group_ids;
+                delete requestBody.active_public_workspace_id;
+                delete requestBody.active_public_workspace_ids;
+            }
+        }
         // Microsoft 365 email and event times in the answer are written in the reader's zone.
         const timeZone = requestTimeZone();
         if (timeZone) {
@@ -3490,7 +3503,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             requestBody.conversation_references = conversationReferences;
         }
 
-        if (contextTagNames.length > 0) {
+        if (contextTagNames.length > 0 && !requestBody.document_source_selection) {
             requestBody.tags = contextTagNames;
         }
         // The ordinary chat path used to send nothing about the prompt, so a saved prompt used
@@ -3501,7 +3514,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         // Only when both kinds are present. With one kind the mode has no effect, and an
         // unnecessary field in the request is one more thing to account for later.
-        if (filterMode) {
+        if (filterMode && !requestBody.document_source_selection) {
             requestBody.document_filter_mode = filterMode;
         }
 

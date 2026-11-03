@@ -4,7 +4,9 @@
 
 Large catalogs should not force users to scroll through every model, agent, or
 saved prompt before writing a message. The V2 chat pickers include an
-always-visible search field styled like the existing Documents search.
+always-visible search field styled like the compact Documents search retained
+in restricted and inline editors. The main composer's Documents panel uses the
+[workspace-sidebar picker](CHAT_CONTEXT_PICKER.md#the-documents-picker).
 
 Implemented in version: **0.261.395**, recorded in
 `application/single_app/config.py`.
@@ -100,7 +102,7 @@ whitespace, stable identities, and missing optional metadata.
 synthetic authorized catalogs. It covers both model modes, one-item and long
 lists, description-only matches, empty matches, selection and query lifecycle,
 keyboard behavior, no search-triggered preference writes, and parity with
-Documents styling in desktop/mobile and light/dark layouts. Existing overlay,
+legacy Documents styling in desktop/mobile and light/dark layouts. Existing overlay,
 orchestration persistence, and prompt-composer suites cover the surrounding
 workflows. The shared browser fixture supports local Chromium or configured Azure
 Playwright without provisioning resources.

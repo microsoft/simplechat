@@ -746,6 +746,8 @@ def _regeneration_request(record):
         'active_group_ids': deepcopy(seeds.get('active_group_ids') or []),
         'active_public_workspace_ids': deepcopy(seeds.get('active_public_workspace_ids') or []),
         'public_workspace_selection': deepcopy(seeds.get('public_workspace_selection')),
+        **({'document_source_selection': deepcopy(seeds['document_source_selection'])}
+           if seeds.get('document_source_selection') is not None else {}),
         **({'public_source_policy': seeds['public_source_policy']}
            if 'public_source_policy' in seeds else {}),
         'reasoning_effort': seeds.get('reasoning_effort'),
@@ -794,6 +796,7 @@ def _authorize_regeneration_request(source, body, user_id, settings, *, override
     if body.get('agent_info'):
         metadata['agent_selection'] = deepcopy(body['agent_info'])
     metadata['workspace_search'] = {
+        'document_source_selection': seeds.get('document_source_selection'),
         'requested_document_ids': seeds['document_ids'], 'document_scope': seeds['doc_scope'],
         'tags': seeds['tags'], 'active_group_ids': seeds['active_group_ids'],
         'active_public_workspace_ids': seeds['active_public_workspace_ids'],

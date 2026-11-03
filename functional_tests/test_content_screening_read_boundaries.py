@@ -1,7 +1,7 @@
 # test_content_screening_read_boundaries.py
 """
 Behavioral tests for search, native caches, and resumed source consumption.
-Version: 0.261.354
+Version: 0.261.395
 Implemented in: 0.261.106
 Upload-only export checks covered in: 0.261.232
 
@@ -29,6 +29,8 @@ from test_content_screening_access import APP_ROOT, FakeContainer, ScreeningAcce
 from content_screening import access
 from content_screening.contracts import DocumentHeldError, ScreeningConflictError, ScreeningError, document_is_available, hash_payload
 from functions_document_status import is_document_processing_complete, is_document_processing_failure
+from public_chat_scope_state import aggregate_public_workspace_ids, current_public_chat_scope
+from search_scope_utils import normalize_search_id_list, normalize_search_scope
 
 
 def load_functions(file_name, names, namespace, *, constants=False):
@@ -70,7 +72,11 @@ class SearchBoundaryTests(ScreeningAccessFixture):
             "document_provenance": access.document_provenance,
             "PROVENANCE_FIELD": access.PROVENANCE_FIELD,
             "filter_available_results": access.filter_available_results,
-            "get_user_visible_public_workspace_ids_from_settings": lambda _user: [],
+            "get_public_source_workspace_ids": lambda _user: [],
+            "aggregate_public_workspace_ids": aggregate_public_workspace_ids,
+            "current_public_chat_scope": current_public_chat_scope,
+            "normalize_search_id_list": normalize_search_id_list,
+            "normalize_search_scope": normalize_search_scope,
             "debug_print": lambda *_args, **_kwargs: None,
             "logger": SimpleNamespace(info=lambda *_args, **_kwargs: None),
             "generate_search_cache_key": lambda **_kwargs: "test-key",
