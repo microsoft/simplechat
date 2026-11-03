@@ -8414,7 +8414,11 @@ function setupTestButtons() {
     const runEnhancedCitationsStorageTest = async (button) => {
         const resultDiv = document.getElementById('test_enhanced_citations_storage_result');
         renderAdminTestLoading(resultDiv, 'Testing Enhanced Citations storage...');
+        storageRequestInFlight = true;
         setButtonBusy(button, true, 'Testing...');
+        if (repairStorageBtn) {
+            repairStorageBtn.disabled = true;
+        }
 
         try {
             const { response, data } = await runAdminTestRequest(buildEnhancedCitationsStoragePayload());
@@ -8426,7 +8430,11 @@ function setupTestButtons() {
                 message: error.message
             });
         } finally {
+            storageRequestInFlight = false;
             setButtonBusy(button, false);
+            if (repairStorageBtn) {
+                repairStorageBtn.disabled = storageSettingsChanged();
+            }
         }
     };
 
@@ -8448,6 +8456,71 @@ function setupTestButtons() {
     const testEnhancedCitationsStorageBtn = document.getElementById('test_enhanced_citations_storage_button');
     if (testEnhancedCitationsStorageBtn) {
         testEnhancedCitationsStorageBtn.addEventListener('click', () => runEnhancedCitationsStorageTest(testEnhancedCitationsStorageBtn));
+    }
+
+    const repairStorageBtn = document.getElementById('repair_enhanced_citations_storage_button');
+    let storageRequestInFlight = false;
+    const repairStorageHelp = document.getElementById('repair_enhanced_citations_storage_help');
+    const savedStoragePayload = JSON.stringify(buildEnhancedCitationsStoragePayload());
+    const storageSettingsChanged = () => JSON.stringify(buildEnhancedCitationsStoragePayload()) !== savedStoragePayload;
+    if (repairStorageBtn) {
+        const updateRepairAvailability = () => {
+            const changed = storageSettingsChanged();
+            repairStorageBtn.disabled = storageRequestInFlight || changed;
+            if (repairStorageHelp) {
+                repairStorageHelp.textContent = changed
+                    ? 'Save storage settings before creating containers.'
+                    : 'Uses saved storage settings. Creates private containers without changing existing files or permissions.';
+            }
+        };
+        ['office_docs_authentication_type', 'office_docs_storage_account_url', 'office_docs_storage_account_blob_endpoint']
+            .forEach((id) => {
+                const field = document.getElementById(id);
+                if (field) {
+                    field.addEventListener('input', updateRepairAvailability);
+                    field.addEventListener('change', updateRepairAvailability);
+                }
+            });
+        repairStorageBtn.addEventListener('click', async () => {
+            if (storageSettingsChanged() || repairStorageBtn.disabled) {
+                return;
+            }
+            const resultDiv = document.getElementById('test_enhanced_citations_storage_result');
+            storageRequestInFlight = true;
+            renderAdminTestLoading(resultDiv, 'Creating missing storage containers...');
+            setButtonBusy(repairStorageBtn, true, 'Creating...');
+            if (testEnhancedCitationsStorageBtn) {
+                testEnhancedCitationsStorageBtn.disabled = true;
+            }
+            try {
+                const response = await fetch('/api/admin/settings/storage/repair-containers', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await response.json();
+                renderAdminTestResult(resultDiv, {
+                    variant: response.ok && data.success ? 'success' : 'danger',
+                    title: response.ok && data.success ? 'Storage containers are ready' : 'Storage repair needs attention',
+                    message: data.message || data.error || 'Storage containers could not be prepared.',
+                    details: data.details,
+                    guidance: data.guidance
+                });
+            } catch (error) {
+                renderAdminTestResult(resultDiv, {
+                    variant: 'danger',
+                    title: 'Storage repair could not be completed',
+                    message: 'Check the connection and try again.'
+                });
+            } finally {
+                storageRequestInFlight = false;
+                setButtonBusy(repairStorageBtn, false);
+                if (testEnhancedCitationsStorageBtn) {
+                    testEnhancedCitationsStorageBtn.disabled = false;
+                }
+                updateRepairAvailability();
+            }
+        });
     }
 
     const testGptBtn = document.getElementById('test_gpt_button');

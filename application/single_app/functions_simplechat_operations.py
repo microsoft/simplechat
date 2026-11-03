@@ -20,6 +20,7 @@ from azure.core.exceptions import AzureError, ResourceExistsError, ResourceNotFo
 from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
 from flask import current_app, has_app_context, session
 
+from blob_container_readiness import write_blob_with_container_recovery
 from collaboration_models import is_shared_conversation_backing, normalize_collaboration_user
 from conversation_memory_lifecycle import clone_owned_memory, delete_referenced_conversation_memory, remap_memory_references
 from functions_conversation_memory import ConversationMemoryStore, MemoryContext, is_conversation_memory_blob_path
@@ -1913,16 +1914,17 @@ def upload_chat_image_bytes_for_user(
         container=storage_account_personal_chat_container_name,
         blob=blob_path,
     )
-    blob_client.upload_blob(
-        file_content_bytes,
-        overwrite=True,
-        metadata={
-            "conversation_id": normalized_conversation_id,
-            "user_id": normalized_user_id,
-            "message_id": normalized_message_id,
-            "chat_image": "true",
-            "image_source": normalized_image_source,
-        },
+    write_blob_with_container_recovery(
+        blob_service_client, storage_account_personal_chat_container_name,
+        lambda: blob_client.upload_blob(
+            file_content_bytes, overwrite=True,
+            metadata={
+                "conversation_id": normalized_conversation_id, "user_id": normalized_user_id,
+                "message_id": normalized_message_id, "chat_image": "true",
+                "image_source": normalized_image_source,
+            },
+        ),
+        before_retry=require_generated_file_publication_allowed, log=log_event,
     )
 
     log_event(
@@ -3640,14 +3642,23 @@ def _upload_generated_chat_artifact_for_current_user(
                 "conversation_id": conversation_id,
             }
     reauthorize_write()
-    try:
-        blob_client.upload_blob(
+
+    def upload_bytes():
+        if hasattr(file_content_bytes, "read"):
+            file_content_bytes.seek(0)
+        return blob_client.upload_blob(
             file_content_bytes, overwrite=not bool(source_context),
             metadata={
                 "conversation_id": conversation_id, "user_id": current_user_id,
                 "generated_artifact": "true",
                 "idempotent_artifact": str(bool(normalized_idempotency_key)).lower(),
             },
+        )
+
+    try:
+        write_blob_with_container_recovery(
+            blob_service_client, blob_container, upload_bytes,
+            before_retry=reauthorize_write, log=log_event,
         )
     except ResourceExistsError:
         if not source_context:

@@ -57,6 +57,7 @@ from azure.cosmos import exceptions as cosmos_exceptions
 from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
 from azure.storage.blob import ContentSettings
 
+from blob_container_readiness import write_blob_with_container_recovery
 from functions_orchestration_result_contracts import (
     RESULT_MANIFEST_VERSION,
     RESULT_RECEIPT_VERSION,
@@ -439,6 +440,7 @@ class WorkflowResultStore:
         *,
         max_size_bytes=DEFAULT_MAX_RESULT_SIZE_MB * 1024 * 1024,
         chunk_size_bytes=MAX_COSMOS_CHUNK_BYTES,
+        storage_log=None,
     ):
         if container is None:
             raise ValueError("A workflow run-items container is required.")
@@ -451,6 +453,7 @@ class WorkflowResultStore:
         self._orchestration_execution = None
         self.blob_client = blob_client
         self.blob_container_name = blob_container_name
+        self.storage_log = storage_log
         self.max_size_bytes = _positive_integer(max_size_bytes, "Result size limit")
         self.chunk_size_bytes = _positive_integer(chunk_size_bytes, "Cosmos chunk size")
         if self.chunk_size_bytes > MAX_COSMOS_CHUNK_BYTES:
@@ -846,12 +849,23 @@ class WorkflowResultStore:
             manifest["analysis_fenced"] = True
         if storage == "blob":
             blob = self._get_blob(identity, reference)
+
+            def recheck_write():
+                self._check_orchestration_execution(identity, writable=True)
+                self._analysis_guard(
+                    identity, required=require_analysis_guard, writable=True, token=guard_token,
+                )
+                if execution is not None:
+                    execution.check()
+
             try:
-                blob.upload_blob(
-                    data=payload,
-                    overwrite=False,
-                    metadata=_blob_metadata(identity, reference),
-                    content_settings=ContentSettings(content_type=RESULT_MEDIA_TYPE),
+                write_blob_with_container_recovery(
+                    self.blob_client, self.blob_container_name,
+                    lambda: blob.upload_blob(
+                        data=payload, overwrite=False, metadata=_blob_metadata(identity, reference),
+                        content_settings=ContentSettings(content_type=RESULT_MEDIA_TYPE),
+                    ),
+                    before_retry=recheck_write, log=self.storage_log,
                 )
             except ResourceExistsError:
                 digest = hashlib.sha256()
@@ -1759,6 +1773,8 @@ def _configured_result_store(binding, *, settings=None, for_write=False):
     Reads/cleanup do not depend on current settings or a changed write quota.
     """
     import config
+    # The initialized runtime supplies logging; the storage leaf stays bootstrap-free.
+    from functions_appinsights import log_event
 
     is_group = binding["scope_type"] == "group"
     if for_write and settings is None:
@@ -1772,6 +1788,7 @@ def _configured_result_store(binding, *, settings=None, for_write=False):
         ),
         blob_client=config.CLIENTS.get("storage_account_office_docs_client"),
         blob_container_name=config.storage_account_personal_chat_container_name,
+        storage_log=log_event,
         max_size_bytes=_quota_bytes(settings if settings is not None else {}),
     )
 

@@ -1,7 +1,7 @@
 # test_orchestration_output_lifecycle.py
 """
 Real retained-result/render/transport/commit/download lifecycle integration.
-Version: 0.261.324
+Version: 0.261.396
 Implemented in: 0.261.127
 Container-only generated-file access covered in: 0.261.232
 Merged documents rendered from their own lineage added in: 0.261.245
@@ -35,7 +35,7 @@ from unittest.mock import patch
 
 import pytest
 import yaml
-from azure.core.exceptions import AzureError, ResourceExistsError, ResourceNotFoundError
+from azure.core.exceptions import AzureError, HttpResponseError, ResourceExistsError, ResourceNotFoundError
 from flask import Flask, g
 
 from cosmos_document_utils import normalize_cosmos_document
@@ -459,6 +459,33 @@ def test_two_independent_files_render_once_and_download_every_record(lifecycle, 
         assert duplicate == output
         assert initial_again == output
     assert len(lifecycle.render_calls) == 2
+
+
+def test_missing_container_rewinds_the_same_export_without_rendering_twice(lifecycle, monkeypatch):
+    created = []
+
+    def create_container(**kwargs):
+        created.append(kwargs)
+
+    def missing_container():
+        lifecycle.output_streams[-1].read()
+        error = HttpResponseError("PRIVATE missing generated-file container")
+        error.error_code = "ContainerNotFound"
+        error.status_code = 404
+        raise error
+
+    monkeypatch.setattr(
+        lifecycle.blobs, "get_container_client",
+        lambda name: SimpleNamespace(create_container=create_container), raising=False,
+    )
+    lifecycle.blobs.before_upload = missing_container
+    result = lifecycle.run(lifecycle.prepare("csv"))
+    assert result["state"] == "completed", result
+    content = lifecycle.download(result)
+    rows = list(csv.reader(io.StringIO(content.decode("utf-8"))))
+    assert len(rows) == len(ROWS) + 1
+    assert len(created) == lifecycle.blobs.uploads == len(lifecycle.render_calls) == 1
+    assert created[0]["public_access"] is None and created[0]["retry_total"] == 0
 
 
 @pytest.mark.parametrize("output_format", ["yaml", "yml"])

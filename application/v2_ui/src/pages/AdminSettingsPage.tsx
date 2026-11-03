@@ -1814,6 +1814,12 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                         <EnhancedCitationsStorageTest
                             key={key}
                             help={field.help}
+                            saving={saving}
+                            hasUnsavedStorageChanges={[
+                                'office_docs_authentication_type',
+                                'office_docs_storage_account_url',
+                                'office_docs_storage_account_blob_endpoint',
+                            ].some((storageKey) => Object.prototype.hasOwnProperty.call(draft, storageKey))}
                             authenticationType={readSibling(
                                 'office_docs_authentication_type',
                                 'key',

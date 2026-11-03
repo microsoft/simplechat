@@ -77,6 +77,16 @@ Ensure the following resource providers are registered in your subscription:
 
 ## Runtime Startup Behavior
 
+Since application **0.261.396** / deployer **1.0.36**, infrastructure provisioning
+includes all five private application storage containers: `user-documents`,
+`group-documents`, `public-documents`, `personal-chat`, and `group-chat`.
+Reprovisioning also prepares missing containers in an existing account.
+Code-only deployments do not provision infrastructure; an administrator can use
+**Create missing containers** beside the Enhanced Citations storage connection
+test after saving the configured storage settings. Result writes also attempt
+bounded recovery of a missing target container when the app has permission.
+Startup itself still performs no live Blob container checks.
+
 - This deployer publishes a **container image** to Azure App Service.
 - Gunicorn is started by the container entrypoint in `application/single_app/Dockerfile`.
 - Do **not** add an App Service Stack Settings Startup command for this deployer unless you intentionally change the deployment model away from containers.
