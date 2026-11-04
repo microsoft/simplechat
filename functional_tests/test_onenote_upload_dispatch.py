@@ -1,7 +1,7 @@
 # test_onenote_upload_dispatch.py
 """
 Functional tests for shared OneNote workspace upload dispatch.
-Version: 0.261.142
+Version: 0.261.400
 Implemented in: 0.261.142 (ported from 0.261.045)
 
 Validates shared allowlists, dispatch for every workspace scope, safe error
@@ -17,10 +17,12 @@ import sys
 import tempfile
 import types
 import unittest
+from azure.cosmos._cosmos_responses import CosmosDict
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from test_onenote_workspace_ingestion import APP_ROOT, chunk_tests, onenote
+from document_chunk_counts import begin_chunk_tracking, end_chunk_tracking
 
 
 def config_namespace():
@@ -65,9 +67,11 @@ class OneNoteUploadDispatchTests(unittest.TestCase):
         metadata = {"id": "document-1", "file_name": f"fixture{suffix}", "author": "Fixture"}
         processor = Mock(side_effect=failure, return_value=(3, 21, "fixture-embedding"))
         container = types.SimpleNamespace(
-            read_item=lambda **kwargs: dict(metadata),
-            upsert_item=lambda item: None,
+            read_item=lambda **kwargs: CosmosDict(dict(metadata), response_headers={}),
+            upsert_item=lambda item: CosmosDict(dict(item), response_headers={}),
         )
+        point = container.read_item(item="document-1", partition_key="document-1")
+        self.assertIs(type(point), CosmosDict)
         namespace.update({
             "os": os,
             "logging": logging,
@@ -84,6 +88,10 @@ class OneNoteUploadDispatchTests(unittest.TestCase):
             "cosmos_group_documents_container": container,
             "cosmos_public_documents_container": container,
             "log_event": lambda *args, **kwargs: None,
+            "begin_chunk_tracking": begin_chunk_tracking, "end_chunk_tracking": end_chunk_tracking,
+            "_indexed_chunk_count_for_document": lambda document: 3,
+            "TEMPLATE_EXTENSIONS": (),
+            "document_is_available": lambda document: True,
         })
         chunk_tests.load_functions(
             APP_ROOT / "functions_documents.py",
@@ -91,6 +99,7 @@ class OneNoteUploadDispatchTests(unittest.TestCase):
                 "process_document_upload_background",
                 "_process_document_upload_background_impl",
                 "_resolve_processing_complete_status",
+                "_update_failed_document_chunk_count",
             ],
             namespace,
         )

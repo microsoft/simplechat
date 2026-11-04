@@ -1,7 +1,7 @@
 # test_content_screening_pipeline.py
 """
 Functional integration tests for workspace admission and reviewed publication.
-Version: 0.261.321
+Version: 0.261.400
 Implemented in: 0.261.106
 The exec namespace carries ONENOTE_EXTENSIONS, which the upload path reads from 0.261.189: 0.261.189
 Enabled-empty upload admission implemented in: 0.261.114
@@ -57,6 +57,7 @@ from content_screening.repository import ScreeningRepository
 from content_screening.storage import ScreeningStorage
 import functions_embedding_compatibility as embedding_compatibility
 from functions_embeddings import EmbeddingVector
+from document_chunk_counts import begin_chunk_tracking, end_chunk_tracking, record_chunk_uploads
 from functions_document_transform_sources import OFFICE_REFERENCE_MIME_TYPES, TEMPLATE_EXTENSIONS, native_template_pages
 from functions_artifact_publication_readiness import (
     PUBLICATION_BINDING, begin_publication_processing, finish_publication_processing,
@@ -124,7 +125,7 @@ class SearchProjection:
         self.writes += 1
         self.documents.update({item["id"]: copy.deepcopy(item) for item in documents})
         failed, self.fail_next_upload = self.fail_next_upload, False
-        return [types.SimpleNamespace(succeeded=not failed) for _ in documents]
+        return [types.SimpleNamespace(key=item["id"], succeeded=not failed) for item in documents]
 
 
 @pytest.fixture
@@ -302,6 +303,12 @@ def pipeline(monkeypatch):
         "_build_archived_scope_value": helpers._build_archived_scope_value,
         "prepare_embedding_search_documents": embedding_compatibility.prepare_embedding_search_documents,
         "cosmos_data_management_jobs_container": None,
+        "begin_chunk_tracking": begin_chunk_tracking, "end_chunk_tracking": end_chunk_tracking,
+        "record_chunk_uploads": record_chunk_uploads, "document_is_available": document_is_available,
+        "_indexed_chunk_count_for_document": lambda document: sum(
+            item["document_id"] == document["id"] and item["version"] == document["version"]
+            for item in search.documents.values()
+        ),
     }
     functions = {
         "save_chunks", "upload_to_blob", "process_txt", "process_office_template", "_process_document_upload_background_impl",
@@ -309,6 +316,7 @@ def pipeline(monkeypatch):
         "_require_screening_chunk_write", "_run_final_metadata_extraction", "_resolve_processing_complete_status",
         "_is_usable_vision_analysis", "_format_vision_analysis_block", "_append_vision_block_to_chunk_text",
         "_search_indexing_results_succeeded", "_execute_document_search_write",
+        "_update_failed_document_chunk_count",
     }
     tree = ast.parse((APP_ROOT / "functions_documents.py").read_text(encoding="utf-8"))
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in functions]

@@ -65,6 +65,8 @@ from content_screening.contracts import (
     require_document_available,
     subject_from_document,
 )
+from document_chunk_counts import chunk_count_for_response
+from functions_document_status import resolve_metadata_completion_status
 
 
 PROVENANCE_FIELD = "screening_provenance"
@@ -87,6 +89,7 @@ PRIVATE_DOCUMENT_FIELDS = frozenset({
     PROVENANCE_FIELD,
     "generated_artifact_publication_binding", "generated_artifact_publication_processing",
     "group_document_projection_writer",
+    "indexed_chunk_count_version",
     "group_document_collaboration_operation", "document_share_details",
     "public_document_projection_writer",
     "public_document_collaboration_operation",
@@ -1069,10 +1072,15 @@ def public_document_payload(document):
     if not isinstance(document, Mapping):
         return {}
     if SCREENING_FIELD not in document:
-        return _with_origin_kind({
+        payload = _with_origin_kind({
             key: deepcopy(value) for key, value in document.items()
             if is_public_document_field(key)
         }, document)
+        payload["num_chunks"] = chunk_count_for_response(document)
+        payload["status"] = resolve_metadata_completion_status(
+            document.get("status"), document.get("metadata_extraction_status"),
+        )
+        return payload
     try:
         _require_available_metadata(document)
         config = import_module("config")
@@ -1104,6 +1112,10 @@ def public_document_payload(document):
         payload["enhanced_citations"] = False
     else:
         _with_origin_kind(payload, document)
+        payload["status"] = resolve_metadata_completion_status(
+            document.get("status"), document.get("metadata_extraction_status"),
+        )
+    payload["num_chunks"] = chunk_count_for_response(document)
     return payload
 
 
