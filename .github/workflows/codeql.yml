@@ -13,9 +13,19 @@ name: "CodeQL Advanced"
 
 on:
   push:
-    branches: [ "Development" ]
+    branches:
+      - main
+      - Staging
+      - Development
+      - paullizer-react-v2-ui  # Temporary: remove when paullizer-react-v2-ui merges into Development (#1571)
   pull_request:
-    branches: [ "Development" ]
+    branches:
+      - main
+      - Staging
+      - Development
+      - paullizer-react-v2-ui  # Temporary: remove when paullizer-react-v2-ui merges into Development (#1571)
+  schedule:
+    - cron: '17 4 * * 1'
   workflow_dispatch:
 
 jobs:
