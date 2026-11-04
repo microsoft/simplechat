@@ -71,9 +71,10 @@ its dedicated CI application. App Service Easy Auth remains enabled.
 
 The authorized setup registered the staging API audience, enabled application
 assignment for its existing User role, and assigned only that role to the
-secretless CI service principal. Its federation is bound to
-`repo:microsoft/simplechat:environment:Staging-Validation`. It has no client
-secret, Admin role or Azure RBAC grants. This permits ordinary chat smoke
+secretless CI service principal. Its federation uses the repository's actual
+OIDC subject template, which includes immutable owner/repository IDs and the
+`Staging-Validation` Environment. It has no client secret, Admin role or Azure
+RBAC grants. This permits ordinary chat smoke
 testing without exposing administrative settings or acting as a real user.
 The workflow itself does not create identities, alter authentication or grant
 permissions.
@@ -107,6 +108,39 @@ required and Azure login is skipped. Missing required values, missing
 authentication, and a non-HTTPS Actions target fail configuration validation.
 There is no inferred deployment name or beta fallback. Tokens acquired by the
 job are masked and remain job-scoped.
+
+### GitHub OIDC subject and platform authorization
+
+Do not assume the standard `repo:<owner>/<repo>:environment:<name>` subject.
+This repository customizes its subject with `repository_owner_id`,
+`repository_id` and `context`. Inspect
+`gh api repos/microsoft/simplechat/actions/oidc/customization/sub` and the
+Azure login step's non-secret subject details, then configure Entra federation
+to match exactly. The verified staging subject is
+`repository_owner_id:6154722:repository_id:890680638:environment:Staging-Validation`.
+Changing GitHub's organization policy to accommodate an incorrect federation
+is unnecessary.
+
+App Service Easy Auth also needs an explicit client-application allowlist that
+includes the existing web-app client and the dedicated CI client. Keep tenant
+and audience validation and the application's CI caller/role checks intact.
+During setup, a valid User token was authenticated but rejected with platform
+substatus **403.76** because its client was not allowed. The effective
+`WEBSITE_AUTH_AAD_ACL` confirmed the repaired client list. Do not interpret
+empty-looking ARM policy values as proof that a client is accepted.
+
+### Test-identity onboarding
+
+Authentication success does not imply that chat is ready. A new CI identity can
+still be redirected to the application's Terms of Use page. Complete that
+identity's onboarding only after the operator approves its consent. Do not
+disable the terms requirement globally, silently accept future terms, or
+record acceptance on a real user's behalf to make a smoke test pass.
+
+The staging browser run now passes the CI session exchange and reaches this
+onboarding page. A missing chat composer at that point is not an authentication
+or model failure. Full chat/model validation remains pending approved
+onboarding and a subsequent successful run.
 
 The workflow no longer consumes `AZD_ENV_FILE_B64`, `AZD_CONFIG_FILE_B64`,
 `AZURE_ENV_NAME`, `AZURE_LOCATION`, or `DEPLOYMENT_APPNAME` to prepare a

@@ -272,9 +272,9 @@ passed: **1,896 tests and 416 subtests**, with **zero review gaps**. Pytest took
 through the portable argument file, without trimming selectors.
 
 This is representative owner-runtime coverage, not a claim that every branch
-of all 75 functions is exhaustively tested. Current Linux and live staging
-results are still blocked by publication access; the earlier 1,881-test runs
-above remain explicitly scoped to their original feature baseline.
+of all 75 functions is exhaustively tested. The earlier 1,881-test runs remain
+explicitly scoped to their original feature baseline; current published
+Linux/staging verification is recorded below.
 
 ### Staging-only CI access
 
@@ -286,7 +286,9 @@ reactivating the retired deployment context.
 
 The new dedicated workload uses GitHub Environment-bound federation, has no
 client secret, and holds only the staging application's **User** role. Its
-registered API audience matches the existing bearer validator. The staging
+federation matches the actual immutable-ID GitHub subject rather than an
+assumed repository-name subject. Its registered API audience matches the
+existing bearer validator. The staging
 endpoint is enabled with that exact caller allowlist and required User role;
 App Service Easy Auth remains enabled. No Admin role, Azure RBAC grant, browser
 workspace, beta configuration or production configuration is added.
@@ -313,6 +315,15 @@ requested but no affirmative response was available. Default setup therefore
 remains enabled until the prepared Advanced coverage reaches the relevant
 branches; its upload conflict is not hidden or reported as resolved.
 
+A separate [CI-only foundation PR](https://github.com/microsoft/simplechat/pull/1879)
+targets `Development` and changes only the CodeQL workflow's event coverage.
+It preserves the analysis jobs and keeps V2 application code out of the release
+branches. It is not merged. Normal `Development -> Staging -> main` promotion,
+publisher safeguards and the coverage-preserving settings cutover remain
+separate from the V2 application PR. Its application-version checkbox is
+explicitly left for maintainer review rather than falsely claiming that a
+workflow-only change updated application metadata.
+
 ### Publication access changed after configuration
 
 The follow-up source is persisted in local integration commits, but publishing
@@ -322,12 +333,45 @@ access, despite the earlier administrative calls succeeding. Existing OAuth
 scopes include repository/workflow access; no alternate account, new token or
 permission escalation was attempted.
 
-The remote PR therefore still contains the original feature head, not the
-local 0.261.400 owner-review and staging-workflow follow-up. Staging access
-configuration is applied, but current Linux and authenticated browser results
-remain unverified until publishing access returns. Configuration success is not
-a substitute for those runs. No new Azure access is required just to retry
-publication.
+At that checkpoint, the remote PR still contained the original feature head,
+not the local 0.261.400 follow-up. The owner subsequently restored administration
+and publication succeeded at
+`ff2ee01faa0f528cae174caa67cebac1d3fa4f61`. No account switch or permission
+bypass was used.
+
+### Current GitHub and staging verification
+
+The fresh [Linux contract run](https://github.com/microsoft/simplechat/actions/runs/41925088134)
+passed **1,896 tests and 416 subtests**, with **1,086 owners, 423 doubles and
+zero review gaps**. Pytest took **16 minutes 54 seconds**. This verifies the
+integrated published source, unlike the earlier pre-integration Linux evidence.
+
+The live staging run exposed two additional setup boundaries:
+
+- GitHub uses an ID-based OIDC subject customization. The initial name-based
+  federation failed with `AADSTS700213`. Updating the sole Entra trust to the
+  observed owner-ID/repository-ID/Environment subject made OIDC login succeed
+  without weakening GitHub policy or adding another identity.
+- Easy Auth authenticated the dedicated app's correct User token but rejected
+  it with **403.76** because the caller was not in the effective application
+  allowlist. Explicitly allowing only the existing web-app client and the CI
+  client fixed that boundary. Tenant, audience, required authentication and
+  the application's User-role/caller checks remain enabled.
+
+Temporary filesystem diagnostics identified the exact rejection and were
+restored from Verbose to their original **Off** level. A temporary issuer
+alignment experiment did not fix the client-policy rejection and was reverted.
+Local diagnostic certificates were short-lived, kept private keys in memory,
+and removed in `finally`; the dedicated identity again has no certificate or
+password credentials.
+
+The [staging browser run](https://github.com/microsoft/simplechat/actions/runs/41925088441)
+now successfully exchanges the CI session and loads the application, but the
+new identity is redirected to **Terms of Use** before chat. Consent was not
+silently recorded, the requirement was not disabled, and the missing composer
+is not reported as a successful smoke result. Operator-approved onboarding for
+this dedicated identity and a subsequent full chat/model pass remain pending.
+Beta and production were not changed or deployed.
 
 ## Future phase work
 
