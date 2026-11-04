@@ -48,14 +48,18 @@ function sameAnalysis(left, right) {
         left.message_id === right.message_id && left.result_sha256 === right.result_sha256);
 }
 
-export function readSavedAnalysis(metadata) {
-    const value = metadata?.saved_analysis;
+function readDescriptor(value) {
     if (!object(value) || value.version !== 'analyze-final-v1' ||
         typeof value.conversation_id !== 'string' || !value.conversation_id.trim() ||
         typeof value.message_id !== 'string' || !value.message_id.trim() ||
         typeof value.result_sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(value.result_sha256) ||
         !count(value.record_count) || !count(value.source_count) ||
-        !Object.prototype.hasOwnProperty.call(validationNotices, value.validation_status)) {
+        !Object.prototype.hasOwnProperty.call(validationNotices, value.validation_status) ||
+        (value.label !== undefined && (typeof value.label !== 'string' || !value.label.trim())) ||
+        (value.available !== undefined && typeof value.available !== 'boolean') ||
+        (value.semantics !== undefined && (!object(value.semantics) ||
+            value.semantics.version !== 'analysis-options-v2' ||
+            !['source_observations', 'reconciled_records'].includes(value.semantics.mode)))) {
         return null;
     }
     return {
@@ -65,7 +69,31 @@ export function readSavedAnalysis(metadata) {
         source_count: value.source_count,
         validation_status: value.validation_status,
         available: value.available !== false,
+        ...(typeof value.label === 'string' ? { label: value.label } : {}),
+        ...(value.semantics ? { semantics: { version: value.semantics.version, mode: value.semantics.mode } } : {}),
     };
+}
+
+export function readSavedAnalysis(metadata) {
+    return readDescriptor(metadata?.saved_analysis);
+}
+
+export function readSavedAnalyses(metadata) {
+    const entries = [];
+    if (metadata?.saved_analysis != null) {
+        entries.push(metadata.saved_analysis);
+    }
+    if (metadata?.saved_analyses != null) {
+        entries.push(...(Array.isArray(metadata.saved_analyses) ? metadata.saved_analyses : [null]));
+    }
+    const results = [];
+    for (const entry of entries) {
+        const descriptor = readDescriptor(entry);
+        if (!descriptor || !results.some(prior => sameAnalysis(prior, descriptor))) {
+            results.push(descriptor);
+        }
+    }
+    return results;
 }
 
 export function syncSavedAnalysisConversation(conversationId = activeConversationId()) {
@@ -129,9 +157,9 @@ export function hydrateSavedAnalysisContext(messages, conversationId, expectedRe
         return;
     }
     if (selectedContext && !messages.some(message => {
-        const descriptor = readSavedAnalysis(message?.metadata);
-        return descriptor?.available !== false && sameAnalysis(selectedContext, descriptor) &&
-            !message.metadata?.masked && !message.metadata?.masked_ranges?.length;
+        return !message.metadata?.masked && !message.metadata?.masked_ranges?.length &&
+            readSavedAnalyses(message?.metadata).some(descriptor =>
+                descriptor?.available !== false && sameAnalysis(selectedContext, descriptor));
     })) {
         clearSavedAnalysisContext();
     }
@@ -281,17 +309,24 @@ function hideUnavailableActions(message) {
 }
 
 export function hydrateSavedAnalysisResult(message, fullMessage) {
-    if (fullMessage?.metadata?.saved_analysis == null) {
+    const descriptors = readSavedAnalyses(fullMessage?.metadata);
+    if (!descriptors.length) {
         return;
     }
     message.dataset.savedAnalysis = 'true';
-    const descriptor = readSavedAnalysis(fullMessage.metadata);
-    message._savedAnalysisDescriptor = descriptor;
+    message._savedAnalysisDescriptors = descriptors;
+    let anchor = message.querySelector('.message-text');
+    for (const descriptor of descriptors) {
+        anchor = hydrateAnalysisResult(message, descriptor, anchor);
+    }
+}
+
+function hydrateAnalysisResult(message, descriptor, anchor) {
     const root = node('section', 'saved-analysis-result border rounded p-3 mt-3');
-    root.setAttribute('aria-label', 'Saved analysis');
-    const heading = node('h3', 'h6 mb-1', 'Saved analysis');
+    root.setAttribute('aria-label', descriptor?.label ? `Saved analysis: ${descriptor.label}` : 'Saved analysis');
+    const heading = node('h3', 'h6 mb-1 text-break', descriptor?.label || 'Saved analysis');
     root.append(heading);
-    message.querySelector('.message-text')?.after(root);
+    anchor?.after(root);
     const controllers = new Set();
     const view = { root, dispose: () => {
         controllers.forEach(controller => controller.abort());
@@ -321,7 +356,7 @@ export function hydrateSavedAnalysisResult(message, fullMessage) {
     };
     if (!descriptor || descriptor.available === false || descriptor.conversation_id !== activeConversationId()) {
         unavailable();
-        return;
+        return root;
     }
     const fetchResult = async (params, controller) => {
         const query = new URLSearchParams({ ...pointer(descriptor), ...params });
@@ -348,7 +383,9 @@ export function hydrateSavedAnalysisResult(message, fullMessage) {
         `0 of ${descriptor.record_count} records displayed · ${descriptor.source_count} sources in the saved analysis.`);
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
-    const validation = node('p', 'small mb-2', validationNotices[descriptor.validation_status]);
+    const validationNotice = status => descriptor.semantics?.mode === 'source_observations'
+        ? `Source observations, not reconciled values. ${validationNotices[status]}` : validationNotices[status];
+    const validation = node('p', 'small mb-2', validationNotice(descriptor.validation_status));
     const ask = node('button', 'btn btn-sm btn-outline-secondary', 'Ask about this analysis');
     ask.type = 'button';
     ask.addEventListener('click', () => {
@@ -461,7 +498,7 @@ export function hydrateSavedAnalysisResult(message, fullMessage) {
             nextOffset = result.next_offset;
             const displayedSources = new Set(result.records.map(record => record.document_id).filter(Boolean)).size;
             status.textContent = `Showing ${result.records.length ? result.offset + 1 : 0}–${result.offset + result.records.length} of ${result.total_records} records · ${displayedSources} of ${result.source_count} sources on this page.`;
-            validation.textContent = validationNotices[result.validation.status];
+            validation.textContent = validationNotice(result.validation.status);
             const limitations = [...notices(result.validation.limitations), ...notices(result.validation.issues)];
             if (limitations.length) {
                 const section = node('section', 'alert alert-secondary small p-2');
@@ -524,10 +561,11 @@ export function hydrateSavedAnalysisResult(message, fullMessage) {
             void loadPage();
         }
     });
+    return root;
 }
 
 export function setSavedAnalysisMasked(message, metadata) {
-    if (!message._savedAnalysisDescriptor) {
+    if (!message._savedAnalysisDescriptors?.length) {
         return;
     }
     const masked = Boolean(metadata?.masked || metadata?.masked_ranges?.length);
@@ -544,7 +582,7 @@ export function setSavedAnalysisMasked(message, metadata) {
         element.classList.toggle('d-none', masked || (element.classList.contains('saved-analysis-downloads') &&
             message.dataset.savedAnalysisUnavailable === 'true'));
     });
-    if (masked && sameAnalysis(selectedContext, message._savedAnalysisDescriptor)) {
+    if (masked && message._savedAnalysisDescriptors.some(descriptor => sameAnalysis(selectedContext, descriptor))) {
         clearSavedAnalysisContext();
     }
 }

@@ -90,6 +90,7 @@ import {
     analysisResultContext,
     applySavedAnalysisContext,
     latestSavedAnalysis,
+    readSavedAnalyses,
     readSavedAnalysis,
     sameAnalysis,
 } from '../lib/savedAnalysis';
@@ -4162,7 +4163,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             set({ messages });
             const selected = get().analysisResultContext;
             if (selected && get().analysisContextRevision === analysisRevision && !messages.some((message) =>
-                sameAnalysis(selected, latestSavedAnalysis([message])),
+                message.role === 'assistant' && !message.metadata?.masked &&
+                !(Array.isArray(message.metadata?.masked_ranges) && message.metadata.masked_ranges.length) &&
+                readSavedAnalyses(message.metadata).some((descriptor) =>
+                    descriptor?.available !== false && sameAnalysis(selected, descriptor)),
             )) {
                 get().clearAnalysisResultContext();
             }

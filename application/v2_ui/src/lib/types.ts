@@ -23,12 +23,19 @@ export interface AnalysisResultContext {
 
 export type AnalysisValidationStatus = 'valid' | 'partial' | 'invalid' | 'pending' | 'not_validated';
 
+export interface AnalysisSemantics {
+    version: 'analysis-options-v2';
+    mode: 'source_observations' | 'reconciled_records';
+}
+
 export interface SavedAnalysisDescriptor extends AnalysisResultContext {
     version: 'analyze-final-v1';
     record_count: number;
     source_count: number;
     validation_status: AnalysisValidationStatus;
     available?: boolean;
+    label?: string;
+    semantics?: AnalysisSemantics;
 }
 
 /** The only selector a browser sends to ask about a finished workflow run's stored result. */

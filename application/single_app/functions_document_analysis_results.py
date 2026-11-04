@@ -21,6 +21,9 @@ from functions_tabular_transformations import normalize_tabular_transformation_s
 
 ANALYSIS_RESULT_VERSION = 'analyze-final-v1'
 ANALYSIS_OPTIONS_VERSION = 'analysis-options-v1'
+ANALYSIS_SEMANTICS_VERSION = 'analysis-options-v2'
+SOURCE_OBSERVATIONS = 'source_observations'
+RECONCILED_RECORDS = 'reconciled_records'
 EVIDENCE_MATCHER_VERSION = 'evidence-matcher-v2'
 EVIDENCE_MATCH_TIERS = ('exact', 'normalized', 'normalized_casefold')
 EVIDENCE_MISS_REASONS = ('missing_quote', 'missing_location', 'ambiguous', 'not_in_cited_location', 'not_in_window')
@@ -58,16 +61,20 @@ _EVIDENCE_FOLDS = str.maketrans({
 
 
 def normalize_analysis_options(analysis_options=None, transformation_spec=None):
-    """Keep ordinary narrative simple; accept only explicitly supported requirements."""
+    """Normalize explicit semantics while preserving unversioned record behavior."""
     options = {} if analysis_options is None else deepcopy(analysis_options)
     if not isinstance(options, dict) or set(options) - {
         'version', 'mode', 'required_fields', 'transformation_spec',
     }:
         raise ValueError('Unsupported analysis options. Declare required field names or supported calculation rules.')
-    if options.get('version', ANALYSIS_OPTIONS_VERSION) != ANALYSIS_OPTIONS_VERSION:
+    version = options.get('version', ANALYSIS_OPTIONS_VERSION)
+    if version not in (ANALYSIS_OPTIONS_VERSION, ANALYSIS_SEMANTICS_VERSION):
         raise ValueError('Unsupported analysis options version.')
-    if options.get('mode', 'narrative_findings') != 'narrative_findings':
+    mode = options.get('mode', 'narrative_findings' if version == ANALYSIS_OPTIONS_VERSION else None)
+    if version == ANALYSIS_OPTIONS_VERSION and mode != 'narrative_findings':
         raise ValueError('This Analyze path supports narrative findings, not a required row cardinality or custom schema.')
+    if version == ANALYSIS_SEMANTICS_VERSION and mode not in (SOURCE_OBSERVATIONS, RECONCILED_RECORDS):
+        raise ValueError('Declare supported Analyze semantics; no mode is inferred from source text.')
     fields = options.get('required_fields', [])
     if (
         not isinstance(fields, list) or len(fields) > 200
@@ -86,12 +93,36 @@ def normalize_analysis_options(analysis_options=None, transformation_spec=None):
             raise ValueError('Conflicting explicit analysis calculation rules were supplied.')
         supplied_spec = transformation_spec
     normalized_spec = normalize_tabular_transformation_spec(supplied_spec)
+    if mode == SOURCE_OBSERVATIONS and (fields or normalized_spec):
+        raise ValueError('Source observations cannot declare reconciled fields or calculations.')
     return {
-        'version': ANALYSIS_OPTIONS_VERSION,
-        'mode': 'narrative_findings',
+        'version': version,
+        'mode': mode,
         'required_fields': [field.strip() for field in fields],
         'transformation_spec': normalized_spec,
     }
+
+
+def narrative_analysis_options(analysis_options=None, transformation_spec=None):
+    """New narrative requests select observations; explicit legacy settings stay strict."""
+    if analysis_options is None and transformation_spec is None:
+        analysis_options = {'version': ANALYSIS_SEMANTICS_VERSION, 'mode': SOURCE_OBSERVATIONS}
+    return normalize_analysis_options(analysis_options, transformation_spec)
+
+
+def analysis_result_semantics(validation):
+    """Validate the optional immutable semantic marker; absence denotes the legacy contract."""
+    if not isinstance(validation, dict):
+        raise ValueError('The saved analysis validation is invalid.')
+    value = validation.get('semantics')
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {'version', 'mode'}:
+        raise ValueError('The saved analysis semantics are invalid.')
+    options = normalize_analysis_options(value)
+    if options['version'] != ANALYSIS_SEMANTICS_VERSION:
+        raise ValueError('The saved analysis semantics version is invalid.')
+    return {'version': options['version'], 'mode': options['mode']}
 
 
 def apply_document_analysis_options(result, analysis_options):
@@ -173,6 +204,20 @@ def apply_document_analysis_options(result, analysis_options):
 def _identity(kind, value):
     encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
     return f'{kind}-{hashlib.sha256(encoded.encode("utf-8")).hexdigest()}'
+
+
+def _observation_record_id(source, values, passages, caveats):
+    # Match tiers and window/subject labels do not change an original evidence anchor.
+    anchors = {
+        _identity('anchor', [
+            {key: value for key, value in passage['location'].items() if key != 'match'},
+            passage['text'],
+        ])
+        for passage in passages
+    }
+    return _identity('record', [
+        ANALYSIS_SEMANTICS_VERSION, SOURCE_OBSERVATIONS, source, values, sorted(anchors), caveats,
+    ])
 
 
 def _chunk_content(chunk):
@@ -689,8 +734,11 @@ def _locate_analysis_evidence(passage, contents, forms):
     return None, 'not_in_window' if needles['normalized'] else 'missing_quote'
 
 
-def collect_analysis_window_candidates(analysis_text, source, work_unit, window_payload):
+def collect_analysis_window_candidates(
+    analysis_text, source, work_unit, window_payload, *, analysis_options=None,
+):
     """Check an extraction response against its assigned original source window."""
+    options = normalize_analysis_options(analysis_options)
     payload = _analysis_response(analysis_text)
     if not isinstance(payload, dict) or not isinstance(payload.get('findings'), list):
         raise ValueError('The analysis response must contain a findings list.')
@@ -776,14 +824,19 @@ def collect_analysis_window_candidates(analysis_text, source, work_unit, window_
             }
             evidence_refs.append(evidence_id)
 
+        evidence_refs = sorted(set(evidence_refs))
+        record_id = (
+            _observation_record_id(source, values, [evidence[ref] for ref in evidence_refs], caveats)
+            if options['mode'] == SOURCE_OBSERVATIONS else _identity('record', [source, finding_key.strip()])
+        )
         candidate = {
-            'record_id': _identity('record', [source, finding_key.strip()]),
+            'record_id': record_id,
             'document_id': source['document_id'],
             'source': deepcopy(source),
             'work_unit_id': work_unit['work_unit_id'],
             'finding_key': finding_key.strip(),
             'values': deepcopy(values),
-            'evidence_refs': sorted(set(evidence_refs)),
+            'evidence_refs': evidence_refs,
             'status': 'candidate' if not issues else 'unresolved',
             'issues': issues,
         }
@@ -820,8 +873,10 @@ def _merge_complementary_values(target, incoming, path=''):
     return conflicts
 
 
-def finalize_document_analysis_result(sources, work_units, candidates, evidence):
+def finalize_document_analysis_result(sources, work_units, candidates, evidence, *, analysis_options=None):
     """Accept only locally checked, conflict-free candidates; never rewrite them."""
+    options = normalize_analysis_options(analysis_options)
+    observations = options['mode'] == SOURCE_OBSERVATIONS
     unit_versions = {}
     for unit in work_units:
         unit_versions.setdefault(unit['work_unit_id'], {})[_identity('unit', unit)] = unit
@@ -864,6 +919,13 @@ def finalize_document_analysis_result(sources, work_units, candidates, evidence)
             for ref in candidate['evidence_refs']
         ):
             candidate['resolution_issues'].append(_issue('invalid_evidence_reference', 'A finding has unavailable source evidence.'))
+        elif observations and candidate['record_id'] != _observation_record_id(
+            candidate['source'], candidate['values'],
+            [evidence_by_id[ref] for ref in candidate['evidence_refs']], candidate.get('caveats', []),
+        ):
+            candidate['resolution_issues'].append(_issue(
+                'invalid_identity', 'An observation does not match its source, content and evidence identity.',
+            ))
         grouped.setdefault(candidate['record_id'], []).append(candidate)
 
     records = []
@@ -960,6 +1022,8 @@ def finalize_document_analysis_result(sources, work_units, candidates, evidence)
         'analysis_evidence': [evidence_by_id[key] for key in sorted(evidence_by_id)],
         'analysis_validation': {
             'status': status,
+            **({'semantics': {'version': options['version'], 'mode': options['mode']}}
+               if options['version'] == ANALYSIS_SEMANTICS_VERSION else {}),
             'checks': [
                 {'name': 'assigned_source_coverage', 'status': 'passed' if coverage_complete else 'incomplete'},
                 {'name': 'window_response_structure', 'status': (
@@ -984,6 +1048,8 @@ def finalize_document_analysis_result(sources, work_units, candidates, evidence)
                 'Reading every source window does not establish that every possible finding was identified.',
                 'Different finding keys and cross-document entities are not semantically reconciled.',
                 'Calculations, scoring rules and derived values have not been independently verified.',
+                *(['Source observations are attributed source statements, not reconciled values.']
+                  if observations else []),
             ],
             'issues': [_public_issue(issue) for issue in issues],
             'coverage': coverage,

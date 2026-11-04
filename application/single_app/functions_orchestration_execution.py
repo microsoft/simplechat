@@ -1768,6 +1768,16 @@ class HarnessExecution:
                 if workflow_result_reads and workflow_result_contexts else {}
             ),
         }
+        if error is None and not output_check.blocked and any(
+            step.get("saved_analyses") for step in current.get("execution_steps") or []
+        ):
+            # Native storage/readers are resolved only after retained execution state exists.
+            from functions_saved_analysis import orchestration_analysis_descriptors
+
+            metadata["saved_analyses"] = orchestration_analysis_descriptors(
+                current, user_id=self.record["user_id"], message_id=message_id,
+                load_result=self.services.results.store.load_orchestration,
+            )
         if current.get("m365_pending_action_ids"):
             metadata["m365_pending_action_ids"] = list(current["m365_pending_action_ids"])
         thread = self._regeneration_thread()

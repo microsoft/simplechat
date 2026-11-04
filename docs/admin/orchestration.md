@@ -5,7 +5,7 @@ description: "Orchestration lets a user describe what they want and have SimpleC
 section: "Administration"
 audience: admin
 admin_tab: orchestration
-version: "0.261.321"
+version: "0.261.398"
 ---
 
 
@@ -794,6 +794,21 @@ alone does not prove that result storage is ready.
 No new storage connection or settings switch is required. **Retry from failed step**
 uses these results with the same effective plan and current authorization, rather
 than invoking the planner or repeating the whole request.
+
+Since **0.261.398**, newly generated narrative Analyze steps explicitly retain
+source observations instead of using a model's repeated subject key to merge
+different statements into one record. Structured-record requests still refuse
+conflicting values. A later complete-only step no longer stops merely because
+two supported observations use different prose about the same subject.
+The semantic mode is recorded in the operation and checkpoint inputs; no new
+administrator setting is needed, and historical attempts are not reinterpreted.
+
+New replies also expose committed native analyses when a downstream step fails.
+Users can inspect each saved review, including its limitations and audit link,
+without rerunning it. Inspection does not turn a partial result into complete
+input, and plural results on failed replies require explicit selection before
+being used as follow-up context. See
+[saved Analyze results]({{ '/guides/analyze-results/' | relative_url }}).
 
 Since **0.261.396**, a missing result-storage container is repaired at the Blob
 write boundary when permissions allow it, without rerunning the model. If repair

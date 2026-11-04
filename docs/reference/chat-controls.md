@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.395"
+version: "0.261.398"
 ---
 
 ## How to use this reference
@@ -609,6 +609,12 @@ The overview and download previews are not the full findings set. Ordinary
 narrative requests such as “Explain the risks in these documents” do not require
 a report schema, scoring setup, or configuration interview.
 
+Since **0.261.398**, new orchestration replies may show several saved reviews
+even when a later step failed. Each section is labelled by its producing step
+and keeps its own validation notice and pages. Those plural results require
+explicit selection before a follow-up; inspecting them does not complete the
+failed answer or promote partial findings to complete input.
+
 | Control or notice | What it does | Why you would use it | Available when |
 | --- | --- | --- | --- |
 | **Saved analysis** | Identifies the saved result and shows displayed-versus-total record counts, separate source counts, and its validation notice. | Distinguish a readable overview or one page from the full saved findings set. | The assistant message carries a saved result; an unavailable result shows a notice instead of result controls |
@@ -616,7 +622,7 @@ a report schema, scoring setup, or configuration interview.
 | **Previous findings** / **Next findings** | Reads the preceding or following page of the same saved result. | Review records outside the currently displayed range. A page's source count may be smaller than the result's total source count. | A corresponding page exists and the current page has loaded |
 | **Evidence for finding …** | Loads that finding's saved supporting passages and any saved filename, page, or chunk location. The label includes the finding's identifier. | Understand what supports a finding without treating it as independently verified. | The finding has saved evidence references |
 | **Ask about this analysis** | Selects this saved result for the next message and focuses the composer. | Ask for an explanation of these findings instead of another original-source pass. | The saved result is available |
-| **View diagnostics (JSON)** | Opens a separate, bounded diagnostic-data response in a new tab; `next_offset` identifies further byte pages. | Audit processing details without mixing them into findings, reports, or model input. | The saved result is available and its current source access is confirmed |
+| **View diagnostics (JSON)** | Opens a separate, bounded diagnostic-data response in a new tab; `next_offset` identifies further byte pages. | Audit processing details without mixing them into findings, reports, or model input. | The saved result is available and access through its conversation is confirmed |
 | **Saved analysis selected.** | Shows the composer notice: “Explaining the saved analysis — not running a new pass over the original sources.” A completed result can select this context automatically. | Confirm what the next ordinary follow-up will discuss. | Saved-analysis context is selected |
 | **Remove saved analysis context** | The accessible label of the notice's close button; removes the saved-result selection without deleting the result or draft. | Leave explanation mode before choosing a different task or source pass. | The saved-analysis composer notice is present |
 | **Downloads** | Expands the existing generated-file cards and their format-specific actions, such as **Download CSV**. | Obtain a supporting output after reviewing the answer and findings. | The available saved result has generated outputs; existing output readiness and approval rules still apply |
@@ -634,12 +640,14 @@ and **Not validated** remain distinct notices; execution completion does not tur
 them into successful validation. Saved evidence and explanations do not imply a
 new independent check of the original sources.
 
-For results produced by this feature, losing access to any contributing source
-blocks new reads and reuse of the whole original result, its evidence, saved
-derived explanations, and original exports—even if the conversation remains
-accessible. An unavailable or stale notice must not be interpreted as zero
-findings. Already explicitly published workspace copies retain the destination
-workspace's permissions and lifecycle; saving a result in chat is not publication.
+Since **0.261.232**, these results, their evidence, derived explanations, and
+original exports take their access from the originating conversation. A
+contributing document being deleted, replaced, held, or no longer shared does
+not withdraw already retained findings. Losing conversation access, masking the
+associated message, or failing an integrity check can still make a result
+unavailable. That notice must not be interpreted as zero findings. Already
+explicitly published workspace copies retain the destination workspace's
+permissions and lifecycle; saving a result in chat is not publication.
 
 ## Search within a conversation
 

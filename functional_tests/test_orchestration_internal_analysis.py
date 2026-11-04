@@ -1,10 +1,11 @@
 # test_orchestration_internal_analysis.py
 """
 Real v2 adapters -> native Analyze/Compare -> saved readers -> generic result store.
-Version: 0.261.232
+Version: 0.261.398
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
 Retained results take container access only in: 0.261.232
+Explicit observation semantics covered in: 0.261.398
 
 Source/model/Cosmos/Blob I/O is offline. Producers, native work-unit checkpoints,
 saved Analyze contracts, complete readers and the M1 facade/store are real.
@@ -302,6 +303,135 @@ def test_native_partial_findings_stay_partial_and_cannot_make_a_complete_child(i
             upstream=[task.output('findings')], allow_partial_inputs=True,
         )
     assert rejected.value.code == 'result_partial_promoted'
+
+
+def test_source_observations_reach_complete_only_readers_without_a_record_projection(internal):
+    original = internal.model.response_builder
+
+    def repeated_subject(prompt):
+        payload = json.loads(original(prompt))
+        for item in payload['findings']:
+            if item['values']['item'] in {'149', '150'}:
+                item['finding_key'] = 'shared-subject'
+        return json.dumps(payload)
+
+    internal.model.response_builder = repeated_subject
+    result = analyze(internal, analysis_options={
+        'version': 'analysis-options-v2', 'mode': 'source_observations',
+    })
+    assert result['status'] == 'completed', result
+    task = result['task_result']
+    restarted = internal.fixture.restart()
+    reader = restarted.open_result(task.output('findings'))
+    findings = list(reader.iter_records())
+    assert task.status == 'complete'
+    assert len(findings) == 151
+    assert 'records' not in {output.output_name for output in task.outputs}
+    assert 'analysis_semantics:source_observations' in task.output('findings').completeness.checks
+    coverage = restarted.open_result(task.output('coverage')).read_value()
+    assert coverage['validation']['semantics'] == {
+        'version': 'analysis-options-v2', 'mode': 'source_observations',
+    }
+    assert coverage['public_records_available'] is False
+
+
+def test_explicit_reconciled_records_still_refuse_conflicting_values(internal):
+    original = internal.model.response_builder
+
+    def repeated_record(prompt):
+        payload = json.loads(original(prompt))
+        for item in payload['findings']:
+            if item['values']['item'] in {'149', '150'}:
+                item['finding_key'] = 'conflicting-record'
+        return json.dumps(payload)
+
+    internal.model.response_builder = repeated_record
+    result = analyze(internal, analysis_options={
+        'version': 'analysis-options-v2', 'mode': 'reconciled_records',
+    })
+    assert result['status'] == 'partial'
+    with pytest.raises(ResultContractError):
+        internal.fixture.restart().open_result(result['task_result'].output('findings'))
+
+
+def test_observations_compose_through_complete_only_inputs_with_verification_enabled(internal):
+    original = internal.model.response_builder
+
+    def repeated_subject(prompt):
+        payload = json.loads(original(prompt))
+        for item in payload['findings']:
+            item['finding_key'] = 'shared-review-subject'
+        return json.dumps(payload)
+
+    internal.model.response_builder = repeated_subject
+    result = analyze(internal, document_ids=['target-1'], analysis_options={
+        'version': 'analysis-options-v2', 'mode': 'source_observations',
+    })
+    assert result['status'] == 'completed', result
+    task = result['task_result']
+    units = list(internal.fixture.restart().open_result(task.output('findings')).iter_records())
+    assert len(units) == 2
+    answer = '\n\n'.join(
+        f'{unit["record"]["values"]["detail"]["text"]} '
+        + internal.native.results.build_document_citation(
+            unit['evidence'][0]['source'], unit['evidence'][0]['location'],
+        )['citation']
+        for unit in units
+    )
+    stages = []
+
+    def invoke(messages, stage=None, metadata=None):
+        stages.append(stage)
+        if stage == 'orchestration_compose':
+            assert metadata['complete_named_inputs'] is True
+            assert all(unit['record']['values']['item'] in json.dumps(messages) for unit in units)
+            return answer
+        if stage == 'completeness_check':
+            check = json.loads(messages[-1]['content'])
+            assert check['candidate'] == answer
+            assert check['evidence']['findings']['completeness']['status'] == 'complete'
+            assert len(check['evidence']['findings']['value']) == 2
+            return json.dumps({'requirements': [{
+                'id': f'observation-{index}', 'requirement': f'Describe source observation {index}.',
+                'status': 'satisfied', 'reason': 'The complete supplied observation is quoted.',
+                'evidence_refs': ['findings'], 'answer_quote': unit['record']['values']['detail']['text'],
+            } for index, unit in enumerate(units)]})
+        raise AssertionError(f'Unexpected model stage: {stage}')
+
+    capabilities = importlib.import_module('functions_model_capabilities')
+    invoke.model_metadata = capabilities.ModelTokenBudget(
+        model_id='offline-observation-compose', provider='openai', context_window=32768,
+        input_limit=24576, output_limit=2048, output_accounting='total_generation',
+    )
+    invoke.provider = 'openai'
+    invoke.output_tokens = 1024
+    internal.fixture.consumer()
+    executor = importlib.import_module('functions_orchestration_executor')
+    composition = importlib.import_module('functions_orchestration_composition')
+    context = executor.RunContext(
+        run_id='run-1', attempt_index=1, conversation_id='conversation-1', user_id='owner',
+        plan_contract_version=2, invoke_prompt=invoke, result_service=internal.fixture.service,
+        user_message='Describe every supplied source observation separately.',
+        result_guard_token_for_step=lambda step_id: 'server-attempt-token',
+        result_input_fingerprint_for_step=lambda step_id: 'd' * 64,
+    )
+    context.task_results['analyze'] = task
+    prepared = composition.adapter_compose({
+        'step_id': 'consume', 'capability_id': 'compose', 'role': 'reason', 'enabled': True,
+        'arguments': {'instruction': 'Describe every supplied source observation separately.', 'knowledge_basis': 'sources'},
+        'depends_on': ['analyze'],
+        'inputs': {'findings': {
+            'binding': {'version': 'orchestration-input-binding-v1', 'step_id': 'analyze',
+                        'output_name': 'findings', 'existing_result': None},
+            'allow_partial': False,
+        }},
+        'outputs': [{'name': 'answer', 'kind': 'markdown-v1'}],
+    }, context, settings={}, user_id='owner', emit=None, cancel_requested=lambda: False)
+    assert prepared['status'] == 'completed', prepared
+    assert prepared['task_completeness']['status'] == 'complete'
+    final = internal.fixture.restart().open_result(prepared['task_result'].output('answer')).read_text()
+    assert final == answer
+    assert stages == ['orchestration_compose', 'completeness_check']
 
 
 def test_report_failure_is_not_saved_as_a_complete_internal_report(internal, monkeypatch):

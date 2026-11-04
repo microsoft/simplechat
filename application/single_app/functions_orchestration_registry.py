@@ -841,6 +841,29 @@ CAPABILITY_REGISTRY = (
                     'enum': ['all', 'personal', 'group', 'public'],
                     'default': 'all',
                 },
+                'analysis_options': {
+                    'type': 'object',
+                    'description': (
+                        'Explicit result semantics. Use analysis-options-v2 with source_observations '
+                        'for independently cited source statements; use reconciled_records for values '
+                        'that must be reconciled or satisfy declared fields/calculations. Repeated '
+                        'subject labels are allowed for observations. Observations expose findings, '
+                        'not the reconciled records projection. Legacy options remain strict.'
+                    ),
+                    'properties': {
+                        'version': {'type': 'string', 'enum': ['analysis-options-v1', 'analysis-options-v2']},
+                        'mode': {
+                            'type': 'string',
+                            'enum': ['narrative_findings', 'source_observations', 'reconciled_records'],
+                        },
+                        'required_fields': {
+                            'type': 'array', 'maxItems': 200, 'uniqueItems': True,
+                            'items': {'type': 'string', 'minLength': 1, 'maxLength': 128},
+                        },
+                        'transformation_spec': {'type': 'object'},
+                    },
+                    'additionalProperties': False,
+                },
             },
             'required': ['analysis_prompt'],
             'additionalProperties': False,
@@ -2007,6 +2030,14 @@ def get_capability_result_outputs(capability, arguments):
             arguments.get('native_operation'), task_type=arguments.get('task_type'),
         )
         return {output.name: output.kind for output in outputs}, {}
+    options = arguments.get('analysis_options')
+    if (
+        capability['id'] == CAPABILITY_DOCUMENT_ANALYZE and isinstance(options, dict)
+        and options.get('version') == 'analysis-options-v2' and options.get('mode') == 'source_observations'
+    ):
+        return capability['result_outputs'], {
+            name: kind for name, kind in capability.get('optional_result_outputs', {}).items() if name != 'records'
+        }
     return capability['result_outputs'], capability.get('optional_result_outputs', {})
 
 

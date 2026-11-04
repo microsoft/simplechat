@@ -20,7 +20,7 @@ import { hydrateInlineImageProposals } from './chat-inline-image-proposals.js';
 import { escapeHtml } from './chat-utils.js';
 import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNotification } from './chat-desktop-notifications.js';
 import { getMessageReasoningAdjustments, renderMessageReasoningAdjustments } from './chat-reasoning.js';
-import { getAnalysisContextRevision, offerSavedAnalysis } from './chat-analysis-results.js';
+import { getAnalysisContextRevision, offerSavedAnalysis, readSavedAnalyses } from './chat-analysis-results.js';
 import {
     actionRecoveryHeaders, getActionRecoveryRevision, prepareActionRequest, setActionRecoveryResume, showActionRecovery,
 } from './chat-action-recovery.js';
@@ -1847,7 +1847,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         showToast(finalData.kernel_fallback_notice, 'warning');
     }
 
-    if (existingFinalMessage && !finalData.metadata?.saved_analysis && !finalData.replace_content && !finalData.blocked) {
+    if (existingFinalMessage && !readSavedAnalyses(finalData.metadata).length && !finalData.replace_content && !finalData.blocked) {
         renderMessageReasoningAdjustments(existingFinalMessage, getMessageReasoningAdjustments(finalData));
         markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
         notifyConversationDocumentsMayHaveChanged(

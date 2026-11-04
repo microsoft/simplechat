@@ -4,7 +4,7 @@ title: "Read and discuss saved Analyze results"
 description: "Read the answer first, browse saved findings and evidence, and ask follow-up questions without requesting another source pass."
 section: "Guides"
 audience: user
-version: "0.261.232"
+version: "0.261.398"
 ---
 
 ## What this does
@@ -42,6 +42,23 @@ Source access, supported documents, and your deployment's existing Analyze limit
 still apply. See [Chat controls]({{ '/reference/chat-controls/#saved-analyze-results-both-interfaces' | relative_url }})
 and [Review and edit orchestration plans]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}).
 
+## Distinguish source statements from reconciled values
+
+Implemented in version: **0.261.398**, tracked in
+`application/single_app/config.py`.
+
+New narrative orchestration plans normally keep separately cited source
+observations. Two passages about the same concern can contribute different
+details without one replacing the other. Conflicting source claims can also be
+reported together: accurately recording that one source says "open" and another
+says "closed" does not establish the item's actual status.
+
+Requests for reconciled structured values retain stricter rules. Incompatible
+values, missing required fields, or failed calculations cannot be presented as
+one completed record. The distinction is declared in the Analyze operation,
+not inferred from a filename or particular wording in your question. Existing
+saved results and unversioned configurations keep their original interpretation.
+
 ## Read the overview, then the saved findings
 
 The assistant's answer is the readable overview. It can explain the main themes
@@ -59,6 +76,18 @@ A closed findings section reports zero records displayed, not zero records saved
 Source counts are separate: the sources represented on one page can be fewer than
 the sources in the saved analysis. One source can contribute several findings.
 Neither count proves that every possible issue was discovered.
+
+Since **0.261.398**, a new orchestration reply can show several retained analyses
+when a later step could not finish. Their headings identify the producing
+steps; each has its own count, findings, evidence, and diagnostic link. Read
+their validation notices separately. A usable source review does not mean the
+overall answer was delivered.
+
+These results are not selected automatically for the next turn. Use **Ask about
+this analysis** on the particular result you want to discuss. Inspecting saved
+work does not complete the failed step or make a partial result suitable for a
+step that requires complete input. Historical failed replies are not rewritten
+to add these sections.
 
 **Downloads** contains the existing generated-file cards and their format-specific
 download actions, such as **Download CSV**, when an output is available. Downloads

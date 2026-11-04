@@ -1,8 +1,9 @@
 # test_chat_saved_analysis.py
 """
 Saved Analyze findings, evidence, and explanation context in both chat interfaces.
-Version: 0.261.122
+Version: 0.261.398
 Implemented in: 0.261.109
+Retained analyses on failed orchestration replies covered in: 0.261.398
 
 Runs the real classic message/stream modules and React MessageList/Composer/store.
 Record/evidence requests cross the production Flask reader and serialized result
@@ -39,7 +40,7 @@ sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 import harness_build as hb  # noqa: E402
 from playwright_connection import connect_options  # noqa: E402,F401
 from test_saved_analysis_routes import analysis_client  # noqa: E402,F401
-from test_saved_analysis_service import saved_chat  # noqa: E402,F401
+from test_saved_analysis_service import read_options, saved, saved_chat  # noqa: E402,F401
 
 pytestmark = pytest.mark.ui
 ORIGIN = "http://simplechat.test"
@@ -229,6 +230,12 @@ class AnalysisApi:
         if path == "/api/v2/orchestration/runs":
             route.fulfill(json={"runs": []})
             return
+        if path == "/api/action-credentials/pending" and request.method == "GET":
+            route.fulfill(json={"requests": [], "csrf_token": "fixture-csrf"})
+            return
+        if path == "/api/msgraph/pending-actions" and request.method == "GET":
+            route.fulfill(json={"success": True, "pending_actions": [], "continuation_token": None})
+            return
         if path in ("/api/documents", "/api/group_documents", "/api/public_workspace_documents"):
             route.fulfill(json={"documents": [], "total_count": 0})
             return
@@ -399,6 +406,130 @@ def choose_new_source(ui):
         ui.page.get_by_title("Documents", exact=True).click()
 
 
+def retain_failed_analyses(ui):
+    fixture = ui.api.fixture
+    manifest, _, _ = saved.load_saved_analysis(
+        "reader", saved.saved_analysis_context(fixture["descriptor"]), **read_options(fixture),
+    )
+    secondary = saved.save_chat_analysis(
+        {"reply": "Accepted reviewer observations.",
+         "analysis_result": {
+             "analysis_result_version": "analyze-final-v1",
+             "source_manifest": manifest["analysis_access"]["sources"],
+             "authoritative_result": {"kind": "records", "value": [{
+                 "record_id": "reviewer-1", "document_id": "document-1",
+                 "source": {"file_name": "reviewer-notes.txt"},
+                 "values": {"comment": "Review remains open."}, "evidence_refs": ["reviewer-evidence"],
+             }]},
+             "analysis_evidence": [{
+                 "evidence_id": "reviewer-evidence", "document_id": "document-1",
+                 "file_name": "reviewer-notes.txt", "page_number": 8, "quote": "Review remains open.",
+             }],
+             "analysis_validation": {
+                 "status": "partial", "limitations": ["One reviewer question remains unsupported."],
+                 "semantics": {"version": "analysis-options-v2", "mode": "source_observations"},
+             },
+         }},
+        user_id="owner", conversation_id=CONVERSATION, message_id="assistant-1",
+        authorize_conversation=lambda user, conversation: fixture["message_loader"](
+            user, conversation, "assistant-1",
+        ),
+        save_result=fixture["store"].save,
+    )
+    descriptors = [
+        {**fixture["descriptor"], "label": "Deck claims"},
+        {**secondary, "label": "Reviewer comments <not HTML>"},
+    ]
+    metadata = {"saved_analyses": descriptors, "orchestration": {"status": "failed", "outcome": "partial"}}
+    fixture["message"]["metadata"] = copy.deepcopy(metadata)
+    ui.api.message["metadata"] = copy.deepcopy(metadata)
+    ui.api.message["content"] = "The final answer could not run; both source reviews were saved."
+    ui.api.messages = [ui.api.message]
+    return descriptors
+
+
+def test_failed_run_keeps_each_saved_analysis_and_requires_explicit_selection(analysis_ui):
+    ui = analysis_ui
+    descriptors = retain_failed_analyses(ui)
+    ui.mount()
+    deck = ui.page.get_by_role("region", name="Saved analysis: Deck claims", exact=True)
+    reviewer = ui.page.get_by_role("region", name="Saved analysis: Reviewer comments <not HTML>", exact=True)
+    expect(deck).to_be_visible()
+    expect(reviewer).to_be_visible()
+    expect(reviewer).to_contain_text("Partial analysis")
+    expect(reviewer).to_contain_text("Source observations, not reconciled values.")
+    initial = context(ui)
+    assert initial is None
+    assert not [item for item in ui.api.requests if item["path"] == "/api/analysis_results"]
+    deck.locator("summary").filter(has_text="Findings and limitations").click()
+    reviewer.locator("summary").filter(has_text="Findings and limitations").click()
+    expect(deck).to_contain_text("Showing 1–25 of 60 records")
+    expect(reviewer).to_contain_text("Showing 1–1 of 1 records")
+    expect(reviewer).to_contain_text("Review remains open.")
+    expect(reviewer).not_to_contain_text("Control 0")
+    assert reviewer.locator("script, img").count() == 0
+    expected = {key: descriptors[1][key] for key in ("conversation_id", "message_id", "result_sha256")}
+    reviewer.get_by_role("button", name="Ask about this analysis").click()
+    selected = context(ui)
+    assert selected == expected
+    ui.page.evaluate("() => window.analysisUI.reload()")
+    after_reload = context(ui)
+    assert after_reload == expected
+    diagnostic_url = reviewer.get_by_role("link", name="View diagnostics as JSON (opens a new tab)").get_attribute("href")
+    assert parse_qs(urlsplit(diagnostic_url).query)["result_sha256"] == [descriptors[1]["result_sha256"]]
+    ui.page.set_viewport_size({"width": 390, "height": 844})
+    expect(deck).to_be_visible()
+    expect(reviewer).to_be_visible()
+    overflows = ui.page.evaluate("document.documentElement.scrollWidth > window.innerWidth + 1")
+    assert not overflows
+
+
+def test_failed_live_completion_keeps_plural_analyses_without_auto_selecting(analysis_ui):
+    ui = analysis_ui
+    retain_failed_analyses(ui)
+    ui.api.messages = []
+    ui.mount(history=False)
+    ui.page.evaluate("() => window.analysisUI.send()")
+    expect(ui.page.get_by_role("region", name="Saved analysis: Deck claims", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role(
+        "region", name="Saved analysis: Reviewer comments <not HTML>", exact=True,
+    )).to_be_visible()
+    selected = context(ui)
+    assert selected is None
+
+
+def test_malformed_plural_entry_is_visible_without_hiding_valid_findings(analysis_ui):
+    ui = analysis_ui
+    retain_failed_analyses(ui)
+    ui.api.message["metadata"]["saved_analyses"][1]["semantics"]["mode"] = "unknown-contract"
+    ui.mount()
+    expect(ui.page.get_by_text("Saved analysis unavailable.", exact=False).first).to_be_visible()
+    deck = ui.page.get_by_role("region", name="Saved analysis: Deck claims", exact=True)
+    deck.locator("summary").filter(has_text="Findings and limitations").click()
+    expect(deck).to_contain_text("Control 0")
+    selected = context(ui)
+    assert selected is None
+
+
+def test_masking_a_plural_reply_hides_every_result_and_clears_explicit_selection(analysis_ui):
+    ui = analysis_ui
+    retain_failed_analyses(ui)
+    ui.mount()
+    reviewer = ui.page.get_by_role(
+        "region", name="Saved analysis: Reviewer comments <not HTML>", exact=True,
+    )
+    reviewer.get_by_role("button", name="Ask about this analysis").click()
+    before = context(ui)
+    assert before is not None
+    ui.api.message["metadata"]["masked"] = True
+    ui.api.fixture["message"]["metadata"]["masked"] = True
+    ui.page.evaluate("() => window.analysisUI.reload()")
+    expect(ui.page.get_by_role("button", name="Ask about this analysis")).to_have_count(0)
+    expect(ui.page.get_by_role("link", name="View diagnostics as JSON (opens a new tab)")).to_have_count(0)
+    selected = context(ui)
+    assert selected is None
+
+
 def test_saved_analysis_page_two_evidence_download_and_safe_text(analysis_ui):
     ui = analysis_ui
     ui.api.unsafe_values = True
@@ -500,14 +631,21 @@ def test_analysis_with_expanded_navigation_has_only_local_table_scrolling(analys
         "Supplier_very_long_document_name_" * 12 + ".csv"
     )
     ui.mount(shell=True)
-    expect(ui.page.get_by_role("navigation", name="Primary")).to_be_visible()
-    expand = ui.page.get_by_role("button", name="Expand navigation", exact=True)
-    if expand.is_visible():
-        expand.click()
-    expect(ui.page.get_by_role("button", name="Collapse navigation", exact=True)).to_be_visible()
+    if width < 768:
+        ui.page.get_by_role("button", name="Open navigation", exact=True).click()
+    else:
+        expand = ui.page.get_by_role("button", name="Expand navigation", exact=True)
+        if expand.is_visible():
+            expand.click()
+    navigation = ui.page.get_by_role("navigation", name="Primary")
+    expect(navigation).to_be_visible()
+    close = navigation.get_by_role(
+        "button", name="Close navigation" if width < 768 else "Collapse navigation", exact=True,
+    )
+    expect(close).to_be_visible()
     dimensions = ui.page.evaluate("({viewport: innerWidth, document: document.documentElement.scrollWidth})")
     assert dimensions["document"] <= width + 1, dimensions
-    ui.page.get_by_role("button", name="Collapse navigation", exact=True).click()
+    close.click()
     result(ui).locator("summary").filter(has_text="Findings and limitations").click()
     expect(result(ui)).to_contain_text("Showing 1–25 of 60 records")
     result(ui).locator("summary").filter(has_text="Evidence for finding record-0").click()
@@ -572,7 +710,7 @@ def test_denied_missing_and_stale_results_are_visible_not_empty_success(analysis
     if status == 401:
         ui.api.identity["user_id"] = None
     elif status == 403:
-        ui.api.fixture["state"]["source_allowed"] = False
+        ui.api.fixture["state"]["conversation_allowed"] = False
     elif status == 404:
         ui.api.message["metadata"]["saved_analysis"]["message_id"] = "missing-message"
     else:
@@ -670,12 +808,25 @@ def test_evidence_rechecks_access_and_removes_the_previously_loaded_page(analysi
     ui.mount()
     result(ui).locator("summary").filter(has_text="Findings and limitations").click()
     expect(result(ui)).to_contain_text("Control 0")
-    ui.api.fixture["state"]["source_allowed"] = False
+    ui.api.fixture["state"]["conversation_allowed"] = False
     result(ui).locator("summary").filter(has_text="Evidence for finding record-0").click()
     expect(result(ui)).to_contain_text("unavailable")
     expect(result(ui)).not_to_contain_text("Control 0")
     expect(download_button(ui)).not_to_be_visible()
     assert context(ui) is None
+
+
+def test_source_revocation_does_not_withdraw_conversation_owned_findings(analysis_ui):
+    ui = analysis_ui
+    ui.mount()
+    result(ui).locator("summary").filter(has_text="Findings and limitations").click()
+    expect(result(ui)).to_contain_text("Control 0")
+    ui.api.fixture["state"]["source_allowed"] = False
+    result(ui).locator("summary").filter(has_text="Evidence for finding record-0").click()
+    expect(result(ui).get_by_role("blockquote")).to_contain_text("Owner: unassigned")
+    expect(result(ui)).to_contain_text("Control 0")
+    selected = context(ui)
+    assert selected == expected_context(ui)
 
 
 def test_transient_page_failure_can_retry_without_exposing_diagnostics(analysis_ui):

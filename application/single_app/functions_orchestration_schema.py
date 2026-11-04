@@ -54,6 +54,7 @@ from blob_container_readiness import STORAGE_FAILURE_CODE, STORAGE_FAILURE_MESSA
 from agent_execution_context import AgentDelegationTimeout
 from functions_m365_operations import M365_SOURCES
 from functions_model_catalog import ModelCatalogError
+from functions_document_analysis_results import normalize_analysis_options
 from functions_orchestration_registry import (
     APPROVAL_FLOOR_MANUAL,
     CAPABILITY_ACTION_INVOKE,
@@ -999,6 +1000,14 @@ def validate_dependency_plan(
             if not Draft202012Validator(capability['inputs']).is_valid(arguments):
                 raise PlanValidationError('Step arguments do not match the capability contract.')
             arguments = deepcopy(arguments)
+            if capability_id == 'document_analyze' and 'analysis_options' in arguments:
+                try:
+                    arguments['analysis_options'] = normalize_analysis_options(arguments['analysis_options'])
+                except ValueError as exc:
+                    raise PlanValidationError(
+                        'The declared Analyze semantics or field requirements are unsupported.',
+                        code='analysis_options_invalid',
+                    ) from exc
             if capability_id == CAPABILITY_TABULAR_ANALYZE:
                 # Native query/transform validators run only for explicitly admitted native work.
                 from functions_orchestration_native_results import validate_native_orchestration_arguments
@@ -1768,6 +1777,11 @@ def apply_plan_edits(
             capability = get_capability(step['capability_id'])
             if not Draft202012Validator(capability['inputs']).is_valid(step['arguments']):
                 raise PlanValidationError('This edit leaves a required source unavailable.')
+            if step['capability_id'] == 'document_analyze' and 'analysis_options' in step['arguments']:
+                try:
+                    normalize_analysis_options(step['arguments']['analysis_options'])
+                except ValueError as exc:
+                    raise PlanValidationError('This edit has unsupported Analyze semantics.') from exc
             if composition_profiles is not None:
                 _dependency_outputs(step, capability, composition_profiles, step['arguments'])
             if (
