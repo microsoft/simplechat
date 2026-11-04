@@ -10,6 +10,13 @@ audience: user
 
 Collaborative conversations let more than one person work in the same chat thread. Participants see the shared message history, can reply in context, and can use `@` mentions to direct attention to another participant or an AI target.
 
+{% include media.html id="slide-collaborative-conversations" %}
+
+Sharing the thread is a deliberate disclosure of its retained content, not
+a transfer of each person's credentials or all their private workspace access.
+[Private conversation references and queued handoffs]({{ '/guides/reference-and-send-conversations/' | relative_url }})
+are a different feature and are not offered as shared-conversation equivalents.
+
 {% include media.html type="video"
                       title="Collaborate in a conversation walkthrough"
                       poster="video-posters/guide-collaborate-in-a-conversation.png"

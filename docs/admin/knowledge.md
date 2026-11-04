@@ -278,7 +278,7 @@ deployment name matches winning over model name matches), or falls back to the c
 connection when multi-endpoint models are off.
 
 Which deployments count as vision-capable is resolved in three steps, most authoritative
-first: an explicit choice recorded on the model under [AI Models](ai-models.md), then the
+first: an explicit choice recorded on the model under [AI Models]({{ '/admin/ai-models/' | relative_url }}), then the
 application's built-in model capability data, then the model's name. A model resolved by
 name alone is marked as inferred, because a name is a guess -- a self-hosted deployment may
 read images without saying so, and some text-only chat variants are named like models that
@@ -376,7 +376,7 @@ that transcribe directly are accepted.
 
 The completion chime is not here. It plays a local browser sound and needs no Speech
 resource, so it lives with the other notification settings under
-[Chat › Feedback & Alerts](chat.md#desktop-notifications-section).
+[Chat › Feedback & Alerts]({{ '/admin/chat/#desktop-notifications-section' | relative_url }}).
 
 #### Settings
 
@@ -416,7 +416,7 @@ card, read from the top down: whether File Sync is on, which workspace types may
 and who manages their sources, how much a single run may do, and which kinds of source
 can be added.
 
-Sync runs need [Redis Cache](scale.md#redis-cache-section) switched on with its URL set,
+Sync runs need [Redis Cache]({{ '/admin/scale/#redis-cache-section' | relative_url }}) switched on with its URL set,
 and its key when Redis uses key authentication. You can turn File Sync on and save its
 settings first, but runs stay inactive until Redis is ready. The V2 card warns while
 Redis Cache is switched off but does not check the URL or key, so confirm those under
@@ -441,7 +441,7 @@ schedule.
   opening and managing personal sources to holders of the `PersonalFileSyncUser` app
   role. Create and assign the role in the Enterprise App first, or no user will be able
   to manage their own personal sources. The requirement is also listed under
-  [App Role Requirements](security.md#app-role-requirements-section).
+  [App Role Requirements]({{ '/admin/security/#app-role-requirements-section' | relative_url }}).
 - **Restrict to assigned groups** and **Restrict to assigned public workspaces** limit
   File Sync to the workspaces chosen in the list that appears beneath the switch.
   Workspaces left off the list can no longer manage their sources, and their scheduled

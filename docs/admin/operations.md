@@ -162,6 +162,14 @@ Service starts; on the V2 page, a **Running state** line says whether the runnin
 matches what is saved, so a change that still needs a restart is not mistaken for one that
 did not work.
 
+{% include media.html id="slide-logging" %}
+
+The slide shows a monitoring pattern, not an automatically connected set of
+services. Application Insights needs a working connection and exporter;
+routing diagnostics into Azure monitoring or a SIEM requires its own
+configuration. Verify an event reaches the intended destination and apply
+that destination's access and retention policy.
+
 ### Application Insights {#application-insights-section}
 
 SimpleChat always sends its own events, and warnings and errors from everything else, to

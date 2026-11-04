@@ -1,282 +1,66 @@
-![logo](./docs/images/logo-wide.png)
+![SimpleChat logo](./docs/images/logo-wide.png)
 
-# Overview
+# SimpleChat
 
-The **Simple Chat Application** is a comprehensive, web-based platform designed to facilitate secure and context-aware interactions with generative AI models, specifically leveraging **Azure OpenAI**. Its central feature is **Retrieval-Augmented Generation (RAG)**, which significantly enhances AI interactions by allowing users to ground conversations in their own data. Users can upload personal ("Your Workspace") or shared group ("Group Workspaces") documents, which are processed using **Azure AI Document Intelligence**, chunked intelligently based on content type, vectorized through a configured **AI Connections embedding model**, and indexed into **Azure AI Search** for efficient hybrid retrieval (semantic + keyword). Embedding connections support Azure OpenAI, compatible Foundry inference endpoints, and approved OpenAI-compatible custom endpoints; changing an existing vector space requires a controlled rebuild.
+SimpleChat is an open-source Flask application for grounded conversations, focused AI assistants, and repeatable workflows on an Azure deployment you manage. It combines Microsoft Entra ID sign-in, Azure Cosmos DB application records, and Azure AI Search-backed workspace retrieval with configurable AI connections and administrative controls.
 
-Built with modularity in mind, the application offers a suite of powerful **optional features** that can be enabled via administrative settings. These include integrating **Azure AI Content Safety** for governance, providing **Image Generation** capabilities (DALL-E), processing **Video** (via Azure Video Indexer) and **Audio** (via Azure Speech Service) files for RAG, implementing **Document Classification** schemes, collecting **User Feedback**, enabling **Conversation Archiving** for compliance, extracting **AI-driven Metadata**, and offering **Enhanced Citations** linked directly to source documents stored in Azure Storage.
+**[Documentation](https://microsoft.github.io/simplechat/)** · **[Get started](https://microsoft.github.io/simplechat/guides/getting-started/)** · **[Feature catalog](https://microsoft.github.io/simplechat/features/)** · **[Choose a deployment path](https://microsoft.github.io/simplechat/start/deployment-options/)**
 
-The application utilizes **Azure Cosmos DB** for storing conversations, metadata, and settings, and is secured using **Azure Active Directory (Entra ID)** for authentication and fine-grained Role-Based Access Control (RBAC) via App Roles. Designed for enterprise use, it runs reliably on **Azure App Service** and supports deployment in both **Azure Commercial** and **Azure Government** cloud environments, offering a versatile tool for knowledge discovery, content generation, and collaborative AI-powered tasks within a secure, customizable, and Azure-native framework.
+## What you can do
 
-## Documentation
+Many capabilities are optional and administrator-controlled. Availability also depends on roles, source permissions, configured services, and compatible models. Enabling a tool does not grant access to new sources or approve sharing data with an external destination.
 
-[Simple Chat Documentation | Simple Chat Documentation](https://aka.ms/simplechat-documentation)
+| Capability | Use it for |
+| --- | --- |
+| [Grounded workspace knowledge](https://microsoft.github.io/simplechat/features/grounded-document-search/) | Ask questions using hybrid keyword/vector retrieval across permitted [personal](https://microsoft.github.io/simplechat/features/personal-workspace/), [group](https://microsoft.github.io/simplechat/features/group-workspaces/), and [public](https://microsoft.github.io/simplechat/features/public-workspaces/) collections. Public workspaces serve signed-in SimpleChat users, not anonymous visitors. |
+| [Chat file uploads](https://microsoft.github.io/simplechat/features/chat-file-uploads/) and [citations](https://microsoft.github.io/simplechat/features/enhanced-citations/) | Bring a file into a conversation and inspect supporting passages and supported source previews. A citation is evidence to review, not a guarantee that an answer is correct. |
+| [Saved prompts](https://microsoft.github.io/simplechat/features/saved-prompts/), [agents](https://microsoft.github.io/simplechat/features/agents/), and [actions](https://microsoft.github.io/simplechat/features/core-actions/) | Reuse instructions and variables, configure focused assistants with assigned knowledge, and give them approved tools instead of rebuilding the same setup for every question. |
+| [V2 chat orchestration](https://microsoft.github.io/simplechat/features/chat-orchestration/) | Plan multi-step work across enabled capabilities, inspect dependencies, and follow execution. [Review or edit proposed plans](https://microsoft.github.io/simplechat/guides/review-and-edit-orchestration-plans/) before execution when the selected approval mode permits. |
+| [Repeatable workflows](https://microsoft.github.io/simplechat/features/workflows/) | Save tasks and inputs, run on demand or on configured schedules and File Sync triggers, and inspect run history and delivered results. |
+| [Analyze](https://microsoft.github.io/simplechat/features/document-analysis/) and [Compare](https://microsoft.github.io/simplechat/features/document-compare/) | Review selected documents or compare a baseline with targets, then inspect findings, supporting passages, and limitations. Saved findings are not a fresh check of the original sources. |
+| [Spreadsheet analysis](https://microsoft.github.io/simplechat/features/tabular-analysis/) | Compute grouped results, charts, and exports from supported CSV and spreadsheet data rather than treating rows as prose. Spreadsheet processing depends on Enhanced Citations and its storage configuration. |
+| [File Sync](https://microsoft.github.io/simplechat/features/file-sync/) | Import workspace documents from approved network shares, Azure Files, or Azure Blob sources, with filters, schedules, and configured deletion handling. |
+| [Collaboration](https://microsoft.github.io/simplechat/features/collaborative-conversations/) and [workspace scope lock](https://microsoft.github.io/simplechat/features/workspace-scope-lock/) | Work in shared conversations and keep grounded retrieval tied to its recorded workspace scope. Scope lock is not a frozen document snapshot or a grant of source access. |
+| [Conversation details](https://microsoft.github.io/simplechat/features/conversation-details/) and [message details](https://microsoft.github.io/simplechat/features/message-details/) | Inspect recorded scope, state, attribution, source evidence, and tool outcomes instead of inferring what happened from the answer's prose. |
+| [Memory](https://microsoft.github.io/simplechat/features/chat-memory/) and [preferences](https://microsoft.github.io/simplechat/guides/update-profile-preferences/) | Keep user-managed instructions and facts across conversations; manage interface and audio preferences separately. Retained memories are not a place for secrets. |
+| [Generated deliverables](https://microsoft.github.io/simplechat/features/generated-deliverables/) | Turn prepared results into supported reports, presentations, spreadsheets, and data files, with charts, diagrams, or generated images where supported. A planned file is not a completed download. |
+| [Web search](https://microsoft.github.io/simplechat/features/web-search/), [deep research](https://microsoft.github.io/simplechat/features/deep-research/), and [media ingestion](https://microsoft.github.io/simplechat/features/media-file-ingestion/) | Bring in current public sources or searchable audio/video when the supporting services are configured. External research has its own destination and data-sharing controls. |
+| [Feedback and archiving](https://microsoft.github.io/simplechat/features/feedback-and-archiving/) | Collect response ratings and comments for review, and optionally retain conversation archives. Feedback does not automatically retrain models; archiving is not legal hold. |
+| [Content Safety](https://microsoft.github.io/simplechat/features/content-safety/), [content screening](https://microsoft.github.io/simplechat/features/content-screening/), and [governance](https://microsoft.github.io/simplechat/admin/governance/) | Configure chat checks, document screening and review, and policies for agents, actions, and external destinations. These controls do not establish regulatory compliance. |
+| [Microsoft 365](https://microsoft.github.io/simplechat/guides/microsoft-365-conversation-data/) and [Teams](https://microsoft.github.io/simplechat/guides/microsoft-teams-app/) | Use configured Calendar, Email, OneDrive, and SharePoint actions, or open SimpleChat as a Teams personal tab. Consent, source permissions, and outgoing-action delivery policies remain separate decisions. |
 
-## Community Call
+Use the [task guides](https://microsoft.github.io/simplechat/guides/) for walkthroughs and the [chat interface reference](https://microsoft.github.io/simplechat/reference/chat-controls/) for individual controls.
 
-We have a Community Call every 6 weeks, please register here to receive the meeting. Our next call is July 23rd.
+## Deploy and operate
 
-[Simple Chat Community Call registration](https://aka.ms/simplechat-community-call)
+Start with the documentation rather than copying a partial setup sequence:
 
-### Previous Recordings
+1. **Choose and deploy:** compare [deployment paths](https://microsoft.github.io/simplechat/start/deployment-options/). The repository-recommended [Azure Developer CLI path](https://microsoft.github.io/simplechat/reference/deploy/azd-cli_deploy/) deploys a container-based App Service; the guides cover toolchain, identity, network, and cloud prerequisites and alternative deployers.
+2. **Configure and verify:** follow [first configuration](https://microsoft.github.io/simplechat/guides/admin-first-configuration/), configure [AI connections](https://microsoft.github.io/simplechat/guides/configure-ai-connections/), and prove one document-grounded conversation before expanding the rollout.
+3. **Update and scale:** use [upgrade paths](https://microsoft.github.io/simplechat/guides/upgrade-paths/) for existing deployments and the [Azure scaling guide](https://microsoft.github.io/simplechat/guides/scale-simplechat-on-azure/) for capacity planning. Configure shared Redis sessions before App Service scale-out; adding web instances does not add search capacity or model quota.
+4. **Manage lifecycle and recovery:** configure [retention and archiving](https://microsoft.github.io/simplechat/admin/data-lifecycle/) separately from [backup, restore, and migration](https://microsoft.github.io/simplechat/admin/backup-recovery/). An archive does not replace a tested backup and restore.
 
+AI connections support compatible Azure OpenAI, Foundry, and approved custom endpoints. Azure Commercial and Government deployments need cloud-appropriate configuration; model capabilities, service availability, and quotas vary by provider, cloud, and region. Review [model routing](https://microsoft.github.io/simplechat/features/model-routing/) and [special deployment scenarios](https://microsoft.github.io/simplechat/deploy/special-scenarios/) rather than assuming every integration is available or stays in the hosting cloud.
 
-Previous Recordings
-- Dec 11th, 2025 - [Recording URL](https://www.youtube.com/watch?v=X12waLe1TKM)
-- Feb 5th, 2026 - [Recording URL](https://www.youtube.com/watch?v=WOeWTzeXMFU)
-- Mar 19th, 2026 - [Recording URL](https://www.youtube.com/watch?v=EpIVCwGXh1E)
-- April 30th, 2026 - [Recording URL](https://www.youtube.com/watch?v=A2QiGNa6pwM)
-- June 11th, 2026 - [Recording URL](https://www.youtube.com/watch?v=gBcm8g4i3rs)
-- July 23rd, 2026 - [Recording URL](https://www.youtube.com/watch?v=6w_ypzkIKqo)
+Read the [architecture](https://microsoft.github.io/simplechat/explanation/architecture/) for application, data, identity, and outbound-service boundaries. Developers can use the dedicated [local development guide](https://microsoft.github.io/simplechat/explanation/running_simplechat_locally/) instead of production deployment instructions.
 
+## Help and contributions
 
-## Contributing
+- **Product and deployment help:** [FAQ](https://microsoft.github.io/simplechat/start/faqs/), [troubleshooting](https://microsoft.github.io/simplechat/troubleshooting/), and [administration](https://microsoft.github.io/simplechat/admin/).
+- **Bugs and feature requests:** [GitHub issues](https://github.com/microsoft/simplechat/issues).
+- **Source and contributions:** [microsoft/simplechat](https://github.com/microsoft/simplechat) and the [contribution workflow](https://microsoft.github.io/simplechat/contributing/). Contributor pull requests target `Development`, not `main` or `Staging`.
+- **Security reports:** follow [SECURITY.md](./SECURITY.md); do not report vulnerabilities in public issues.
+- **License:** [MIT](./LICENSE).
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for the fork-based workflow, target branch guidance, and local development references for SimpleChat contributors.
+## Community
 
-## Quick Deploy
+[Register for the SimpleChat community call](https://aka.ms/simplechat-community-call) for meeting details.
 
-[Detailed deployment Guide](./deployers/bicep/README.md)
+Previous recordings:
 
-If you prefer a PowerShell and Azure CLI driven deployment without AZD, or you want more script-level control over deployment and recovery steps, see [deployers/azurecli/README.md](./deployers/azurecli/README.md).
-
-### Prerequisites
-
-Install these tools before starting the deployment flow:
-
-1. Azure CLI
-    Download: https://learn.microsoft.com/cli/azure/install-azure-cli
-2. Azure Developer CLI (`azd`)
-    Download: https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd
-3. Python 3.12
-    Download: https://www.python.org/downloads/
-    The AZD preprovision and postprovision hooks in [deployers/azure.yaml](./deployers/azure.yaml) run Python scripts for prerequisite validation, dependency installation, and post-provision configuration. Make sure `python` is available on Windows and `python3` is available on Linux/macOS before running `azd up`.
-4. PowerShell 7
-    Download: https://learn.microsoft.com/powershell/scripting/install/installing-powershell
-5. Visual Studio Code
-    Download: https://code.visualstudio.com/download
-
-Shell guidance:
-
-- This quick-start section uses PowerShell examples.
-- Windows users can run the commands in PowerShell.
-- Linux and macOS users can run the PowerShell scripts by using PowerShell 7 with `pwsh`.
-- If you prefer bash for the surrounding shell commands, use the shell-specific examples in [deployers/bicep/README.md](./deployers/bicep/README.md).
-
-Minimum access and setup:
-
-- An Azure subscription where you have Owner or Contributor access for deployment.
-- Permission to create an Entra application registration, or coordination with an Entra admin who can run that step for you.
-- Access to Azure Container Registry Tasks so `azd up` can build the application image in ACR.
-
-### Pre-Configuration:
-
-The following procedure must be completed with a user that has permissions to create an application registration in the users Entra tenant.
-
-#### Create the application registration:
-
-```powershell
-cd ./deployers
-```
-
-Define your application name and your environment in PowerShell:
-
-```powershell
-$appName = "simplechat"
-$environment = "dev"
-```
-
-If you type `appName = "simplechat"` in PowerShell, PowerShell treats `appName` as a command name. PowerShell variables must start with `$`.
-
-This main README uses PowerShell examples consistently. Linux and macOS users should run the same script with `pwsh`. If you prefer bash for the surrounding shell commands, use the shell-specific examples in [deployers/bicep/README.md](./deployers/bicep/README.md).
-
-The following script will create an Entra Enterprise Application, with an App Registration named *\<appName\>*-*\<environment\>*-ar for the web service called *\<appName\>*-*\<environment\>*-app.
-
-> [!TIP]
->
-> The web service name may be overriden with the `-AppServceName` parameter.
-
-> [!TIP]
->
-> A different expiration date for the secret which defaults to 180 days with the `-SecretExpirationDays` parameter.
-
-```powershell
-.\Initialize-EntraApplication.ps1 -AppName $appName -Environment $environment -AppRolesJsonPath "./azurecli/appRegistrationRoles.json"
-```
-
-By default, the script saves the app registration values that `azd up` needs into the resolved AZD environment:
-
-- `ENTERPRISE_APP_CLIENT_ID`
-- `ENTERPRISE_APP_SERVICE_PRINCIPAL_ID`
-- `ENTERPRISE_APP_CLIENT_SECRET`
-
-Use `-AzdEnvironmentName <name>` to target a specific AZD environment, or `-SkipAzdEnvironmentUpdate` when running the registration as a standalone/manual workflow.
-
-Linux and macOS example:
-
-```bash
-pwsh ./Initialize-EntraApplication.ps1 -AppName simplechat -Environment dev -AppRolesJsonPath ./azurecli/appRegistrationRoles.json
-```
-
-> [!NOTE]
->
-> If the script cannot update the AZD environment, save the displayed values manually and set them later with `azd env set`.
-
-```========================================
-App Registration Created Successfully!
-Application Name:       <registered application name>
-Client ID:              <clientID>
-Tenant ID:              <tenantID>
-Service Principal ID:   <servicePrincipalId>
-Client Secret:          <clientSecret>
-Secret Expiration:      <yyyy-mm-dd>
-```
-
-In addition, the script will note additional steps that must be taken for the app registration step to be completed.
-
-1.  Grant Admin Consent for API Permissions:
-
-    - Navigate to Azure Portal > Entra ID > App registrations
-    - Find app: *\<registered application name\>*
-    - Go to API permissions
-    - Click 'Grant admin consent for [Tenant]'
-
-2.  Assign Users/Groups to Enterprise Application:
-    - Navigate to Azure Portal > Entra ID > Enterprise applications
-    - Find app: *\<registered application name\>*
-    - Go to Users and groups
-    - Add user/group assignments with appropriate app roles
-
-3.  Store the Client Secret Securely:
-    - Save the client secret in Azure Key Vault or secure credential store
-    - The secret value is shown above and will not be displayed again
-
-#### Configure AZD Environment
-
-Using PowerShell in Visual Studio Code
-
-```powershell
-cd ./deployers
-```
-
-If you work with other Azure clouds, you may need to update your cloud like `azd config set cloud.name AzureUSGovernment` - more information here - [Use Azure Developer CLI in sovereign clouds | Microsoft Learn](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/sovereign-clouds)
-
-```powershell
-azd config set cloud.name AzureCloud
-```
-
-This will open a browser window that the user with Owner level permissions to the target subscription will need to authenticate with.
-
-```powershell
-azd auth login
-```
-
-Initialize the AZD project in the current folder before creating or selecting the environment.
-
-```powershell
-azd init
-```
-
-Use the same value for `$environment` that was used in the application registration.
-
-```powershell
-azd env new $environment
-```
-
-Select the new environment
-
-```powershell
-azd env select $environment
-```
-
-This step will begin the deployment process.
-
-```powershell
-azd up
-```
-
-## Deployment Runtime Notes
-
-### Container
-> [!NOTE]
->
-> The container deployments of Simple Chat does NOT need this step, when you run `azd up` for new installs or `azd deploy` for updates, the container is configured to run with gunicorn.
-
-- The repo-provided `azd`, Bicep, Terraform, and Azure CLI deployers are **container-based** App Service deployments.
-- For those container deployments, do **not** set an App Service Stack Settings Startup command.
-    - The container already starts Gunicorn through `application/single_app/Dockerfile`.
-- If your environment needs private or self-signed certificate authorities for outbound TLS checks to internal services, add them during image build using [docs/guides/docker-customization.md](docs/guides/docker-customization.md).
-
-### Native Python
-- For **native Python App Service** deployments, deploy the `application/single_app` folder and set the App Service Startup command explicitly.
-
-Native Python deployment references:
-
-- [Manual deployment notes](./docs/reference/deploy/manual_deploy.md)
-- [Manual setup steps](./docs/setup_instructions_manual.md#installing-and-deploying-the-application-code)
-- [VS Code deployment steps](./docs/setup_instructions_manual.md#deploying-via-vs-code-recommended-for-simplicity)
-- [Azure CLI ZIP deploy steps](./docs/setup_instructions_manual.md#deploying-via-azure-cli-zip-deploy)
-
-To set the Startup command in Azure Portal:
-
-1. Go to the App Service.
-2. Open **Settings** > **Configuration** > **Stack Settings**.
-3. Enter the following Startup command.
-4. Save the change, then stop and start the app.
-
-Use this Startup command for native Python App Service deployments:
-
-```bash
-python -m gunicorn -c gunicorn.conf.py app:app
-```
-
-> [!IMPORTANT]
->
-> Running Simple Chat with gunicorn improves the experience with better request handling and concurrency.
-
-## Upgrade Paths
-
-- For a concise upgrade decision guide, see [docs/guides/upgrade-paths.md](docs/guides/upgrade-paths.md).
-
-### Container
-- **Container-based upgrades** should usually start with `azd deploy` for code-only changes. Use `azd up` only when the release also changes infrastructure.
-- If your App Service is already configured to pull from ACR and you want image-only rollouts, use the ACR/image refresh approach described in [docs/guides/upgrade-paths.md](docs/guides/upgrade-paths.md) instead of treating every release as a full reprovisioning event.
-
-### Native Python
-- **Native Python App Service upgrades** should reuse the manual deployment path, validate the Startup command above, and deploy the `application/single_app` folder with VS Code or Azure CLI ZIP deploy.
-- [Manual native Python upgrade guide](./docs/setup_instructions_manual.md#upgrading-the-application)
-- [Native Python ZIP deploy reference](./docs/setup_instructions_manual.md#deploying-via-azure-cli-zip-deploy)
-- [Native Python deployment notes](./docs/reference/deploy/manual_deploy.md)
-
-## Architecture
-
-![Architecture](./docs/images/architecture.png)
-
-## Features
-
-- **Chat with AI**: Interact with an AI model based on Azure OpenAI’s GPT and Thinking models.
-- **RAG with Hybrid Search**: Upload documents and perform hybrid searches (vector + keyword), retrieving relevant information from your files to augment AI responses.
-- **Document Management**: Upload, store, and manage multiple versions of documents—personal ("Your Workspace") or group-level ("Group Workspaces").
-- **Group Management**: Create and join groups to share access to group-specific documents, enabling collaboration with Role-Based Access Control (RBAC).
-- **Ephemeral (Single-Convo) Documents**: Upload temporary documents available only during the current chat session, without persistent storage in Azure AI Search.
-- **Conversation Archiving (Optional)**: Retain copies of user conversations—even after deletion from the UI—in a dedicated Cosmos DB container for audit, compliance, or legal requirements.
-- **Content Safety (Optional)**: Integrate Azure AI Content Safety to review every user message *before* it reaches AI models, search indexes, or image generation services. Enforce custom filters and compliance policies, with an optional `SafetyAdmin` role for viewing violations.
-- **Feedback System (Optional)**: Allow users to rate AI responses (thumbs up/down) and provide contextual comments on negative feedback. Includes user and admin dashboards, governed by an optional `FeedbackAdmin` role.
-- **Bing Web Search (Optional)**: Augment AI responses with live Bing search results, providing up-to-date information. Configurable via Admin Settings.
-- **Image Generation (Optional)**: Enable on-demand image creation using Azure OpenAI's DALL-E models, controlled via Admin Settings.
-- **Video Extraction (Optional)**: Utilize Azure Video Indexer to transcribe speech and perform Optical Character Recognition (OCR) on video frames. Segments are timestamp-chunked for precise retrieval and enhanced citations linking back to the video timecode.
-- **Audio Extraction (Optional)**: Leverage Azure Speech Service to transcribe audio files into timestamped text chunks, making audio content searchable and enabling enhanced citations linked to audio timecodes.
-- **Document Classification (Optional)**: Admins define custom classification types and associated colors. Users tag uploaded documents with these labels, which flow through to AI conversations, providing lineage and insight into data sensitivity or type.
-- **Enhanced Citation (Optional)**: Store processed, chunked files in Azure Storage (organized into user- and document-scoped folders). Display interactive citations in the UI—showing page numbers or timestamps—that link directly to the source document preview.
-- **Metadata Extraction (Optional)**: Apply an AI model (configurable GPT model via Admin Settings) to automatically generate keywords, two-sentence summaries, and infer author/date for uploaded documents. Allows manual override for richer search context.
-- **File Processing Logs (Optional)**: Enable verbose logging for all ingestion pipelines (workspaces and ephemeral chat uploads) to aid in debugging, monitoring, and auditing file processing steps.
-- **Redis Cache (Optional)**: Integrate Azure Cache for Redis to provide a distributed, high-performance session store. This enables true horizontal scaling and high availability by decoupling user sessions from individual app instances.
-- **SQL Database Agents (Optional)**: Connect agents to Azure SQL or other SQL databases through configurable SQL Query and SQL Schema plugins. Database schema is automatically discovered and injected into agent instructions at load time, enabling agents to answer natural language questions by generating and executing SQL queries without requiring users to know table or column names.
-- **Authentication & RBAC**: Secure access via Azure Active Directory (Entra ID) using MSAL. Supports Managed Identities for Azure service authentication, group-based controls, and custom application roles (`Admin`, `User`, `CreateGroup`, `SafetyAdmin`, `FeedbackAdmin`).
-- **Supported File Types**:
-
-  -   **Text**: `txt`, `md`, `html`, `json`, `xml`, `yaml`, `yml`, `log`
-  -   **Documents**: `pdf`, `doc`, `docm`, `docx`, `pptx`, `xlsx`, `xlsm`, `xls`, `csv`
-  -   **Images**: `jpg`, `jpeg`, `png`, `bmp`, `tiff`, `tif`, `heif`
-  -   **Video**: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `flv`, `mxf`, `gxf`, `ts`, `ps`, `3gp`, `3gpp`, `mpg`, `asf`, `m4v`, `isma`, `ismv`, `dvr-ms`
-  -   **Audio**: `wav`, `m4a`
+- [December 11, 2025](https://www.youtube.com/watch?v=X12waLe1TKM)
+- [February 5, 2026](https://www.youtube.com/watch?v=WOeWTzeXMFU)
+- [March 19, 2026](https://www.youtube.com/watch?v=EpIVCwGXh1E)
+- [April 30, 2026](https://www.youtube.com/watch?v=A2QiGNa6pwM)
+- [June 11, 2026](https://www.youtube.com/watch?v=gBcm8g4i3rs)
+- [July 23, 2026](https://www.youtube.com/watch?v=6w_ypzkIKqo)

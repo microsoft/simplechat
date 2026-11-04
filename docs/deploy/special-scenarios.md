@@ -166,7 +166,7 @@ The architecture consists of a single VNet with multiple subnets and a set of Pr
 
 These are reference architecture segments, not the unmodified deployer output. A **fresh private-network deployment without existing VNet/subnet IDs** creates a `10.0.0.0/21` VNet, delegated `10.0.0.0/24` App Service integration subnet, and shared `10.0.2.0/24` private endpoint subnet. This is identical in Commercial and Government; the scripts do not automatically split endpoint subnets by service.
 
-The [Commercial subnet tables](../guides/enterprise-networking.md#networking-in-azure-commercial) and [Government subnet tables](../guides/enterprise-networking.md#networking-in-azure-government) show **fresh deployment defaults** and a **compact existing-network reference** using `10.42.0.0/24`, with address counts, Azure-usable counts, delegation, and reserved growth space. The compact reference needs enterprise-managed endpoint placement or IaC customization; existing-VNet reuse still sends script-created endpoints to one supplied endpoint subnet.
+The [Commercial subnet tables]({{ '/guides/enterprise-networking/#networking-in-azure-commercial' | relative_url }}) and [Government subnet tables]({{ '/guides/enterprise-networking/#networking-in-azure-government' | relative_url }}) show **fresh deployment defaults** and a **compact existing-network reference** using `10.42.0.0/24`, with address counts, Azure-usable counts, delegation, and reserved growth space. The compact reference needs enterprise-managed endpoint placement or IaC customization; existing-VNet reuse still sends script-created endpoints to one supplied endpoint subnet.
 
 **Key Points:**
 - The App Service has **two network connections**:
@@ -195,7 +195,7 @@ For each Azure service with a Private Endpoint, you must create and link the fol
 | Speech Service         | privatelink.cognitiveservices.azure.com      |
 | Video Indexer          | privatelink.api.videoindexer.ai              |
 
-This table is **Azure Commercial**. Document Intelligence, Content Safety, and Speech share Cognitive Services DNS, but Video Indexer does not. See the [cloud-specific DNS matrix and AMPLS setup](../guides/enterprise-networking.md#step-5-configure-private-dns) for Government and monitoring. Government Key Vault uses `privatelink.vaultcore.usgovcloudapi.net`; Government Redis uses `privatelink.redis.cache.usgovcloudapi.net`.
+This table is **Azure Commercial**. Document Intelligence, Content Safety, and Speech share Cognitive Services DNS, but Video Indexer does not. See the [cloud-specific DNS matrix and AMPLS setup]({{ '/guides/enterprise-networking/#step-5-configure-private-dns' | relative_url }}) for Government and monitoring. Government Key Vault uses `privatelink.vaultcore.usgovcloudapi.net`; Government Redis uses `privatelink.redis.cache.usgovcloudapi.net`.
 
 **You must link each DNS zone to the VNet and ensure the correct records are created for each private endpoint.**
 

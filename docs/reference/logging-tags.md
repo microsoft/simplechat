@@ -198,7 +198,7 @@ and the hashed conversation ID. These counts expose selection pressure without
 logging memory values. A selected count below the available count does not alone
 prove a cap omission: relevance, empty values, and embedding compatibility also
 affect selection. Inclusion proves context delivery, not that the model used it.
-See the [request-memory resolution fix](../explanation/fixes/ORCHESTRATION_REQUEST_MEMORY_RESOLUTION_FIX.md)
+See the [request-memory resolution fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_REQUEST_MEMORY_RESOLUTION_FIX.md)
 for availability states and live-UI validation limits.
 
 ## Current tag inventory
@@ -528,7 +528,7 @@ boolean flags and `turn_id_hash`. The serializer preserves these safe categories
 replacing them with string lengths. It does not allow arbitrary diagnostic text. No instruction,
 draft, response, credentials, raw identity IDs or provider exception message is recorded.
 
-See [Ask AI operation diagnostics](../explanation/fixes/ASK_AI_OPERATION_DIAGNOSTICS_FIX.md)
+See [Ask AI operation diagnostics](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ASK_AI_OPERATION_DIAGNOSTICS_FIX.md)
 for the event and dimension reference, bounded queries and reproduction procedure.
 
 ## Orchestration failure diagnostics
@@ -811,5 +811,5 @@ AppTraces
 | order by TimeGenerated asc
 ```
 
-See [the evidence matching fix](../explanation/fixes/V2_COMPARISON_ANALYZE_EVIDENCE_MATCHING_FIX.md)
+See [the evidence matching fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_COMPARISON_ANALYZE_EVIDENCE_MATCHING_FIX.md)
 for how the tiers are applied.

@@ -24,7 +24,7 @@ workspace decision:
 ## Why it matters
 
 Workspace types set the default audience for a document. Personal is one person, group is a
-named membership, and public is everyone in the organisation. Sharing and downloads then
+named membership, and public is the signed-in SimpleChat audience. Sharing and downloads then
 decide whether a file can leave that audience, which is the point at which a document
 management decision becomes a data movement decision.
 
@@ -34,7 +34,7 @@ management decision becomes a data movement decision.
 
 ## Before you change anything
 
-- Decide which workspace types your policy supports before enabling them; a public workspace is readable organisation-wide.
+- Decide which workspace types your policy supports before enabling them; public workspace content is readable by signed-in app users, not anonymous visitors.
 - Assign the `CreateGroups` and `CreatePublicWorkspaces` app roles in the Enterprise App before requiring them, or nobody will be able to create anything.
 - Decide the download policy before inviting a broad audience. Turning downloads on later is easier than retracting files that have already left.
 
@@ -42,9 +42,11 @@ management decision becomes a data movement decision.
 
 ### Personal Workspaces {#personal-workspaces-section}
 
-Every user gets one private space for their own documents, prompts, agents and actions, which
-nobody else can reach. The new interface presents it to end users as **My Workspace**; admin
-settings and internal references call it the personal workspace.
+When enabled, every user gets a private space for their own documents, prompts,
+agents and actions. Its collection is not published to other users; deliberately
+sharing a supported file or a conversation output is a separate decision.
+The new interface presents it to end users as **My Workspace**; admin settings
+and internal references call it the personal workspace.
 
 Turning this off hides the destination and removes the personal scope from chat. Documents
 already stored stay in place but become unreachable, so this retires the feature rather than
@@ -67,7 +69,7 @@ change it.
 
 ### Public Workspaces {#public-workspaces-section}
 
-A public workspace is readable by anyone in the organisation without being a member;
+A public workspace is readable by signed-in SimpleChat users without being a member;
 membership still controls who can add or change documents. Because publishing here reaches
 everybody, requiring the `CreatePublicWorkspaces` role is usually the setting to reach for
 before enabling the type broadly.
@@ -86,7 +88,7 @@ about a setting still resolves to the same words.
 | Allow Users to Create Groups | Off freezes the group list without disabling existing groups, and overrides the role requirement below. | On | `enable_group_creation`; the classic page renders this inverted, as "Disable Group Creation" |
 | Require CreateGroups App Role | Narrows group creation to holders of the `CreateGroups` role. | Off | `require_member_of_create_group` |
 | Require Owner to Manage Group Agents, Actions and Workflows | Restricts changing a group's agents, actions and workflows to the Owner; Admins keep read access. | Off | `require_owner_for_group_agent_management` |
-| Enable Public Workspaces | Adds a workspace type any user in the organisation can read without being a member. | Off | `enable_public_workspaces`; capability toggle |
+| Enable Public Workspaces | Adds a workspace type signed-in app users can read without being a member. | Off | `enable_public_workspaces`; capability toggle |
 | End-user display name | Renames the type for end users only, up to 32 characters. Admin settings keep saying Public Workspace. | Empty | `public_workspace_display_name` |
 | Require CreatePublicWorkspaces App Role | Narrows public workspace creation to holders of the `CreatePublicWorkspaces` role. | Off | `require_member_of_create_public_workspace` |
 
@@ -109,6 +111,13 @@ downloads were never enabled.
 Lets a user hand a workspace file to another user or workspace from inside the application,
 rather than downloading it and sending it on. It is a separate decision from downloads: you
 can allow movement within SimpleChat while still refusing to hand out the original file.
+
+{% include media.html id="slide-file-sharing" %}
+
+The recipient's access does not transfer ownership of the original. Removing
+a shared reference, deleting the source, approving access, and allowing a
+download are different operations; review the destination audience before
+offering either sharing or downloads.
 
 ### Shared Conversation File Approvals {#shared-conversation-file-approvals-section}
 

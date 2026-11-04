@@ -37,7 +37,13 @@ This group protects who can enter the app, what secrets the app can use, what co
 
 Everything on this tab decides who gets in and what they can reach once they are in. It is deliberately separate from Content Safety, which governs what may be said by someone already inside.
 
-SimpleChat recognises a general `Admin` role and a set of narrower Entra app roles. By default the narrower roles are not required, so anyone holding `Admin` can reach every admin surface and any signed-in user can use every enabled feature. Requiring a role is what splits that apart.
+{% include media.html id="slide-identity-and-access" %}
+
+Signing in does not confer access to every workspace, model endpoint, or
+external source. Application roles, workspace membership, governance, and
+the connected service's own permissions each retain their part of the decision.
+
+SimpleChat recognises a general `Admin` role and a set of narrower Entra app roles. By default the narrower roles are not required, so anyone holding `Admin` can reach every admin surface and signed-in users can use enabled features subject to workspace, source, and governance permissions. Requiring a role further narrows that access.
 
 ### Permissions {#permissions-section}
 
@@ -178,6 +184,13 @@ remove the reference first.
 
 ## Content Screening {#content-screening}
 
+{% include media.html id="slide-safety-and-screening" %}
+
+This illustration combines distinct, optional controls. Configure the
+screening rules, Content Safety connection, input and output checkpoints,
+and failure behavior explicitly; turning on one scanner does not enable
+every check pictured.
+
 ### Policies and scans {#content-screening-section}
 
 Content screening applies saved PII, regex, literal, and optional model rules at administrator-selected checkpoints. Workspace uploads retain their hold-and-review workflow. Submitted chat messages and AI reply text can use the same global baseline without inheriting workspace-specific additions.
@@ -253,7 +266,7 @@ Streaming first is **post-response moderation**. Removing an answer cannot undo 
 
 Use **Review unchecked chat content** to open the protected report. It lists incomplete checks without duplicating message bodies, and offers a revision-bound **Recheck** action. A later finding automatically removes an AI reply from stored chat and shared representations. Outages remain retryable; old submitted-message findings are recorded for review rather than pretending earlier model calls can be undone.
 
-See [Recheck chat content]({{ '/guides/recheck-chat-content/' | relative_url }}) for the workflow and [Chat content checks]({{ '/explanation/features/CHAT_CONTENT_CHECKS/' | relative_url }}) for the coverage boundary.
+See [Recheck chat content]({{ '/guides/recheck-chat-content/' | relative_url }}) for the workflow and [Content Safety]({{ '/features/content-safety/' | relative_url }}) for the coverage boundary.
 
 ## Session {#session}
 

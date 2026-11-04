@@ -1,9 +1,9 @@
 # test_docs_showcase_pages.py
 """
 UI test for docs showcase pages.
-Version: 0.241.134
+Version: 0.261.398
 Implemented in: 0.241.012
-Updated in: 0.241.134
+Updated in: 0.261.398
 
 This test ensures that the redesigned docs landing pages, reference guides,
 how-to guides, tutorials, and troubleshooting pages render the shared GitHub
@@ -26,15 +26,15 @@ VIEWPORTS = [
 ]
 
 PAGES = [
-    pytest.param("/", "Simple Chat Documentation", ".latest-release-note-panel", id="home"),
+    pytest.param("/", "Simple Chat Documentation", "h2:has-text('Find what you need')", id="home"),
     pytest.param("/setup_instructions/", "Getting Started", "nav.page-navigation", id="getting-started"),
-    pytest.param("/features/", "Features", "[data-latest-feature-image-src] img", id="features"),
+    pytest.param("/features/", "Features", "a[href$='/features/workflows/']", id="features"),
     pytest.param("/faqs/", "FAQ", ".latest-release-archive-panel", id="faq"),
-    pytest.param("/about/", "About Simple Chat", "h2:has-text('Built as an open repo')", id="about"),
+    pytest.param("/start/about/", "About Simple Chat", "h2:has-text('Built as an open repo')", id="about"),
     pytest.param("/contributing/", "Working in the repo", "h2:has-text('Contribution workflow')", id="contributing"),
     pytest.param("/admin_configuration/", "Admin Configuration", "img[src*='admin_settings_page.png']", id="admin-config"),
     pytest.param("/application_scaling/", "Application Scaling", "img[src*='scale-cosmos.png']", id="scaling"),
-    pytest.param("/application_workflows/", "Application Workflows", "img[src*='workflow-content_safety.png']", id="workflows"),
+    pytest.param("/reference/application-workflows/", "Application Workflows", "img[src$='/slides/safety-and-screening.png']", id="workflows"),
     pytest.param("/demos/", "Solution Demonstrations", "img[src*='UploadDocumentDemo.gif']", id="demos"),
     pytest.param("/external_apps_overview/", "External Applications Overview", ".latest-release-note-panel", id="external-apps"),
     pytest.param("/setup_instructions_manual/", "Manual Setup", "h2:has-text('Provision Azure Resources')", id="manual-setup"),
@@ -113,18 +113,23 @@ def test_docs_showcase_pages(playwright, viewport, path, heading, specific_selec
         else:
             page.get_by_role("button", name="Open documentation navigation").click()
             expect(page.locator("#sidebar-nav")).to_be_visible()
-            page.get_by_role("button", name="Close documentation navigation").click()
+            page.locator("#docs-sidebar-close").click()
 
         if path == "/features/":
-            page.locator("[data-latest-feature-image-src]").first.click()
-            expect(page.locator("#latestFeatureImageModal")).to_be_visible()
-            expect(page.locator("#latestFeatureImageModalLabel")).to_have_text("Architecture overview")
+            page.locator("a[href$='/features/workflows/']").first.click()
+            page.locator("button[data-docs-media-src$='/slides/workflows.png']").click()
+            expect(page.get_by_role("dialog", name="Enlarged screenshot", exact=True)).to_be_visible()
 
         if path == "/":
-            page.locator("#docs-hero-search-input").fill("features")
+            if viewport["width"] >= 992:
+                search = page.locator(".docs-topbar-search [data-docs-search='true']")
+            else:
+                page.goto(f"{DOCS_BASE_URL}/search/", wait_until="networkidle")
+                search = page.locator("[data-docs-search-page-input='true']")
+            search.fill("features")
             expect(page.locator(".docs-search-result-title", has_text="Features").first).to_be_visible()
-            page.locator("#docs-hero-search-input").fill("classification banner")
-            expect(page.locator(".docs-search-result-title", has_text="Configure Branding, Home Page, and Support Settings").first).to_be_visible()
+            search.fill("workspace scope lock")
+            expect(page.locator("a[href$='/features/workspace-scope-lock/']").first).to_be_visible()
     finally:
         context.close()
         browser.close()

@@ -12,8 +12,9 @@ admin_tab: governance
 
 ## What this group controls
 
-Governance decides who may use what is configured inside SimpleChat. Entra app roles
-still decide who may sign in; governance works on the people who are already in.
+Governance decides who may use what is configured inside SimpleChat. Entra sign-in
+establishes identity; app roles, workspace permissions, and source authorization
+still apply alongside governance.
 
 It covers four things:
 
@@ -25,6 +26,13 @@ It covers four things:
   scope and by person.
 - **Inbound MCP source governance**: who may use SimpleChat as an MCP server from an
   external client.
+
+{% include media.html id="slide-governance" %}
+
+Read these as separate decisions: enabling a capability does not authorize a
+source, an allowed MCP destination does not grant its credentials, and access
+to a tool does not approve every operation it can perform. Configure the
+applicable policies and review gates for the intended task.
 
 ## Why it matters
 
