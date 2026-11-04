@@ -118,12 +118,12 @@ def _query_metadata(container, where, parameters, *, fields, offset=None, limit=
 def discover_document_sources(user_id, settings, *, query="", workspace=None, workspace_offset=0,
                               source_offset=0, page_size=40, conversation_id=None):
     # Discovery runs after app initialization; no content/extraction owner is imported at bootstrap.
-    from config import cosmos_documents_container, cosmos_group_documents_container, cosmos_public_documents_container
+    from config import cosmos_user_documents_container, cosmos_group_documents_container, cosmos_public_documents_container
     from content_screening.access import public_document_payload
 
     catalog = source_catalog(user_id, settings, conversation_id)
     containers = {
-        "personal": cosmos_documents_container,
+        "personal": cosmos_user_documents_container,
         "group": cosmos_group_documents_container,
         "public": cosmos_public_documents_container,
     }

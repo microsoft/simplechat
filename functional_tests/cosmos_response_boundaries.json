@@ -14053,7 +14053,7 @@
     "application/single_app/functions_document_source_discovery.py::_query_metadata": {
       "boundary": {
         "batches": [],
-        "module_sha256": "858bc60e058bd55c568bd088b0baeb0927c6ea7edc1c6e34d5fe54e95c3c1bc8",
+        "module_sha256": "95b6694e6349e0275d1babfc497a45bbf6aa7d813d409e2bd0f76cc11bcb4e85",
         "points": [],
         "queries": [
           {
@@ -14068,13 +14068,14 @@
       "contract": "Metadata OFFSET/LIMIT query rows are plain dictionaries; selected public payload fields are projected before JSON serialization. No point response is consumed.",
       "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_v2_document_source_selection.py"
+        "functional_tests/test_v2_document_source_selection.py",
+        "functional_tests/test_v2_document_source_discovery_imports.py"
       ]
     },
     "application/single_app/functions_document_source_discovery.py::discover_document_sources": {
       "boundary": {
         "batches": [],
-        "module_sha256": "858bc60e058bd55c568bd088b0baeb0927c6ea7edc1c6e34d5fe54e95c3c1bc8",
+        "module_sha256": "95b6694e6349e0275d1babfc497a45bbf6aa7d813d409e2bd0f76cc11bcb4e85",
         "points": [],
         "queries": [
           {
@@ -14093,19 +14094,20 @@
             "response": "consumed"
           }
         ],
-        "sha256": "46a8fe952b0c27b6fda6364cde893b353efbd364f930e8033ed42549c7f930d5"
+        "sha256": "9f9d07f4087666df2f809a5d7f028726b2269ccd386b67839df25fa5f265cb0e"
       },
       "classification": "sdk-compatible",
-      "contract": "COUNT/GROUP BY and tag query rows are plain JSON; document pages pass the screening-safe public projection. Personal and approved group shares retain their workspace attribution without treating query rows as point responses.",
+      "contract": "COUNT/GROUP BY and tag query rows are plain JSON; document pages pass the screening-safe public projection. Personal and approved group shares retain their workspace attribution without treating query rows as point responses. Real configured containers are exercised with offline storage I/O.",
       "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_v2_document_source_selection.py"
+        "functional_tests/test_v2_document_source_selection.py",
+        "functional_tests/test_v2_document_source_discovery_imports.py"
       ]
     },
     "application/single_app/functions_document_source_discovery.py::source_catalog": {
       "boundary": {
         "batches": [],
-        "module_sha256": "858bc60e058bd55c568bd088b0baeb0927c6ea7edc1c6e34d5fe54e95c3c1bc8",
+        "module_sha256": "95b6694e6349e0275d1babfc497a45bbf6aa7d813d409e2bd0f76cc11bcb4e85",
         "points": [],
         "queries": [
           {
@@ -14120,7 +14122,8 @@
       "contract": "Conversation ownership and scope-lock query rows are plain dictionaries; only workspace identity/name metadata is returned. Group/public eligibility is resolved through the established domain owners.",
       "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_v2_document_source_selection.py"
+        "functional_tests/test_v2_document_source_selection.py",
+        "functional_tests/test_v2_document_source_discovery_imports.py"
       ]
     },
     "application/single_app/functions_documents.py::_complete_document_search_sync_pass": {
