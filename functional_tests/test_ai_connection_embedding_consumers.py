@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_consumers.py
 """
 Functional coverage for embedding consumer wiring and persistence boundaries.
-Version: 0.261.163
+Version: 0.261.400
 Implemented in: 0.261.106
 
 Load the actual consumer functions/classes against isolated collaborators to
@@ -138,6 +138,7 @@ class EmbeddingConsumerTests(unittest.TestCase):
             "hold_data_management_search_write_slot": slot,
             "cosmos_data_management_jobs_container": object(),
             "prepare_embedding_search_documents": prepare,
+            "record_chunk_uploads": Mock(),
             # A non-group write holds no projection fence: `nullcontext(None)` stands in for it.
             "nullcontext": nullcontext,
         }

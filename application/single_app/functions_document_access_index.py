@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from time import perf_counter
 
 import app_settings_cache
+from document_chunk_counts import chunk_count_for_response
 from azure.core import MatchConditions
 from config import (
     cosmos_document_access_index_container,
@@ -1736,6 +1737,9 @@ def _build_base_row(document_item, source_scope, scope_type, scope_id, access_ro
         'abstract': document_item.get('abstract'),
         'status': document_item.get('status'),
         'metadata_extraction_status': document_item.get('metadata_extraction_status'),
+        'num_chunks': chunk_count_for_response(document_item),
+        'indexed_chunk_count_version': document_item.get('indexed_chunk_count_version'),
+        'num_file_chunks': document_item.get('num_file_chunks'),
         'percentage_complete': document_item.get('percentage_complete'),
         'number_of_pages': document_item.get('number_of_pages'),
         'publication_date': document_item.get('publication_date'),
@@ -2171,7 +2175,8 @@ def _query_candidate_projection_rows_for_scope(scope_key, source_scope):
         'SELECT c.id, c.document_id, c.source_document_id, c.version, c.scope_key, '
         'c.scope_id, c.access_role, c.approval_status, c.access_granted, '
         'c.shared_user_ids, c.shared_group_ids, c.file_name, c.title, c.document_classification, c.tags, c.authors, c.keywords, '
-        'c.abstract, c.status, c.percentage_complete, c.number_of_pages, c.publication_date, '
+        'c.abstract, c.status, c.metadata_extraction_status, c.percentage_complete, c.number_of_pages, c.publication_date, '
+        'c.num_chunks, c.indexed_chunk_count_version, c.num_file_chunks, '
         'c.enhanced_citations, c.document_intelligence_extraction_mode, '
         'c.extraction_engine, c.extraction_engine_reason, '
         'c.generated_artifact_promotion_status, c.generated_artifact_requested_by_user_id, '
@@ -2425,6 +2430,9 @@ def _projection_row_to_document(row, source_scope):
         'abstract': row.get('abstract'),
         'status': row.get('status'),
         'metadata_extraction_status': row.get('metadata_extraction_status'),
+        'num_chunks': row.get('num_chunks'),
+        'indexed_chunk_count_version': row.get('indexed_chunk_count_version'),
+        'num_file_chunks': row.get('num_file_chunks'),
         'percentage_complete': row.get('percentage_complete'),
         'number_of_pages': row.get('number_of_pages'),
         'publication_date': row.get('publication_date'),
@@ -2487,6 +2495,7 @@ def _projection_row_to_document(row, source_scope):
             if shared_entry not in document_item['shared_user_ids']:
                 document_item['shared_user_ids'].append(shared_entry)
 
+    document_item['num_chunks'] = chunk_count_for_response(document_item)
     return document_item
 
 
@@ -2725,6 +2734,8 @@ def query_document_access_index_documents(
     cached_payload = _try_get_document_access_cache_entry(cache_context)
     if cached_payload is not None:
         cached_documents = copy.deepcopy(cached_payload.get('documents') or [])
+        for document in cached_documents:
+            document['num_chunks'] = chunk_count_for_response(document)
         cache_diagnostics = {
             'label': 'document_access_index_cache_hit',
             'request_charge': 0,

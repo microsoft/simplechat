@@ -170,6 +170,22 @@ after a failed or empty analysis. It queues analysis, not another upload, and
 does not imply success. Details refresh while analysis is running. Screening,
 publication approval, and workspace permissions remain in force.
 
+## Interpreting document chunk counts
+
+From **0.261.400**, **Chunks** reports the number of indexed Search chunks for the
+document's source version, not its page count or the number of physical files
+used during processing. A recorded zero means no content was indexed.
+
+Older documents may have no trustworthy recorded count. Lists expose that count
+as unknown rather than showing a misleading zero; V2 details use an em dash for
+an unknown value. Opening or refreshing a completed document's details verifies
+its count from Search without re-uploading the file or running another model.
+Pending review and unavailable documents are not searched for this lookup.
+
+A successful metadata retry also removes the old metadata-extraction warning.
+Ingestion failures and review holds are separate states and are not cleared by
+metadata analysis.
+
 ## Step 3: Upload to Group Workspaces
 
 Group workspaces require additional setup:
