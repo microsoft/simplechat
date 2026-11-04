@@ -17,6 +17,7 @@ import {
     type OrchestrationPlan, type PlanStatus,
 } from '../../lib/orchestration';
 import { legacyPlanErrorMessage } from '../../lib/orchestrationErrors';
+import { filesNeedPlanRetry } from '../../lib/orchestrationOutputs';
 import { M365ApprovalInlineCard } from './M365ApprovalInlineCard';
 import { OrchestrationM365Notice } from './OrchestrationM365Notice';
 
@@ -83,6 +84,7 @@ export function OrchestrationRecoveryNotice({
     const streaming = useChatStore((state) => state.streaming);
     const inFlight = useOrchestrationStore((state) => state.inFlight);
     const [confirmationVersion, setConfirmationVersion] = useState<string | null>(null);
+    const [confirmationAvailableInformation, setConfirmationAvailableInformation] = useState(false);
     const attempt = saved ?? normalizeOrchestrationAttempt(metadata);
     const outcome = attempt.outcome ?? saved?.status ?? status;
     const runState = { ...attempt, status: saved?.status ?? status };
@@ -105,8 +107,7 @@ export function OrchestrationRecoveryNotice({
     // again from this chat, as long as no other file is still being prepared.
     const filesInProgress = outputs.some((output) =>
         output.state === 'waiting' || output.state === 'rendering' || output.state === 'retry_scheduled');
-    const planRetryForFiles = fileOutputs && !filesInProgress
-        && outputs.some((output) => output.state === 'failed' && !output.can_retry);
+    const planRetryForFiles = filesNeedPlanRetry(outputs);
     const planRetryOffered = !fileOutputs || planRetryForFiles;
     // The server refuses runs from an earlier orchestration version: there is nothing to reload,
     // check or review, only its message to show.
@@ -129,9 +130,13 @@ export function OrchestrationRecoveryNotice({
     const active = Object.values(inFlight).some((run) => run.conversationId === conversationId);
     const retryAllowed = failed && planRetryOffered && !isOrchestrationRunPending(runState) && recovery?.eligible && recovery.expected_version
         && (!newer || newer === runId) && !saved?.transportUnknown;
-    const retry = async (confirmedVersion?: string) => {
-        const result = await retryOrchestrationRun(conversationId, runId, confirmedVersion);
+    const availableInformationAllowed = failed && !filesInProgress && !isOrchestrationRunPending(runState)
+        && recovery?.can_use_available_information && recovery.expected_version
+        && (!newer || newer === runId) && !saved?.transportUnknown && !legacy;
+    const retry = async (confirmedVersion?: string, availableInformation = false) => {
+        const result = await retryOrchestrationRun(conversationId, runId, confirmedVersion, availableInformation);
         setConfirmationVersion(result.confirmationRequired && result.version ? result.version : null);
+        setConfirmationAvailableInformation(availableInformation);
     };
     const titleFor = (stepId: string) => currentPlan?.steps.find((step) => step.step_id === stepId)?.title || stepId;
     const allFailures = [...(attempt.failure ? [attempt.failure] : []), ...(attempt.failures ?? [])];
@@ -145,7 +150,7 @@ export function OrchestrationRecoveryNotice({
     const confirmation = confirmationVersion ? (
         <RecoveryConfirmation
             busy={saved?.busy}
-            onConfirm={() => void retry(confirmationVersion)}
+            onConfirm={() => void retry(confirmationVersion, confirmationAvailableInformation)}
             onClose={() => setConfirmationVersion(null)}
         />
     ) : null;
@@ -220,6 +225,12 @@ export function OrchestrationRecoveryNotice({
                     ? 'Resume the saved plan without repeating completed plan steps.'
                     : 'This historical attempt has no verified recovery checkpoint. It cannot be resumed; start a new plan deliberately if needed.')}</p>
             ) : null}
+            {availableInformationAllowed ? (
+                <p>
+                    You can still prepare an answer and the requested narrative files from the accepted findings,
+                    with missing information explained. Completed source work will not run again.
+                </p>
+            ) : null}
             {failed && planRetryOffered && recovery?.reused_step_ids.length ? (
                 <p><strong>Reuse saved results:</strong> {recovery.reused_step_ids.map(titleFor).join(', ')}.</p>
             ) : null}
@@ -237,6 +248,12 @@ export function OrchestrationRecoveryNotice({
                     <GlassButton size="sm" disabled={Boolean(saved?.busy || streaming || active)}
                         onClick={() => void retry()}>
                         {saved?.busy ? 'Preparing retry...' : 'Retry from failed step'}
+                    </GlassButton>
+                ) : null}
+                {availableInformationAllowed ? (
+                    <GlassButton size="sm" disabled={Boolean(saved?.busy || streaming || active)}
+                        onClick={() => void retry(undefined, true)}>
+                        {saved?.busy ? 'Preparing answer...' : 'Use available information'}
                     </GlassButton>
                 ) : null}
                 {newer && newer !== runId ? (

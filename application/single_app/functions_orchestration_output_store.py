@@ -19,10 +19,12 @@ from azure.cosmos import exceptions
 
 from cosmos_document_utils import normalize_cosmos_document
 from functions_orchestration_result_contracts import (
+    NARRATIVE_EXPORT_PROFILES,
     ProducerIdentity,
     ResultRef,
     canonical_bytes,
     canonical_digest,
+    narrative_result_ready,
 )
 
 
@@ -723,7 +725,12 @@ class OrchestrationOutputStore:
             raise OutputUnavailableError("output_binding_invalid")
         for value in (producer.run_id, producer.step_id, approved_work_id):
             safe_identity(value)
-        source_ref.completeness.require_readable()
+        source_ref.completeness.require_readable(
+            allow_partial=(
+                type(render_spec) is dict and render_spec.get("profile") in NARRATIVE_EXPORT_PROFILES
+                and narrative_result_ready(source_ref, profile=render_spec["profile"])
+            ),
+        )
         deadline_at = parse_time(deadline_at).isoformat()
         identity = {
             "version": OUTPUT_CONTRACT_VERSION, "request_owner": _request_owner(producer.to_dict()),

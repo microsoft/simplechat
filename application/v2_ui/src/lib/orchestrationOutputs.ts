@@ -101,6 +101,12 @@ export function hasPendingOrchestrationOutputs(outputs?: readonly OrchestrationO
         && (output.state === 'waiting' || output.state === 'rendering' || output.state === 'retry_scheduled')));
 }
 
+export function filesNeedPlanRetry(outputs: readonly OrchestrationOutput[]): boolean {
+    return outputs.some((output) => output.state === 'failed' && !output.can_retry)
+        && !outputs.some((output) =>
+            output.state === 'waiting' || output.state === 'rendering' || output.state === 'retry_scheduled');
+}
+
 const OUTPUT_TYPE_LABELS: Readonly<Record<string, string>> = {
     csv: 'CSV file',
     docx: 'Word document',

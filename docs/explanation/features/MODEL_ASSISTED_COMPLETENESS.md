@@ -1,7 +1,7 @@
 # Model-assisted answer completeness
 
 Implemented in version: **0.261.382** (`application/single_app/config.py`).
-Updated in version: **0.261.384** (`application/single_app/config.py`).
+Updated in version: **0.261.399** (`application/single_app/config.py`).
 
 ## Purpose
 
@@ -37,6 +37,42 @@ certify completion. They do not authorize fabricated data. Invalid checker outpu
 provider failure and unavailable context produce **Verification unavailable**, not
 a successful result. An explicit unknown is acceptable only where the task and
 partial-result contract permit it.
+
+### Available-information narrative responses
+
+Implemented in version: **0.261.399**, recorded in
+`application/single_app/config.py`.
+
+New ordinary narrative plans explicitly declare `response_policy:
+available_information`. A supported answer or a precise explanation of what
+cannot be determined handles a requested question; the checker must not require
+invented facts or treat limited evidence as an execution failure.
+
+The application supplies stable obligations for requested content, supported
+claims, and material limitations before assessment. A checker cannot drop an
+obligation to obtain a passing result. It checks prepared content separately
+from later file creation or delivery, which retain their own execution checks.
+Missing information is explained naturally, without a mandatory generic warning
+or coverage appendix.
+
+Within the existing answer-correction allowance, an unsupported assertion may be
+removed or replaced by an honest limitation, then checked again. The supported
+content and requested scope must be preserved. One malformed assessment can
+receive a separate bounded protocol repair without rewriting the candidate;
+reservation is persisted before the call, so interruption does not start an
+uncounted duplicate repair. Persistent assessment failure remains verification
+unavailable, never approval by default.
+
+Evidence aliases resolve real paths and exact identifier values, not substrings
+of serialized source prose. Accepted source findings remain distinct from
+unresolved diagnostic candidates. A narrative readiness attestation is bound
+to the retained result manifest; it does not promote partial source data to
+complete data. Exact datasets, calculations, and closed schemas remain strict.
+
+The same distinction permits prepared narrative files to contain supported
+information and material gaps while preserving their full-consumption,
+integrity, ownership, and publication checks. There is no new administrator
+switch.
 
 ## Administration
 
@@ -106,6 +142,11 @@ interruption, opt-out and check-only behavior.
 `functional_tests/test_task_completeness_runtime.py` exercises actual workflow
 result construction and orchestration execution/checkpoint/render boundaries with
 offline model replies. UI coverage is in `ui_tests/test_task_completeness_ui.py`.
+`functional_tests/test_orchestration_available_information.py` covers ordinary
+answers, bounded checker repair, strict-data negative controls, actual narrative
+files, immutable native reports, and safe saved-run continuation. The live,
+reloaded, desktop, and mobile recovery states are covered by
+`ui_tests/test_v2_orchestration_recovery.py`.
 
 The checker adds model calls, latency and token use. It is model-assisted, not a
 proof of factual correctness: false positive and false negative assessments remain

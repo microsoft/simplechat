@@ -79,7 +79,7 @@ from functions_orchestration_output_store import (
 )
 from functions_orchestration_result_contracts import (
     IMAGE_ASSET_KIND, MAX_IMAGE_ASSET_PIXELS, ProducerIdentity, ResultContractError, ResultRef,
-    validate_image_asset_value,
+    narrative_result_ready, validate_image_asset_value,
 )
 from functions_orchestration_results import (
     OrchestrationResultReader,
@@ -844,6 +844,7 @@ class OrchestrationRenderingService:
             reference = ResultRef.from_dict(record["source_ref"])
             return self.results.open_result(
                 reference, require_current_sources=record["render_spec"]["require_current_sources"],
+                allow_partial=narrative_result_ready(reference, profile=record["render_spec"]["profile"]),
             )
         except Exception as exc:
             _raise_source_read_failure(exc)
@@ -860,6 +861,7 @@ class OrchestrationRenderingService:
         source = open_orchestration_export_source(
             self.results, source_ref, columns=export_request.columns,
             require_current_sources=require_current_sources,
+            profile=export_request.profile,
         )
         entry = resolve_generated_file_export_format(export_request, source.kind)
         request = asdict(export_request)
@@ -1174,6 +1176,7 @@ class OrchestrationRenderingService:
                 columns=record["render_spec"]["columns"],
                 max_value_bytes=min(self.limits.max_value_bytes, record["render_spec"]["limits"]["max_value_bytes"]),
                 require_current_sources=record["render_spec"]["require_current_sources"],
+                profile=record["render_spec"]["profile"],
             )
             request = _request(record["render_spec"])
             entry = resolve_generated_file_export_format(request, source.kind)

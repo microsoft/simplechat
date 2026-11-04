@@ -165,6 +165,24 @@ limit should be revised, not silently truncated or changed to a different format
 The renderer cannot turn a preview, incomplete source coverage or pending
 computation into a complete exported dataset.
 
+### Reports with unavailable information
+
+Since **0.261.399**, a narrative report can use the accepted findings even when
+some requested conclusions cannot be established. The report states those gaps
+in its actual content, just as the chat answer does; missing information alone
+does not become a failed plan or a partially-completed error.
+
+The prepared report is still checked and read in full before publication.
+Its underlying evidence keeps its real coverage and limitations. This does not
+permit a partial spreadsheet or record collection to masquerade as an exhaustive
+dataset, invent values for required fields, or claim a file was created when its
+renderer or publication failed.
+
+For an eligible older attempt stopped at a complete-only narrative input,
+**Use available information** prepares the answer and narrative files from the
+saved accepted results without repeating source analysis or completed external
+operations.
+
 ## Reuse a document or presentation
 
 Since **0.261.321**, select or upload a populated Word/PowerPoint file or an

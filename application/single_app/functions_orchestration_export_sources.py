@@ -18,8 +18,10 @@ from functions_generated_export_contracts import (
 )
 from functions_orchestration_result_contracts import (
     Completeness,
+    NARRATIVE_EXPORT_PROFILES,
     RecordColumn,
     ResultRef,
+    narrative_result_ready,
     validate_columns,
 )
 from functions_orchestration_results import (
@@ -43,7 +45,9 @@ _Reader = OrchestrationResultReader | SavedAnalysisRecordSource
 class OrchestrationExportSource:
     """Server-side source binding with a separate full-consumption receipt."""
 
-    def __init__(self, reader: _Reader, kind: str, completeness: Completeness | None = None):
+    def __init__(
+        self, reader: _Reader, kind: str, completeness: Completeness | None = None, *, profile: str | None = None,
+    ):
         self._reader = reader
         self._kind = kind
         self._reference = (
@@ -57,6 +61,10 @@ class OrchestrationExportSource:
             raise GeneratedFileExportError(
                 "invalid_source", "An explicit retained-source completeness contract is required."
             )
+        self._narrative_ready = (
+            profile in NARRATIVE_EXPORT_PROFILES
+            and narrative_result_ready(self._reference, profile=profile)
+        )
         self._verified = False
         self.recheck()
 
@@ -71,9 +79,10 @@ class OrchestrationExportSource:
     @property
     def readiness(self) -> GeneratedFileExportReadiness:
         completeness = self._completeness
+        ready = completeness.status == "complete" or self._narrative_ready
         return GeneratedFileExportReadiness(
-            state="ready" if completeness.status == "complete" else completeness.status,
-            is_complete=completeness.status == "complete",
+            state="ready" if ready else completeness.status,
+            is_complete=ready,
             is_preview=completeness.preview,
         )
 
@@ -189,9 +198,9 @@ class _RecordExportSource(OrchestrationExportSource):
 
 
 class _TextExportSource(OrchestrationExportSource):
-    def __init__(self, reader: OrchestrationResultReader, kind: str):
+    def __init__(self, reader: OrchestrationResultReader, kind: str, *, profile: str | None = None):
         self._character_count = reader.reference.character_count
-        super().__init__(reader, kind)
+        super().__init__(reader, kind, profile=profile)
 
     @property
     def character_count(self) -> int:
@@ -232,9 +241,9 @@ class _TextExportSource(OrchestrationExportSource):
 
 
 class _ValueExportSource(OrchestrationExportSource):
-    def __init__(self, reader: OrchestrationResultReader, max_value_bytes: int):
+    def __init__(self, reader: OrchestrationResultReader, max_value_bytes: int, *, profile: str | None = None):
         self._max_value_bytes = max_value_bytes
-        super().__init__(reader, "structured_value")
+        super().__init__(reader, "structured_value", profile=profile)
 
     def read_value(self) -> Any:
         self.recheck()
@@ -250,6 +259,7 @@ def build_orchestration_export_source(
     *,
     columns: tuple[str, ...] | list[str] | None = None,
     max_value_bytes: int = MAX_VALUE_BYTES,
+    profile: str | None = None,
 ) -> OrchestrationExportSource:
     """Adapt a real reader; column selection never flattens or changes row order."""
     if not isinstance(reader, OrchestrationResultReader):
@@ -276,8 +286,8 @@ def build_orchestration_export_source(
     if kind == "records":
         return _RecordExportSource(reader, columns)
     if kind in {"text", "markdown"}:
-        return _TextExportSource(reader, kind)
-    return _ValueExportSource(reader, max_value_bytes)
+        return _TextExportSource(reader, kind, profile=profile)
+    return _ValueExportSource(reader, max_value_bytes, profile=profile)
 
 
 def open_orchestration_export_source(
@@ -287,17 +297,19 @@ def open_orchestration_export_source(
     columns: tuple[str, ...] | list[str] | None = None,
     max_value_bytes: int = MAX_VALUE_BYTES,
     require_current_sources: bool = False,
+    profile: str | None = None,
 ) -> OrchestrationExportSource:
-    """Open under current access; never opt a partial result into a full export."""
+    """Open complete data or an owner-attested, fully prepared narrative."""
     if not isinstance(service, OrchestrationResults) or type(reference) is not ResultRef:
         raise GeneratedFileExportError(
             "invalid_source", "A retained-result service and trusted reference are required."
         )
     reader = service.open_result(
         reference, require_current_sources=require_current_sources,
+        allow_partial=profile in NARRATIVE_EXPORT_PROFILES and narrative_result_ready(reference, profile=profile),
     )
     return build_orchestration_export_source(
-        reader, columns=columns, max_value_bytes=max_value_bytes,
+        reader, columns=columns, max_value_bytes=max_value_bytes, profile=profile,
     )
 
 

@@ -939,6 +939,7 @@ saved effective plan, not the current composer selections or a new planner call.
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
 | Retry from failed step | Creates a linked attempt that restores valid completed-step results and executes the incomplete work. | Recover after a failure without repeating successful plan steps or duplicating the question. | `enable_chat_orchestration`, current access, and recoverable saved checkpoints. For an attempt with files, only when a failed file can't be retried on its own and no file is still being prepared (since **0.261.303**) |
+| Use available information | Since **0.261.399**, creates a linked answer-and-narrative-file attempt from accepted saved findings, explaining unavailable information in the content. Source analysis and completed external operations are not repeated. | Get a useful answer from an older attempt that stopped at a complete-only narrative input, rather than retrying the same refusal. | The server has verified that only eligible narrative output work remains, with reusable checkpoints, current access, and no active or newer attempt |
 | Confirm retry / Cancel | Confirms the possible external effects of retrying a failed agent/action, or dismisses the confirmation without executing it. Since **0.261.212** it also appears for a step that starts a saved workflow; its retry never starts the workflow twice, and links the run when the plan already started it. Since **0.261.304** it closes as soon as the retry starts, and it doesn't appear for a **Use an action** step that stopped for Microsoft 365 sign-in, approval or policy, which only reads data. | Decide whether it is safe to repeat the failed step's internal tool activity. | A recoverable attempt that requires external-effect confirmation |
 | Allow this time / Always allow for SharePoint (or OneDrive) / Quick read only | Since **0.261.304**, shown in the stopped message when a step needs the user's approval to read more of a SharePoint or OneDrive file than a quick read covers, with the amount it needs to read. Each choice saves the decision through the approvals API and continues the plan immediately. **Always allow** also saves the per-source preference; **Quick read only** answers from what fits and says what it left out. | Approve or decline deeper file analysis without leaving the conversation or retrying by hand. | A **Use an action** step stopped with `m365_approval_required` for extended analysis that the user can still decide; other approvals link to **Approvals** |
 | Continue | Since **0.261.304**, continues a stopped plan whose Microsoft 365 approval was already decided, for example on the **Approvals** page. | Pick up the plan after deciding elsewhere, without a confirmation. | A recoverable attempt stopped for an approval that is no longer pending |
@@ -951,6 +952,13 @@ saved effective plan, not the current composer selections or a new planner call.
 Steps restored from checkpoints show **Reused saved result**. Retry is always
 manual, including when normal approval is Auto or timed. An older attempt cannot
 create a competing retry after a newer attempt has been prepared.
+
+New narrative answers and documents handle missing information normally: they
+answer supported questions and explain the gaps without a partial-completion
+error. **Results with limits** in Run details describes the underlying evidence,
+not a failed answer or permission to treat a partial dataset as complete. Genuine
+execution, verification, and file-publication failures still use their recovery
+controls.
 
 Since **0.261.304**, a retry's answer replaces the attempt it retried in the thread.
 The earlier attempt stays saved for the record, but it is hidden, and it is left out

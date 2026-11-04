@@ -43,7 +43,9 @@ from functions_orchestration_output_store import (
     OrchestrationOutputStore, OutputError, OutputUnavailableError,
 )
 from functions_orchestration_registry import resolve_available_capability_ids
-from functions_orchestration_result_contracts import InputBinding, ResultContractError, ResultRef, TaskResult
+from functions_orchestration_result_contracts import (
+    NARRATIVE_EXPORT_PROFILES, InputBinding, ResultContractError, ResultRef, TaskResult, narrative_result_ready,
+)
 from functions_orchestration_results import ResultUnavailableError
 from functions_orchestration_runs import get_orchestration_run
 from functions_orchestration_services import OrchestrationServices
@@ -200,24 +202,32 @@ def _bound_render_reference(run, step, user_id):
     if type(inputs) is not dict or len(inputs) != 1:
         raise OutputUnavailableError("output_binding_invalid")
     value = next(iter(inputs.values()))
-    if type(value) is not dict or value.get("allow_partial", False) is not False:
+    if type(value) is not dict or type(value.get("allow_partial", False)) is not bool:
+        raise OutputUnavailableError("output_binding_invalid")
+    profile = step.get("arguments", {}).get("profile")
+    if value.get("allow_partial") and profile not in NARRATIVE_EXPORT_PROFILES:
         raise OutputUnavailableError("output_binding_invalid")
     binding = InputBinding.from_dict(value.get("binding"))
     if binding.existing_result is not None:
         aliases = run.get("result_aliases") or {}
         if binding.existing_result not in aliases:
             raise OutputUnavailableError("output_binding_invalid")
-        return ResultRef.from_dict(aliases[binding.existing_result])
-    # Recovery owns chained checkpoint provenance; don't guess a result digest or
-    # substitute the latest result for a different execution attempt.
-    from functions_orchestration_recovery import _completed_checkpoint
+        reference = ResultRef.from_dict(aliases[binding.existing_result])
+    else:
+        # Recovery owns chained checkpoint provenance; bootstrap must not rediscover it.
+        from functions_orchestration_recovery import _completed_checkpoint
 
-    checkpoint = _completed_checkpoint(
-        run, binding.step_id,
-        lambda: read_owned_conversation(user_id, run["conversation_id"]),
-    )
-    task = TaskResult.from_dict(checkpoint["result"]["task_result"])
-    return task.output(binding.output_name)
+        checkpoint = _completed_checkpoint(
+            run, binding.step_id,
+            lambda: read_owned_conversation(user_id, run["conversation_id"]),
+        )
+        task = TaskResult.from_dict(checkpoint["result"]["task_result"])
+        reference = task.output(binding.output_name)
+    if reference.completeness.status == "partial" and not (
+        value.get("allow_partial") is True and narrative_result_ready(reference, profile=profile)
+    ):
+        raise OutputUnavailableError("output_binding_invalid")
+    return reference
 
 
 def _authorize_render_output(record, *, operation, rendering_service):

@@ -79,8 +79,10 @@ from functions_orchestration_registry import (
     resolve_available_capability_ids,
 )
 from functions_orchestration_result_contracts import (
+    AVAILABLE_INFORMATION_POLICY, NARRATIVE_EXPORT_PROFILES,
     EXTERNAL_SESSION_UNAVAILABLE_REASON, IMAGE_ASSET_KIND, InputBinding, InputSpec, OutputSpec, RecordColumn,
     ResultContractError, StepBindings, TaskResult, canonical_bytes, output_name, validate_input_bindings,
+    is_narrative_output, uses_available_information,
 )
 from functions_orchestration_deliverables import DeliverableError, compile_deliverables
 # The wait rules import this module lazily, so importing them here does not form a cycle.
@@ -433,6 +435,11 @@ def step_input_specs(step):
             raise PlanValidationError('This capability does not accept that named input.')
         if value.get('allow_partial') is True and not capability['partial_inputs_supported']:
             raise PlanValidationError('This capability requires complete named inputs.')
+        if (
+            value.get('allow_partial') is True and step.get('capability_id') == 'render_file'
+            and step.get('arguments', {}).get('profile') not in NARRATIVE_EXPORT_PROFILES
+        ):
+            raise PlanValidationError('This file profile requires complete source data.')
         if type(value.get('optional', False)) is not bool:
             raise PlanValidationError('Input optionality must be a boolean.')
         if value.get('optional') is True and not capability.get('optional_inputs_supported'):
@@ -459,6 +466,38 @@ def step_result_bindings(step):
         tuple(OutputSpec(item['name'], item['kind']) for item in step['outputs']),
         step_input_specs(step), tuple(step.get('depends_on', [])),
     )
+
+
+def available_information_plan(raw, *, step_ids=None):
+    """Declare the new narrative policy before approval, never while restoring a plan."""
+    if type(raw) is not dict:
+        return raw
+    plan = deepcopy(raw)
+    if type(plan.get('steps')) is not list:
+        return plan
+    for step in plan['steps']:
+        if type(step) is not dict or type(step.get('arguments')) is not dict:
+            continue
+        if step_ids is not None and step.get('step_id') not in step_ids:
+            continue
+        outputs = step.get('outputs')
+        if (
+            step.get('capability_id') == CAPABILITY_COMPOSE
+            and type(outputs) is list and outputs and all(is_narrative_output(item) for item in outputs)
+        ):
+            step['arguments'].setdefault('response_policy', AVAILABLE_INFORMATION_POLICY)
+        narrative = uses_available_information(step) or (
+            step.get('capability_id') == 'render_file'
+            and step['arguments'].get('profile') in NARRATIVE_EXPORT_PROFILES
+        )
+        if narrative and type(step.get('inputs')) is dict:
+            for value in step['inputs'].values():
+                if (
+                    type(value) is dict and 'binding' in value
+                    and type(value.get('allow_partial', False)) is bool
+                ):
+                    value['allow_partial'] = True
+    return plan
 
 
 def _dependency_outputs(raw, capability, composition_profiles, arguments):
@@ -516,6 +555,11 @@ def _dependency_outputs(raw, capability, composition_profiles, arguments):
                 or item['profile'] not in (composition_profiles or {})
             ):
                 raise PlanValidationError('The prepared-content profile is unavailable.')
+    if (
+        arguments.get('response_policy') == AVAILABLE_INFORMATION_POLICY
+        and not all(is_narrative_output(item) for item in outputs)
+    ):
+        raise PlanValidationError('Available-information responses require narrative outputs, not datasets.')
     return deepcopy(outputs)
 
 
