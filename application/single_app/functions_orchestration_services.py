@@ -27,7 +27,7 @@ from functions_orchestration_registry import (
 )
 from functions_orchestration_rendering import OrchestrationRenderingService
 from functions_orchestration_result_contracts import (
-    InputBinding, ResultContractError, ResultRef, TaskResult, canonical_digest,
+    InputBinding, ResultContractError, ResultRef, TaskResult, canonical_digest, narrative_result_ready,
 )
 from functions_orchestration_results import OrchestrationResultAccess, OrchestrationResults
 from functions_tabular_merge import (
@@ -107,7 +107,9 @@ def admitted_result_aliases(record, results):
         if reference.producer.capability_id == CAPABILITY_WORKFLOW_RESULTS:
             # Discovery never stores one; a stored alias naming a saved workflow result fails closed.
             raise ResultContractError("result_reference_untrusted")
-        results.open_result(reference, require_current_sources=True).recheck()
+        results.open_result(
+            reference, require_current_sources=True, allow_partial=narrative_result_ready(reference),
+        ).recheck()
         aliases[alias] = reference
     return aliases
 
@@ -156,10 +158,12 @@ def discover_result_aliases(runs, results):
                 # workflow is followed through its run link; a later plan never reads any of them.
                 continue
             for reference in task.outputs:
-                if reference.completeness.status != "complete":
+                if reference.completeness.status != "complete" and not narrative_result_ready(reference):
                     continue
                 try:
-                    results.open_result(reference, require_current_sources=True).recheck()
+                    results.open_result(
+                        reference, require_current_sources=True, allow_partial=narrative_result_ready(reference),
+                    ).recheck()
                 except (PermissionError, DocumentHeldError):
                     unavailable_count += 1
                     continue
@@ -187,7 +191,9 @@ def selected_conversation_results(runs, aliases, results, messages):
         alias = references.get(reference)
         if alias is None or reference.kind not in ("text-v1", "markdown-v1"):
             continue
-        reader = results.open_result(reference, require_current_sources=True)
+        reader = results.open_result(
+            reference, require_current_sources=True, allow_partial=narrative_result_ready(reference),
+        )
         text = reader.read_text()
         reader.recheck()
         if text.strip() == message["content"].strip():

@@ -168,7 +168,9 @@ from config import *
 from flask import Response, copy_current_request_context, g, has_request_context, stream_with_context
 from functions_authentication import *
 from functions_search import *
-from functions_search_service import search_relevant_tabular_candidates
+from functions_search_service import get_document_accessibility_payload, search_documents, search_relevant_tabular_candidates
+from functions_excel_accessibility import EXCEL_EVIDENCE_MARKER, is_excel_native_inspection_question
+from functions_accessibility import format_accessibility_metadata_for_chat
 from functions_public_workspaces import resolve_public_chat_workspace_ids
 from public_chat_scope_state import aggregate_public_workspace_ids
 from functions_service_health import (
@@ -421,7 +423,7 @@ from functions_diagram_operations import (
     build_diagram_guidance_message,
     user_requested_diagram,
 )
-from functions_agent_document_citations import apply_agent_document_citations
+from functions_agent_document_citations import apply_agent_document_citations, annotate_document_search_payload
 from functions_citation_tracking import (
     build_cited_source_subsets,
     initialize_conversation_used_document_tracking,
@@ -5044,7 +5046,7 @@ def build_search_augmentation_system_prompt(retrieved_content):
 
                         These excerpts are your starting evidence, not your only means of gathering evidence. If you have actions or tools available and the excerpts do not contain what the question needs, call the appropriate action to obtain it, then reason over the retrieved excerpts and the action results together. Gather the evidence you are capable of gathering before declining to answer.
                         Ground every claim in a retrieved excerpt, in computed tool-backed results included elsewhere in this conversation context, or in a result you obtained by calling an action. Never estimate, infer, or fabricate values that none of those sources support; if the evidence is still missing after you have used the actions available to you, say so.
-                        Excerpts drawn from a spreadsheet or other tabular source contain only a truncated schema preview of that file, not its data. Never derive counts, totals, averages, minimums, maximums, trends, or any other numeric conclusion from those preview rows; obtain such values from a computed tabular result instead.
+                        Spreadsheet excerpts can contain a truncated schema preview or explicitly labelled Excel native inspection evidence. Native evidence supports saved properties, observed native-record counts, comments, object accessibility, formatting and headers/footers, subject to its coverage limits; it is not worksheet data or a conformance certificate. Schema previews are not full data. Never derive counts, totals, averages, minimums, maximums, trends, or any other numeric conclusion from preview rows; obtain such values from a computed tabular result instead.
                         If computed tabular results are provided in another system message, treat them as authoritative for row-level values, calculations, and numeric conclusions. Do not say that you lack direct access to the data when those computed results are present.
 
                         Example
@@ -13978,6 +13980,88 @@ def collect_tabular_sk_citations(user_id, conversation_id):
     return citations
 
 
+def _execute_excel_native_inspection_evidence(
+    sources, question, user_id, conversation_id, selection_mode,
+    cancel_requested=None, request_correlation_id=None,
+):
+    """Read native evidence through the existing authorized Document Search boundaries."""
+    citations = []
+
+    def execute_source(source):
+        scope = {
+            'doc_scope': source.get('scope') or 'all',
+            'active_group_ids': [source['group_id']] if source.get('group_id') else None,
+            'active_public_workspace_id': source.get('public_workspace_id'),
+        }
+        report = get_document_accessibility_payload(
+            source['document_id'], user_id, conversation_id=conversation_id, **scope,
+        )
+        metadata = report.get('accessibility_metadata') or {}
+        if metadata.get('format') not in ('xlsx', 'xlsm', 'xls'):
+            raise ValueError('This source has no native Excel inspection metadata')
+        summary = format_accessibility_metadata_for_chat({
+            **metadata, 'style_inventory': report.get('style_inventory') or {},
+        })
+        reference = annotate_document_search_payload(
+            {'document': report['document']}, 'get_document_accessibility_report',
+        )
+        excerpts = search_documents(
+            query=f"Excel native inspection {question}", user_id=user_id,
+            document_ids=[source['document_id']], top_n=5, **scope,
+        )
+        native_results = [
+            item for item in excerpts.get('results', [])
+            if EXCEL_EVIDENCE_MARKER in str(item.get('chunk_text') or '')
+        ]
+        excerpts = annotate_document_search_payload({'results': native_results}, 'search_documents')
+        text = f"{summary[:6000]}\n{reference.get('citation', '')}"
+        if len(summary) > 6000:
+            text += "\n[Parent summary shortened; request the stored report for remaining details.]"
+        for item in native_results[:3]:
+            content = str(item.get('chunk_text') or '')
+            text += f"\n\n{content[:2500]}\n{item.get('citation', '')}"
+            if len(content) > 2500:
+                text += "\n[Search excerpt shortened; request this evidence segment for remaining details.]"
+        if not native_results:
+            text += "\nNo native evidence excerpts matched this query; only the stored parent summary is available."
+        source_citations = [{
+            'tool_name': 'document_search.get_document_accessibility_report',
+            'plugin_name': 'document_search', 'function_name': 'get_document_accessibility_report',
+            'function_arguments': {'document_id': source['document_id']},
+            'function_result': reference, 'success': True,
+        }]
+        if native_results:
+            source_citations.append({
+                'tool_name': 'document_search.search_documents',
+                'plugin_name': 'document_search', 'function_name': 'search_documents',
+                'function_arguments': {'document_ids': [source['document_id']]},
+                'function_result': {'results': [
+                    {key: value for key, value in item.items() if key != 'chunk_text'}
+                    for item in excerpts['results']
+                ]}, 'success': True,
+            })
+        citations.extend(source_citations)
+        return {
+            'summary': text, 'citations': source_citations,
+            'coverage': {
+                'execution_mode': 'native_inspection', 'worksheet_data_computed': False,
+                'native_coverage': metadata.get('coverage'),
+                'matched_evidence_segments': len(native_results),
+            },
+        }
+
+    envelopes = execute_tabular_evidence_sources(
+        sources, execute_source, selection_mode, user_id=user_id,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+    )
+    return {
+        'evidence_envelopes': envelopes, 'system_messages': [],
+        'agent_citations': citations, 'generated_outputs': [],
+        'invocations': [], 'executed': True, 'token_usage': None,
+    }
+
+
 def _execute_mixed_source_tabular_evidence(
     *,
     tabular_sources,
@@ -13996,6 +14080,14 @@ def _execute_mixed_source_tabular_evidence(
     suppress_generated_output=False,
 ):
     """Run the existing tabular engine once per manifest source with terminal coverage."""
+    if is_excel_native_inspection_question(
+        user_question, file_names=[source.get('file_name') for source in tabular_sources],
+    ):
+        return _execute_excel_native_inspection_evidence(
+            tabular_sources, user_question, user_id, conversation_id, selection_mode,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
+        )
     source_contexts = build_tabular_file_contexts_from_manifest(tabular_sources)
     if has_request_context():
         authorized_context = dict(getattr(g, 'authorized_chat_context', {}) or {})
@@ -20605,6 +20697,7 @@ def register_route_backend_chats(bp):
                 and (hybrid_search_enabled or history_grounded_search_used)
                 and workspace_tabular_files
                 and is_tabular_processing_enabled(settings)
+                and not is_excel_native_inspection_question(user_message, file_names=workspace_tabular_files)
             ):
                 tabular_source_hint = determine_tabular_source_hint(
                     effective_document_scope,
@@ -24971,6 +25064,7 @@ def register_route_backend_chats(bp):
                     and (hybrid_search_enabled or history_grounded_search_used)
                     and workspace_tabular_files
                     and is_tabular_processing_enabled(settings)
+                    and not is_excel_native_inspection_question(user_message, file_names=workspace_tabular_files)
                 ):
                     tabular_source_hint = determine_tabular_source_hint(
                         effective_document_scope,

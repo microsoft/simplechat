@@ -1,7 +1,7 @@
 # test_v2_orchestration_recovery.py
 """
 Real-component browser coverage for orchestration failure and checkpoint recovery.
-Version: 0.261.358
+Version: 0.261.399
 Implemented in: 0.261.105
 Earlier-version run refusals covered in: 0.261.139
 Settled runs whose stored plan still reads running covered in: 0.261.141
@@ -10,6 +10,7 @@ Ended runs show unfinished steps and retry them; files that cannot be retried al
 Retry from failed step, in: 0.261.303
 Empty pending-credential polling fixture updated in: 0.261.341
 Delayed detail, list and reconciliation reads fenced in: 0.261.356
+Available-information completion and explicit output-only continuation covered in: 0.261.399
 
 The production controller, SSE reader, stores, message list, and Run drawer execute
 in the existing local/Azure Playwright harness. Only API responses are deterministic.
@@ -18,6 +19,7 @@ The companion backend test forwards those requests to the actual Flask routes.
 
 import copy
 import json
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
@@ -39,6 +41,10 @@ FAILURE = "The selected agent did not finish before this step's time limit."
 LEGACY_PLAN_MESSAGE = (
     "This plan was created by an earlier orchestration version and can't be opened or rerun. "
     "Start a new request."
+)
+AVAILABLE_ANSWER = (
+    "The reports describe the available results. The requested forecast was not included "
+    "in the provided data, so I cannot determine it from these reports."
 )
 
 
@@ -63,6 +69,8 @@ class RecoveryApi:
         self.waiting = []
         # The failed step's failure; Microsoft 365 recovery tests replace it.
         self.failure = {"code": "step_timeout", "message": FAILURE}
+        self.available_information = False
+        self.normal_information_limits = False
         # Runs the server refuses as an earlier orchestration version: every by-id request
         # answers 409 legacy_plan and the run list leaves them out.
         self.legacy = set()
@@ -85,12 +93,19 @@ class RecoveryApi:
         return record
 
     def recovery(self, run_id):
-        return {
+        recovery = {
             "eligible": True, "reason_code": None, "message": "Completed steps were saved.",
             "expected_version": "recovery-v1", "source_run_id": run_id,
             "retry_step_ids": ["research", "answer"], "reused_step_ids": ["read"],
             "requires_confirmation": True,
         }
+        if self.available_information and not self.records[run_id].get("retry_of_run_id"):
+            recovery.update(
+                eligible=False, reason_code="input_partial_not_recoverable",
+                message="The saved findings do not establish every requested conclusion.",
+                requires_confirmation=False, can_use_available_information=True,
+            )
+        return recovery
 
     def finish(self, run_id, status="failed"):
         record = self.records[run_id]
@@ -116,8 +131,13 @@ class RecoveryApi:
             {"step_id": "answer", "step_index": 2,
              "status": "completed" if status == "completed" else "skipped", "summary": ""},
         ]
+        if status == "completed" and self.normal_information_limits:
+            for step in (self.steps[run_id][0], self.steps[run_id][2]):
+                step.update(status="partial", summary="Available results retained; missing information explained.")
         content = "Comparison from saved reports and the recovered agent." if status == "completed" else (
             "This run was stopped. Available partial results were kept." if status == "cancelled" else failure["message"])
+        if status == "completed" and (self.normal_information_limits or self.available_information):
+            content = AVAILABLE_ANSWER
         metadata = {"orchestration": {
             key: record[key] for key in ("run_id", "turn_id", "attempt_index", "retry_of_run_id",
                                         "outcome", "failure", "failures", "recovery",
@@ -200,7 +220,7 @@ class RecoveryApi:
             if self.stream_mode == "transport":
                 self.stream(route, [{"type": "content", "content": "Partial result before disconnect."}])
             else:
-                status = "completed" if record["retry_of_run_id"] else "failed"
+                status = "completed" if record["retry_of_run_id"] or self.normal_information_limits else "failed"
                 event = self.finish(body["run_id"], status)
                 events = [{"type": "orchestration_step", **step} for step in self.steps[body["run_id"]]]
                 self.stream(route, events + [event])
@@ -221,7 +241,11 @@ class RecoveryApi:
                 assert self.preparations[body["submission_id"]][0] == body
                 route.fulfill(json={"run": self.preparations[body["submission_id"]][1]})
                 return
-            assert body["confirm_external_effects"], "Uncertain effects require explicit consent."
+            if body.get("use_available_information"):
+                assert self.records[run_id]["recovery"].get("can_use_available_information") is True
+                assert body["confirm_external_effects"] is False
+            else:
+                assert body["confirm_external_effects"], "Uncertain effects require explicit consent."
             child_plan = copy.deepcopy(self.records[run_id]["plan"])
             child_plan.update(
                 run_id="retry-attempt", plan_id="retry-plan", status="awaiting_approval",
@@ -1010,6 +1034,10 @@ def test_file_that_cannot_be_retried_alone_offers_retry_from_failed_step(recover
     expect(page.get_by_text("Review each file separately.", exact=False)).to_have_count(0)
     expect(page.get_by_role("button", name="Retry file bank_analysis.docx")).to_have_count(0)
     assert not api.calls("/run") and not api.calls("/retry")
+    page.get_by_role("button", name="Retry from failed step").first.click()
+    page.get_by_role("dialog").get_by_role("button", name="Confirm retry").click()
+    expect(page.get_by_text("Comparison from saved reports and the recovered agent.", exact=True)).to_be_visible()
+    assert len(api.calls("/retry")) == len(api.calls("/run")) == 1
 
 
 def test_file_that_can_be_retried_alone_keeps_only_the_file_retry(recovery_ui):
@@ -1020,3 +1048,92 @@ def test_file_that_can_be_retried_alone_keeps_only_the_file_retry(recovery_ui):
     expect(page.get_by_text("Review each file separately.", exact=False).first).to_be_visible()
     expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
     assert not api.calls("/run") and not api.calls("/retry")
+
+
+@pytest.mark.parametrize("viewport", [(1440, 900), (390, 844)])
+def test_information_gaps_are_a_normal_answer_live_and_after_reload(recovery_ui, viewport):
+    page, api = recovery_ui
+    page.set_viewport_size({"width": viewport[0], "height": viewport[1]})
+    api.normal_information_limits = True
+    api.plan["steps"][-1]["arguments"]["response_policy"] = "available_information"
+    api.plan["steps"][-1]["inputs"]["findings"]["allow_partial"] = True
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_text(AVAILABLE_ANSWER, exact=True).first).to_be_visible()
+    expect(page.locator('section[aria-label="Orchestration recovery"]')).to_have_count(0)
+    expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
+    state = main_state(page)
+    assert state["history"][CONVERSATION][0]["status"] == "completed"
+    assert state["messages"][-1]["metadata"]["orchestration"]["outcome"] == "completed"
+    page.evaluate(
+        "([conversation, run]) => window.OrchHarness.controller.openOrchestrationRecovery(conversation, run)",
+        [CONVERSATION, api.plan["run_id"]],
+    )
+    drawer = page.get_by_role("complementary", name="Review drawer")
+    expect(drawer.get_by_text("Results with limits", exact=True).first).to_be_visible()
+    expect(drawer.locator('[data-deliverable-id="answer"]')).to_have_attribute("data-deliverable-state", "delivered")
+    expect(drawer.get_by_text("Partially completed", exact=True)).to_have_count(0)
+    if viewport[0] < 640:
+        # This component harness has a fixed side-by-side drawer, unlike the mobile AppShell overlay.
+        page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.getState().setDrawerMode(null)")
+        expect(page.get_by_text(AVAILABLE_ANSWER, exact=True).first).to_be_visible()
+    screenshot = Path(__file__).resolve().parent / "artifacts" / "available-information" / f"normal-{viewport[0]}.png"
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(screenshot), full_page=True)
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_text(AVAILABLE_ANSWER, exact=True).first).to_be_visible()
+    expect(page.locator('section[aria-label="Orchestration recovery"]')).to_have_count(0)
+    assert len(api.calls("/run")) == 1 and not api.calls("/retry")
+
+
+def test_blocked_old_answer_offers_output_only_available_information(recovery_ui):
+    page, api = recovery_ui
+    api.available_information = True
+    api.failure = {
+        "code": "input_partial_not_accepted",
+        "message": "An earlier step returned only a partial result, and this step requires complete results, so it did not run.",
+    }
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_text(api.failure["message"], exact=True).first).to_be_visible()
+    expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
+    page.get_by_role("button", name="Use available information", exact=True).first.click()
+    expect(page.get_by_text(AVAILABLE_ANSWER, exact=True).first).to_be_visible()
+    expect(page.get_by_role("dialog", name="Retry this failed step?")).to_have_count(0)
+    assert len(api.calls("/retry")) == 1
+    request = api.calls("/retry")[0]["body"]
+    assert request["use_available_information"] is True
+    assert request["confirm_external_effects"] is False
+    assert [entry["body"]["run_id"] for entry in api.calls("/run")] == [api.plan["run_id"], "retry-attempt"]
+    state = main_state(page)
+    assert len([message for message in state["messages"] if message["role"] == "user"]) == 1
+    assert state["messages"][-1]["metadata"]["orchestration"]["outcome"] == "completed"
+
+
+@pytest.mark.parametrize("flag", [None, False, "true", 1])
+def test_unverified_available_information_flags_never_offer_continuation(recovery_ui, flag):
+    page, api = recovery_ui
+    api.available_information = True
+    original = api.recovery
+    api.recovery = lambda run_id: {**original(run_id), "can_use_available_information": flag}
+    api.finish(api.plan["run_id"])
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_role("button", name="Review saved attempt").first).to_be_visible()
+    expect(page.get_by_role("button", name="Use available information", exact=True)).to_have_count(0)
+    assert not api.calls("/run") and not api.calls("/retry")
+
+
+def test_an_unresolved_retry_cannot_silently_change_to_another_recovery_action(recovery_ui):
+    page, api = recovery_ui
+    api.prepare_mode = "lost"
+    start_failure(page, api)
+    page.get_by_role("button", name="Retry from failed step").first.click()
+    page.get_by_role("dialog").get_by_role("button", name="Confirm retry").click()
+    expect(page.get_by_text("Preparing retry...", exact=True)).to_have_count(0)
+    page.evaluate(
+        "([conversation, run]) => window.OrchHarness.controller.retryOrchestrationRun(conversation, run, undefined, true)",
+        [CONVERSATION, api.plan["run_id"]],
+    )
+    expect(page.get_by_text("A different recovery request is still unresolved.", exact=False).first).to_be_visible()
+    assert len(api.calls("/retry")) == 1
+    assert len(api.calls("/run")) == 1

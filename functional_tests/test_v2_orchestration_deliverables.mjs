@@ -1,7 +1,8 @@
 // test_v2_orchestration_deliverables.mjs
-// Version: 0.261.293
+// Version: 0.261.399
 // Implemented in: 0.261.135
 // Server chart and diagram checks after a run added in: 0.261.293
+// Narrative answer readiness remains distinct from exact delivery in: 0.261.399
 // Executes the shared plan normalization for deliverables: what a plan says the user asked
 // for, how each deliverable's state follows its producing steps, and the image helpers.
 // Also reads a terminal frame shaped as the harness publishes it through the real run
@@ -22,7 +23,9 @@ const {
     bindsGeneratedImage, deliverableKindLabel, deliverableRows, doneFrameHasGeneratedImages, hasGeneratedImages,
     normalizeDeliverables, normalizePlan,
 } = await import('../application/v2_ui/src/lib/orchestrationPlan.ts');
-const { normalizeDeliverableChecks, normalizeOrchestrationAttempt, runOrchestration } = await import(
+const {
+    normalizeDeliverableChecks, normalizeOrchestrationAttempt, normalizeOrchestrationRecovery, runOrchestration,
+} = await import(
     '../application/v2_ui/src/lib/orchestration.ts'
 );
 const {
@@ -60,6 +63,30 @@ function presidentsPlan() {
         ],
     });
 }
+
+test('a completed narrative answer may have limits without certifying partial files or visuals', () => {
+    const plan = presidentsPlan();
+    const statusOf = (id) => id === 'report' || id === 'word' ? 'partial' : 'completed';
+    const rows = new Map(deliverableRows(plan, statusOf, undefined, undefined, 'completed')
+        .map((row) => [row.deliverable.id, row]));
+    assert.equal(rows.get('report').state, 'delivered');
+    assert.notEqual(rows.get('word_file').state, 'delivered');
+    assert.notEqual(rows.get('timeline').state, 'delivered');
+    const failed = deliverableRows(plan, statusOf, undefined, undefined, 'failed');
+    assert.equal(failed.find((row) => row.deliverable.id === 'report').state, 'not_delivered');
+});
+
+test('available-information continuation requires a real server boolean and preserves effect confirmation', () => {
+    const value = { source_run_id: 'old-run', eligible: false, can_use_available_information: true };
+    const valid = normalizeOrchestrationRecovery(value);
+    assert.equal(valid.can_use_available_information, true);
+    assert.equal(valid.requires_confirmation, true);
+    for (const flag of [undefined, false, 'true', 1, {}]) {
+        const invalid = normalizeOrchestrationRecovery({ ...value, can_use_available_information: flag });
+        assert.equal(invalid.can_use_available_information, undefined);
+        assert.equal(invalid.requires_confirmation, true);
+    }
+});
 
 test('deliverables and step delivers survive normalization; malformed entries are dropped', () => {
     const plan = presidentsPlan();

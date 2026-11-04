@@ -219,6 +219,13 @@ a temporary service error.
 **Visuals** lists the charts, Mermaid diagrams, or image proposal cards the planner
 asked the answer to include.
 
+Since **0.261.399**, ordinary narrative preparation uses **Use available
+information** as its answer behavior. It answers what the inputs support and
+explains missing information or unresolved disagreement in the answer and
+requested narrative documents. **Results with limits** describes usable retained
+information, not an error on an otherwise answered request. Exact datasets and
+explicit complete-only transformations still require complete inputs.
+
 Since **0.261.341**, a schedule with activity lanes, such as eating and drinking
 before, during, and after a ride, is planned as a **Diagram**, even when you call
 it a chart. The diagram preserves the supplied events and relative-time labels;

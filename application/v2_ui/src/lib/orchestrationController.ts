@@ -60,6 +60,7 @@ import {
 import type { Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
 import { applyOrchestrationOutputEvent } from './orchestrationOutputController';
+import { filesNeedPlanRetry } from './orchestrationOutputs';
 import { choosePlanSubmissionId, rememberPlanSubmission } from './planSubmissionIds';
 import { canonicalPlanReferences, PlanReferenceError, type PlanReference } from './planReferences';
 import { announceCompletedReply } from './replyEvents';
@@ -1082,7 +1083,9 @@ export async function continueCredentialOrchestration(credentialRequest: Credent
 }
 
 const reconciliationTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const recoverySubmissions = new Map<string, { id: string; version: string; confirmed: boolean; unresolved: boolean }>();
+const recoverySubmissions = new Map<string, {
+    id: string; version: string; confirmed: boolean; unresolved: boolean; availableInformation: boolean;
+}>();
 const recoveryLocks = new Set<string>();
 
 /**
@@ -1267,6 +1270,7 @@ export async function retryOrchestrationRun(
     conversationId: string,
     runId: string,
     confirmedVersion?: string,
+    useAvailableInformation = false,
 ): Promise<{ confirmationRequired?: boolean; version?: string; started?: boolean }> {
     const key = scopeKey(conversationId, runId);
     const store = useOrchestrationStore.getState();
@@ -1283,7 +1287,13 @@ export async function retryOrchestrationRun(
     const initialTurn = store.activeTurns[conversationId];
     try {
         const record = await loadOrchestrationRecovery(conversationId, runId);
-        if (record?.outputs?.length) {
+        const previous = recoverySubmissions.get(key);
+        if (previous?.unresolved && previous.availableInformation !== useAvailableInformation) {
+            fail('A different recovery request is still unresolved. Check saved status before choosing another recovery action.');
+            return {};
+        }
+        const availableInformation = previous?.unresolved ? previous.availableInformation : useAvailableInformation;
+        if (record?.outputs?.length && !availableInformation && !filesNeedPlanRetry(record.outputs)) {
             fail('Use the individual file retry controls. This action will not repeat file producers or the plan.');
             return {};
         }
@@ -1292,8 +1302,8 @@ export async function retryOrchestrationRun(
             return {};
         }
         const recovery = normalizeOrchestrationRecovery(record?.recovery);
-        const previous = recoverySubmissions.get(key);
-        if (!record || !recovery || (!previous?.unresolved && (!recovery.eligible || !recovery.expected_version
+        const eligible = availableInformation ? recovery?.can_use_available_information === true : recovery?.eligible;
+        if (!record || !recovery || (!previous?.unresolved && (!eligible || !recovery.expected_version
             || recovery.source_run_id !== runId
             || (recovery.current_run_id && recovery.current_run_id !== runId)))) {
             fail(recovery?.message || 'This saved attempt cannot be resumed. Review the current attempt or start a new plan deliberately.');
@@ -1308,13 +1318,14 @@ export async function retryOrchestrationRun(
         }
         const confirmed = recovery.requires_confirmation && confirmedVersion === recovery.expected_version;
         const submission = previous?.unresolved ? previous
-            : { id: makeTurnId(), version: recovery.expected_version ?? '', confirmed, unresolved: true };
+            : { id: makeTurnId(), version: recovery.expected_version ?? '', confirmed, unresolved: true, availableInformation };
         recoverySubmissions.set(key, submission);
         const child = await prepareOrchestrationRetry(runId, {
             conversation_id: conversationId,
             submission_id: submission.id,
             expected_version: submission.version,
             confirm_external_effects: submission.confirmed,
+            ...(submission.availableInformation ? { use_available_information: true } : {}),
         });
         submission.unresolved = false;
         const plan = normalizePlan(child.plan);

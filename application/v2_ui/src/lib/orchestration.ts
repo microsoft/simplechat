@@ -88,6 +88,7 @@ export interface OrchestrationRecovery {
     retry_step_ids: string[];
     reused_step_ids: string[];
     requires_confirmation: boolean;
+    can_use_available_information?: boolean;
 }
 
 /** The server's check, after a run, of whether the answer shows a chart or diagram the user asked for. */
@@ -157,6 +158,7 @@ export function normalizeOrchestrationRecovery(value: unknown): OrchestrationRec
         reused_step_ids: ids(data.reused_step_ids),
         // Missing replay-safety information must never silently authorize external effects.
         requires_confirmation: data.requires_confirmation !== false,
+        ...(data.can_use_available_information === true ? { can_use_available_information: true } : {}),
     };
 }
 
@@ -1113,6 +1115,7 @@ export async function prepareOrchestrationRetry(
         submission_id: string;
         expected_version: string;
         confirm_external_effects: boolean;
+        use_available_information?: boolean;
     },
 ): Promise<PersistedRun> {
     const payload = await api.post<{ run: PersistedRun }>(

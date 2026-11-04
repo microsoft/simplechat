@@ -82,7 +82,7 @@ const statusTone: Record<StepStatus, string> = {
     pending: 'bg-surface-3 text-text-3',
     running: 'bg-accent-soft text-accent',
     waiting: 'bg-warn-soft text-warn',
-    partial: 'bg-warn-soft text-warn',
+    partial: 'bg-surface-3 text-text-2',
     completed: 'bg-ok-soft text-ok',
     failed: 'bg-danger-soft text-danger',
     skipped: 'bg-surface-3 text-text-3',
@@ -99,7 +99,7 @@ const STATUS_LABELS: Record<StepStatus, string> = {
     pending: 'Pending',
     running: 'Running',
     waiting: 'Waiting for results',
-    partial: 'Partially completed',
+    partial: 'Results with limits',
     completed: 'Completed',
     failed: 'Failed',
     skipped: 'Skipped',
@@ -213,6 +213,11 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
         }
         if (key === 'knowledge_basis' && typeof value === 'string') {
             entries.push(['answer basis', KNOWLEDGE_BASIS_LABELS[value] ?? value]);
+            continue;
+        }
+        if (key === 'response_policy' && typeof value === 'string') {
+            entries.push(['answer behavior', value === 'available_information' ? 'Use available information'
+                : value === 'complete_inputs' ? 'Require complete inputs' : value]);
             continue;
         }
         if (key === 'visuals' && Array.isArray(value)) {

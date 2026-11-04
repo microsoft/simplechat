@@ -1,6 +1,15 @@
 # Gather / Reason / Render orchestration
 
-**Version: 0.261.347**
+**Version: 0.261.399**
+
+Available-information narrative responses implemented in version: **0.261.399**,
+recorded in `application/single_app/config.py`. Ordinary answers and prepared
+narrative documents can use accepted findings and explain unavailable conclusions
+without failing the request. Evidence coverage remains partial when appropriate;
+answer readiness does not turn partial data into complete data. Exact exports,
+calculations, and complete-only transformations retain their strict guarantees.
+Eligible older blocked attempts offer an explicit output-only continuation. See
+the [available-information fix](../fixes/ORCHESTRATION_AVAILABLE_INFORMATION_FIX.md).
 
 Chat-associated workspace source identity fixed in version: **0.261.347**,
 recorded in `application/single_app/config.py`. Analyze and Compare preserve

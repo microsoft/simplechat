@@ -72,6 +72,7 @@ from functions_orchestration_registry import (
 )
 from functions_orchestration_result_contracts import (
     InputBinding, PartialInputNotAcceptedError, ProducerIdentity, ResultContractError, ResultRef, TaskResult, digest,
+    narrative_result_ready, uses_available_information,
 )
 from functions_orchestration_result_runtime import (
     decode_step_result, raise_source_service_failure, read_complete_input, read_result_document_citations,
@@ -103,6 +104,7 @@ from functions_orchestration_schema import (
     failure_explanation,
     failure_is_transient,
     optional_input_producers,
+    step_input_specs,
     plan_contract_version,
     validate_plan,
 )
@@ -586,6 +588,42 @@ def _collect_plan_document_ids(steps):
 # --------------------------------------------------------------------------------------
 # Step execution
 # --------------------------------------------------------------------------------------
+
+def _narrative_consumed_steps(steps, statuses, context, response_reference):
+    """Evidence may stay partial after its narrative consumer has fulfilled the request."""
+    by_id = {step['step_id']: step for step in steps}
+    pending = [
+        step_id for step_id, task in context.task_results.items()
+        if uses_available_information(by_id.get(step_id))
+        and task.outputs and all(narrative_result_ready(reference) for reference in task.outputs)
+    ]
+    if narrative_result_ready(response_reference):
+        task = context.task_results.get(response_reference.producer.step_id)
+        if task is not None and response_reference in task.outputs:
+            pending.append(response_reference.producer.step_id)
+    for step in steps:
+        if step['role'] != 'render' or statuses.get(step['step_id']) != STEP_STATUS_COMPLETED:
+            continue
+        spec = step_input_specs(step)[0]
+        binding = spec.binding
+        if binding.step_id in context.task_results:
+            reference = context.task_results[binding.step_id].output(binding.output_name)
+        else:
+            reference = context.result_aliases.get(binding.existing_result)
+        if narrative_result_ready(reference, profile=step['arguments']['profile']):
+            pending.append(binding.step_id)
+    accepted = set()
+    while pending:
+        step_id = pending.pop()
+        if step_id in accepted or step_id not in by_id or step_id not in context.task_results:
+            continue
+        accepted.add(step_id)
+        pending.extend(
+            spec.binding.step_id for spec in step_input_specs(by_id[step_id])
+            if spec.binding.step_id in context.task_results
+        )
+    return accepted
+
 
 def _step_record(context, step, index, status, result, started_at, completed_at, duration_ms):
     result = result if isinstance(result, dict) else {}
@@ -1741,6 +1779,8 @@ def _execute_dependency_plan(
     complete = bool(required) and all(statuses[step['step_id']] == STEP_STATUS_COMPLETED for step in required)
     message, response_reference, citations = '', None, []
     authorized_references = set()
+    finalization_authorized = False
+    response_ready = not bool(plan.get('final_response'))
     if not cancelled:
         try:
             for task in context.task_results.values():
@@ -1763,8 +1803,11 @@ def _execute_dependency_plan(
                     message = read_complete_input(reader)
                     citations = read_result_document_citations(context, response_reference)
                     authorized_references.add(response_reference)
-                    if response_reference.completeness.status != 'complete':
-                        complete = False
+                    response_ready = (
+                        response_reference.completeness.status == 'complete'
+                        or narrative_result_ready(response_reference)
+                    )
+            finalization_authorized = True
         except (
             ResultContractError, ResultUnavailableError, PermissionError, ScreeningError,
             WorkflowResultIntegrityError, WorkflowResultStorageUnavailableError,
@@ -1780,9 +1823,19 @@ def _execute_dependency_plan(
             )
             context.failures.append(failure)
             message, complete, response_reference, citations = '', False, None, []
+            response_ready = False
             context.artifacts = []
     file_outputs, committed_artifacts = _dependency_file_outcomes(
         context, settings=settings, user_id=user_id,
+    )
+    accepted_steps = (
+        _narrative_consumed_steps(steps, statuses, context, response_reference)
+        if finalization_authorized else set()
+    )
+    complete = finalization_authorized and response_ready and bool(required) and all(
+        statuses[step['step_id']] == STEP_STATUS_COMPLETED
+        or (statuses[step['step_id']] == STEP_STATUS_PARTIAL and step['step_id'] in accepted_steps)
+        for step in required
     )
     for step in required:
         if step['role'] == 'render' and sum(
