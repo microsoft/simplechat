@@ -14126,7 +14126,7 @@
     "application/single_app/functions_documents.py::_complete_document_search_sync_pass": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "delete_item",
@@ -14145,7 +14145,7 @@
     "application/single_app/functions_documents.py::_delete_document_search_sync_record": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "delete_item",
@@ -14164,7 +14164,7 @@
     "application/single_app/functions_documents.py::_get_document_family_items_from_document": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -14186,7 +14186,7 @@
     "application/single_app/functions_documents.py::_process_document_upload_background_impl": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14203,17 +14203,18 @@
         "sha256": "0824152e6cd0843d3f879451f603e7dea5c89baea3421a648e7e62f85b3bd316"
       },
       "classification": "sdk-compatible",
-      "contract": "_process_document_upload_background_impl: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
+      "contract": "_process_document_upload_background_impl: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review 0.261.400: native Excel extraction retains the same Cosmos operations and Mapping/ETag consumers; existing SDK upload-dispatch evidence and native ingestion scope/chunk tests pass.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workspace_metadata_outcomes.py::test_upload_dispatcher_preserves_ready_content_after_metadata_failure",
-        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold"
+        "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
+        "functional_tests/test_excel_document_accessibility_extraction.py::test_ingestion_modes_scopes_native_properties_and_chunk_identity"
       ]
     },
     "application/single_app/functions_documents.py::_query_current_xsd_documents": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -14235,7 +14236,7 @@
     "application/single_app/functions_documents.py::_read_document_for_search_sync": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14257,7 +14258,7 @@
     "application/single_app/functions_documents.py::_read_document_search_sync_record": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14279,7 +14280,7 @@
     "application/single_app/functions_documents.py::_rebase_document_after_fenced_acl_projection": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14301,7 +14302,7 @@
     "application/single_app/functions_documents.py::_replace_document_search_sync_record": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "replace_item",
@@ -14323,7 +14324,7 @@
     "application/single_app/functions_documents.py::_upsert_document_and_sync_access_index": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14360,7 +14361,7 @@
     "application/single_app/functions_documents.py::_workspace_file_name_exists": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -14382,7 +14383,7 @@
     "application/single_app/functions_documents.py::create_document": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -14404,7 +14405,7 @@
     "application/single_app/functions_documents.py::delete_document": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14451,7 +14452,7 @@
     "application/single_app/functions_documents.py::delete_document_revision": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14478,7 +14479,7 @@
     "application/single_app/functions_documents.py::delete_from_blob_storage": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14500,7 +14501,7 @@
     "application/single_app/functions_documents.py::detect_doc_type": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14532,7 +14533,7 @@
     "application/single_app/functions_documents.py::extract_document_metadata": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -14554,7 +14555,7 @@
     "application/single_app/functions_documents.py::get_chat_upload_workspace_documents_for_collaboration": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -14576,7 +14577,7 @@
     "application/single_app/functions_documents.py::get_chat_upload_workspace_documents_for_conversation": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -14603,7 +14604,7 @@
     "application/single_app/functions_documents.py::get_document_metadata": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -14625,7 +14626,7 @@
     "application/single_app/functions_documents.py::get_document_metadata_for_citations": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14647,7 +14648,7 @@
     "application/single_app/functions_documents.py::get_document_record": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14669,7 +14670,7 @@
     "application/single_app/functions_documents.py::get_document_version": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -14691,7 +14692,7 @@
     "application/single_app/functions_documents.py::get_document_versions": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14713,7 +14714,7 @@
     "application/single_app/functions_documents.py::get_documents_shared_with_group": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -14735,7 +14736,7 @@
     "application/single_app/functions_documents.py::get_documents_shared_with_user": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -14757,7 +14758,7 @@
     "application/single_app/functions_documents.py::get_latest_version": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14779,7 +14780,7 @@
     "application/single_app/functions_documents.py::get_shared_groups_for_document": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14801,7 +14802,7 @@
     "application/single_app/functions_documents.py::get_shared_users_for_document": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14823,7 +14824,7 @@
     "application/single_app/functions_documents.py::get_workspace_tags": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -14845,7 +14846,7 @@
     "application/single_app/functions_documents.py::is_document_shared_with_group": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14867,7 +14868,7 @@
     "application/single_app/functions_documents.py::is_document_shared_with_user": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14889,7 +14890,7 @@
     "application/single_app/functions_documents.py::process_due_document_search_metadata_syncs": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -14911,7 +14912,7 @@
     "application/single_app/functions_documents.py::propagate_tags_to_blob_metadata": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -14933,7 +14934,7 @@
     "application/single_app/functions_documents.py::queue_group_workspace_upload_from_temp_file": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "delete_item",
@@ -14952,7 +14953,7 @@
     "application/single_app/functions_documents.py::queue_personal_workspace_upload_from_temp_file": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "delete_item",
@@ -14971,7 +14972,7 @@
     "application/single_app/functions_documents.py::request_document_search_metadata_sync": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "create_item",
@@ -14993,7 +14994,7 @@
     "application/single_app/functions_documents.py::share_document_with_group": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -15015,7 +15016,7 @@
     "application/single_app/functions_documents.py::share_document_with_user": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -15037,7 +15038,7 @@
     "application/single_app/functions_documents.py::sync_chat_upload_workspace_attachment_status": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -15064,7 +15065,7 @@
     "application/single_app/functions_documents.py::unshare_document_from_group": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -15086,7 +15087,7 @@
     "application/single_app/functions_documents.py::unshare_document_from_user": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -15108,7 +15109,7 @@
     "application/single_app/functions_documents.py::update_document": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -15133,7 +15134,7 @@
     "application/single_app/functions_documents.py::upgrade_legacy_documents": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [],
         "queries": [
           {
@@ -15155,7 +15156,7 @@
     "application/single_app/functions_documents.py::upload_to_blob": {
       "boundary": {
         "batches": [],
-        "module_sha256": "093ffdcbe3ed8ab0f903956fa1c287c0ab4f3a44c9d1f894cd2f7543f2d2445c",
+        "module_sha256": "ab4c562ba033ce0cd61381a1830c4c654724075be7b24e1280feb35e3a3ce109",
         "points": [
           {
             "method": "read_item",
@@ -26914,7 +26915,7 @@
     "application/single_app/route_backend_chats.py::_build_tabular_related_document_catalog": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [],
         "queries": [
           {
@@ -26937,7 +26938,7 @@
     "application/single_app/route_backend_chats.py::_create_personal_conversation": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "upsert_item",
@@ -26963,7 +26964,7 @@
     "application/single_app/route_backend_chats.py::_get_user_message_image_context": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -26986,7 +26987,7 @@
     "application/single_app/route_backend_chats.py::_load_user_message_response_context": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -27009,7 +27010,7 @@
     "application/single_app/route_backend_chats.py::_persist_screened_assistant": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "delete_item",
@@ -27030,7 +27031,7 @@
     "application/single_app/route_backend_chats.py::_read_agent_citation_artifact_payloads": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [],
         "queries": [
           {
@@ -27053,7 +27054,7 @@
     "application/single_app/route_backend_chats.py::_read_recent_assistant_messages": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [],
         "queries": [
           {
@@ -27076,7 +27077,7 @@
     "application/single_app/route_backend_chats.py::_reject_chat_submission": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "upsert_item",
@@ -27107,7 +27108,7 @@
     "application/single_app/route_backend_chats.py::_resolve_authorized_conversation_context": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -27130,7 +27131,7 @@
     "application/single_app/route_backend_chats.py::_resolve_chat_selected_document_metadata": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [],
         "queries": [
           {
@@ -27153,7 +27154,7 @@
     "application/single_app/route_backend_chats.py::_rollback_agent_citation_artifacts": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "delete_item",
@@ -27185,7 +27186,7 @@
     "application/single_app/route_backend_chats.py::_save_chat_user_metadata": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "upsert_item",
@@ -27208,7 +27209,7 @@
     "application/single_app/route_backend_chats.py::persist_agent_citation_artifacts": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "upsert_item",
@@ -27234,7 +27235,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats._answer_raced_block_submission": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -27257,7 +27258,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats._find_originating_user_request": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [],
         "queries": [
           {
@@ -27280,7 +27281,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats._get_latest_chat_thread_id": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [],
         "queries": [
           {
@@ -27303,7 +27304,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats._load_block_revision_message": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -27326,7 +27327,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats._load_or_create_analyze_conversation": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -27354,7 +27355,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats._resolve_document_action_selected_documents": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [],
         "queries": [
           {
@@ -27377,7 +27378,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats.add_message_image_revision_api": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -27400,7 +27401,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_api": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -27480,23 +27481,24 @@
             "response": "consumed"
           }
         ],
-        "sha256": "c18ff9a27c11b20aae41f9a7d2a0796a79bad98450dec91b96a77a99e1944fcf"
+        "sha256": "35213e61b04f93aa5598b53eaf9f24e89b00be17dc627ee3ae652826cf6e4fa1"
       },
       "classification": "sdk-compatible",
-      "contract": "Retry/source point mappings supply role/content and nested model/thread metadata through Mapping access; history queries stay plain. Metadata persistence remains with its existing owner and local write responses are discarded. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Added per-answer evidence metadata and stable model-configuration errors; existing point responses still use Mapping-compatible field access and the same save/authorization owners. No exact-dict sink or new storage call is introduced. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged. Review 0.261.395: canonical source intent is nested plain request JSON; the existing SDK Mapping reads and unused message/conversation write responses are unchanged.",
+      "contract": "Retry/source point mappings supply role/content and nested model/thread metadata through Mapping access; history queries stay plain. Metadata persistence remains with its existing owner and local write responses are discarded. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Added per-answer evidence metadata and stable model-configuration errors; existing point responses still use Mapping-compatible field access and the same save/authorization owners. No exact-dict sink or new storage call is introduced. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged. Review 0.261.395: canonical source intent is nested plain request JSON; the existing SDK Mapping reads and unused message/conversation write responses are unchanged. Review 0.261.400: Excel native-inspection routing delegates to report/search readers; original retry/history Mapping consumers and unused writes are unchanged. Existing SDK route evidence and native routing/citation tests pass.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_action_runtime_recovery.py::test_actual_chat_routes_pause_before_kernel_initialization_or_user_persistence",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports",
-        "functional_tests/test_v2_document_source_runtime.py"
+        "functional_tests/test_v2_document_source_runtime.py",
+        "functional_tests/test_excel_document_accessibility_extraction.py::test_mixed_source_inspection_uses_report_search_authorization_and_citations"
       ]
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_stream_api.generate": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -27556,23 +27558,24 @@
             "response": "consumed"
           }
         ],
-        "sha256": "8643d95b1afc5f2ae8ee968107949144d69bce180d8bfeca17bf764a1d5d6662"
+        "sha256": "1c761b170ff0f1f2128d58b6ec138d491e79f97d5a5a8cb7c26a60e012c01699"
       },
       "classification": "sdk-compatible",
-      "contract": "Retry point mappings are checked for role/conversation and nested metadata through Mapping access; history queries remain plain, and local create/replace/delete return values are discarded. SSE telemetry does not alter storage contracts. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Added per-answer evidence metadata and stable model-configuration errors; existing point responses still use Mapping-compatible field access and the same save/authorization owners. Streaming publication and cancellation fences remain unchanged. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged. Review 0.261.395: canonical source intent is nested plain request JSON; the existing SDK Mapping reads and unused message/conversation write responses are unchanged.",
+      "contract": "Retry point mappings are checked for role/conversation and nested metadata through Mapping access; history queries remain plain, and local create/replace/delete return values are discarded. SSE telemetry does not alter storage contracts. Action recovery now pauses before user-message persistence and model initialization; the original mapping-compatible Cosmos consumers and conditional persistence stay unchanged. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Combined V2 source-policy and stale-group recovery wiring preserves this storage function; both branches' representative owner-runtime evidence is retained. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.388: Added per-answer evidence metadata and stable model-configuration errors; existing point responses still use Mapping-compatible field access and the same save/authorization owners. Streaming publication and cancellation fences remain unchanged. Review renewed for 0.261.389: Legacy and named model calls now use the shared explicit-API client factory. Redundant identity-header construction was removed; the factory retains the same identity context. SDK conversation/message consumers, object authorization, screening, cancellation, ETags and persistence operations are unchanged. Review 0.261.395: canonical source intent is nested plain request JSON; the existing SDK Mapping reads and unused message/conversation write responses are unchanged. Review 0.261.400: Excel native-inspection routing delegates to report/search readers; original retry/history Mapping consumers and unused writes are unchanged. Existing SDK route evidence and native routing/citation tests pass.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_action_runtime_recovery.py::test_actual_chat_routes_pause_before_kernel_initialization_or_user_persistence",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_recovers_in_real_pages_and_chat_transports",
-        "functional_tests/test_v2_document_source_runtime.py"
+        "functional_tests/test_v2_document_source_runtime.py",
+        "functional_tests/test_excel_document_accessibility_extraction.py::test_mixed_source_inspection_uses_report_search_authorization_and_citations"
       ]
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_stream_api.generate.finalize_cancelled_stream_response": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "replace_item",
@@ -27593,7 +27596,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats.execute_document_action_chat_request": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -27636,7 +27639,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats.execute_saved_analysis_chat_request": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -27690,7 +27693,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats.generate_image_from_proposal": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -27718,7 +27721,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats.generate_image_from_proposal.read_conversation_image": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -27741,7 +27744,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats.image_proposal_status": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [],
         "queries": [
           {
@@ -27764,7 +27767,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats.mask_message_api": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",
@@ -27798,7 +27801,7 @@
     "application/single_app/route_backend_chats.py::register_route_backend_chats.set_message_visual_style_api": {
       "boundary": {
         "batches": [],
-        "module_sha256": "c8a7fb44be0a80124118c673320e70ab2ef3960c750760d0495ba84d432eb573",
+        "module_sha256": "6869610ed801ff27baf7672a73bca8d82f3205dacc22c938b95317c035c57497",
         "points": [
           {
             "method": "read_item",

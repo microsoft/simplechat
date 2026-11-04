@@ -72,6 +72,9 @@ local_storage_state.json
 
 # UI automation screenshots, traces, and recordings
 /ui_tests/artifacts/
+/ui_tests/playwright-workspaces/node_modules/
+/ui_tests/playwright-workspaces/playwright-report/
+/ui_tests/playwright-workspaces/test-results/
 
 # Local OneNote native builds
 application/single_app/native/onenote_extractor/target/

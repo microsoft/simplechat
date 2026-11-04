@@ -1,8 +1,9 @@
 # Existing staging UI validation
 
-Version: **0.261.399**, tracked in `application/single_app/config.py`.
+Version: **0.261.400**, tracked in `application/single_app/config.py`.
 
-Fixed/Implemented in version: **0.261.399**.
+Fixed/Implemented in version: **0.261.399**; isolated runner-local validation
+implemented in **0.261.400**.
 
 ## Purpose and scope
 
@@ -15,16 +16,25 @@ verify the currently deployed application using the checked-out test code.
 Offline functional checks validate source changes separately. Deploying a new
 application version remains an explicit, separate operation.
 
-The workflow retains its existing file path,
-`.github/workflows/staging-azd-ui-tests.yml`, but is named **Staging UI Smoke
-Tests**. It runs on pushes to `Staging` and supports manual dispatch. The
-`azd_command` dispatch input has been removed; `pytest_target` remains available.
+The workflow is `.github/workflows/staging-ui-smoke.yml`, named **Staging UI
+Smoke Tests**. The former `staging-azd-ui-tests.yml` deployment workflow is
+disabled rather than receiving replacement-tenant deployment credentials.
+The new workflow uses the separate **Staging-Validation** GitHub Environment.
+
+It runs on pushes to `Staging` and on same-repository pull requests into
+`Staging` or the temporary V2 integration branch when the workflow or its smoke
+tests change. Fork pull requests cannot run the authenticated job. Manual
+dispatch is also defined; GitHub requires that dispatchable workflow to exist
+on the default branch before it can be invoked there. The trusted PR event
+allows initial validation without a protected-branch promotion.
+
+The `azd_command` dispatch input is removed; `pytest_target` remains available.
 
 For this repository's current environment split:
 
 | Environment | Target | Automation |
 |---|---|---|
-| Staging | `https://simplechat-2026stage-app.azurewebsites.net/` | Existing-deployment validation through the `Staging` GitHub Environment |
+| Staging | `https://simplechat-2026stage-app.azurewebsites.net/` | Existing-deployment validation through `Staging-Validation` |
 | Beta | `https://simplechat-2026beta-app.azurewebsites.net/` | Manual development; no automatic beta target is added |
 | Local | The developer's explicitly configured loopback origin | Separate local configuration and signed-in state |
 
@@ -33,9 +43,15 @@ belong in shared workflow defaults.
 
 ## Dependencies and identities
 
-The existing validation path uses Azure OIDC login, Microsoft Playwright
-Workspaces, and the Python Playwright smoke test. An already authorized
-test identity and browser workspace must exist before a live run.
+Both the JavaScript and Python Playwright smoke tests launch Chromium directly
+on the GitHub runner. No paid Azure browser workspace, workspace endpoint or
+Azure subscription role is required. The separately retained
+`test:staging:azure` command is optional and is not invoked by this workflow.
+
+Application authentication uses a dedicated test identity through OIDC or
+approved browser state. OIDC login uses `allow-no-subscriptions: true`: the
+identity needs permission to the staging application, not Contributor,
+User Access Administrator or deployment access to Azure resources.
 
 Keep these identities distinct:
 
@@ -49,9 +65,18 @@ Keep these identities distinct:
 
 The existing `/ci-auth/session` path is disabled by default. When explicitly
 configured, it validates the token, required application role and allowed
-caller before establishing a browser session. Its default required role is
-`Admin`. The validation workflow does not enable this endpoint, change app
-roles, grant a CI identity Admin access, or bypass App Service Easy Auth.
+caller before establishing a browser session. Its default required role remains
+`Admin`; this staging installation explicitly uses **User** and allowlists only
+its dedicated CI application. App Service Easy Auth remains enabled.
+
+The authorized setup registered the staging API audience, enabled application
+assignment for its existing User role, and assigned only that role to the
+secretless CI service principal. Its federation is bound to
+`repo:microsoft/simplechat:environment:Staging-Validation`. It has no client
+secret, Admin role or Azure RBAC grants. This permits ordinary chat smoke
+testing without exposing administrative settings or acting as a real user.
+The workflow itself does not create identities, alter authentication or grant
+permissions.
 
 An authorized dedicated test user's Playwright storage state remains the
 alternative to CI bearer-session authentication. State is a credential: keep it
@@ -61,16 +86,14 @@ tenant variable.
 
 ## GitHub Environment configuration
 
-Set values on the repository's `Staging` GitHub Environment, or the explicitly
-selected `STAGING_GITHUB_ENVIRONMENT`. The job requires:
+Set values on the repository's **Staging-Validation** GitHub Environment:
 
 | Value | Meaning |
 |---|---|
-| `AZURE_CLIENT_ID` | Existing GitHub OIDC workload application |
-| `AZURE_TENANT_ID` | That workload's current tenant |
-| `AZURE_SUBSCRIPTION_ID` | Existing Azure login context |
+| `AZURE_CLIENT_ID` | Dedicated GitHub OIDC workload application; required for bearer authentication |
+| `AZURE_TENANT_ID` | That workload's current tenant; required for bearer authentication |
 | `SIMPLECHAT_UI_BASE_URL` | Explicit staging HTTPS base URL |
-| `PLAYWRIGHT_SERVICE_URL` | Existing, accessible Playwright workspace endpoint |
+| `SIMPLECHAT_UI_AUTH_RESOURCE` | Registered staging API audience for bearer authentication |
 
 Also configure one supported application-authentication path:
 
@@ -79,9 +102,11 @@ Also configure one supported application-authentication path:
 - `SIMPLECHAT_UI_STORAGE_STATE_B64` / `SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64`
   containing appropriately authorized, current browser state.
 
-Missing required values, missing authentication, and a non-HTTPS Actions target
-fail configuration validation. There is no inferred deployment name or beta
-fallback. Tokens acquired by the job are masked and remain job-scoped.
+For browser-state authentication, the Azure identity/resource values are not
+required and Azure login is skipped. Missing required values, missing
+authentication, and a non-HTTPS Actions target fail configuration validation.
+There is no inferred deployment name or beta fallback. Tokens acquired by the
+job are masked and remain job-scoped.
 
 The workflow no longer consumes `AZD_ENV_FILE_B64`, `AZD_CONFIG_FILE_B64`,
 `AZURE_ENV_NAME`, `AZURE_LOCATION`, or `DEPLOYMENT_APPNAME` to prepare a
@@ -89,21 +114,27 @@ deployment. Unused legacy secrets are not automatically deleted.
 
 ### Replacement-tenant transition
 
-First land the validation-only workflow and confirm no older deploy-and-test run
-is still active. Only then change the Environment's tenant, workload identity,
-subscription, app audience, browser workspace and target URL as a coherent,
-verified configuration.
+Disable the older deploy-and-test workflow and confirm no deployment run is
+active before changing access. Keep its deployment Environment and legacy
+secrets separate from the new validation Environment.
 
-Do not refresh credentials under an older workflow that can still run `azd up`:
-doing so could unintentionally reactivate deployment. Verify access to the
-actual staging resource rather than relying on the CLI's cached subscription
-list or copying beta's settings.
+Configure the validation Environment's verified tenant, workload identity,
+registered app audience and target URL together. Its deployment policies allow
+`Staging`, the approved feature branch for dispatch, and PR merge refs; the
+workflow's same-repository guard rejects fork execution. Do not copy beta's
+settings or refresh credentials under an older workflow that can still run
+`azd up`.
 
-If the new tenant lacks an approved test identity, application consent/role
-assignment, browser state, or Playwright workspace, report that prerequisite.
-Creating accounts/resources, changing application authentication, or granting
-access requires a separate approval; a validation job is not a provisioning
-mechanism.
+For bearer authentication, configure the existing staging endpoint with
+`ENABLE_CI_BEARER_SESSION_AUTH=true`,
+`CI_BEARER_SESSION_ALLOWED_APP_IDS=<dedicated-ci-client-id>`, and
+`CI_BEARER_SESSION_REQUIRED_ROLE=User`. Apply these coherently so the enabled
+endpoint is never left without its intended caller restriction. App-setting
+changes can restart staging; they are not application deployments.
+
+Identity and authentication changes require operator approval; a validation
+job is not a provisioning mechanism. The current staging-only setup was
+explicitly authorized. It does not configure beta, production or local sign-in.
 
 ## Validation behavior
 
@@ -115,7 +146,7 @@ A redirect, 401, or 403 can establish that an authentication boundary is
 reachable; it does not prove that the application is ready or the test identity
 is authorized. Both subsequent authenticated smoke paths must succeed:
 
-- `npm run test:staging:azure` in `ui_tests/playwright-workspaces`;
+- `npm run test:staging` in `ui_tests/playwright-workspaces`;
 - `python -m pytest "$PYTEST_TARGET" -m ui -ra`, defaulting to
   `ui_tests/test_staging_chat_smoke.py`.
 
@@ -124,9 +155,10 @@ assistant response, and attempt cleanup of that conversation. These are real
 staging writes and model calls, not read-only health probes. Use a dedicated test
 identity and the intended staging data boundary.
 
-Failure screenshots and traces are collected under `ui_tests/artifacts/` and
-the existing Playwright report directories. Treat authenticated artifacts as
-sensitive and retain them according to the repository's access policy.
+Only failure PNG screenshots are uploaded, with seven-day retention. Raw
+traces, browser storage state and HTML reports are excluded because they can
+contain authentication headers or cookies. Local diagnostic files remain
+sensitive even when they are not uploaded.
 
 ## Local development
 
@@ -143,7 +175,8 @@ or a live staging URL to make its fixtures pass.
 
 `functional_tests/test_staging_ui_cicd_workflow.py` checks parsed workflow
 configuration, pinned actions, required authentication, TLS behavior, absence
-of deployment commands, and the existing Python/Playwright smoke wiring:
+of deployment commands, same-repository execution, runner-local browsers and
+credential-safe artifact selection:
 
 ```powershell
 python -m pytest .\functional_tests\test_staging_ui_cicd_workflow.py -q

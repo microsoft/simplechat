@@ -1,9 +1,11 @@
 # Historical staging UI deployment pipeline (v0.241.014)
 
-Current documentation version: **0.261.399**.
+Current documentation version: **0.261.400**.
 
-Since **0.261.399**, the workflow at the path below validates an existing
-deployment and no longer runs `azd up` or `azd deploy`. Use
+The validation-only replacement was introduced in **0.261.399** and moved to
+`.github/workflows/staging-ui-smoke.yml` in **0.261.400**, using runner-local
+browsers and an isolated validation Environment. The older deployment workflow
+is disabled; it must not receive replacement-tenant deployment credentials. Use
 [Existing staging UI validation](../STAGING_UI_VALIDATION.md) for its current
 behavior and replacement-tenant setup. The remainder of this page records the
 older deployment pattern and standalone provisioning bootstrap; do not run that

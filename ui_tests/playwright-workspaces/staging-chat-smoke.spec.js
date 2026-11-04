@@ -1,11 +1,12 @@
 // staging-chat-smoke.spec.js
 /*
-UI smoke test for staging chat deployment through Microsoft Playwright Workspaces.
-Version: 0.241.018
+UI smoke test for staging chat deployment.
+Version: 0.261.400
 Implemented in: 0.241.017; 0.241.018
 
 This test validates the same authenticated chat path as the Python staging
-smoke test, but runs through Azure-hosted browsers in Playwright Workspaces.
+smoke test. The default command uses runner-local Chromium; the separate Azure
+command retains optional Playwright Workspaces execution.
 */
 
 import { existsSync } from 'node:fs';

@@ -4,6 +4,14 @@ on:
   push:
     branches:
       - Staging
+  pull_request:
+    branches:
+      - Staging
+      - paullizer-react-v2-ui
+    paths:
+      - .github/workflows/staging-ui-smoke.yml
+      - ui_tests/test_staging_chat_smoke.py
+      - ui_tests/playwright-workspaces/**
   workflow_dispatch:
     inputs:
       pytest_target:
@@ -17,24 +25,23 @@ permissions:
   id-token: write
 
 concurrency:
-  group: simplechat-staging-azd-ui-tests
+  group: simplechat-staging-ui-smoke
   cancel-in-progress: false
 
 jobs:
   ui-smoke:
     name: Validate existing staging and run UI smoke tests
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     environment:
-      name: ${{ vars.STAGING_GITHUB_ENVIRONMENT || 'Staging' }}
-    timeout-minutes: 180
+      name: Staging-Validation
+    timeout-minutes: 30
     env:
       PYTEST_TARGET: ${{ github.event.inputs.pytest_target || 'ui_tests/test_staging_chat_smoke.py' }}
       AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
       SIMPLECHAT_UI_BASE_URL: ${{ vars.SIMPLECHAT_UI_BASE_URL }}
       SIMPLECHAT_UI_AUTH_RESOURCE: ${{ vars.SIMPLECHAT_UI_AUTH_RESOURCE }}
-      PLAYWRIGHT_SERVICE_URL: ${{ vars.PLAYWRIGHT_SERVICE_URL }}
       SIMPLECHAT_UI_STORAGE_STATE_B64: ${{ secrets.SIMPLECHAT_UI_STORAGE_STATE_B64 }}
       SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64: ${{ secrets.SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64 }}
       SIMPLECHAT_UI_ARTIFACT_DIR: ui_tests/artifacts
@@ -49,7 +56,11 @@ jobs:
           set -euo pipefail
 
           missing=()
-          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID SIMPLECHAT_UI_BASE_URL PLAYWRIGHT_SERVICE_URL; do
+          required=(SIMPLECHAT_UI_BASE_URL)
+          if [[ -n "${SIMPLECHAT_UI_AUTH_RESOURCE:-}" ]]; then
+            required+=(AZURE_CLIENT_ID AZURE_TENANT_ID)
+          fi
+          for name in "${required[@]}"; do
             if [[ -z "${!name:-}" ]]; then
               missing+=("$name")
             fi
@@ -76,11 +87,12 @@ jobs:
           echo "This workflow does not deploy code or provision Azure resources."
 
       - name: Azure login
+        if: ${{ env.SIMPLECHAT_UI_AUTH_RESOURCE != '' }}
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
-          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: true
 
       - name: Acquire SimpleChat UI access token
         if: ${{ env.SIMPLECHAT_UI_AUTH_RESOURCE != '' }}
@@ -143,12 +155,13 @@ jobs:
           python -m pip install -r ui_tests/requirements.txt
           python -m playwright install --with-deps chromium
 
-      - name: Install Playwright Workspaces dependencies
+      - name: Install JavaScript browser test dependencies
         shell: bash
         working-directory: ui_tests/playwright-workspaces
         run: |
           set -euo pipefail
           npm ci
+          npx playwright install --with-deps chromium
 
       - name: Restore Playwright storage state
         shell: bash
@@ -170,12 +183,12 @@ jobs:
             fi
           fi
 
-      - name: Run staging UI smoke test in Playwright Workspaces
+      - name: Run JavaScript staging UI smoke test
         shell: bash
         working-directory: ui_tests/playwright-workspaces
         run: |
           set -euo pipefail
-          npm run test:staging:azure
+          npm run test:staging
 
       - name: Run staging UI smoke tests
         shell: bash
@@ -189,7 +202,7 @@ jobs:
         with:
           name: staging-ui-test-artifacts
           path: |
-            ui_tests/artifacts
-            ui_tests/playwright-workspaces/playwright-report
-            ui_tests/playwright-workspaces/test-results
+            ui_tests/artifacts/*.png
+            ui_tests/playwright-workspaces/test-results/**/*.png
+          retention-days: 7
           if-no-files-found: ignore

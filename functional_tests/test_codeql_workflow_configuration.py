@@ -1,7 +1,7 @@
 # test_codeql_workflow_configuration.py
 """Functional tests for coverage-preserving Advanced CodeQL configuration.
 
-Version: 0.261.399
+Version: 0.261.400
 Implemented in: 0.261.399
 
 These tests validate checked-in workflow coverage, not live repository setup or

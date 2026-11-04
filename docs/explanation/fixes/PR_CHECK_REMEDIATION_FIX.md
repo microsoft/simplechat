@@ -1,8 +1,9 @@
 # Shared PR check remediation
 
-Version: **0.261.399**, tracked in `application/single_app/config.py`.
+Version: **0.261.400**, tracked in `application/single_app/config.py`.
 
-Fixed/Implemented in version: **0.261.399**.
+Fixed/Implemented in version: **0.261.399**; current-base integration and
+authorized staging CI setup in **0.261.400**.
 
 ## Issue and root causes
 
@@ -94,7 +95,7 @@ make a feature-branch check appear successful.
 
 ### Existing-staging validation and local configuration
 
-`.github/workflows/staging-azd-ui-tests.yml` now validates an existing deployment
+`.github/workflows/staging-ui-smoke.yml` now validates an existing deployment
 without running `azd`, restoring deployment secrets, or provisioning resources.
 It requires an explicit HTTPS staging URL and application authentication,
 retains OIDC and both existing authenticated smoke paths, verifies TLS, and
@@ -110,14 +111,17 @@ the app's tenant/client/secret, the independent Flask signing secret, and the
 separate Actions identity. The template now includes the existing runtime
 setting `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET`.
 
-No Azure resource, application role, redirect, CI authentication setting or
-deployment was changed. The unchanged standalone deployment bootstrap is not
+Initial source validation changed no Azure configuration. The subsequent
+authorized staging-only authentication setup is recorded below. No application
+deployment was performed. The unchanged standalone deployment bootstrap is not
 part of the validation-only path.
 
 ## Validation
 
-The following results were obtained locally and on GitHub's `ubuntu-latest`
-runner, with external network access blocked where application owners execute:
+The following **0.261.399 pre-integration** results were obtained locally and on
+GitHub's `ubuntu-latest` runner, with external network access blocked where
+application owners execute. They do not establish success on the later merge
+context; current-base review is recorded below.
 
 | Selection | Result |
 |---|---|
@@ -157,7 +161,7 @@ functional-test directories and retain `-p test_support.cosmos_network_guard`.
 Targeted success is not a substitute for the complete gate or live tenant
 verification.
 
-## Live transition prerequisites
+## Initial live-transition findings
 
 The read-only preflight found the GitHub `Staging` Environment still referenced
 the retired tenant and deployment. A subsequent check after repository access
@@ -171,7 +175,7 @@ running in `simplechat-2026stage-rg`. Its hosted tenant/client settings and
 managed identity match the replacement tenant. The earlier resource-access
 blocker is resolved; no tenant setting needed to be changed on that app.
 
-The remaining prerequisite gap is concrete: no Playwright resource was found
+At the initial checkpoint, no Playwright resource was found
 across the four accessible enabled subscriptions, and the staging App Service
 has no CI bearer-authentication, caller-allowlist or required-role overrides
 configured. CI bearer authentication defaults to disabled. An approved
@@ -183,7 +187,9 @@ registration has a local loopback redirect. Do not invent replacement
 audience/workload values, reuse a hosted registration for localhost without
 checking its redirects, or grant new access under the validation-only approval.
 Creating the missing CI/browser infrastructure or enabling CI sign-in requires
-specific approval beyond the existing no-Azure-changes boundary.
+specific approval beyond the then-current no-Azure-changes boundary. The owner
+subsequently authorized staging-only access/configuration changes; the current
+setup below replaces these initial blockers without a paid browser resource.
 
 Before changing live GitHub Environment values, first activate the
 validation-only workflow and confirm no older deploying run is active. Only
@@ -195,7 +201,7 @@ The CodeQL Default-to-Advanced switch likewise remains a coordinated
 post-promotion operation. Neither old closed-PR statuses nor local configuration
 tests establish that these live transitions have completed.
 
-The current live check still finds the old Development-only CodeQL triggers on
+The CodeQL check still finds the old Development-only triggers on
 `main` and `Staging`, with no schedule there, and Default setup remains enabled.
 The updated source coverage must be promoted before disabling Default setup.
 
@@ -209,10 +215,10 @@ feature branch for contract verification does not promote the workflows or
 authorize a merge or application deployment. No automatic account switch or
 token-permission expansion was performed.
 
-The older deployment-capable workflow is enabled, although no run was in
-progress at the final check. Do not update its tenant credentials before the
-validation-only definition is activated: the old definition can still provision
-or deploy resources.
+At that checkpoint, the older deployment-capable workflow was enabled with no
+run in progress. It has since been explicitly disabled before configuring
+replacement-tenant validation access; its old deployment secrets were not
+refreshed.
 
 A push-trigger audit also found that `Development` and `Staging` publish
 `simple-chat-dev:latest` to two configured container registries, while `main`
@@ -225,6 +231,80 @@ the feature-branch verification.
 Release-note and GitHub issue-publishing updates were not approved at the
 source-validation checkpoint and remain unchanged. No issue or pull request was
 created at that checkpoint.
+
+## Current-base integration and authorized staging setup
+
+The target branch advanced through two other merges while
+[#1877](https://github.com/microsoft/simplechat/pull/1877) was being opened.
+The incoming Excel change already failed its own inventory check with
+75 storage-owner review gaps. These were separate from the repaired Windows
+transport and original credential/citation runtime failures.
+
+The feature branch was merged with target
+`0ee8893cb38e647640626d5a4a201bfe6bb19d35` without rewriting published history.
+Both lines had independently selected version 0.261.399, so the final
+integration advances `config.py` to **0.261.400**.
+
+### Renewed storage-owner review
+
+| Module | Affected owners | Review outcome |
+|---|---:|---|
+| `functions_documents.py` | 45 | Native Excel extraction/import wiring changes the module fingerprint. Direct Cosmos operations and the existing Mapping/ETag consumers are unchanged. |
+| `route_backend_chats.py` | 30 | All module fingerprints change; two chat handlers also gain native-inspection routing predicates. Their Cosmos point/query/batch operations and retry/history consumers remain unchanged. |
+
+All ten existing affected-owner evidence selectors plus the incoming Excel and
+available-information regression files passed: **105 tests**, with network
+access blocked. The evidence exercises installed-SDK point responses, ordinary
+query rows, conditional writes, processing guards, personal/group/public scope
+and real chat recovery entry points.
+
+The 75 entries retain their specific consumer classifications and existing
+runtime evidence. Native ingestion and native report/search routing selectors
+are added to the three directly affected review records. Runtime targets grow
+from **185 to 187**; none are removed. The inventory reports **1,086 owners,
+423 doubles and zero review gaps**. No legacy-double, source-only-owner or
+compatibility-seam baseline was expanded or reset.
+
+This is representative owner-runtime coverage, not a claim that every branch
+of all 75 functions is exhaustively tested. Current complete-gate and live-run
+evidence belongs in the PR validation record; the earlier 1,881-test runs above
+remain explicitly scoped to their original feature baseline.
+
+### Staging-only CI access
+
+The owner explicitly authorized Azure/GitHub permissions and Environment
+configuration for `https://simplechat-2026stage-app.azurewebsites.net/`.
+The older deploying workflow was disabled, with no active run, before access
+was configured. A separate **Staging-Validation** GitHub Environment avoids
+reactivating the retired deployment context.
+
+The new dedicated workload uses GitHub Environment-bound federation, has no
+client secret, and holds only the staging application's **User** role. Its
+registered API audience matches the existing bearer validator. The staging
+endpoint is enabled with that exact caller allowlist and required User role;
+App Service Easy Auth remains enabled. No Admin role, Azure RBAC grant, browser
+workspace, beta configuration or production configuration is added.
+
+Both existing smoke paths now run Chromium directly on the GitHub runner.
+Azure login permits no-subscription access because application authentication
+does not require deployment permissions. Authenticated traces and browser
+state are excluded from artifact upload; only failure PNGs are published.
+Generated local browser dependencies/reports are ignored rather than committed.
+
+See [Existing staging UI validation](../features/STAGING_UI_VALIDATION.md)
+for the four required Environment values, supported authentication paths and
+the distinction between testing an existing app and deploying PR source.
+Configuration success alone is not reported as an authenticated smoke pass.
+
+### Remaining CodeQL activation boundary
+
+Repository administration is working. Normal protected-branch promotion still
+requires a controlled CI-only cutover, because push-triggered publishers can
+update latest container tags even when application source is unchanged.
+Specific permission for that protected-branch promotion/publisher pause was
+requested but no affirmative response was available. Default setup therefore
+remains enabled until the prepared Advanced coverage reaches the relevant
+branches; its upload conflict is not hidden or reported as resolved.
 
 ## Future phase work
 
@@ -242,7 +322,8 @@ The manifests account for 94 application-requirements alerts, four dev-
 requirements alerts, one Playwright npm-lock alert and one documentation Ruby-
 lock alert. Compare the exact current feature-branch pins and affected runtime
 paths before treating default-branch reports as current defects or applying
-upgrades. No dependency manifest was changed in this remediation.
+upgrades. No dependency pins were changed in this remediation; the browser-test
+package manifest only adds its runner-local command.
 
 ### B. Broader runtime correctness and test integrity
 
@@ -267,5 +348,5 @@ part of these focused CI repairs.
 
 No database migration, historical-run rewrite, new application capability switch,
 browser runtime dependency or deployer change is included. The application
-version is **0.261.399**; `deployers/version.txt` is unchanged because no file
+version is **0.261.400**; `deployers/version.txt` is unchanged because no file
 under `deployers/` was modified.

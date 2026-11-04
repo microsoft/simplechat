@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.399** (tracked in `application/single_app/config.py`)
+**Version: 0.261.400** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**

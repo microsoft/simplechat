@@ -1,8 +1,8 @@
 # test_staging_ui_cicd_workflow.py
 """Functional tests for authenticated validation of an existing staging deployment.
 
-Version: 0.261.399
-Implemented in: 0.241.014; validation-only workflow in 0.261.399
+Version: 0.261.400
+Implemented in: 0.241.014; validation-only workflow in 0.261.399; isolated runner-local validation in 0.261.400
 
 The workflow must not provision or deploy resources. The standalone, explicitly
 invoked deployment bootstrap remains separate and retains its existing contract.
@@ -32,20 +32,30 @@ def assert_fragments(content, fragments, label):
 
 @pytest.fixture(scope="module")
 def workflow():
-    source = read_repo_file(".github", "workflows", "staging-azd-ui-tests.yml")
+    source = read_repo_file(".github", "workflows", "staging-ui-smoke.yml")
     return yaml.load(source, Loader=yaml.BaseLoader)
 
 
 def test_staging_workflow_configuration(workflow):
     events = workflow["on"]
     assert events["push"]["branches"] == ["Staging"]
-    assert set(events) == {"push", "workflow_dispatch"}
+    assert set(events) == {"push", "pull_request", "workflow_dispatch"}
+    assert events["pull_request"]["branches"] == ["Staging", "paullizer-react-v2-ui"]
+    assert events["pull_request"]["paths"] == [
+        ".github/workflows/staging-ui-smoke.yml",
+        "ui_tests/test_staging_chat_smoke.py",
+        "ui_tests/playwright-workspaces/**",
+    ]
     assert "azd_command" not in events["workflow_dispatch"]["inputs"]
     assert workflow["permissions"] == {"contents": "read", "id-token": "write"}
     job = workflow["jobs"]["ui-smoke"]
-    assert job["environment"]["name"] == "${{ vars.STAGING_GITHUB_ENVIRONMENT || 'Staging' }}"
+    assert job["environment"]["name"] == "Staging-Validation"
+    assert job["if"] == "${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}"
     assert job["env"]["SIMPLECHAT_UI_BASE_URL"] == "${{ vars.SIMPLECHAT_UI_BASE_URL }}"
     assert not any(name.startswith("AZD_") for name in job["env"])
+    assert "AZURE_SUBSCRIPTION_ID" not in job["env"]
+    assert "PLAYWRIGHT_SERVICE_URL" not in job["env"]
+    assert job["timeout-minutes"] == "30"
     actions = [step["uses"] for step in job["steps"] if "uses" in step]
     assert all(re.fullmatch(r"[^@]+@[0-9a-f]{40}", action) for action in actions)
     assert not any(action.lower().startswith("azure/setup-azd@") for action in actions)
@@ -62,7 +72,8 @@ def test_staging_requires_authentication_and_verified_transport(workflow):
     steps = workflow["jobs"]["ui-smoke"]["steps"]
     validation = next(step for step in steps if step["name"] == "Validate required environment values")
     assert_fragments(validation["run"], [
-        "AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID SIMPLECHAT_UI_BASE_URL PLAYWRIGHT_SERVICE_URL",
+        "required=(SIMPLECHAT_UI_BASE_URL)",
+        "required+=(AZURE_CLIENT_ID AZURE_TENANT_ID)",
         "SIMPLECHAT_UI_STORAGE_STATE_B64",
         "SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64",
         "SIMPLECHAT_UI_AUTH_RESOURCE",
@@ -74,8 +85,9 @@ def test_staging_requires_authentication_and_verified_transport(workflow):
     assert login["with"] == {
         "client-id": "${{ env.AZURE_CLIENT_ID }}",
         "tenant-id": "${{ env.AZURE_TENANT_ID }}",
-        "subscription-id": "${{ env.AZURE_SUBSCRIPTION_ID }}",
+        "allow-no-subscriptions": "true",
     }
+    assert login["if"] == "${{ env.SIMPLECHAT_UI_AUTH_RESOURCE != '' }}"
     token = next(step for step in steps if step["name"] == "Acquire SimpleChat UI access token")
     assert token["if"] == "${{ env.SIMPLECHAT_UI_AUTH_RESOURCE != '' }}"
     assert 'az account get-access-token --resource "$SIMPLECHAT_UI_AUTH_RESOURCE"' in token["run"]
@@ -85,9 +97,21 @@ def test_staging_requires_authentication_and_verified_transport(workflow):
     assert not re.search(r"\bcurl\b[^\n]*(?:\s-k\b|--insecure\b)", reachability["run"])
     assert "Staging health check passed." not in reachability["run"]
     assert "exit 1" in reachability["run"]
-    assert any("npm run test:staging:azure" in step.get("run", "") for step in steps)
+    assert any("npm run test:staging\n" in step.get("run", "") for step in steps)
+    assert any("npx playwright install --with-deps chromium" in step.get("run", "") for step in steps)
     assert any('python -m pytest "$PYTEST_TARGET" -m ui -ra' in step.get("run", "") for step in steps)
     assert not any(step.get("continue-on-error") == "true" for step in steps)
+
+
+def test_staging_artifacts_exclude_browser_credentials_and_traces(workflow):
+    steps = workflow["jobs"]["ui-smoke"]["steps"]
+    upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
+    assert upload["with"]["path"].splitlines() == [
+        "ui_tests/artifacts/*.png",
+        "ui_tests/playwright-workspaces/test-results/**/*.png",
+    ]
+    assert upload["with"]["retention-days"] == "7"
+    assert upload["if"] == "always()"
 
 
 def test_branch_flow_uses_actual_branch_casing():
@@ -150,6 +174,12 @@ def test_playwright_workspaces_runner_configuration():
     dependencies = {**package.get("dependencies", {}), **package.get("devDependencies", {})}
     assert {"@azure/playwright", "@azure/identity", "@playwright/test"} <= dependencies.keys()
     assert "test:staging:azure" in package["scripts"]
+    assert package["scripts"]["test:staging"] == (
+        "playwright test staging-chat-smoke.spec.js --config=playwright.config.js --workers=1"
+    )
+    local_config = read_repo_file("ui_tests", "playwright-workspaces", "playwright.config.js")
+    assert "PLAYWRIGHT_SERVICE_URL" not in local_config
+    assert "@azure/playwright" not in local_config
     service_config = read_repo_file("ui_tests", "playwright-workspaces", "playwright.service.config.js")
     assert_fragments(service_config, [
         "createAzurePlaywrightConfig", "DefaultAzureCredential",
