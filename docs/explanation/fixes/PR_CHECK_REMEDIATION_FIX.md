@@ -152,9 +152,11 @@ verification.
 ## Live transition prerequisites
 
 The read-only preflight found the GitHub `Staging` Environment still referenced
-the retired tenant and deployment. The corrected staging hostname is reachable
-and redirects to the replacement tenant, but this is not authenticated
-application validation.
+the retired tenant and deployment. A subsequent check after repository access
+was restored confirmed that its configured tenant and base URL still do not
+match the verified staging app. The corrected staging hostname is reachable and
+redirects to the replacement tenant, but this is not authenticated application
+validation.
 
 A subsequent read-only ARM check confirmed that `simplechat-2026stage-app` is
 running in `simplechat-2026stage-rg`. Its hosted tenant/client settings and
@@ -185,16 +187,17 @@ The CodeQL Default-to-Advanced switch likewise remains a coordinated
 post-promotion operation. Neither old closed-PR statuses nor local configuration
 tests establish that these live transitions have completed.
 
-The final live check still found the old Development-only CodeQL triggers on
-`main` and `Staging`, and the deploying staging workflow was still active.
-Both inherited and already-stored CLI credentials were checked without changing
-authentication. They identify the same approved account and both have pull-only
-repository access, with no push or admin permission. An inherited token is not
-masking an existing authorized writer. The Default-setup endpoint returned HTTP
-403 requesting the `admin:repo_hook` scope. An appropriately
-repository-authorized maintainer must perform the promotion and admin cutover.
-No automatic account switch, permission expansion, or partial live
-configuration update was attempted.
+The current live check still finds the old Development-only CodeQL triggers on
+`main` and `Staging`, with no schedule there, and Default setup remains enabled.
+The updated source coverage must be promoted before disabling Default setup.
+
+The earlier GitHub authorization blocker is resolved. After the owner restored
+permissions, the current CLI credential was verified with repository admin,
+maintain and push access, and reading the CodeQL administrative configuration
+succeeded. No additional GitHub permission is currently needed. The remaining
+GitHub step is approved publication/promotion of the prepared changes, followed
+by the coverage-preserving settings cutover and fresh CI runs. No automatic
+account switch or token-permission expansion was performed.
 
 The older deployment-capable workflow is enabled, although no run was in
 progress at the final check. Do not update its tenant credentials before the
