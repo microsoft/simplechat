@@ -17,6 +17,13 @@ use them.
 Direct chat uses the person asking. A workflow instead uses its explicitly
 authorized Run as account for both manual and scheduled execution.
 
+{% include media.html id="slide-microsoft-365-and-teams" %}
+
+The [Teams app]({{ '/guides/microsoft-teams-app/' | relative_url }}) is a
+configured personal tab into SimpleChat, not a channel bot. Opening it does
+not connect every Microsoft 365 source or approve sharing and outgoing actions.
+The decisions below still apply.
+
 To narrow a request, name the file or supply its canonical folder URL, for
 example: "Use SharePoint Online to find the current travel policy under
 `https://tenant.sharepoint.com/sites/Team/Shared%20Documents/Policies`."
@@ -91,9 +98,13 @@ The step reads as you, the person who sent the request, and uses only that one
 action. An **Ask an agent** step whose agent uses Microsoft 365 actions reads
 with that agent's own actions, under the same rules.
 
-Plans only read Microsoft 365 data. Sending mail, sending calendar invitations,
-and marking mail as read aren't offered to a plan step, even when the action
-allows them. Ask in chat without a plan to prepare a message for review.
+Since **0.261.321**, a step distinguishes **Gather information** from a
+**Requested operation**. Review the intended operation, inputs, and destination
+before execution. The action's existing capabilities and manual, delayed, or
+automatic delivery policy still apply; approving a plan does not send a
+manual-review draft. Older plans without explicit operation intent remain
+read-only until replanned. See
+[Review and edit orchestration plans]({{ '/guides/review-and-edit-orchestration-plans/#review-versus-edit' | relative_url }}).
 
 The step checks your delegated Microsoft 365 access before any model or
 Microsoft Graph call. If you haven't connected the source, or your sign-in has

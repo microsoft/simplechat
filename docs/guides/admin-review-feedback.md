@@ -11,6 +11,13 @@ version: "0.261.299"
 
 Feedback review gives authorized reviewers a queue for the feedback users submit on assistant replies. It is distinct from the personal Feedback tab, which only shows a user's own submissions. In the V2 interface it is the **Feedback** section of the [Review center]({{ '/guides/admin-review-center/' | relative_url }}); the classic **Feedback Review** page offers the same review through the same APIs.
 
+{% include media.html id="slide-feedback" %}
+
+This loop begins with feedback on an assistant response, not the
+[Support email-draft form]({{ '/guides/send-feedback/' | relative_url }}).
+Review, retesting, and follow-up are human decisions; submitting a rating
+does not automatically retrain a model or change the answer.
+
 ## Who can use it
 
 Feedback review is available while **User Feedback** is enabled. By default, users with the **Admin** app role can use it. When **Require Feedback Admin Role** is enabled, only users with the **FeedbackAdmin** app role can use the review APIs, and the V2 account menu shows **Review center** to that role.

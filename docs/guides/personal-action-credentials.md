@@ -161,4 +161,4 @@ reconstructed or replayed.
 
 - [Yamcs action]({{ '/reference/actions/yamcs/' | relative_url }})
 - [Create an agent with actions]({{ '/guides/create-an-agent-with-actions/' | relative_url }})
-- [Personal action credential framework]({{ '/explanation/features/PERSONAL_ACTION_CREDENTIALS/' | relative_url }})
+- [Personal action credential framework](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/PERSONAL_ACTION_CREDENTIALS.md)

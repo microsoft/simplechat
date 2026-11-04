@@ -1022,7 +1022,8 @@ def register_route_backend_v2(bp):
             return jsonify({"error": "Invalid source page."}), 400
         except Exception as error:
             log_event("[V2_BOOTSTRAP] Could not discover document sources.",
-                      extra={"error_type": type(error).__name__}, level=logging.ERROR)
+                      extra={"error_type": type(error).__name__}, level=logging.ERROR,
+                      exceptionTraceback=True)
             return jsonify({"error": "Could not load document sources. Please retry."}), 503
 
     @bp.route("/api/v2/bootstrap", methods=["GET"])

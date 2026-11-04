@@ -48,7 +48,7 @@ alone does not prove that the requested facts were included.
 
 Each correction is checked again. After the allowance is exhausted, incomplete
 required output is not eligible for dependent tasks. Disabling the feature restores
-previous behavior. See [model-assisted completeness](../explanation/features/MODEL_ASSISTED_COMPLETENESS.md)
+previous behavior. See [model-assisted completeness](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/MODEL_ASSISTED_COMPLETENESS.md)
 for failure categories, evidence limits and durable recovery.
 
 ## Workflow {#workflow}
@@ -130,7 +130,7 @@ can still be saved with it, including when it's turned off and on, until someone
 changes its schedule. The scheduler doesn't read the minimum.
 
 The time zones offered come from the server's time zone database. See
-[Workflow calendar schedules](../explanation/features/WORKFLOW_CALENDAR_SCHEDULES.md)
+[Workflow calendar schedules](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_CALENDAR_SCHEDULES.md)
 for the daylight saving rules and the stored format.
 
 ### AI workflow assistant {#workflow-ai-assistant}
@@ -171,7 +171,7 @@ workflow settings. Things to know before relying on it:
   the browser page. The server doesn't store it, and reloading the page starts
   it over.
 
-See [AI workflow assistant](../explanation/features/WORKFLOW_AI_ASSISTANT.md)
+See [AI workflow assistant](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_AI_ASSISTANT.md)
 for the request contract, the changes it can propose, and its security model.
 
 ## Durable runs
@@ -217,7 +217,7 @@ before starting a replacement.
 
 Conditions and joins are deterministic engine operations. Model input limits
 still come from the selected catalog/deployment, not the admission limit.
-See [Structured workflow control flow](../explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md)
+See [Structured workflow control flow](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md)
 for the supported If/else, Run when, and forward-routing scope.
 
 ### Serial loop inputs
@@ -237,7 +237,7 @@ Loop tasks and explicit saved-record reporting require locally metered runners.
 Per-task context limits still come from the model catalog and deployment. There
 is no cumulative run-token/spend cap in this slice.
 
-See [Serial For each and exact Collect](../explanation/features/WORKFLOW_FOR_EACH_COLLECT.md)
+See [Serial For each and exact Collect](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_FOR_EACH_COLLECT.md)
 for retained-data behavior, partial coverage, and inspection.
 
 ### Repeat batches and manual continuation
@@ -264,7 +264,7 @@ The run retains bounded exhaustion and continuation counters/audit records.
 Control Center personal-user monitoring, group monitoring, and a dedicated
 **Workflow Monitoring** section are an approved future follow-up, **not
 implemented here**. This setting adds no monitoring role or cross-run access.
-See [Repeat until](../explanation/features/WORKFLOW_REPEAT_UNTIL.md).
+See [Repeat until](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_REPEAT_UNTIL.md).
 
 ## Common tasks
 
@@ -281,7 +281,7 @@ be skipped with continue-on-error; neither Resume nor a changed administrator
 limit resets the active run's admitted bounds. Destination approval and content
 screening retain their existing permissions.
 
-See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATION_COMPLETION.md).
+See [Workflow publication completion](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_PUBLICATION_COMPLETION.md).
 
 ### Administration examples
 

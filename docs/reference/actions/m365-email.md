@@ -132,7 +132,7 @@ recent" for a search.
 Only an `https` link from Microsoft Graph becomes a link, and stored citations
 hold no message body. Answer guidance avoids routine source-provenance introductions,
 but still requires citations and disclosures about uncertainty or incomplete coverage. See
-[Microsoft 365 Source Citations]({{ '/explanation/features/M365_SOURCE_CITATIONS/' | relative_url }}).
+[Microsoft 365 Source Citations](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/M365_SOURCE_CITATIONS.md).
 
 ## Failure and approval behavior
 

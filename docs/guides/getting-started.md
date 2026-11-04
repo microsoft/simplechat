@@ -77,7 +77,7 @@ Follow the prompts to select your subscription, region, and provide required con
 
 ### Option B: Other Deployment Methods
 
-For more deployment options, see our [deployment reference](../reference/deploy/index.md).
+For more deployment options, see our [deployment reference]({{ '/reference/deploy/' | relative_url }}).
 
 ## Step 2: Initial Configuration
 

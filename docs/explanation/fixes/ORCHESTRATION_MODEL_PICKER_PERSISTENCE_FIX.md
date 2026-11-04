@@ -87,4 +87,4 @@ the model it names on the server.
 - [Chat controls](../../reference/chat-controls.md)
 - [Choose models for orchestration](../../guides/model-catalog-routing.md)
 - [Chat orchestration](../features/CHAT_ORCHESTRATION.md)
-- [Gather / Reason / Render harness](../features/ORCHESTRATION_RENDERING_HARNESS.md)
+- [Gather / Reason / Render harness](../features/ORCHESTRATION_GATHER_REASON_RENDER.md)

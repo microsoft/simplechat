@@ -19,6 +19,8 @@ server choose a connected model for each model-backed step rather than forcing
 the whole plan through one model. The administrator must enable orchestration
 and publish usable connections with suitable catalog profiles.
 
+{% include media.html id="slide-model-routing" %}
+
 This is not the **Auto** approval preference: approval controls whether a plan
 runs automatically; model Auto controls which model each step uses.
 

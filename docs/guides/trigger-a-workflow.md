@@ -233,7 +233,7 @@ undo an email, upload, or other completed external action.
 
 Classic workflows remain synchronous unless opted in. Classic can run and cancel
 durable definitions, but V2 provides their approval, checkpoint-resume, and
-memory controls. See [Durable workflow execution](../explanation/features/WORKFLOW_DURABLE_EXECUTION.md).
+memory controls. See [Durable workflow execution](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_DURABLE_EXECUTION.md).
 
 ### Microsoft 365 authorization waits
 
@@ -265,7 +265,7 @@ load separately and remain subject to current source permissions.
 Required final outputs and selected-path work determine completion. A budget
 or deadline limit cannot be cleared by a normal Resume, and changing source
 data cannot silently choose a different branch. See
-[Structured workflow control flow](../explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md).
+[Structured workflow control flow](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md).
 
 ## Inspect a run's frozen Flow
 
@@ -323,7 +323,7 @@ a workspace query or adopt a newly changed administrator ceiling. An
 over-limit selection must be narrowed for a new run; a paused unsafe large-input
 task retains its data rather than receiving a truncated substitute.
 
-See [Serial For each and exact Collect](../explanation/features/WORKFLOW_FOR_EACH_COLLECT.md).
+See [Serial For each and exact Collect](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_FOR_EACH_COLLECT.md).
 
 ## Continue a Repeat batch
 
@@ -354,7 +354,7 @@ gate rather than treating it as a Repeat-limit pause.
 A true condition completes Repeat, including on the last allowed round.
 Only then are its declared final exports eligible for downstream tasks.
 Earlier saved state and accepted partial limitations remain retained.
-See [Repeat until](../explanation/features/WORKFLOW_REPEAT_UNTIL.md).
+See [Repeat until](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_REPEAT_UNTIL.md).
 
 ## Inspect a saved-output publication
 
@@ -404,7 +404,7 @@ original content cannot silently satisfy the policy; cancel and start a new
 authorized request where appropriate. The elapsed deadline still includes
 these waits.
 
-See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATION_COMPLETION.md).
+See [Workflow publication completion](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_PUBLICATION_COMPLETION.md).
 
 ### Other run problems
 
