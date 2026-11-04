@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.349** (tracked in `application/single_app/config.py`)
+**Version: 0.261.399** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -28,6 +28,7 @@
 **Conversation-first source retention, conversation-mode persistence, and semantic diagnostics fixed in version: 0.261.341**
 **Current-message source interpretation and memory-aware request resolution fixed in version: 0.261.349**
 **Private conversation references (`~`), `conversation_search` / `conversation_read`, and queued `conversation_send` handoffs added in version: 0.261.381**
+**Search evidence citation harness expectations aligned in version: 0.261.399**
 
 ## Overview
 
@@ -476,9 +477,12 @@ result or reads incidental sibling notes/citations. Reopening a saved answer
 or an admitted old-attempt reference preserves the same authorized provenance
 without another model call.
 
-An explicitly consumed search `prepared` result retains its actual citation
-IDs, filenames and page locations. Other document-backed inputs contribute
-document-level citations without inventing chunk IDs or page numbers.
+Since **0.261.365**, explicitly consumed Search `prepared` and `evidence` results
+retain their actual citation IDs, filenames and page locations. An `evidence`
+binding matches each excerpt to the citation sidecar from the same producer and
+committed manifest, retaining its verified excerpt association. Sources-only
+bindings and historical evidence without a usable sidecar retain document-level
+provenance without inventing chunk IDs or page numbers.
 Workspace/conversation scope comes from the authorized source snapshots,
 not citation display metadata. The projection excludes private manifests and
 storage fields and fails rather than truncates if citation metadata exceeds

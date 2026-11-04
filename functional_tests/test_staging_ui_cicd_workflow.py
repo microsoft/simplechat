@@ -1,255 +1,200 @@
 # test_staging_ui_cicd_workflow.py
-#!/usr/bin/env python3
-"""
-Functional test for staging UI CI/CD workflow assets.
-Version: 0.241.018
-Implemented in: 0.241.014
+"""Functional tests for authenticated validation of an existing staging deployment.
 
-This test ensures that the reusable GitHub Actions staging deployment workflow,
-Azure/GitHub bootstrap script, and Playwright smoke test are present and wired
-for OIDC-based azd deployment followed by authenticated UI validation.
+Version: 0.261.399
+Implemented in: 0.241.014; validation-only workflow in 0.261.399
+
+The workflow must not provision or deploy resources. The standalone, explicitly
+invoked deployment bootstrap remains separate and retains its existing contract.
 """
 
-import os
+import ast
+import json
+from pathlib import Path
+import re
 import sys
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import pytest
+import yaml
 
 
-def repo_root():
-    """Return the repository root path."""
-    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def read_repo_file(*parts):
-    """Read a repository file for assertions."""
-    file_path = os.path.join(repo_root(), *parts)
-    with open(file_path, 'r', encoding='utf-8') as handle:
-        return handle.read()
+    return ROOT.joinpath(*parts).read_text(encoding="utf-8")
 
 
 def assert_fragments(content, fragments, label):
-    """Validate that each expected fragment exists in the supplied content."""
     for fragment in fragments:
-        if fragment not in content:
-            print(f'Missing {label} fragment: {fragment}')
-            return False
-    return True
+        assert fragment in content, f"Missing {label} fragment: {fragment}"
 
 
-def test_staging_workflow_configuration():
-    """Verify the staging workflow runs azd deployment and UI tests."""
-    print('Testing staging workflow configuration...')
+@pytest.fixture(scope="module")
+def workflow():
+    source = read_repo_file(".github", "workflows", "staging-azd-ui-tests.yml")
+    return yaml.load(source, Loader=yaml.BaseLoader)
 
-    try:
-        content = read_repo_file('.github', 'workflows', 'staging-azd-ui-tests.yml')
-        required_fragments = [
-            'name: Staging AZD Deploy and UI Smoke Tests',
-            'branches:',
-            '- Staging',
-            "name: ${{ vars.STAGING_GITHUB_ENVIRONMENT || 'Staging' }}",
-            'id-token: write',
-            'azure/login@v2',
-            'Azure/setup-azd@v2',
-            '--federated-credential-provider github',
-            'azd up --no-prompt',
-            'azd deploy --no-prompt',
-            'Waiting up to 15 minutes for staging to finish App Service warm-up.',
-            '/external/healthcheckz',
-            'SIMPLECHAT_UI_STORAGE_STATE_B64',
-            'SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64',
-            'SIMPLECHAT_UI_AUTH_RESOURCE',
-            'SIMPLECHAT_UI_ACCESS_TOKEN',
-            'az account get-access-token --resource',
-            'PLAYWRIGHT_SERVICE_URL',
-            'actions/setup-node@v4',
-            'ui_tests/playwright-workspaces/package-lock.json',
-            'npm run test:staging:azure',
-            'ui_tests/requirements.txt',
-            'python -m pytest "$PYTEST_TARGET" -m ui -ra',
-            'actions/upload-artifact@v4',
-        ]
 
-        if not assert_fragments(content, required_fragments, 'workflow'):
-            return False
+def test_staging_workflow_configuration(workflow):
+    events = workflow["on"]
+    assert events["push"]["branches"] == ["Staging"]
+    assert set(events) == {"push", "workflow_dispatch"}
+    assert "azd_command" not in events["workflow_dispatch"]["inputs"]
+    assert workflow["permissions"] == {"contents": "read", "id-token": "write"}
+    job = workflow["jobs"]["ui-smoke"]
+    assert job["environment"]["name"] == "${{ vars.STAGING_GITHUB_ENVIRONMENT || 'Staging' }}"
+    assert job["env"]["SIMPLECHAT_UI_BASE_URL"] == "${{ vars.SIMPLECHAT_UI_BASE_URL }}"
+    assert not any(name.startswith("AZD_") for name in job["env"])
+    actions = [step["uses"] for step in job["steps"] if "uses" in step]
+    assert all(re.fullmatch(r"[^@]+@[0-9a-f]{40}", action) for action in actions)
+    assert not any(action.lower().startswith("azure/setup-azd@") for action in actions)
+    scripts = "\n".join(step.get("run", "") for step in job["steps"])
+    assert not re.search(r"\bazd\s+(?:up|deploy|env|auth)\b", scripts)
+    assert "AZD_ENV_FILE_B64" not in scripts and "AZD_CONFIG_FILE_B64" not in scripts
+    assert not re.search(r"\baz\s+(?:deployment|role\s+assignment|ad\s+(?:app|sp))\b", scripts)
+    assert "simplechat-2026beta" not in scripts
+    assert "This workflow does not deploy code or provision Azure resources." in scripts
+    assert not any(step.get("working-directory") == "deployers" for step in job["steps"])
 
-        print('Staging workflow is configured for OIDC azd deployment and UI smoke tests.')
-        return True
-    except Exception as exc:
-        print(f'Test failed: {exc}')
-        import traceback
-        traceback.print_exc()
-        return False
+
+def test_staging_requires_authentication_and_verified_transport(workflow):
+    steps = workflow["jobs"]["ui-smoke"]["steps"]
+    validation = next(step for step in steps if step["name"] == "Validate required environment values")
+    assert_fragments(validation["run"], [
+        "AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID SIMPLECHAT_UI_BASE_URL PLAYWRIGHT_SERVICE_URL",
+        "SIMPLECHAT_UI_STORAGE_STATE_B64",
+        "SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64",
+        "SIMPLECHAT_UI_AUTH_RESOURCE",
+        '[[ ${#missing[@]} -gt 0 ]]',
+        "exit 1",
+        '!= https://*',
+    ], "required staging configuration")
+    login = next(step for step in steps if step.get("uses", "").startswith("azure/login@"))
+    assert login["with"] == {
+        "client-id": "${{ env.AZURE_CLIENT_ID }}",
+        "tenant-id": "${{ env.AZURE_TENANT_ID }}",
+        "subscription-id": "${{ env.AZURE_SUBSCRIPTION_ID }}",
+    }
+    token = next(step for step in steps if step["name"] == "Acquire SimpleChat UI access token")
+    assert token["if"] == "${{ env.SIMPLECHAT_UI_AUTH_RESOURCE != '' }}"
+    assert 'az account get-access-token --resource "$SIMPLECHAT_UI_AUTH_RESOURCE"' in token["run"]
+    assert "::add-mask::$access_token" in token["run"]
+    reachability = next(step for step in steps if step["name"] == "Wait for staging endpoint reachability")
+    assert "Reachability is not application readiness" in reachability["run"]
+    assert not re.search(r"\bcurl\b[^\n]*(?:\s-k\b|--insecure\b)", reachability["run"])
+    assert "Staging health check passed." not in reachability["run"]
+    assert "exit 1" in reachability["run"]
+    assert any("npm run test:staging:azure" in step.get("run", "") for step in steps)
+    assert any('python -m pytest "$PYTEST_TARGET" -m ui -ra' in step.get("run", "") for step in steps)
+    assert not any(step.get("continue-on-error") == "true" for step in steps)
 
 
 def test_branch_flow_uses_actual_branch_casing():
-    """Verify branch-flow guard matches the repository's branch names."""
-    print('Testing branch-flow casing configuration...')
-
-    try:
-        content = read_repo_file('.github', 'workflows', 'enforce-branch-flow.yml')
-        required_fragments = [
-            "github.event.pull_request.base.ref == 'Staging'",
-            "github.event.pull_request.head.ref != 'Development'",
-            "github.event.pull_request.head.ref != 'Staging'",
-            "Pull requests into 'Staging' must originate from branch 'Development'.",
-            "Pull requests into 'main' must originate from branch 'Staging'.",
-        ]
-
-        if not assert_fragments(content, required_fragments, 'branch-flow workflow'):
-            return False
-
-        print('Branch-flow guard uses the actual Development and Staging branch casing.')
-        return True
-    except Exception as exc:
-        print(f'Test failed: {exc}')
-        import traceback
-        traceback.print_exc()
-        return False
+    content = read_repo_file(".github", "workflows", "enforce-branch-flow.yml")
+    assert_fragments(content, [
+        "github.event.pull_request.base.ref == 'Staging'",
+        "github.event.pull_request.head.ref != 'Development'",
+        "github.event.pull_request.head.ref != 'Staging'",
+        "Pull requests into 'Staging' must originate from branch 'Development'.",
+        "Pull requests into 'main' must originate from branch 'Staging'.",
+    ], "branch-flow workflow")
 
 
 def test_bootstrap_script_configuration():
-    """Verify the bootstrap script creates OIDC and GitHub Environment settings."""
-    print('Testing staging bootstrap script configuration...')
-
-    try:
-        content = read_repo_file('deployers', 'Initialize-GitHubActionsStaging.ps1')
-        required_fragments = [
-            'az ad app create',
-            'az ad sp create',
-            'az ad app federated-credential create',
-            'repo:${Repository}:environment:${EnvironmentName}',
-            'Contributor',
-            'User Access Administrator',
-            'gh api --method PUT',
-            'gh variable set',
-            'gh secret set',
-            'AZD_ENV_FILE_B64',
-            'SIMPLECHAT_UI_STORAGE_STATE_B64',
-            'SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64',
-            'Microsoft.LoadTestService/playwrightWorkspaces',
-            'Playwright Workspace Contributor',
-            'PLAYWRIGHT_SERVICE_URL',
-            'SIMPLECHAT_UI_AUTH_RESOURCE',
-            'ENABLE_CI_BEARER_SESSION_AUTH',
-            'CI_BEARER_SESSION_ALLOWED_APP_IDS',
-            'AppRoleValue "Admin"',
-            'Assigning Enterprise App role',
-        ]
-
-        if not assert_fragments(content, required_fragments, 'bootstrap script'):
-            return False
-
-        print('Bootstrap script includes Azure OIDC, RBAC, GitHub secret, and app assignment support.')
-        return True
-    except Exception as exc:
-        print(f'Test failed: {exc}')
-        import traceback
-        traceback.print_exc()
-        return False
+    content = read_repo_file("deployers", "Initialize-GitHubActionsStaging.ps1")
+    assert_fragments(content, [
+        "az ad app create", "az ad sp create", "az ad app federated-credential create",
+        "repo:${Repository}:environment:${EnvironmentName}",
+        "Contributor", "User Access Administrator",
+        "gh api --method PUT", "gh variable set", "gh secret set",
+        "AZD_ENV_FILE_B64", "SIMPLECHAT_UI_STORAGE_STATE_B64",
+        "SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64",
+        "Microsoft.LoadTestService/playwrightWorkspaces",
+        "Playwright Workspace Contributor", "PLAYWRIGHT_SERVICE_URL",
+        "SIMPLECHAT_UI_AUTH_RESOURCE", "ENABLE_CI_BEARER_SESSION_AUTH",
+        "CI_BEARER_SESSION_ALLOWED_APP_IDS", 'AppRoleValue "Admin"',
+        "Assigning Enterprise App role",
+    ], "standalone deployment bootstrap")
 
 
 def test_staging_smoke_test_configuration():
-    """Verify the live Playwright smoke test targets the deployed chat workflow."""
-    print('Testing staging Playwright smoke test configuration...')
-
-    try:
-        content = read_repo_file('ui_tests', 'test_staging_chat_smoke.py')
-        required_fragments = [
-            'Version: 0.241.018',
-            'SIMPLECHAT_UI_BASE_URL',
-            'SIMPLECHAT_UI_STORAGE_STATE',
-            'SIMPLECHAT_UI_ADMIN_STORAGE_STATE',
-            'SIMPLECHAT_UI_ACCESS_TOKEN',
-            '/ci-auth/session',
-            '@pytest.mark.ui',
-            'page.goto(f"{BASE_URL}/chats"',
-            '#new-conversation-btn',
-            '#user-input',
-            '#send-btn',
-            '.ai-message .message-text',
-            'context.request.delete',
-            'context.tracing.start',
-        ]
-
-        if not assert_fragments(content, required_fragments, 'smoke test'):
-            return False
-
-        print('Staging smoke test validates authenticated chat creation and assistant response.')
-        return True
-    except Exception as exc:
-        print(f'Test failed: {exc}')
-        import traceback
-        traceback.print_exc()
-        return False
+    source = read_repo_file("ui_tests", "test_staging_chat_smoke.py")
+    assert_fragments(source, [
+        "SIMPLECHAT_UI_BASE_URL", "SIMPLECHAT_UI_STORAGE_STATE",
+        "SIMPLECHAT_UI_ADMIN_STORAGE_STATE", "SIMPLECHAT_UI_ACCESS_TOKEN",
+        "/ci-auth/session", "@pytest.mark.ui", 'page.goto(f"{BASE_URL}/chats"',
+        "#new-conversation-btn", "#user-input", "#send-btn",
+        ".ai-message .message-text", "context.request.delete", "context.tracing.start",
+    ], "authenticated smoke test")
+    tree = ast.parse(source)
+    authorization = [
+        node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Subscript)
+            and isinstance(target.value, ast.Name) and target.value.id == "auth_headers"
+            and isinstance(target.slice, ast.Constant) and target.slice.value == "Authorization"
+            for target in node.targets
+        )
+    ]
+    assert len(authorization) == 1 and isinstance(authorization[0], ast.JoinedStr)
+    assert any(
+        isinstance(value, ast.FormattedValue)
+        and isinstance(value.value, ast.Name) and value.value.id == "ACCESS_TOKEN"
+        for value in authorization[0].values
+    )
 
 
 def test_playwright_workspaces_runner_configuration():
-    """Verify the Azure Playwright Workspaces runner is configured."""
-    print('Testing Playwright Workspaces runner configuration...')
-
-    try:
-        package_content = read_repo_file('ui_tests', 'playwright-workspaces', 'package.json')
-        service_config = read_repo_file('ui_tests', 'playwright-workspaces', 'playwright.service.config.js')
-        smoke_test = read_repo_file('ui_tests', 'playwright-workspaces', 'staging-chat-smoke.spec.js')
-
-        required_package_fragments = [
-            '@azure/playwright',
-            '@azure/identity',
-            '@playwright/test',
-            'test:staging:azure',
-        ]
-        required_service_fragments = [
-            'createAzurePlaywrightConfig',
-            'DefaultAzureCredential',
-            'ServiceOS.LINUX',
-            'PLAYWRIGHT_SERVICE_URL',
-        ]
-        required_smoke_fragments = [
-            'Version: 0.241.018',
-            'SIMPLECHAT_UI_BASE_URL',
-            'SIMPLECHAT_UI_STORAGE_STATE',
-            'SIMPLECHAT_UI_ADMIN_STORAGE_STATE',
-            'SIMPLECHAT_UI_ACCESS_TOKEN',
-            '/ci-auth/session',
-            'page.goto(`${baseUrl}/chats`',
-            '#new-conversation-btn',
-            '#user-input',
-            '#send-btn',
-            '.ai-message .message-text',
-            'page.context().request.delete',
-        ]
-
-        if not assert_fragments(package_content, required_package_fragments, 'Playwright package'):
-            return False
-        if not assert_fragments(service_config, required_service_fragments, 'Playwright service config'):
-            return False
-        if not assert_fragments(smoke_test, required_smoke_fragments, 'Playwright Workspaces smoke test'):
-            return False
-
-        print('Playwright Workspaces runner is configured for Azure-hosted browser smoke tests.')
-        return True
-    except Exception as exc:
-        print(f'Test failed: {exc}')
-        import traceback
-        traceback.print_exc()
-        return False
+    package = json.loads(read_repo_file("ui_tests", "playwright-workspaces", "package.json"))
+    dependencies = {**package.get("dependencies", {}), **package.get("devDependencies", {})}
+    assert {"@azure/playwright", "@azure/identity", "@playwright/test"} <= dependencies.keys()
+    assert "test:staging:azure" in package["scripts"]
+    service_config = read_repo_file("ui_tests", "playwright-workspaces", "playwright.service.config.js")
+    assert_fragments(service_config, [
+        "createAzurePlaywrightConfig", "DefaultAzureCredential",
+        "ServiceOS.LINUX", "PLAYWRIGHT_SERVICE_URL",
+    ], "Playwright service configuration")
+    smoke_test = read_repo_file("ui_tests", "playwright-workspaces", "staging-chat-smoke.spec.js")
+    assert_fragments(smoke_test, [
+        "SIMPLECHAT_UI_BASE_URL", "SIMPLECHAT_UI_STORAGE_STATE",
+        "SIMPLECHAT_UI_ADMIN_STORAGE_STATE", "SIMPLECHAT_UI_ACCESS_TOKEN",
+        "/ci-auth/session", "page.goto(`${baseUrl}/chats`",
+        "#new-conversation-btn", "#user-input", "#send-btn",
+        ".ai-message .message-text", "page.context().request.delete",
+    ], "Playwright smoke test")
 
 
-if __name__ == '__main__':
-    tests = [
-        test_staging_workflow_configuration,
-        test_branch_flow_uses_actual_branch_casing,
-        test_bootstrap_script_configuration,
-        test_staging_smoke_test_configuration,
-        test_playwright_workspaces_runner_configuration,
-    ]
-    results = []
+def test_local_authentication_template_matches_application_setting_names():
+    template = read_repo_file("application", "single_app", "example.env")
+    values = dict(
+        line.split("=", 1) for line in template.splitlines()
+        if line.strip() and not line.lstrip().startswith("#") and "=" in line
+    )
+    assert {"TENANT_ID", "CLIENT_ID", "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET", "SECRET_KEY"} <= values.keys()
+    assert "<your-local-app-registration-client-secret>" in values["MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"]
+    config = ast.parse(read_repo_file("application", "single_app", "config.py"))
+    credential = next(
+        node.value for node in config.body if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "CLIENT_SECRET" for target in node.targets)
+    )
+    assert isinstance(credential, ast.Call)
+    assert credential.args[0].value == "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
 
-    for test in tests:
-        print(f'Running {test.__name__}...')
-        results.append(test())
 
-    success = all(results)
-    print(f'Results: {sum(results)}/{len(results)} tests passed')
-    sys.exit(0 if success else 1)
+def test_cosmos_contract_job_keeps_complete_guarded_selection_and_bounded_runtime():
+    source = read_repo_file(".github", "workflows", "cosmos-response-contract-check.yml")
+    contracts = yaml.load(source, Loader=yaml.BaseLoader)
+    job = contracts["jobs"]["cosmos-contracts"]
+    assert job["timeout-minutes"] == "30"
+    commands = [step["run"] for step in job["steps"] if "run" in step]
+    assert commands[-1] == "python scripts/check_cosmos_response_boundaries.py --run-contracts"
+    assert not any("-k " in command or "--maxfail" in command for command in commands)
+    assert job["env"]["TIKTOKEN_CACHE_DIR"] == "${{ github.workspace }}/.cosmos-contract-assets/tiktoken"
+    assert commands.index(
+        'python -c "import tiktoken; tiktoken.get_encoding(\'cl100k_base\'); tiktoken.get_encoding(\'o200k_base\')"'
+    ) < commands.index("python scripts/check_cosmos_response_boundaries.py --run-contracts")
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q", *sys.argv[1:]]))

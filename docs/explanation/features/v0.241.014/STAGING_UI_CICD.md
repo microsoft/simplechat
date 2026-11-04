@@ -1,4 +1,13 @@
-# Staging UI CI/CD with GitHub Actions (v0.241.014)
+# Historical staging UI deployment pipeline (v0.241.014)
+
+Current documentation version: **0.261.399**.
+
+Since **0.261.399**, the workflow at the path below validates an existing
+deployment and no longer runs `azd up` or `azd deploy`. Use
+[Existing staging UI validation](../STAGING_UI_VALIDATION.md) for its current
+behavior and replacement-tenant setup. The remainder of this page records the
+older deployment pattern and standalone provisioning bootstrap; do not run that
+bootstrap as part of validation-only setup.
 
 ## Overview
 
@@ -148,7 +157,7 @@ Sign in as the dedicated staging test user, then close the browser. Rerun the bo
 
 GitHub secrets have a size limit. If the base64-encoded storage state becomes too large, store the state in Azure Key Vault and extend the workflow to retrieve it with the OIDC identity.
 
-## Workflow Behavior
+## Historical Workflow Behavior
 
 On a push to `Staging`, the workflow:
 
