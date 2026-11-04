@@ -265,10 +265,16 @@ from **185 to 187**; none are removed. The inventory reports **1,086 owners,
 423 doubles and zero review gaps**. No legacy-double, source-only-owner or
 compatibility-seam baseline was expanded or reset.
 
+The complete current Windows command,
+`python .\scripts\check_cosmos_response_boundaries.py --run-contracts`, also
+passed: **1,896 tests and 416 subtests**, with **zero review gaps**. Pytest took
+27 minutes 14 seconds. It ran all 187 targets in a guarded fresh subprocess
+through the portable argument file, without trimming selectors.
+
 This is representative owner-runtime coverage, not a claim that every branch
-of all 75 functions is exhaustively tested. Current complete-gate and live-run
-evidence belongs in the PR validation record; the earlier 1,881-test runs above
-remain explicitly scoped to their original feature baseline.
+of all 75 functions is exhaustively tested. Current Linux and live staging
+results are still blocked by publication access; the earlier 1,881-test runs
+above remain explicitly scoped to their original feature baseline.
 
 ### Staging-only CI access
 
