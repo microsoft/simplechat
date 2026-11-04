@@ -298,13 +298,30 @@ Configuration success alone is not reported as an authenticated smoke pass.
 
 ### Remaining CodeQL activation boundary
 
-Repository administration is working. Normal protected-branch promotion still
+Repository administration initially worked for the approved staging setup.
+Normal protected-branch promotion still
 requires a controlled CI-only cutover, because push-triggered publishers can
 update latest container tags even when application source is unchanged.
 Specific permission for that protected-branch promotion/publisher pause was
 requested but no affirmative response was available. Default setup therefore
 remains enabled until the prepared Advanced coverage reaches the relevant
 branches; its upload conflict is not hidden or reported as resolved.
+
+### Publication access changed after configuration
+
+The follow-up source is persisted in local integration commits, but publishing
+it to the existing PR was rejected with HTTP 403. Fresh API checks for both
+Git and the CLI use the same configured account and report pull-only repository
+access, despite the earlier administrative calls succeeding. Existing OAuth
+scopes include repository/workflow access; no alternate account, new token or
+permission escalation was attempted.
+
+The remote PR therefore still contains the original feature head, not the
+local 0.261.400 owner-review and staging-workflow follow-up. Staging access
+configuration is applied, but current Linux and authenticated browser results
+remain unverified until publishing access returns. Configuration success is not
+a substitute for those runs. No new Azure access is required just to retry
+publication.
 
 ## Future phase work
 
