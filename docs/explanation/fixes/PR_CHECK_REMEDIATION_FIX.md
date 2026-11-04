@@ -116,8 +116,8 @@ part of the validation-only path.
 
 ## Validation
 
-The following local results were obtained with external network access blocked
-where application owners execute:
+The following results were obtained locally and on GitHub's `ubuntu-latest`
+runner, with external network access blocked where application owners execute:
 
 | Selection | Result |
 |---|---|
@@ -132,6 +132,14 @@ where application owners execute:
 | Documentation site quality | 6/6 checks passed |
 | Actionlint 1.7.12 on all three changed workflows | Passed |
 | Complete reviewed Cosmos contract command on Windows | 1,881 passed; 416 subtests passed; 1,086 owners and 423 doubles with zero review gaps |
+| Live Ubuntu Cosmos contract workflow | 1,881 passed; 416 subtests passed; the same owners/doubles with zero review gaps |
+
+The [successful Linux run](https://github.com/microsoft/simplechat/actions/runs/41901934773)
+used published feature SHA `f263fa8172d50a1d6f08dc9da51ba9c438c86697`.
+Pytest took 20 minutes 11 seconds and the complete job took 23 minutes 31 seconds,
+confirming that the old 20-minute job limit was insufficient for the successful
+suite. The 30-minute budget remains bounded. This was the isolated,
+network-blocked contract workflow, not a staging deployment or live chat test.
 
 Primary commands:
 
@@ -206,6 +214,14 @@ progress at the final check. Do not update its tenant credentials before the
 validation-only definition is activated: the old definition can still provision
 or deploy resources.
 
+A push-trigger audit also found that `Development` and `Staging` publish
+`simple-chat-dev:latest` to two configured container registries, while `main`
+publishes `simple-chat:latest`. A workflow-only promotion can therefore still
+publish images. Protected-branch activation needs a separately approved,
+deployment-suppressed cutover that preserves required validation and branch
+flow. No release workflow was paused and no protected branch was changed for
+the feature-branch verification.
+
 Release-note and GitHub issue-publishing updates were not approved at the
 source-validation checkpoint and remain unchanged. No issue or pull request was
 created at that checkpoint.
@@ -219,6 +235,14 @@ source-to-sink findings, and fix verified critical/high issues before medium
 issues. The recorded 3,320 alerts across 82 families include quality notes and
 stale results, not 3,320 confirmed current vulnerabilities. No bulk dismissal,
 query reduction or broad security refactoring is included in this change.
+
+The separate default-branch Dependabot queue contains 100 open alerts:
+7 critical, 52 high, 39 medium and 2 low. Patch metadata exists for 99 alerts.
+The manifests account for 94 application-requirements alerts, four dev-
+requirements alerts, one Playwright npm-lock alert and one documentation Ruby-
+lock alert. Compare the exact current feature-branch pins and affected runtime
+paths before treating default-branch reports as current defects or applying
+upgrades. No dependency manifest was changed in this remediation.
 
 ### B. Broader runtime correctness and test integrity
 
