@@ -46,8 +46,9 @@ from functions_orchestration_registry import (
 )
 from functions_generated_export_registry import PREPARED_SLIDE_DECK_VERSION
 from functions_orchestration_result_contracts import (
+    AVAILABLE_INFORMATION_POLICY, NARRATIVE_READY_CHECK,
     IMAGE_ASSET_KIND, Completeness, Coverage, RecordColumn, ResultContractError, canonical_bytes,
-    validate_record,
+    narrative_result_ready, uses_available_information, validate_record,
 )
 from functions_orchestration_result_runtime import (
     raise_source_service_failure, read_complete_input, read_result_document_citations,
@@ -78,6 +79,16 @@ COMPOSE_POLICY = (
     'prepared or scheduled actions are still unsent. Graph acceptance does not prove '
     'recipient delivery. Disclose refused, failed or uncertain operations. No tools, source '
     'retrieval, or file publication are available.'
+)
+AVAILABLE_INFORMATION_INSTRUCTIONS = (
+    'Answer every requested question using supported information or a precise explanation of '
+    'what cannot be determined from the available material. Missing information is a normal '
+    'answer, not an execution error. State material gaps naturally in the answer and any '
+    'prepared document; do not append a generic partially-completed warning. Attribute '
+    'conflicting source statements without inventing a reconciled conclusion. Accepted findings '
+    'are the only factual inputs: diagnostics and unresolved candidates are not facts. Partial '
+    'coverage does not prove that a fact is absent from an entire source or corpus. Do not '
+    'invent values, citations, inspection counts, or certainty to make an answer complete.'
 )
 KNOWLEDGE_POLICIES = {
     KNOWLEDGE_BASIS_GENERAL: (
@@ -440,7 +451,10 @@ def check_retained_final_response(step, result, context, *, settings, emit=None,
         service = require_result_service(context)
         task = result['task_result']
         reference = task.output(context.completeness_final_output)
-        readers = {item.output_name: service.open_result(item) for item in task.outputs}
+        readers = {
+            item.output_name: service.open_result(item, allow_partial=narrative_result_ready(reference))
+            for item in task.outputs
+        }
         guard = context.result_guard_token_for_step(step['step_id'])
 
         def recheck():
@@ -498,7 +512,9 @@ def check_retained_final_response(step, result, context, *, settings, emit=None,
                 'scope_rule': 'Only enabled approved work is required. Do not restore disabled work.',
             },
             contract={'kind': reference.kind, 'knowledge_basis': 'sources_only',
-                      'immutable_report': True},
+                      'immutable_report': True,
+                      **({'response_policy': AVAILABLE_INFORMATION_POLICY, 'delivery_verified_separately': True}
+                         if reference.completeness.status == 'partial' and narrative_result_ready(reference) else {})},
             evidence=evidence, policy=policy, invoke=invoke_check,
             validate=lambda value: [], checkpoint=checkpoint, saved_state=saved, recheck=recheck,
             on_error=lambda error_type: log_event(
@@ -635,6 +651,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         memory = _answer_memory(context)
         policy = ' '.join(part for part in (
             COMPOSE_POLICY, KNOWLEDGE_POLICIES[basis], transform_policy, MISSING_INPUT_POLICY if missing else '',
+            AVAILABLE_INFORMATION_INSTRUCTIONS if uses_available_information(step) else '',
             MISSING_IMAGE_POLICY if missing_images else '',
             CITATION_POLICY if _carries_citation_values(inputs) else '',
             'Return only the prepared text.' if plain_text else ' '.join((
@@ -835,6 +852,9 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 },
                 contract={
                     'outputs': outputs, 'profiles': profiles, 'knowledge_basis': basis,
+                    **({
+                        'response_policy': AVAILABLE_INFORMATION_POLICY, 'delivery_verified_separately': True,
+                    } if uses_available_information(step) else {}),
                     'generation_policy': completeness_generation_policy,
                     'visual_requirements': _compose_visual_rules(step, {}),
                 },
@@ -932,6 +952,11 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         for specification in outputs:
             value = values[specification['name']]
             count = len(value) if specification['kind'] == 'records-v1' else 1
+            checks = ('prepared_output_schema', 'authoritative_input_reads')
+            if uses_available_information(step):
+                checks += (NARRATIVE_READY_CHECK,)
+                if specification.get('profile'):
+                    checks += (f'narrative_profile:{specification["profile"]}',)
             named.append(NamedOutput(
                 specification['name'], specification['kind'], value,
                 Completeness(
@@ -939,7 +964,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     Coverage(len(readers) or 1, sum(
                         reader.completeness.status == 'complete' for reader in readers.values()
                     ) if readers else 1, 'work_units'),
-                    'partial' if partial else 'valid', ('prepared_output_schema', 'authoritative_input_reads'),
+                    'partial' if partial else 'valid', checks,
                     limitations,
                 ),
                 tuple(RecordColumn.from_dict(item) for item in specification.get('columns', [])),
@@ -955,7 +980,11 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         )
         result = build_step_result(
             status=STEP_STATUS_PARTIAL if partial else STEP_STATUS_COMPLETED,
-            summary='Prepared the declared content.' if not partial else 'Prepared content from explicitly partial inputs.',
+            summary=(
+                'Prepared the response from available information.' if uses_available_information(step)
+                else 'Prepared the declared content.' if not partial
+                else 'Prepared content from explicitly partial inputs.'
+            ),
             task_result=task,
         )
         if completeness_report:

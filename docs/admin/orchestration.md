@@ -62,13 +62,23 @@ Implemented in version **0.261.382**. Prepared content and the designated final
 composition are assessed against their scoped instructions before publication or
 file rendering. This catches requested information that a schema does not require.
 
+Since **0.261.399**, ordinary chat answers and narrative documents use the
+information that can be supported and explain what cannot be determined. Missing
+facts or unresolved source disagreement do not by themselves make the answer a
+failed request. Retained evidence can still have limited coverage; a successfully
+prepared answer is not a claim that the source data is exhaustive. Exact datasets,
+required calculations, and complete-only transformations keep their stricter rules.
+
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
 | Check Answer Completeness | Assess requested content and attempt grounded corrections using authorized inputs. | On | `enable_chat_orchestration_completeness_check`; model-assisted, not a deterministic guarantee. |
 | Maximum Answer Corrections | Bound the shared format, visual and completeness repair allowance per composition. | 2 | `chat_orchestration_completeness_max_corrections`; 0-5, zero means check-only. |
 
-Every correction is checked again; no separate repair loop can multiply the
-allowance. Disabling restores the previous single format/visual correction.
+Every answer correction is checked again and uses the same bounded allowance.
+For available-information responses, one malformed assessment may be checked
+again without changing the answer or consuming an answer correction. This protocol
+repair is reserved durably and cannot loop or replay connector work.
+Disabling restores the previous single format/visual correction.
 This adds model calls but never authorizes connector replay. See
 [model-assisted completeness](../explanation/features/MODEL_ASSISTED_COMPLETENESS.md).
 
@@ -809,6 +819,21 @@ without rerunning it. Inspection does not turn a partial result into complete
 input, and plural results on failed replies require explicit selection before
 being used as follow-up context. See
 [saved Analyze results]({{ '/guides/analyze-results/' | relative_url }}).
+
+Since **0.261.399**, new narrative plans accept eligible retained findings with
+limitations instead of stopping answer preparation merely because other
+conclusions remain unresolved. The answer and any requested narrative document
+state the material gaps naturally. Run details show **Results with limits** for
+the retained partial results, without a partially-completed error on an otherwise
+successfully answered request.
+
+An eligible older run blocked by complete-only narrative inputs offers **Use
+available information**. It creates a linked output-only attempt: accepted source
+results are reauthorized and reused, and only the answer and its narrative files
+are prepared. It does not reanalyze the source or replay completed agents,
+actions, or workflows. The original attempt and original analysis producer
+identity remain intact. Missing or unverifiable checkpoints, changed context,
+real operational failures, and exact-data requirements are not bypassed.
 
 Since **0.261.396**, a missing result-storage container is repaired at the Blob
 write boundary when permissions allow it, without rerunning the model. If repair

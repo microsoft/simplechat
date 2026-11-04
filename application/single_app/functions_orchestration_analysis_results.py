@@ -13,6 +13,7 @@ from functions_document_analysis_results import (
 )
 from functions_document_citations import build_document_citation
 from functions_orchestration_result_contracts import (
+    NARRATIVE_READY_CHECK,
     Completeness,
     Coverage,
     RecordColumn,
@@ -177,9 +178,14 @@ def persist_saved_analysis_result(
         report = reader.read_report_text()
         if not report.strip():
             raise ResultContractError("result_analysis_report_missing")
+        if status == "partial":
+            report += (
+                "\n\nOnly accepted findings are included. Other requested conclusions could not "
+                "be established from the available results."
+            )
         outputs.append(NamedOutput(
             "report", "markdown-v1", report,
-            _completeness(status, 1, coverage, checks, limitations),
+            _completeness(status, 1, coverage, (*checks, NARRATIVE_READY_CHECK), limitations),
         ))
     outputs.append(NamedOutput(
         "coverage", "structured-v1", {
@@ -242,9 +248,14 @@ def persist_comparison_result(*, service, producer, result, sources, guard_token
         report = result.get("analysis_reply")
         if type(report) is not str or not report.strip() or not actual:
             raise ResultContractError("result_comparison_report_missing")
+        if status == "partial":
+            report += (
+                "\n\nThese conclusions cover the available comparison results only. Conclusions "
+                "for the remaining requested comparisons could not be established."
+            )
         outputs.append(NamedOutput(
             "report", "markdown-v1", report,
-            _completeness(status, 1, coverage, checks, limitations),
+            _completeness(status, 1, coverage, (*checks, NARRATIVE_READY_CHECK), limitations),
         ))
     receipt_options = {"input_fingerprint": input_fingerprint} if status in {"complete", "partial"} else {}
     return service.persist_task_result(

@@ -319,7 +319,9 @@ export function deliverableRows(
             state = check.state;
         } else {
             const statuses = enabled.map((step) => statusOf(step.step_id) ?? step.status);
-            if (statuses.length > 0 && statuses.every((status) => status === 'completed')) {
+            if (statuses.length > 0 && statuses.every((status) =>
+                status === 'completed'
+                || (status === 'partial' && runStatus === 'completed' && deliverable.kind === 'answer'))) {
                 state = 'delivered';
             } else if (statuses.some((status) => status === 'failed' || status === 'skipped' || status === 'cancelled')) {
                 state = 'not_delivered';

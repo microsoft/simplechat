@@ -74,6 +74,7 @@ from functions_orchestration_schema import (
     WORKFLOW_RESULTS_INVALID_CODE,
     WORKFLOW_RUN_INVALID_CODE,
     PlanValidationError,
+    available_information_plan,
     normalize_elicitation,
     normalize_plan,
     plan_document_ids,
@@ -587,6 +588,11 @@ or more supported named outputs. records-v1 requires columns:[{"name":"field",
 "value_type":"string","nullable":false}] in exact order. structured-v1 can specify a
 self-contained inline JSON schema or one offered profile. Only explicitly accepted partial
 inputs may be consumed; a partial result cannot become complete by composition.
+For ordinary answers and narrative documents, declare response_policy:
+available_information on compose. Answer what the authorized inputs support and state what
+cannot be determined, including unresolved source disagreement, without treating that as a
+failed request. Bind accepted partial findings explicitly; never consume unresolved diagnostic
+candidates as facts. Exact datasets and calculations still require complete inputs.
 
 compose is explicit Reason work: draft answers, Markdown reports, records, or structured
 content. It cannot retrieve sources, invoke tools, infer formats, or publish files. No
@@ -1705,6 +1711,7 @@ def plan_request(
                             if arguments.get('knowledge_basis') == 'sources_and_general_knowledge' else 'sources'
                         ),
                     }
+        raw = available_information_plan(raw)
         normalized = normalize_plan(
             raw,
             conversation_id,

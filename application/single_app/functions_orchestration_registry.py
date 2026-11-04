@@ -1554,7 +1554,11 @@ CAPABILITY_REGISTRY = (
             'the visuals the Markdown answer should author: chart, diagram (Mermaid), or '
             'image_proposal (cards the user approves before generation). Place bound '
             'generate_image outputs with [[image:<step_id>]] tokens in Markdown, or as '
-            '"asset:<step_id>" image sources in a prepared slide deck.'
+            '"asset:<step_id>" image sources in a prepared slide deck. For ordinary answers and '
+            'narrative documents use response_policy: available_information: answer supported '
+            'questions and explain unavailable or conflicting information normally. A data gap '
+            'is not an execution failure. Use complete_inputs for exact datasets or an explicitly '
+            'complete-only transformation; never invent missing values.'
         ),
         'settings_gates': (),
         'settings_gates_any': (),
@@ -1566,6 +1570,9 @@ CAPABILITY_REGISTRY = (
             'properties': {
                 'instruction': {'type': 'string', 'minLength': 1},
                 'knowledge_basis': {'type': 'string', 'enum': list(KNOWLEDGE_BASES)},
+                'response_policy': {
+                    'type': 'string', 'enum': ['available_information', 'complete_inputs'],
+                },
                 'visuals': {
                     'type': 'array', 'items': {'type': 'string', 'enum': list(VISUAL_KINDS)},
                     'uniqueItems': True, 'maxItems': len(VISUAL_KINDS),
@@ -1965,7 +1972,9 @@ def _render_file_descriptor():
         'role': ROLE_RENDER,
         'summary': 'Create one downloadable file from an explicitly prepared retained result.',
         'when_to_use': (
-            'Bind exactly one complete retained source. Select an explicit file name, format, '
+            'Bind exactly one complete retained source, or an owner-attested prepared narrative '
+            'for a narrative profile. Partial evidence is not permission to export a partial dataset. '
+            'Select an explicit file name, format, '
             'profile, and supported options. Draft content with Reason first when necessary; '
             'Render does not compose, retrieve, select a model, or infer a representation. '
             'Its outputs are durable file deliveries, not named data results. DOCX, PDF, and '
@@ -1981,7 +1990,7 @@ def _render_file_descriptor():
         'result_input_kinds': {'source': tuple(_RENDER_SOURCE_KINDS)},
         'required_result_inputs': ('source',),
         'render_source_kinds': dict(_RENDER_SOURCE_KINDS),
-        'partial_inputs_supported': False,
+        'partial_inputs_supported': True,
         'result_outputs': {},
         'produces': (PRODUCES_ARTIFACTS,),
         'cost_class': COST_CLASS_LOW,

@@ -13,6 +13,11 @@ TASK_RESULT_VERSION = "orchestration-task-result-v1"
 RESULT_REF_VERSION = "orchestration-result-ref-v1"
 INPUT_BINDING_VERSION = "orchestration-input-binding-v1"
 COMPLETENESS_VERSION = "orchestration-completeness-v1"
+AVAILABLE_INFORMATION_POLICY = "available_information"
+NARRATIVE_READY_CHECK = "prepared_narrative_v1"
+NARRATIVE_EXPORT_PROFILES = frozenset({
+    "prepared_text_v1", "prepared_report_v1", "prepared_slide_deck_v1",
+})
 RESULT_MANIFEST_VERSION = "orchestration-result-manifest-v2"
 RESULT_RECEIPT_VERSION = "orchestration-result-receipt-v1"
 EXTERNAL_SOURCE_VERSION = "orchestration-external-source-v1"
@@ -455,6 +460,53 @@ class ResultRef(_Contract):
         values["completeness"] = Completeness.from_dict(values["completeness"])
         values["columns"] = tuple(RecordColumn.from_dict(item) for item in _list(values["columns"]))
         return cls(**values)
+
+
+def is_narrative_output(specification):
+    """Only explicit narrative representations, never a partial record export."""
+    return type(specification) is dict and (
+        specification.get("kind") in {"text-v1", "markdown-v1"}
+        or (
+            specification.get("kind") == "structured-v1"
+            and specification.get("profile") == "prepared_slide_deck_v1"
+        )
+    )
+
+
+def uses_available_information(step):
+    outputs = step.get("outputs") if type(step) is dict else None
+    return (
+        type(step) is dict and step.get("capability_id") == "compose"
+        and (step.get("arguments") or {}).get("response_policy") == AVAILABLE_INFORMATION_POLICY
+        and type(outputs) is list and bool(outputs) and all(is_narrative_output(item) for item in outputs)
+    )
+
+
+def narrative_result_ready(reference, *, profile=None):
+    """Readiness attested by the owning producer and bound to its immutable manifest.
+
+    This does not change evidence completeness or authorize a source read. Callers must
+    still open the exact reference with its result owner and exhaust its content.
+    """
+    if (
+        type(reference) is not ResultRef or reference.completeness.preview
+        or reference.completeness.status not in {"complete", "partial"}
+        or NARRATIVE_READY_CHECK not in reference.completeness.checks
+    ):
+        return False
+    producer = reference.producer.capability_id
+    if producer in {"document_analyze", "document_compare"}:
+        if reference.output_name != "report" or reference.kind != "markdown-v1":
+            return False
+    elif producer != "compose":
+        return False
+    if reference.kind in {"text-v1", "markdown-v1"}:
+        return profile is None or profile in {"prepared_text_v1", "prepared_report_v1"}
+    return (
+        producer == "compose" and reference.kind == "structured-v1"
+        and "narrative_profile:prepared_slide_deck_v1" in reference.completeness.checks
+        and profile in {None, "prepared_slide_deck_v1"}
+    )
 
 
 @dataclass(frozen=True)

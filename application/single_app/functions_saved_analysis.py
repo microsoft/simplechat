@@ -1075,7 +1075,12 @@ def orchestration_analysis_descriptors(
         if step.get("status") not in {"completed", "partial"}:
             continue
         for descriptor in step.get("saved_analyses") or []:
-            inherited = (record.get("inherited_checkpoints") or {}).get(step["step_id"]) or {}
+            checkpoint_sources = (
+                record.get("continuation_source_checkpoints")
+                if record.get("available_information_continuation") is True
+                else record.get("inherited_checkpoints")
+            ) or {}
+            inherited = checkpoint_sources.get(step["step_id"]) or {}
             if step.get("reused") and inherited and (
                 inherited.get("source_run_id") != record.get("retry_of_run_id")
                 or (inherited.get("provenance") or {}).get("step_id") != step["step_id"]
