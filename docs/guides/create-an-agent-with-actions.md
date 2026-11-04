@@ -11,6 +11,12 @@ version: "0.261.347"
 
 This guide connects an existing action to an agent and narrows what the agent can do with it. The result is an assistant with both instructions and approved tool access.
 
+{% include media.html id="slide-approved-actions" %}
+
+Attach only the operations the task needs. An action's presence in the agent
+does not grant access to its remote source or override destination policies,
+the acting user's permissions, or a required outgoing-operation review.
+
 {% include media.html type="video"
                       title="Create an agent with actions walkthrough"
                       poster="video-posters/guide-create-an-agent-with-actions.png"

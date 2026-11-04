@@ -69,7 +69,7 @@ The Bicep templates are the infrastructure backbone behind the repo's recommende
 
 ## Recommended workflow
 
-1. Start with the [Azure Developer CLI deployment guide](./azd-cli_deploy.md).
+1. Start with the [Azure Developer CLI deployment guide]({{ '/reference/deploy/azd-cli_deploy/' | relative_url }}).
 2. Review or modify the Bicep files under `deployers/bicep/`.
 3. Use `azd provision --preview` or `azd up` to apply those changes through the supported workflow.
 

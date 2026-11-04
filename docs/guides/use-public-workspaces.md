@@ -10,6 +10,12 @@ audience: user
 
 Public workspaces make selected documents and prompts available through a shared workspace surface. This guide selects a public workspace, browses documents, and uses filters, tags, and chat actions where your role permits.
 
+{% include media.html id="slide-public-workspaces" %}
+
+Here, **public** means visible to signed-in SimpleChat users, not an
+anonymous website. The management roster controls who can curate the
+workspace; readers do not need to join that roster to use its published content.
+
 {% include media.html type="video"
                       title="Use public workspaces walkthrough"
                       poster="video-posters/guide-use-public-workspaces.png"
@@ -87,7 +93,7 @@ reloads them. Locked cards and Settings, Activity, and Statistics stay uncounted
 From version **0.261.177**, a public workspace's **Prompts** are in V2 too.
 Everyone can read them and use them in chat. Owners, Admins and
 DocumentManagers can create, edit and delete them while the workspace is
-active. **Use in chat** works even for a workspace you've hidden from chat. The
+active. **Use in chat** in V2 is not restricted by classic visibility preferences. The
 classic page's prompt changes also need an active workspace from this version.
 
 From version **0.261.179**, the Owner and Admins manage the workspace's
@@ -102,21 +108,26 @@ keep its **Identities** and **Sync** (File Sync sources) in V2, when File Sync
 is enabled for the workspace. They can create, edit and delete them, test and
 browse connections, and start a sync while the workspace is active. Readers
 don't see either section. See
-[V2 Public Connections]({{ '/explanation/features/V2_PUBLIC_CONNECTIONS/' | relative_url }}).
+[Create a file sync]({{ '/guides/create-a-file-sync/' | relative_url }}).
 
 From version **0.261.184**, the directory lets you ask to manage a workspace's
 documents, and cancel the request, from its row. Its former visibility and
 saved-list controls were removed from V2 in **0.261.373**; classic retains them.
 
-The directory's **Chat with all public** action opens a fresh native V2 chat over all
-available public workspaces. Open **Documents → Search in** to change its
-public-only scope; in Orchestrate, use **Manual controls → Documents** when available.
-**All public workspaces** excludes personal and group retrieval. **Current
-context** supports mixed personal, group and public sources, with all eligible
-public sources discoverable and explicit selections still respected.
-Old V2 Visible links reopen as All. **New chat** resets the aggregate scope.
-If no workspace qualifies, the request explains the empty scope rather than
-searching somewhere else.
+The directory's **Chat with all public** action opens a fresh native V2 chat.
+From **0.261.395**, its eligible public workspaces become selected source chips,
+rather than a separate aggregate-public mode. Wait for those sources to load
+before sending; use **Retry sources** after a failed load or **Choose other
+sources** to review another selection. If no workspace qualifies, the request
+explains the empty scope rather than searching somewhere else.
+
+Open **Documents → Choose sources** to inspect or change the individual public
+workspaces, documents, and tags. In Orchestrate, use **Manual controls → Documents**
+when available. Selections are additive, so including an entire workspace does
+not limit it to another selected document. **Search all documents** instead uses
+all accessible workspace scopes within the conversation's lock, not only public
+sources. A new ordinary chat starts with document search off. See the
+[document-source picker]({{ '/reference/chat-controls/#react-v2-document-source-picker' | relative_url }}).
 
 From version **0.261.185**, the Owner and Admins manage the workspace's
 **Settings** (name, description, color and logo for the Owner; file downloads
@@ -124,7 +135,8 @@ and retention for both), read its **Activity**, and chart and export its
 **Statistics**, which DocumentManagers can also see, under **Manage**. Deleting
 the workspace still happens on the classic page, and removes only the workspace
 record: its documents and prompts stay behind. See
-[V2 Public Settings]({{ '/explanation/features/V2_PUBLIC_SETTINGS/' | relative_url }}).
+[Workspaces settings]({{ '/admin/workspaces/' | relative_url }}) and
+[Data Lifecycle settings]({{ '/admin/data-lifecycle/' | relative_url }}).
 
 Sharing a public document with other workspaces is not available.
 

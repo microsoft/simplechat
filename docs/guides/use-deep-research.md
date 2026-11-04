@@ -10,6 +10,13 @@ audience: user
 
 **Deep Research** is a chat control that reviews sources more deeply for the current message. It is separate from normal workspace search and direct URL Access.
 
+{% include media.html id="slide-external-research" %}
+
+Choose the evidence path deliberately: web search discovers public sources,
+URL Access reads an approved address, and research performs deeper source
+review. These paths depend on enabled services and policy; they do not
+inherit a private workspace boundary merely because the chat also uses documents.
+
 {% include media.html type="video"
                       title="Use deep research walkthrough"
                       poster="video-posters/guide-use-deep-research.png"

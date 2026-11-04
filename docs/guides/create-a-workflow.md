@@ -9,7 +9,9 @@ version: "0.261.382"
 
 ## What this does
 
-A workflow is an ordered set of instruction tasks that runs with a selected model or agent. This guide creates a workflow with runner, trigger, tasks, reliability choices, and review.
+A workflow saves repeatable work with a selected model or agent, using an ordered task list or explicitly structured branches and loops. This guide creates a workflow with runner, trigger, tasks, reliability choices, and review.
+
+{% include media.html id="slide-workflows" %}
 
 {% include media.html type="video"
                       title="Create a workflow walkthrough"
@@ -34,7 +36,7 @@ See [Workflow settings]({{ '/admin/workflow/' | relative_url }}).
 
 ## Before you start
 
-- Personal workflows require `allow_user_workflows`; group workflows require `allow_group_workflows`; see [Workspaces settings]({{ '/admin/workspaces/' | relative_url }}).
+- Personal workflows require `allow_user_workflows`; group workflows require `allow_group_workflows`; see [Workflow settings]({{ '/admin/workflow/' | relative_url }}).
 - Admins may require `require_member_of_workflow_user` before users can create workflows.
 - If tasks use documents, upload them or configure File Sync first.
 
@@ -103,8 +105,8 @@ it open, saving is refused with "This workflow was deleted after it was opened,
 so your changes were not saved." The draft stays open so you can copy anything
 you need; saving in V2 never brings a deleted workflow back.
 
-See [Explicit workflow data flow](../explanation/features/WORKFLOW_EXPLICIT_DATA_FLOW.md)
-for binding semantics, shared references, and validation outcomes.
+See [Workflows]({{ '/features/workflows/' | relative_url }})
+for an overview of reusable tasks, declared inputs, and retained results.
 
 ## Choose chat capabilities
 
@@ -227,13 +229,15 @@ later, **Create again** creates it again, paused. A proposal expires 14 days
 after chat made it; after that, ask in chat again.
 
 A workflow created from chat can't turn on URL Access. Create it first, then
-turn on URL Access in the workflow editor. A task that uses Microsoft 365 runs as
-you, and as with any workflow, its first run waits for you to approve Run as.
+turn on URL Access in the workflow editor. A task that uses Microsoft 365 needs
+a connected Run as account. Saving a revision as that account's owner counts
+as reviewing it; a revision someone else saved needs that person's approval,
+as described under [Microsoft 365 Run as](#microsoft-365-run-as).
 When Microsoft 365 isn't connected for workflows, the card links to the
 connection in your profile.
 
-See [Chat orchestration workflow proposals](../explanation/features/CHAT_ORCHESTRATION_WORKFLOW_PROPOSALS.md)
-for how proposals are checked and created.
+See [Workflow proposal controls]({{ '/reference/chat-controls/#workflow-proposals-v2-interface' | relative_url }})
+for reviewing and creating a proposed workflow.
 
 ### Repeat a chat plan on a schedule
 
@@ -381,8 +385,8 @@ runs more often is refused with a message that names the minimum, such as
 interval of at least 5 minutes." Workflows already saved on a shorter interval
 keep running, and calendar schedules aren't affected.
 
-See [Workflow calendar schedules](../explanation/features/WORKFLOW_CALENDAR_SCHEDULES.md)
-for the stored format and the full rules.
+See [Workflow settings]({{ '/admin/workflow/' | relative_url }})
+for deployment-wide scheduling limits.
 
 ## Run a workflow when File Sync finds changes
 
@@ -612,6 +616,12 @@ People who can't manage the workflow see only whether an account is selected
 
 ## Choose branches and optional work
 
+{% include media.html id="slide-workflow-logic" %}
+
+Use the illustration to reason about paths and named results, then configure
+the actual bindings and limits in List or Flow. A human checkpoint approves
+specific work; it does not repair missing evidence or grant new source access.
+
 In **0.261.116**, **Enable structured control flow** explicitly converts a V2
 draft to definition version 3. Existing workflows stay ordered unless you
 choose this conversion; nothing is persisted until **Save workflow**.
@@ -636,8 +646,8 @@ Repeat until is added in **0.261.120** below. Version **0.261.121** adds the
 read-only saved/run Flow inspection described below. Version **0.261.122**
 adds **List authoring** and **Flow authoring** for the same structured draft.
 
-See [Structured workflow control flow](../explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md)
-for condition semantics, execution identity, limits, and compatibility.
+See [Inspect a structured path]({{ '/guides/trigger-a-workflow/#inspect-a-structured-path' | relative_url }})
+for run-time decisions, execution identity, and continuation limits.
 
 ## Edit with List or Flow
 
@@ -1067,8 +1077,8 @@ For a qualitative explanation of a large collected dataset, explicitly choose
 report uses bounded calls and source-linked support. Ordinary tasks pause if
 their full input cannot safely fit; they do not silently become summary tasks.
 
-See [Serial For each and exact Collect](../explanation/features/WORKFLOW_FOR_EACH_COLLECT.md)
-for local-runner requirements, partial coverage, nested scopes, and limitations.
+See [Inspect loop progress]({{ '/guides/trigger-a-workflow/#inspect-loop-progress' | relative_url }})
+for frozen selections, exact results, partial coverage, and continuation limits.
 
 ## Refine saved state with Repeat until
 
@@ -1099,7 +1109,7 @@ unchanged, but hosted loop execution is unavailable.
 The final exports become available only when the condition is true, including
 when it first becomes true on the last allowed round. Otherwise the workflow
 pauses at the batch limit with prior outputs and next state retained. See
-[manual continuation](trigger-a-workflow.md#continue-a-repeat-batch) before
+[manual continuation]({{ '/guides/trigger-a-workflow/#continue-a-repeat-batch' | relative_url }}) before
 granting another batch.
 
 Partial state is rejected unless the producer, state slot, and relevant
@@ -1107,8 +1117,8 @@ consumers explicitly accept it. Accepted coverage limitations remain visible
 through later rounds and final results. Approval cannot repair failed,
 invalid, pending, missing, or unauthorized data.
 
-See [Repeat until with saved typed state](../explanation/features/WORKFLOW_REPEAT_UNTIL.md)
-for state contracts, frozen policy, mixed nesting, and exact result identity.
+See [Continue a Repeat batch]({{ '/guides/trigger-a-workflow/#continue-a-repeat-batch' | relative_url }})
+for retained state, frozen limits, and manual continuation.
 
 ## Durable execution and task approval
 
@@ -1116,6 +1126,13 @@ Starting in **0.261.111**, new V2 workflows enable **Durable execution**.
 Existing workflows keep their previous setting until you opt in. The run saves
 its definition, completed task results, and decisions so closing the browser or
 restarting a worker does not discard progress.
+
+{% include media.html id="slide-durable-workflows" %}
+
+Saved progress, result delivery, and alerts are separate choices. Configure
+the destinations and alerts you need, and inspect the saved run before
+retrying an uncertain external action. A follow-up on saved results explains
+that run rather than verifying the sources again.
 
 For a task that needs a review before execution, enable its approval requirement
 and explain what the reviewer should inspect. In run history, review the gate
@@ -1125,8 +1142,8 @@ specific inputs; it cannot make an invalid output valid.
 Run memory shows checkpoint units, attempts, and decisions. If a worker may have
 performed an external action without saving its result, a recovery gate asks you
 to check the destination before retrying. This is different from rerunning every
-task. See [Durable workflow execution](../explanation/features/WORKFLOW_DURABLE_EXECUTION.md)
-for readiness, recovery, and cancellation limits.
+task. See [Continue a durable run]({{ '/guides/trigger-a-workflow/#continue-a-durable-run' | relative_url }})
+for approval, recovery, and cancellation limits.
 
 ## Classic interface steps
 
@@ -1159,10 +1176,12 @@ When a workflow uses Calendar, Email, OneDrive, or SharePoint actions, select an
 explicit **Microsoft 365 Run as** account. Manual and scheduled runs use that
 account, not the person pressing Run or an application identity.
 
-The selected person must connect Microsoft 365 from Profile and approve the
-workflow's sources, instructions, and destinations. Material changes require
-renewed approval. Missing approval or sign-in pauses the operation and creates
-a notification; the person can respond from Approvals without reopening the
+The selected person must connect Microsoft 365 from Profile. Their own save
+reviews the workflow's current revision; a revision saved by someone else, or
+a later relevant agent/action change, needs their approval of its sources,
+instructions, and destinations. Explicit denial or revocation still takes
+precedence. Missing approval or sign-in pauses the operation and creates a
+notification; the person can respond from Approvals without reopening the
 conversation.
 
 When a mail or calendar action uses manual delivery, its separate review is sent
@@ -1182,12 +1201,12 @@ Starting in **0.261.106**, each task saves its final output separately from pres
 
 The former 12,000-character task-handoff cap no longer clips the middle of a result. The effective model's context budget determines whether the complete selected output fits. If it does not, the result remains stored and the dependent task reports the budget problem instead of receiving a shortened substitute.
 
-This preserves the producer's final data; it does not guarantee that an extraction is semantically complete. Prefer a clear final output format, such as a JSON record array, when another task must consume structured findings. See [Workflow data flow](../explanation/features/WORKFLOW_DATA_FLOW.md) for result references and limitations.
+This preserves the producer's final data; it does not guarantee that an extraction is semantically complete. Prefer a clear final output format, such as a JSON record array, when another task must consume structured findings. Use [explicit task inputs](#create-or-edit-in-v2) to bind a particular producer rather than relying on whichever task ran last.
 
 For Analyze results produced in **0.261.109**, a later explanation uses accepted
 findings and their saved provenance. Ordinary narrative analysis does not require
 you to configure columns or scoring. Read
-[Saved Analyze results](analyze-results.md) for the difference between source
+[Saved Analyze results]({{ '/guides/analyze-results/' | relative_url }}) for the difference between source
 coverage, accepted findings, and validation.
 
 ## Publish an existing analysis artifact
@@ -1270,8 +1289,10 @@ policy. Queued, approved and indexed-ready are different stages; a failed or
 uncertain explicit policy pauses instead of publishing another copy or
 continuing on error. A valid JSON download, including an empty array, does not
 prove that its destination has searchable content. See
-[Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATION_COMPLETION.md)
-for readiness proof, screening and recovery limitations.
+[Inspect a saved-output publication]({{ '/guides/trigger-a-workflow/#inspect-a-saved-output-publication' | relative_url }})
+for publication evidence and recovery, and
+[Screen and review workspace documents]({{ '/guides/review-screened-documents/' | relative_url }})
+for destination holds.
 
 ## Find documents a workflow saved
 
@@ -1330,4 +1351,4 @@ The Results section can create a separate conversation without an agent; use
 
 - [Trigger a workflow]({{ '/guides/trigger-a-workflow/' | relative_url }})
 - [Create an agent]({{ '/guides/create-an-agent/' | relative_url }})
-- [Workspaces settings]({{ '/admin/workspaces/' | relative_url }})
+- [Workflow settings]({{ '/admin/workflow/' | relative_url }})

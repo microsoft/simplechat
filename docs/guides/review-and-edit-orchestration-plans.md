@@ -14,6 +14,13 @@ Review it when you want to check its sources or cost before committing to that
 work. Edit it when the approach needs another step, less research, or a different
 focus.
 
+{% include media.html id="slide-orchestration" %}
+
+The slide illustrates the reviewed path. Your deployment's approval mode
+determines whether execution waits for review, uses a countdown, or starts
+automatically; selecting a model or answering a follow-up is not a separate
+authorization to run.
+
 Conversational plan editing was implemented in version **0.261.102**, recorded in
 `application/single_app/config.py`. It is available in the V2 interface for plans
 that have not started.
@@ -570,7 +577,7 @@ a successful run just because one file is ready.
 
 ## Related
 
-- [Chat orchestration](https://github.com/microsoft/simplechat/blob/main/docs/explanation/features/CHAT_ORCHESTRATION.md)
-- [Plan editing architecture](https://github.com/microsoft/simplechat/blob/main/docs/explanation/features/V2_ORCHESTRATION_PLAN_EDITING.md)
-- [Checkpoint recovery architecture](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/ORCHESTRATION_CHECKPOINT_RECOVERY.md)
+- [Chat orchestration]({{ '/features/chat-orchestration/' | relative_url }})
+- [Create files with orchestration]({{ '/guides/create-files-with-orchestration/' | relative_url }})
+- [Choose models for orchestration]({{ '/guides/model-catalog-routing/' | relative_url }})
 - [Orchestration settings]({{ '/admin/orchestration/' | relative_url }})

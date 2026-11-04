@@ -39,9 +39,19 @@ implicitly widened across audiences.
 | Cancel handoff | Stops a queued or in-flight handoff from its outgoing status card without removing existing destination history. | Outgoing handoff status card |
 
 See [Reference and send between conversations]({{ '/guides/reference-and-send-conversations/' | relative_url }})
-and [Conversation references and queued AI handoffs]({{ '/explanation/features/CONVERSATION_REFERENCES_AND_HANDOFFS/' | relative_url }}).
+for source selection, handoff review, and the private-conversation boundary.
 
 ## Conversation header and status
+
+### Conversation details
+
+{% include media.html id="slide-conversation-details" %}
+
+Open the conversation's **Details** to inspect its recorded scope and state,
+associated documents, model or agent attribution, and any available summary.
+These are conversation-level facts: a linked document does not establish that
+every answer used it. Inspect the selected reply's sources for answer-specific
+evidence. See [Conversation details]({{ '/features/conversation-details/' | relative_url }}).
 
 ### React V2 document-source picker
 
@@ -62,7 +72,7 @@ It does not search document contents.
 
 Fresh chats keep document search off. Old public-only launches become selected
 public workspace chips rather than a separate aggregate-public mode.
-See [Chat Context Picker]({{ '/explanation/features/CHAT_CONTEXT_PICKER/' | relative_url }}).
+See [Uploading and managing documents]({{ '/guides/upload-and-manage-documents/' | relative_url }}).
 
 ### React V2 document-evidence status
 
@@ -83,7 +93,7 @@ Unknown historical metadata and ordinary non-grounded chat do not become
 missing-evidence warnings. Suggested next steps do not automatically search
 another workspace or grant broader access. Copying preserves a short material
 limitation notice. See
-[V2 model tools and evidence status]({{ '/explanation/features/V2_MODEL_TOOLS_AND_EVIDENCE_STATUS/' | relative_url }}).
+[Message details and sources]({{ '/features/message-details/' | relative_url }}).
 
 ### React V2 sign-in recovery
 
@@ -227,7 +237,7 @@ Scrolling back to the bottom resumes live following.
 | New messages (down arrow) | Shows that new content arrived while you were reading earlier messages and takes you to the beginning of the newest rendered message or live reply. | Appears when there is new content to reach in the open conversation. |
 
 This is separate from the classic `scroll-to-bottom-btn`, whose behavior is unchanged.
-See [V2 message scroll anchoring]({{ '/explanation/fixes/V2_CHAT_MESSAGE_SCROLL_ANCHOR_FIX/' | relative_url }}).
+See [Reading incoming messages]({{ '/guides/collaborate-in-a-conversation/#reading-incoming-messages' | relative_url }}).
 
 ### Foundry sign-in requests
 
@@ -273,7 +283,7 @@ The existing `/` prompt shortcut remains available in the message editor.
 Vendor matching uses configured public metadata, not guesses about custom
 OpenAI-compatible APIs. Models without publisher information remain searchable
 by their known names and meaningful provider labels. See
-[V2 chat picker search]({{ '/explanation/features/V2_CHAT_PICKER_SEARCH/' | relative_url }}).
+[Prompt, model, agent, and reasoning selectors](#prompt-model-agent-and-reasoning-selectors).
 
 ### Source lookup failures and retry
 
@@ -292,27 +302,27 @@ Cancelling or superseding a query does not replace a newer query's results.
 
 Implemented in version: **0.261.310** (`application/single_app/config.py`).
 Public discovery corrected in version: **0.261.373**.
-Placement fixed in version: **0.261.315**. Open **Documents → Search in**;
-in Orchestrate, use **Manual controls → Documents** when available.
-The choices appear only inside the picker, not above the message editor:
-**Current context** and **All public workspaces**.
-V2 searches all eligible public workspaces regardless of classic visibility
-preferences. Current context supports mixed personal, group and public sources;
-explicit document and tag selections still narrow the request.
-All public workspaces excludes personal/group retrieval and restricts Documents
-and `#` browsing to public sources. Clear incompatible references before
-sending, or return to Current context.
-The Documents button indicates All when its toolbar is visible.
-Old V2 Visible links and saved aggregate selections reopen as All; classic
-visibility preferences are neither changed nor used by V2.
-If manual controls are disabled in Orchestrate, switch to Manual mode to
-change the scope, or start a new chat.
+Source selection updated in version: **0.261.395**.
 
-The aggregate choice persists across follow-up questions and is restored from
-the latest saved user turn when reopening a conversation. New chat resets it.
-This lifetime is separate from turn-specific document and tag chips, which
-still clear when sent. See
-[Aggregate public chat]({{ '/explanation/features/V2_AGGREGATE_PUBLIC_CHAT/' | relative_url }}).
+Open **Documents** in the main composer; in Orchestrate, use
+**Manual controls → Documents** when available. **Choose sources** lists
+eligible public workspaces individually alongside personal and group sources.
+Select the intended public workspace, document, or tag chips to keep the request
+focused there. Selections are additive: also selecting a whole workspace does
+not narrow it to the separately selected document.
+
+**Search all documents** can include accessible personal, group, and public
+knowledge within the conversation's scope lock; it is not a public-only mode.
+V2 does not use classic **Visible for chat** preferences to hide eligible sources.
+Classic retains those independent preferences.
+
+Legacy **Chat with all public** launches become selected public-workspace chips,
+not a separate aggregate-public picker mode. Wait for the sources to load.
+**Retry sources** retries a failed load; **Choose other sources** opens the
+picker instead. An empty public selection is reported rather than silently
+searching another scope. New ordinary chats start with document search off.
+Source selection does not grant access or override the workspace lock. See
+[Use public workspaces]({{ '/guides/use-public-workspaces/' | relative_url }}).
 
 Microsoft 365 agents can pause for a source-sharing or deeper-analysis decision.
 The local approval dialog offers only the durations permitted by the action.
@@ -396,7 +406,7 @@ is not on screen appears in a **Microsoft 365 outgoing actions for this
 conversation** section, which also offers **Load more
 outgoing actions** and **Refresh outgoing actions**. A notification about a saved
 action opens its conversation and scrolls to the card. See
-[V2 Microsoft 365 pending-action cards]({{ '/explanation/features/V2_M365_PENDING_ACTION_CARDS/' | relative_url }}).
+[Review an email or meeting before delivery]({{ '/guides/microsoft-365-conversation-data/#review-an-email-or-meeting-before-delivery' | relative_url }}).
 
 ## Reply sources and tool outcomes (V2 interface)
 
@@ -406,6 +416,14 @@ Open **Show sources** beneath an assistant reply to inspect the evidence recorde
 for that reply, separately from what the assistant says in its answer. Tool and
 web evidence is available as soon as the stream finishes, without reopening the
 conversation. Ordinary and orchestrated answers use the same evidence handoff.
+
+{% include media.html id="slide-message-details" %}
+
+Message-level details describe the selected reply rather than the whole
+conversation. Read recorded attribution, capability use, source references,
+and limitations together. **Show reasoning** exposes recorded processing
+activity, not the model's hidden chain of thought or a guarantee that its
+conclusions are complete or correct.
 
 | Existing control | What it shows | Why you would use it |
 | --- | --- | --- |
@@ -423,7 +441,7 @@ or `success`; those field names alone do not classify the execution.
 Opening Sources does not rerun a tool. Missing citations are not reconstructed
 from model prose, and blocked/safety replies do not expose suppressed evidence.
 Previously recorded incorrect success values are not rewritten by this fix.
-See [Streamed tool evidence and outcomes fix]({{ '/explanation/fixes/STREAMED_TOOL_EVIDENCE_AND_OUTCOMES_FIX/' | relative_url }}).
+See [Message details and sources]({{ '/features/message-details/' | relative_url }}).
 
 ## Microsoft 365 citations and Open online
 
@@ -451,7 +469,7 @@ SharePoint and OneDrive permissions. A saved record without an online URL keeps
 its details; the source card explains that its link is unavailable. Recall the
 item again to capture current details and a Graph URL if available. History is
 not rewritten. See
-[Microsoft 365 Source Citations]({{ '/explanation/features/M365_SOURCE_CITATIONS/' | relative_url }}).
+[Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}).
 
 ## Generated image editor
 
@@ -597,6 +615,16 @@ Orchestrate keeps its own model choice; see
 | `clearFiltersBtn` | Clears selected grounded-search filters. | Use it when a search is too narrow or you want to return to the full chosen scope. | Always available |
 | `document-comparison-edit-btn` | Reopens comparison setup for source/target document selections. The child label `document-comparison-edit-btn-label` supplies the visible text. | Use it when the wrong source or target document was selected for Compare. | Always available |
 
+### Inspect a cited source
+
+{% include media.html id="slide-citations" %}
+
+A citation connects a claim to recorded source material; it is not proof that
+the answer reviewed an entire file or found every relevant fact. Standard
+citations expose indexed passages. Opening an original through
+[Enhanced Citations]({{ '/features/enhanced-citations/' | relative_url }})
+also depends on configured storage and current source access.
+
 ## Saved Analyze results (both interfaces)
 
 Implemented in version **0.261.109**. These response-specific controls appear in
@@ -692,18 +720,18 @@ permissions and lifecycle; saving a result in chat is not publication.
 
 ## Context references (V2 interface)
 
-These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They replace the classic scope, tags, and documents dropdowns with one list of what the next message is pointed at. See [Chat Context Picker]({{ '/explanation/features/CHAT_CONTEXT_PICKER/' | relative_url }}) for the full description.
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They replace the classic scope, tags, and documents dropdowns with one list of what the next message is pointed at. See the [document-source picker](#react-v2-document-source-picker) for current selection behavior.
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
-| Documents button | Opens a search panel listing documents, tags, and workspaces with checkboxes. Selections add context chips without changing your message text. Its first row, **Search all my documents**, is the original on/off relevance search. | Use it to pick what should ground an answer while keeping your question free of inserted document names. | [`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}) |
+| Documents button | Opens the document-source picker. **Search all documents** uses accessible knowledge within the scope lock; **Choose sources** selects workspaces, individual documents, and workspace-specific tags. Selections add context chips without changing your message text. | Use it to pick what should ground an answer while keeping your question free of inserted document names. | Enabled workspace scopes and current access |
 | `#` in the message box | Searches documents, tags, and workspaces and inserts the chosen one as `#[Name]`. This is the way to intentionally add an inline reference; an existing chip is reused. | Use it to name a document within a sentence, for example when comparing two contracts. | [`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}) |
 | Context chips | Show the next message's context above the message box, grouped by workspace and individually removable. Independently selected chips survive message edits, including deletion of a later inline mention. More than five collapse to per-workspace counts. | Use them to confirm what an answer will be grounded in and remove context without rewriting your question. | [`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}) |
 | Chat action on a tag | Opens the composer with that tag as a context chip and search filter, without inserting text. The message searches whatever holds the tag when it is sent. | Use it to ask questions of a whole grouping rather than of documents chosen one at a time. | [`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}) |
 
 ## Shared conversations (V2 interface)
 
-These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They make a conversation with several people and agents readable at a glance: who a message is for and which agents are working. See [V2 shared conversation experience]({{ '/explanation/features/V2_COLLABORATION_UX/' | relative_url }}) for the full description.
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They make a conversation with several people and agents readable at a glance: who a message is for and which agents are working. See [Collaborate in a conversation]({{ '/guides/collaborate-in-a-conversation/' | relative_url }}) for invitations, permissions, and shared-file approvals.
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
@@ -714,7 +742,7 @@ These controls exist only in the V2 interface, so they are not part of the gener
 
 ## Documents drawer (V2 interface)
 
-These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. The drawer's **Documents** tab gathers what a conversation used and what it produced, in personal and shared conversations alike, so a file or source is not lost in a long thread. See [Documents drawer generated files fix]({{ '/explanation/fixes/DOCUMENTS_DRAWER_GENERATED_FILES_FIX/' | relative_url }}) for how generated files are found.
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. The drawer's **Documents** tab gathers what a conversation used and what it produced, in personal and shared conversations alike, so a file or source is not lost in a long thread. See [Generated deliverables]({{ '/features/generated-deliverables/' | relative_url }}) for the distinction between a planned output and an available file.
 
 Since **0.261.327**, workspace document cards show the title, a separate filename
 when it differs, and a file-type icon using the same visual vocabulary as the
@@ -723,8 +751,8 @@ group/public workspace name when available; it never substitutes a workspace ID
 for a missing name. Citation indicators and page/sheet locations remain available.
 New Orchestrate answers retain readable source metadata even when Analyze or
 Compare supplies document references without individual chunk citations. Existing
-conversations are not backfilled. See [Chat document metadata and notification
-alignment fix]({{ '/explanation/fixes/CHAT_DOCUMENT_METADATA_AND_NOTIFICATION_ALIGNMENT_FIX/' | relative_url }}).
+conversations are not backfilled. See [Conversation details]({{ '/features/conversation-details/' | relative_url }})
+for recorded context and associated documents.
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
@@ -734,12 +762,12 @@ alignment fix]({{ '/explanation/fixes/CHAT_DOCUMENT_METADATA_AND_NOTIFICATION_AL
 
 ## Media in replies (V2 interface)
 
-These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They keep a reply that returns many images and clips readable: two or more in a row show as tiles, three to a row, instead of one full-width card each. See [V2 media galleries and viewer]({{ '/explanation/features/V2_MEDIA_GALLERIES_AND_VIEWER/' | relative_url }}) for the full description.
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They keep a reply that returns many images and clips readable: two or more in a row show as tiles, three to a row, instead of one full-width card each. The viewer controls below enlarge the retained media without rerunning its source action.
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
 | Gallery image tile | Opens the media viewer on that image, with the rest of the gallery a step away. The tile shows **Unavailable** when its link has expired. | Use it to look at a still or scan at full size without losing your place in the thread. | Always available |
-| Gallery clip tile | Shows the clip's first frame and length. Pressing it plays the clip where it is, at tile size, with the browser's own controls. | Use it to glance at a short clip next to the text about it. | Always available; another host's clips need [`CSP_MEDIA_SRC_ORIGINS`]({{ '/explanation/features/V2_INLINE_MEDIA_AND_AGENT_MESSAGES/' | relative_url }}) |
+| Gallery clip tile | Shows the clip's first frame and length. Pressing it plays the clip where it is, at tile size, with the browser's own controls. | Use it to glance at a short clip next to the text about it. | Always available; another host's clips need `CSP_MEDIA_SRC_ORIGINS` |
 | View larger | Opens a clip in the media viewer, continuing from where it had reached in its tile. | Use it when a clip needs more detail than the tile shows. | Same as the clip tile |
 | Media viewer: Previous, Next and arrow keys | Move through the images and clips in the gallery, or through every image and clip when opened from the drawer. The header shows the position, such as "3 of 15". | Use them to review a set of stills and clips in order without closing and reopening each. | Always available |
 | Media viewer: View at actual size | Shows an image at its natural size, scrolling to pan; selecting the image does the same. | Use it to read a plate, a document or other fine detail. | Always available |
@@ -748,7 +776,7 @@ These controls exist only in the V2 interface, so they are not part of the gener
 
 ## Attached prompts (V2 interface)
 
-These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. A saved prompt picked in V2 is attached to the message you are writing rather than pasted into the box, so the two stay separate until you send. See [Prompt composer card]({{ '/explanation/features/PROMPT_COMPOSER_CARD/' | relative_url }}) for the full description.
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. A saved prompt picked in V2 is attached to the message you are writing rather than pasted into the box, so the two stay separate until you send. See [Saved prompts]({{ '/features/saved-prompts/' | relative_url }}) for reusable instructions and their scope.
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
@@ -860,7 +888,7 @@ clears only that selection; other requirements remain intact.
 Implemented in **0.261.096**. These controls appear when chat orchestration needs more
 information before it can plan the request. They use the composer's editing capabilities
 without adding another model, agent, or execution toolbar. See
-[Chat Orchestration](https://github.com/microsoft/simplechat/blob/main/docs/explanation/features/CHAT_ORCHESTRATION.md).
+[Chat orchestration]({{ '/features/chat-orchestration/' | relative_url }}).
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |

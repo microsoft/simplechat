@@ -13,6 +13,8 @@ A V2 prompt is an attachment to the message you are writing, not a wall of text
 pasted into your question. Its fields help adapt reusable instructions to a
 particular customer, document, or task.
 
+{% include media.html id="slide-saved-prompts" %}
+
 The variable picker, knowledge fill, and persistent sent-message card were
 implemented in version **0.261.096**, recorded in
 `application/single_app/config.py`. The classic chat interface is unchanged.
@@ -100,6 +102,6 @@ prompt preview.
 
 ## Related
 
-- [Prompt composer card]({{ '/explanation/features/PROMPT_COMPOSER_CARD/' | relative_url }})
-- [V2 prompts workbench]({{ '/explanation/features/V2_PROMPTS_WORKBENCH/' | relative_url }})
+- [Saved prompts]({{ '/features/saved-prompts/' | relative_url }})
+- [Workspace agents and actions]({{ '/guides/workspace-agents-and-actions/' | relative_url }})
 - [Chat controls]({{ '/reference/chat-controls/' | relative_url }})

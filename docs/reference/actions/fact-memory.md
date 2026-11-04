@@ -36,7 +36,7 @@ before answering, and memory provenance remains available in citations.
 
 Shared conversations, including their hidden backing records, do not receive
 this automatic memory context. See the
-[orchestration memory boundaries](https://github.com/microsoft/simplechat/blob/main/docs/explanation/fixes/ORCHESTRATION_CAPABILITY_CONTEXT_FIX.md#read-only-saved-memory)
+[orchestration memory boundaries](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_CAPABILITY_CONTEXT_FIX.md#read-only-saved-memory)
 for scope selection and missing-embedding behavior.
 
 ## Configuration overview

@@ -11,6 +11,8 @@ version: "0.261.368"
 
 An agent is a specialized assistant that keeps the same role, instructions, knowledge choices, and optional tools every time someone uses it. This guide creates a local workspace agent that can be selected from chat.
 
+{% include media.html id="slide-agents" %}
+
 Since **0.261.368**, a long saved local-agent name does not need to be shortened
 to meet a model's 64-character message-author limit. SimpleChat uses a stable
 request-only alias where needed; saved names, visible labels, and agent
@@ -40,6 +42,8 @@ for the native workflow, implemented in **0.261.096** in
 `application/single_app/config.py`.
 
 ### Build the agent with Ask AI
+
+{% include media.html id="slide-agent-builder" %}
 
 Select **Ask AI** in the editor's header to open the assistant beside the form,
 then describe the agent in your own words, for example "a helpdesk agent that

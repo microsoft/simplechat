@@ -21,9 +21,15 @@ workflow output settings are separate and keep their existing behavior. Plans
 created by an earlier orchestration version cannot be reopened or rerun; start a
 new request to create files with the current contract.
 
-See [orchestration settings](../admin/orchestration.md) for rollout and permissions.
+See [orchestration settings]({{ '/admin/orchestration/' | relative_url }}) for rollout and permissions.
 
 ## Ask for the result and its representations
+
+{% include media.html id="slide-generated-deliverables" %}
+
+Use the slide to choose the representations you need, then verify the plan
+has an actual file-producing task for each one. The supported formats and
+delivery limits below take precedence over a requested or pictured output.
 
 Describe the work once, then name the files you need. For example:
 
@@ -120,7 +126,7 @@ again with a different description.
 
 ## Review the file tasks before running
 
-Use the [plan review and editor](review-and-edit-orchestration-plans.md) to check
+Use the [plan review and editor]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}) to check
 what will be computed and what will be exported.
 
 **Gather** acquires inputs. **Reason** produces reusable findings, records, text
@@ -194,8 +200,8 @@ That creates another version; **Retry file** repeats the prepared edits rather
 than collecting new facts. Forms, formatted workbook editing and supplied
 JSON/XML instance editing are not included in this release.
 
-See the [Document Transformation Framework](../explanation/features/DOCUMENT_TRANSFORMATION_FRAMEWORK.md)
-for supported contracts and preservation limits.
+See [Generated deliverables]({{ '/features/generated-deliverables/' | relative_url }})
+for the distinction between prepared content, supported representations, and actual delivery.
 
 ## Follow each file independently
 

@@ -144,5 +144,5 @@ The V2 pane uses the same server-side role and setting rules as the existing Con
 
 ## Related
 
-- [V2 Control Center foundation](../explanation/features/V2_CONTROL_CENTER.md)
-- [Operate SimpleChat day to day](admin-operate-simplechat.md)
+- [V2 Control Center foundation](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_CONTROL_CENTER.md)
+- [Operate SimpleChat day to day]({{ '/guides/admin-operate-simplechat/' | relative_url }})

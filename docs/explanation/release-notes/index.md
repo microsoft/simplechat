@@ -343,7 +343,7 @@ This page includes the latest release notes inline. Older release sections are s
     *   Hydrated workspace-backed chat file upload text (`file_content_source: "workspace"`) from indexed chunks in `_refresh_workspace_linked_history_message` when Content Screening is off, and removed the 50 KB history preview truncation for workspace-backed non-tabular chat uploads.
     *   Added automatic fallback from `query_type="semantic"` to vector + BM25 keyword hybrid search (`query_type="simple"`) in `hybrid_search` when Azure AI Search Semantic Ranker monthly free quota is exhausted, while keeping the persisted service-health warning active.
     *   Added resolution for bracketed full and 8-character hex prefix chunk citation IDs (`[8ed56431_1]`, `[15dce0d4_2; 8ed56431_2]`) in V2 `citations.ts`, Classic `chat-citations.js`, and `functions_citation_tracking.py`.
-    *   (Ref: `route_backend_chats.py`, `functions_mixed_source_orchestration.py`, `functions_search.py`, `functions_citation_tracking.py`, `citations.ts`, `chat-citations.js`, [Retrieval, Narrative/XML Fidelity, System Prompt, and Inline Citation Restoration Fix](fixes/RETRIEVAL_CITATION_SYSTEM_PROMPT_RESTORATION_FIX.md), [#1855](https://github.com/microsoft/simplechat/issues/1855))
+    *   (Ref: `route_backend_chats.py`, `functions_mixed_source_orchestration.py`, `functions_search.py`, `functions_citation_tracking.py`, `citations.ts`, `chat-citations.js`, [Retrieval, Narrative/XML Fidelity, System Prompt, and Inline Citation Restoration Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/RETRIEVAL_CITATION_SYSTEM_PROMPT_RESTORATION_FIX.md), [#1855](https://github.com/microsoft/simplechat/issues/1855))
 
 ### **(v0.261.390)**
 
@@ -353,7 +353,7 @@ This page includes the latest release notes inline. Older release sections are s
     *   Added local extraction of review comments from modern OOXML Word documents (`.docx`, `.docm`, `.dotx`) and legacy Word 97–2003 binary OLE documents (`.doc`), which were previously omitted by Azure Document Intelligence and `docx2txt` or flattened without metadata in piece tables.
     *   OOXML extraction parses `word/comments.xml`, `word/commentsExtended.xml`, and `word/document.xml` to capture comment authors, initials, timestamps, resolved states, threaded replies, quoted anchor text (`w:commentRangeStart`/`w:commentRangeEnd`), and reading-order word offsets. Legacy `.doc` extraction parses the MS-DOC File Information Block (`FibRgLw97` `ccpAtn`, `PlcfandTxt`, `PlcfandRef`, `GrpXstAtnOwners`, and annotation bookmarks) while keeping raw annotation streams separate from body text.
     *   Workspace ingestion merges each comment thread into the document chunk containing its anchored text, and direct chat uploads, `.docm` processing, M365 extraction, and content screening include the extracted comments.
-    *   (Ref: `functions_office_media.py`, `functions_content.py`, `functions_documents.py`, `route_frontend_chats.py`, [Word Comment Extraction](features/WORD_COMMENT_EXTRACTION.md), [#1850](https://github.com/microsoft/simplechat/issues/1850))
+    *   (Ref: `functions_office_media.py`, `functions_content.py`, `functions_documents.py`, `route_frontend_chats.py`, [Word Comment Extraction](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORD_COMMENT_EXTRACTION.md), [#1850](https://github.com/microsoft/simplechat/issues/1850))
 
 ### **(v0.261.385)**
 
@@ -362,7 +362,7 @@ This page includes the latest release notes inline. Older release sections are s
 *   **Orchestration Unfound Source Information And Linked PDF Coverage Handling**
     *   Fixed an issue where source-grounded orchestration requests failed with `completeness_incomplete` (`"The answer did not satisfy the requested requirements within its correction allowance."`) when the searched document or linked URL did not contain the requested item or setting. `compose` and task completeness verification now treat an evidence-backed response that clearly states the searched content does not contain the requested information, reports the inspected page/source coverage, and summarizes what the content covers as a completed answer.
     *   Added `application/pdf` extraction support to Source Review and `url_fetch` using PyMuPDF (`fitz`), tracking total and inspected PDF page counts (`[Page X of Y]`) and surfacing `source_coverage` metadata when `document_search` or `document_analyze` returns empty matches.
-    *   (Ref: `functions_source_review.py`, `functions_orchestration_adapters.py`, `functions_orchestration_result_runtime.py`, `functions_orchestration_composition.py`, `functions_task_completeness.py`, [Orchestration Unfound Source Coverage Fix](fixes/ORCHESTRATION_UNFOUND_SOURCE_COVERAGE_FIX.md))
+    *   (Ref: `functions_source_review.py`, `functions_orchestration_adapters.py`, `functions_orchestration_result_runtime.py`, `functions_orchestration_composition.py`, `functions_task_completeness.py`, [Orchestration Unfound Source Coverage Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_UNFOUND_SOURCE_COVERAGE_FIX.md))
 
 ### **(v0.261.381)**
 
@@ -380,7 +380,7 @@ This page includes the latest release notes inline. Older release sections are s
 *   **Mixed-Mode Conversation History Ordering And Superseded Saved-Memory Handling**
     *   Fixed `sort_messages_by_thread` so unthreaded orchestration turns (`user_orchestration_*` and `assistant_orchestration_*`) are interleaved chronologically with threaded manual chat turns based on each thread's earliest timestamp rather than placing all orchestration turns before all manual turns.
     *   Clarified saved `Instruction Memory`, `Fact Memory`, and orchestration composition/planning prompts so updated profile memories supersede earlier assistant prefixes, names, call signs, and roles without quoting, contrasting, or flagging the earlier values as note inconsistencies during consistency checks.
-    *   (Ref: `functions_chat.py`, `functions_fact_memory_context.py`, `functions_orchestration_composition.py`, `functions_orchestration_planner.py`, [Mixed-Mode History Order and Superseded Memory Fix](fixes/MIXED_MODE_HISTORY_ORDER_AND_SUPERSEDED_MEMORY_FIX.md))
+    *   (Ref: `functions_chat.py`, `functions_fact_memory_context.py`, `functions_orchestration_composition.py`, `functions_orchestration_planner.py`, [Mixed-Mode History Order and Superseded Memory Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/MIXED_MODE_HISTORY_ORDER_AND_SUPERSEDED_MEMORY_FIX.md))
 
 ### **(v0.261.378)**
 
@@ -389,7 +389,7 @@ This page includes the latest release notes inline. Older release sections are s
 *   **V2 Chat Orchestration Unseeded Agent Availability And Catalog Ranking Fix**
     *   Fixed an issue where V2 chat orchestration turns without a manually pinned composer agent (`seeds.agent: null`) dropped `agent_invoke` whenever `user_settings.settings.enable_agents` had been persisted as `false` (for example after saving any user setting when `enable_agents` was not yet stored). V2 orchestration now evaluates `agent_invoke` using admin capability settings, governance, scope/group membership, and optional `seeds.agent` narrowing rather than the Classic `/chats` composer toggle.
     *   Updated `update_user_settings()` to default missing `enable_agents` to `True`, ranked agents and external sources named in `request_text` ahead of unnamed entries before applying the 25-item workflow planning catalog cap, and preserved `group` scope metadata when background chat upload ingestion completes.
-    *   (Ref: `functions_settings.py`, `route_backend_orchestration.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_external_sources.py`, `functions_orchestration_workflow_context.py`, `functions_documents.py`, [Orchestration Unseeded Agent Availability Fix](fixes/ORCHESTRATION_UNSEEDED_AGENT_AVAILABILITY_FIX.md))
+    *   (Ref: `functions_settings.py`, `route_backend_orchestration.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_external_sources.py`, `functions_orchestration_workflow_context.py`, `functions_documents.py`, [Orchestration Unseeded Agent Availability Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_UNSEEDED_AGENT_AVAILABILITY_FIX.md))
 
 ### **(v0.261.333)**
 
@@ -398,14 +398,14 @@ This page includes the latest release notes inline. Older release sections are s
 *   **Optional Private Monitoring In Commercial And Government**
     *   Deployment administrators can opt into Azure Monitor Private Link Scope (AMPLS) for Application Insights and Log Analytics in either cloud. The option defaults off and requires private networking; when enabled, monitoring ingestion and queries use private-only access.
     *   Bicep/AZD, Terraform, and Azure CLI support cloud-specific monitoring DNS and existing-zone reuse. AMPLS reuses Blob DNS, and Government's additional ADX zone is handled separately from the five-zone private endpoint DNS group.
-    *   (Ref: `enableAzureMonitorPrivateLink`, `ENABLE_AZURE_MONITOR_PRIVATE_LINK`, `azureMonitorPrivateNetworking.bicep`, [Azure Monitor Private Link](features/AZURE_MONITOR_PRIVATE_LINK.md), [#1765](https://github.com/microsoft/simplechat/issues/1765))
+    *   (Ref: `enableAzureMonitorPrivateLink`, `ENABLE_AZURE_MONITOR_PRIVATE_LINK`, `azureMonitorPrivateNetworking.bicep`, [Azure Monitor Private Link](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/AZURE_MONITOR_PRIVATE_LINK.md), [#1765](https://github.com/microsoft/simplechat/issues/1765))
 
 #### Bug Fixes
 
 *   **Redis Private Endpoints And Cloud DNS Corrections**
     *   Private Bicep/AZD deployments now create the appropriate Managed or classic Redis private endpoint. Redis remains reachable during bootstrap, and the final `azd up` hook disables public access after configuration succeeds. Separate provision/deploy workflows must perform equivalent final lockdown.
     *   Commercial Video Indexer uses `privatelink.api.videoindexer.ai`, while unsupported Government private endpoint creation remains disabled. Government Key Vault now uses `privatelink.vaultcore.usgovcloudapi.net` across all three deployers.
-    *   (Ref: `privateNetworking.bicep`, `redisCache.bicep`, `privateDNSZones.json`, `deployers/azure.yaml`, [Private Endpoint And DNS Fix](fixes/DEPLOYER_PRIVATE_ENDPOINT_DNS_FIX.md), [#1765](https://github.com/microsoft/simplechat/issues/1765))
+    *   (Ref: `privateNetworking.bicep`, `redisCache.bicep`, `privateDNSZones.json`, `deployers/azure.yaml`, [Private Endpoint And DNS Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/DEPLOYER_PRIVATE_ENDPOINT_DNS_FIX.md), [#1765](https://github.com/microsoft/simplechat/issues/1765))
 
 #### Documentation And Architecture
 
@@ -414,7 +414,7 @@ This page includes the latest release notes inline. Older release sections are s
     *   Cloud-specific tables distinguish fresh script-created networks from a compact existing-network reference, showing CIDRs, total and Azure-usable addresses, delegation, service placement, and growth space. The compact segmented reference is not automatically created by existing-VNet reuse.
     *   Added a Visio companion and deployment guidance covering AMPLS capacity, shared-DNS impacts, bootstrap lockdown, and cloud limitations. Diagram labels do not override the documented service/private-endpoint availability requirements.
     *   Deployer version: **1.0.34**. Live-cloud connectivity and monitoring validation remain deployment checks.
-    *   (Ref: `artifacts/architecture.vsdx`, `artifacts/private_endpoints.vsdx`, [Diagram Network Reference](../../artifacts/PRIVATE_ENDPOINTS_NETWORK_REFERENCE.md), [Enterprise Networking](../guides/enterprise-networking.md), [#1765](https://github.com/microsoft/simplechat/issues/1765))
+    *   (Ref: `artifacts/architecture.vsdx`, `artifacts/private_endpoints.vsdx`, [Diagram Network Reference](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/artifacts/PRIVATE_ENDPOINTS_NETWORK_REFERENCE.md), [Enterprise Networking](https://microsoft.github.io/simplechat/guides/enterprise-networking/), [#1765](https://github.com/microsoft/simplechat/issues/1765))
 
 ### **(v0.261.315)**
 
@@ -423,7 +423,7 @@ This page includes the latest release notes inline. Older release sections are s
 *   **Create And Edit Workspace Identities In V2**
     *   Personal users can create and edit reusable identities directly in My Workspace. Group and public workspace identity authoring continues to use the native shared editor, so authorized managers do not need to visit classic pages.
     *   Personal edits and deletes require the version opened by the editor. A stale save keeps the draft available to rebase, while stored credentials remain server-side and unchanged secrets are preserved.
-    *   (Ref: `functions_personal_identity_access.py`, `route_backend_personal_identities_scoped.py`, `IdentityWorkbenchSection.tsx`, [V2 Workspace Identities](features/V2_WORKSPACE_IDENTITIES.md), [#1722](https://github.com/microsoft/simplechat/issues/1722))
+    *   (Ref: `functions_personal_identity_access.py`, `route_backend_personal_identities_scoped.py`, `IdentityWorkbenchSection.tsx`, [V2 Workspace Identities](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_WORKSPACE_IDENTITIES.md), [#1722](https://github.com/microsoft/simplechat/issues/1722))
 
 ### **(v0.261.309)**
 
@@ -435,7 +435,7 @@ This page includes the latest release notes inline. Older release sections are s
     *   A plan waits at most **Wait for a workflow from chat** (default 300 seconds, range 60-1800), and always keeps enough of its run time to write the answer. A run that finishes in time reaches the answer through the existing workflow results reader, which checks access again and marks the content as untrusted. A failed or cancelled run says so, and the steps that needed its result don't run. A run still going when the wait ends is posted to the chat by the existing post-back when it finishes.
     *   One compare-and-set write on the run's delivery record decides whether the answer or the post-back delivers the result, so it reaches the chat once. Each check while waiting confirms that the conversation is still private and the user's, the setting is still on, and the workflow is still the user's and still quick. A failed check ends the wait and leaves delivery to the post-back's own rules.
     *   Off by default, and with it off planning and execution are unchanged. A plan that starts a workflow still always waits for the user's approval, and hand-off workflows are never waited for.
-    *   (Ref: `functions_orchestration_workflow_run_wait.py` `SAVED_WORKFLOW_RUN_WAIT_KIND` and `quick_run_eligibility`, `functions_orchestration_workflow_runs.py` `resume_workflow_run_wait`, `functions_workflow_chat_delivery.py` `apply_plan_wait_consume`, `functions_orchestration_continuation.py`, [Chat Orchestration Workflow Run Wait](features/CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT.md))
+    *   (Ref: `functions_orchestration_workflow_run_wait.py` `SAVED_WORKFLOW_RUN_WAIT_KIND` and `quick_run_eligibility`, `functions_orchestration_workflow_runs.py` `resume_workflow_run_wait`, `functions_workflow_chat_delivery.py` `apply_plan_wait_consume`, `functions_orchestration_continuation.py`, [Chat Orchestration Workflow Run Wait](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT.md))
 
 #### User Interface Enhancements
 
@@ -456,7 +456,7 @@ This page includes the latest release notes inline. Older release sections are s
     *   The run inspector shows a typed result for each run: the orchestration run, each step's status, the final response and its image or file artifacts. The V2 workflow editor shows the frozen steps read-only; the name, schedule and alerts stay editable. The Classic workflow page sends these workflows to V2.
     *   A saved workflow starts with one **Run failed** alert rule, so a refused or failed scheduled run isn't missed: it sends a high-severity notification to the bell, never a pop-up, with the fixed reason. The card says so before saving, and the rule stays editable under **Alerts**.
     *   Part of #1550, refs #1543.
-    *   (Ref: `functions_workflow_plan_replay.py`, `functions_workflow_runner.py`, `route_backend_orchestration.py` `/api/v2/orchestration/runs/<run_id>/plan-replay`, `PlanReplaySaveCard.tsx`, `WorkflowEditorDialog.tsx`, `WorkflowRunHistory.tsx`, [Workflow plan replay](features/WORKFLOW_PLAN_REPLAY.md))
+    *   (Ref: `functions_workflow_plan_replay.py`, `functions_workflow_runner.py`, `route_backend_orchestration.py` `/api/v2/orchestration/runs/<run_id>/plan-replay`, `PlanReplaySaveCard.tsx`, `WorkflowEditorDialog.tsx`, `WorkflowRunHistory.tsx`, [Workflow plan replay](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_PLAN_REPLAY.md))
 
 ### **(v0.261.306)**
 
@@ -474,4 +474,4 @@ This page includes the latest release notes inline. Older release sections are s
     *   A group switch now confirms the saved selection through a lightweight scope read instead of waiting for the complete startup payload. Current-access checks, sign-in checks, and read-only recovery after an uncertain save remain in place.
     *   An overlapping startup refresh cannot restore the previous selection. Startup and scope reads bypass the browser's HTTP cache.
     *   Startup requests now report per-phase timing so the remaining first-load bottleneck can be measured; first-load optimization is a separate follow-up.
-    *   (Ref: `route_backend_v2.py`, `bootstrapStore.ts`, `groupWorkspaceStore.ts`, [V2 Group Switch Latency Fix](fixes/V2_GROUP_SWITCH_LATENCY_FIX.md), [#1725](https://github.com/microsoft/simplechat/issues/1725))
+    *   (Ref: `route_backend_v2.py`, `bootstrapStore.ts`, `groupWorkspaceStore.ts`, [V2 Group Switch Latency Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_GROUP_SWITCH_LATENCY_FIX.md), [#1725](https://github.com/microsoft/simplechat/issues/1725))

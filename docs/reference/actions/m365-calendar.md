@@ -129,7 +129,7 @@ The time span is in the reader's browser time zone, an all-day event shows
 "All day", and the location and organizer parts are left out when they are empty.
 Direct-answer guidance avoids routine provenance introductions without removing
 meeting locations, organizers, citations or incomplete-coverage disclosures.
-See [Microsoft 365 Source Citations]({{ '/explanation/features/M365_SOURCE_CITATIONS/' | relative_url }}).
+See [Microsoft 365 Source Citations](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/M365_SOURCE_CITATIONS.md).
 
 ## Workflow identity
 

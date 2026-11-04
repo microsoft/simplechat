@@ -55,7 +55,7 @@ are listed under **SharePoint & OneDrive** in the conversation's **Documents**
 pane with **Open online**. A list of files uses one line per file:
 "**File name** — SharePoint, modified Sep 1, 2026", followed by its chip. This
 applies in chat with an agent and in orchestrated answers. See
-[Microsoft 365 Source Citations]({{ '/explanation/features/M365_SOURCE_CITATIONS/' | relative_url }}).
+[Microsoft 365 Source Citations](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/M365_SOURCE_CITATIONS.md).
 
 ## Permission and disclosure boundaries
 
