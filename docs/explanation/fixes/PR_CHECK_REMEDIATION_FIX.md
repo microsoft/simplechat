@@ -156,13 +156,24 @@ the retired tenant and deployment. The corrected staging hostname is reachable
 and redirects to the replacement tenant, but this is not authenticated
 application validation.
 
-The staging ARM resource and existing Playwright/test-identity access remain
-unverified. Its inspected sign-in registration has no registered identifier URI,
-and its `Admin` role currently permits users, not application callers. Neither
-inspected hosted registration has a local loopback redirect. Do not invent
-replacement audience/workload values, reuse a hosted registration for localhost
-without checking its redirects, or grant new access under the validation-only
-approval.
+A subsequent read-only ARM check confirmed that `simplechat-2026stage-app` is
+running in `simplechat-2026stage-rg`. Its hosted tenant/client settings and
+managed identity match the replacement tenant. The earlier resource-access
+blocker is resolved; no tenant setting needed to be changed on that app.
+
+The remaining prerequisite gap is concrete: no Playwright resource was found
+across the four accessible enabled subscriptions, and the staging App Service
+has no CI bearer-authentication, caller-allowlist or required-role overrides
+configured. CI bearer authentication defaults to disabled. An approved
+authenticated browser credential was not available to this run.
+
+Its inspected sign-in registration has no registered identifier URI, and its
+`Admin` role permits users, not application callers. Neither inspected hosted
+registration has a local loopback redirect. Do not invent replacement
+audience/workload values, reuse a hosted registration for localhost without
+checking its redirects, or grant new access under the validation-only approval.
+Creating the missing CI/browser infrastructure or enabling CI sign-in requires
+specific approval beyond the existing no-Azure-changes boundary.
 
 Before changing live GitHub Environment values, first activate the
 validation-only workflow and confirm no older deploying run is active. Only
@@ -176,11 +187,19 @@ tests establish that these live transitions have completed.
 
 The final live check still found the old Development-only CodeQL triggers on
 `main` and `Staging`, and the deploying staging workflow was still active.
-The current CLI credential also reports repository `READ` access; the
-Default-setup endpoint returned HTTP 403 requesting the `admin:repo_hook`
-scope. An appropriately repository-authorized maintainer must perform the
-promotion and admin cutover. No automatic account switch, permission expansion,
-or partial live configuration update was attempted.
+Both inherited and already-stored CLI credentials were checked without changing
+authentication. They identify the same approved account and both have pull-only
+repository access, with no push or admin permission. An inherited token is not
+masking an existing authorized writer. The Default-setup endpoint returned HTTP
+403 requesting the `admin:repo_hook` scope. An appropriately
+repository-authorized maintainer must perform the promotion and admin cutover.
+No automatic account switch, permission expansion, or partial live
+configuration update was attempted.
+
+The older deployment-capable workflow is enabled, although no run was in
+progress at the final check. Do not update its tenant credentials before the
+validation-only definition is activated: the old definition can still provision
+or deploy resources.
 
 Release-note and GitHub issue-publishing updates were not approved at the
 source-validation checkpoint and remain unchanged. No issue or remote
