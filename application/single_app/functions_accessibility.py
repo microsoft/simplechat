@@ -30,6 +30,7 @@ from defusedxml.ElementTree import fromstring as defused_fromstring
 from pypdf import PdfReader
 
 from functions_appinsights import log_event
+from functions_excel_accessibility import extract_excel_accessibility_metadata
 from functions_document_style import (
     build_legacy_doc_style_inventory,
     build_pptx_style_inventory,
@@ -2191,8 +2192,10 @@ def _extract_legacy_doc_accessibility(file_path):
 
 
 def extract_office_accessibility_metadata(file_path, file_ext=None):
-    """Dispatch Office accessibility extraction for .docx, .docm, .dotx, .pptx, and .doc."""
+    """Dispatch native accessibility extraction for supported Word, PowerPoint and Excel files."""
     ext = (file_ext or os.path.splitext(str(file_path or ''))[1]).lower().strip()
+    if ext in ('.xlsx', '.xlsm', '.xls'):
+        return extract_excel_accessibility_metadata(file_path, ext)
     try:
         if ext in ('.docx', '.docm', '.dotx'):
             return _extract_word_ooxml_accessibility(file_path, ext)
@@ -2260,6 +2263,24 @@ def format_accessibility_metadata_for_chat(accessibility_metadata):
 
     fmt = str(accessibility_metadata.get('format') or '').upper()
     lines = [f"Document Accessibility & Structure Summary ({fmt or 'Document'}):"]
+
+    if fmt in ('XLSX', 'XLSM', 'XLS'):
+        lines.append(f"- Saved workbook properties: {accessibility_metadata.get('properties') or {}}")
+        lines.append(
+            f"- Sheets: {accessibility_metadata.get('sheet_count', 'unknown')}; "
+            f"observed native records: {accessibility_metadata.get('observed_counts') or {}}"
+        )
+        for sheet in (accessibility_metadata.get('sheets') or [])[:10]:
+            lines.append(
+                f"- Sheet {sheet.get('name')}: state={sheet.get('state')}; "
+                f"headers/footers={sheet.get('header_footer', 'not inspected')}"
+            )
+        lines.append(f"- Inspection coverage: {accessibility_metadata.get('coverage', 'unknown')}")
+        lines.extend(f"  * {note}" for note in accessibility_metadata.get('coverage_notes', []))
+        lines.extend(format_style_inventory_for_chat(accessibility_metadata.get('style_inventory')))
+        lines.append("- Location-specific comments, objects and formatting are indexed as Excel native inspection evidence.")
+        lines.append("- Native inspection is not an accessibility conformance result; unavailable evidence is not proof of absence.")
+        return '\n'.join(lines)
 
     if fmt == 'PDF':
         is_tagged = 'Yes' if accessibility_metadata.get('is_tagged') else 'No (Untagged PDF)'

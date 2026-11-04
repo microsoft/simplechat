@@ -2,7 +2,7 @@
 # test_mixed_source_chat_search_consistency.py
 """
 Functional test for mixed-source Chat and Search consistency.
-Version: 0.261.266
+Version: 0.261.399
 Implemented in: 0.250.064; additive tabular evidence gating updated in 0.260.025;
 derived from Enhanced Citations in 0.261.266
 
@@ -35,6 +35,7 @@ SETTINGS_PATH = APP_ROOT / "functions_settings.py"
 sys.path.insert(0, str(APP_ROOT))
 
 import functions_mixed_source_orchestration as orchestration  # pyright: ignore[reportMissingImports]
+from functions_excel_accessibility import is_excel_native_inspection_question
 
 
 def _read(path):
@@ -119,6 +120,7 @@ def _load_shared_tabular_executor(failing_file_name=None, emit_tool_invocation=T
 
     namespace = {
         "asyncio": asyncio,
+        "is_excel_native_inspection_question": is_excel_native_inspection_question,
         "has_request_context": lambda: False,
         "build_tabular_file_contexts_from_manifest": orchestration.build_tabular_file_contexts_from_manifest,
         "is_tabular_processing_enabled": lambda settings: settings.get("tabular", True),
