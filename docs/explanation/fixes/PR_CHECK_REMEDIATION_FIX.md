@@ -1,9 +1,10 @@
 # Shared PR check remediation
 
-Version: **0.261.400**, tracked in `application/single_app/config.py`.
+Version: **0.261.401**, tracked in `application/single_app/config.py`.
 
 Fixed/Implemented in version: **0.261.399**; current-base integration and
-authorized staging CI setup in **0.261.400**.
+authorized staging CI setup in **0.261.400**; pinned per-session smoke onboarding
+in **0.261.401**.
 
 ## Issue and root causes
 
@@ -304,25 +305,34 @@ for the four required Environment values, supported authentication paths and
 the distinction between testing an existing app and deploying PR source.
 Configuration success alone is not reported as an authenticated smoke pass.
 
-### Remaining CodeQL activation boundary
+### Controlled CodeQL activation
 
-Repository administration initially worked for the approved staging setup.
-Normal protected-branch promotion still
-requires a controlled CI-only cutover, because push-triggered publishers can
-update latest container tags even when application source is unchanged.
-Specific permission for that protected-branch promotion/publisher pause was
-requested but no affirmative response was available. Default setup therefore
-remains enabled until the prepared Advanced coverage reaches the relevant
-branches; its upload conflict is not hidden or reported as resolved.
+The owner merged the [CI-only foundation](https://github.com/microsoft/simplechat/pull/1879)
+into Development and directed the remaining work to proceed. It was promoted
+normally through [Staging](https://github.com/microsoft/simplechat/pull/1882)
+and [main](https://github.com/microsoft/simplechat/pull/1884), with successful
+required branch-flow checks and no protection override. The complete release
+branch diff is only `.github/workflows/codeql.yml`; V2 application code was
+not imported.
 
-A separate [CI-only foundation PR](https://github.com/microsoft/simplechat/pull/1879)
-targets `Development` and changes only the CodeQL workflow's event coverage.
-It preserves the analysis jobs and keeps V2 application code out of the release
-branches. It is not merged. Normal `Development -> Staging -> main` promotion,
-publisher safeguards and the coverage-preserving settings cutover remain
-separate from the V2 application PR. Its application-version checkbox is
-explicitly left for maintainer review rather than falsely claiming that a
-workflow-only change updated application metadata.
+The two release image publishers were temporarily paused. The queued image
+run caused by the owner's CI-only Development merge was canceled before it
+published; no unrelated application run was canceled. Both publishers were
+restored active in `finally`, while the legacy AZD staging workflow stays
+disabled.
+
+The exact prepared workflow blob was verified on main, Staging and Development
+before Default setup was disabled. The live state is now `not-configured`;
+Advanced retains all three languages and `+security-and-quality`, with
+protected-branch events and the weekly default-main schedule.
+
+Fresh [main](https://github.com/microsoft/simplechat/actions/runs/41933293260)
+and [Staging](https://github.com/microsoft/simplechat/actions/runs/41933297491)
+scans passed. The code-scanning API confirms accepted Actions,
+JavaScript/TypeScript and Python analyses with empty error fields on the exact
+promoted SHAs. Development, V2 and the PR also passed their fresh runs. The PR merge-context
+code-scanning API confirms all three accepted categories, not merely a neutral
+summary.
 
 ### Publication access changed after configuration
 
@@ -366,11 +376,32 @@ and removed in `finally`; the dedicated identity again has no certificate or
 password credentials.
 
 The [staging browser run](https://github.com/microsoft/simplechat/actions/runs/41925088441)
-now successfully exchanges the CI session and loads the application, but the
-new identity is redirected to **Terms of Use** before chat. Consent was not
-silently recorded, the requirement was not disabled, and the missing composer
-is not reported as a successful smoke result. Operator-approved onboarding for
-this dedicated identity and a subsequent full chat/model pass remain pending.
+then exposed session-specific **Terms of Use** onboarding. Completing a normal
+browser setup session displayed the chat composer, but fresh Node/Python
+contexts still needed their own onboarding.
+
+Version **0.261.401** adds matching CI-only helpers that require a same-origin,
+explicitly pinned SHA-256 digest of the reviewed rendered notice. The current
+unchanged notice is nonbinding demonstration text. The normal acceptance form
+is used only for the dedicated CI bearer identity and exact pinned content;
+no human account or global consent setting is altered. Changed text,
+linked/active content, missing pins, browser-state identities and foreign
+origins fail before clicking. Both languages have 15 regression cases and the
+workflow runs them before the live paths. A scoped browser preference also
+prevents the first-use tutorial overlay from intercepting chat controls.
+The default prompt requires a unique response marker, and test-conversation
+cleanup failures are explicit. No full model result is inferred from successful
+authentication, onboarding or an arbitrary nonempty message.
+
+The live Node and Python paths subsequently passed against the actual staging
+app: **one test each**, requiring the unique model reply and successful
+conversation cleanup. Their durations were 7.4 seconds and 9.85 seconds.
+The transient `Thinking` text is not treated as a completed response. Local
+guard/configuration verification passed **30 Python tests** and **15 Node
+tests**, with documentation coverage 7/7 and site quality 6/6. The published
+follow-up is still verified through fresh GitHub runs, not inferred from these
+local results.
+
 Beta and production were not changed or deployed.
 
 ## Future phase work
@@ -415,5 +446,5 @@ part of these focused CI repairs.
 
 No database migration, historical-run rewrite, new application capability switch,
 browser runtime dependency or deployer change is included. The application
-version is **0.261.400**; `deployers/version.txt` is unchanged because no file
+version is **0.261.401**; `deployers/version.txt` is unchanged because no file
 under `deployers/` was modified.

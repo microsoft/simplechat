@@ -45,7 +45,7 @@ Local development is intentionally simpler than Azure production. The goal is fa
 
 This guide explains the recommended local developer workflow for Simple Chat.
 
-Current documentation version: **0.261.400** (tracked in `application/single_app/config.py`).
+Current documentation version: **0.261.401** (tracked in `application/single_app/config.py`).
 
 ## Replacement tenant and local sign-in
 

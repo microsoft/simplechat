@@ -1,7 +1,7 @@
 # test_action_credentials_chat_reconstruction.py
 """Fresh-agent save/continue integration through real application owners.
 
-Version: 0.261.400
+Version: 0.261.401
 Implemented in: 0.261.345
 Runtime math-plugin instrumentation aligned in: 0.261.399
 

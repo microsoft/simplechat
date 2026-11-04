@@ -1,9 +1,9 @@
 # Existing staging UI validation
 
-Version: **0.261.400**, tracked in `application/single_app/config.py`.
+Version: **0.261.401**, tracked in `application/single_app/config.py`.
 
 Fixed/Implemented in version: **0.261.399**; isolated runner-local validation
-implemented in **0.261.400**.
+implemented in **0.261.400**; pinned per-session onboarding in **0.261.401**.
 
 ## Purpose and scope
 
@@ -95,6 +95,7 @@ Set values on the repository's **Staging-Validation** GitHub Environment:
 | `AZURE_TENANT_ID` | That workload's current tenant; required for bearer authentication |
 | `SIMPLECHAT_UI_BASE_URL` | Explicit staging HTTPS base URL |
 | `SIMPLECHAT_UI_AUTH_RESOURCE` | Registered staging API audience for bearer authentication |
+| `SIMPLECHAT_UI_TERMS_SHA256` | Optional reviewed-content pin for the dedicated CI identity's Terms of Use |
 
 Also configure one supported application-authentication path:
 
@@ -131,16 +132,32 @@ empty-looking ARM policy values as proof that a client is accepted.
 
 ### Test-identity onboarding
 
-Authentication success does not imply that chat is ready. A new CI identity can
-still be redirected to the application's Terms of Use page. Complete that
-identity's onboarding only after the operator approves its consent. Do not
-disable the terms requirement globally, silently accept future terms, or
-record acceptance on a real user's behalf to make a smoke test pass.
+Authentication success does not imply that chat is ready. Staging requires
+Terms of Use onboarding in each fresh browser session, so a one-time setup
+session cannot satisfy the later JavaScript and Python tests.
 
-The staging browser run now passes the CI session exchange and reaches this
-onboarding page. A missing chat composer at that point is not an authentication
-or model failure. Full chat/model validation remains pending approved
-onboarding and a subsequent successful run.
+`ui_tests/staging_auth.py` and the matching Node helper handle this only when
+the test uses the dedicated CI bearer-session flow and
+`SIMPLECHAT_UI_TERMS_SHA256` pins the reviewed notice. The helpers require the
+same configured origin, hash the rendered message's UTF-8 text after collapsing
+ASCII whitespace, reject linked/active content, and use the normal browser
+acceptance form. Human storage-state sessions are not autoaccepted.
+
+The current staging notice is the unchanged nonbinding demonstration text,
+pinned as `5e9a93d28d7a8fe1f12feda6c024b10ca8e43c64785b398ae228c5068a7925a5`
+for this test identity only. No global setting or real user's record is
+changed. An absent/invalid pin, a changed notice, a different origin, or active
+content fails explicitly before any acceptance click. A future notice requires
+fresh review and an intentional pin update; the workflow never blindly accepts
+new terms.
+
+Both helpers are covered by 15 guard tests per language, including default
+ports, Unicode preservation, missing credentials/pins, changed text and
+cross-origin rejection. A browser-local, origin-scoped tutorial-dismissal
+preference prevents the first-use tour from intercepting chat controls; it
+does not disable tutorials for other users. The workflow executes these guards
+before its live smoke paths. The smoke tests select the visible sidebar or
+header New Chat control, rather than waiting on a hidden layout variant.
 
 The workflow no longer consumes `AZD_ENV_FILE_B64`, `AZD_CONFIG_FILE_B64`,
 `AZURE_ENV_NAME`, `AZURE_LOCATION`, or `DEPLOYMENT_APPNAME` to prepare a
@@ -170,6 +187,11 @@ Identity and authentication changes require operator approval; a validation
 job is not a provisioning mechanism. The current staging-only setup was
 explicitly authorized. It does not configure beta, production or local sign-in.
 
+On a later application deployment, verify that the separately managed CI app
+settings and explicit platform client allowlist are retained. The validation
+workflow never reapplies infrastructure configuration or silently grants access
+to repair a redeployment.
+
 ## Validation behavior
 
 The job validates configuration, logs in with OIDC, obtains application
@@ -188,6 +210,14 @@ The smoke tests create their own conversation, send a short prompt, verify an
 assistant response, and attempt cleanup of that conversation. These are real
 staging writes and model calls, not read-only health probes. Use a dedicated test
 identity and the intended staging data boundary.
+
+The default prompt requires a unique response marker so an error bubble or a
+stale nonempty message is not mistaken for a model reply. An explicitly
+configured `SIMPLECHAT_UI_SMOKE_PROMPT` retains the custom-prompt path. The
+created conversation ID is captured before waiting for model completion, and
+cleanup failures are surfaced rather than silently swallowed. The response
+wait itself requires the marker; a transient `Thinking` placeholder cannot
+prematurely satisfy it.
 
 Only failure PNG screenshots are uploaded, with seven-day retention. Raw
 traces, browser storage state and HTML reports are excluded because they can

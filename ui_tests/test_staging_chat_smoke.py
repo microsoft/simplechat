@@ -1,7 +1,7 @@
 # test_staging_chat_smoke.py
 """
 UI smoke test for staging chat deployment.
-Version: 0.241.018
+Version: 0.261.401
 Implemented in: 0.241.014; 0.241.018
 
 This test ensures that a deployed staging SimpleChat environment can load the
@@ -11,9 +11,12 @@ message, receive an assistant response, and clean up the created conversation.
 
 import os
 from pathlib import Path
+import uuid
 
 import pytest
 from playwright.sync_api import expect
+
+from staging_auth import complete_staging_terms_onboarding, prepare_staging_browser
 
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
@@ -22,11 +25,11 @@ STORAGE_STATE = (
     or os.getenv("SIMPLECHAT_UI_ADMIN_STORAGE_STATE", "")
 )
 ACCESS_TOKEN = os.getenv("SIMPLECHAT_UI_ACCESS_TOKEN", "")
+TERMS_SHA256 = os.getenv("SIMPLECHAT_UI_TERMS_SHA256", "")
 ARTIFACT_DIR = Path(os.getenv("SIMPLECHAT_UI_ARTIFACT_DIR", Path(__file__).parent / "artifacts"))
-SMOKE_PROMPT = os.getenv(
-    "SIMPLECHAT_UI_SMOKE_PROMPT",
-    "CI smoke test. Reply with one short greeting.",
-)
+CUSTOM_PROMPT = os.getenv("SIMPLECHAT_UI_SMOKE_PROMPT", "")
+EXPECTED_RESPONSE = "" if CUSTOM_PROMPT else f"SIMPLECHAT_CI_{uuid.uuid4().hex}"
+SMOKE_PROMPT = CUSTOM_PROMPT or f"CI smoke test. Reply with exactly this text: {EXPECTED_RESPONSE}"
 RESPONSE_TIMEOUT_MS = int(os.getenv("SIMPLECHAT_UI_SMOKE_RESPONSE_TIMEOUT_MS", "180000"))
 
 
@@ -54,6 +57,7 @@ def test_staging_chat_can_create_conversation_and_receive_response(playwright):
         context_options["storage_state"] = STORAGE_STATE
 
     context = browser.new_context(**context_options)
+    prepare_staging_browser(context, BASE_URL)
     trace_path = ARTIFACT_DIR / "staging_chat_smoke_trace.zip"
     screenshot_path = ARTIFACT_DIR / "staging_chat_smoke_failure.png"
     context.tracing.start(screenshots=True, snapshots=True, sources=True)
@@ -71,35 +75,19 @@ def test_staging_chat_can_create_conversation_and_receive_response(playwright):
             pytest.fail("Authenticated storage state was rejected by the staging chat page.")
         assert response.ok, f"Expected /chats to load successfully, got HTTP {response.status}."
 
+        complete_staging_terms_onboarding(
+            page, BASE_URL, access_token=ACCESS_TOKEN, terms_sha256=TERMS_SHA256,
+        )
         expect(page.locator("#user-input")).to_be_visible(timeout=30000)
         expect(page.locator("#send-btn")).to_be_attached(timeout=30000)
 
-        page.locator("#new-conversation-btn").click()
+        new_chat = page.locator("#new-conversation-btn:visible, #sidebar-new-chat-btn:visible").first
+        expect(new_chat).to_be_visible(timeout=30000)
+        new_chat.click()
         page.locator("#user-input").fill(SMOKE_PROMPT)
         page.locator("#send-btn").click()
 
         expect(page.locator(".user-message .message-text").filter(has_text=SMOKE_PROMPT)).to_be_visible(timeout=15000)
-
-        page.wait_for_function(
-            """
-            () => Array.from(document.querySelectorAll('.ai-message .message-text')).some(element => {
-                const text = (element.textContent || '').trim();
-                const messageElement = element.closest('.ai-message');
-                return Boolean(
-                    text
-                    && !text.includes('Streaming...')
-                    && !text.includes('Reconnecting')
-                    && messageElement
-                    && !messageElement.querySelector('.streaming-cursor, .spinner-border')
-                );
-            })
-            """,
-            timeout=RESPONSE_TIMEOUT_MS,
-        )
-
-        assistant_message = page.locator(".ai-message .message-text").last
-        assistant_text = (assistant_message.text_content() or "").strip()
-        assert assistant_text, "Expected the assistant response to contain text."
 
         conversation_id = page.evaluate(
             """
@@ -110,17 +98,42 @@ def test_staging_chat_can_create_conversation_and_receive_response(playwright):
         )
         assert conversation_id, "Expected the staging smoke test to create or select a conversation."
 
+        page.wait_for_function(
+            """
+            (expectedResponseText) => Array.from(document.querySelectorAll('.ai-message .message-text')).some(element => {
+                const text = (element.textContent || '').trim();
+                const messageElement = element.closest('.ai-message');
+                return Boolean(
+                    text
+                    && (!expectedResponseText || text.includes(expectedResponseText))
+                    && text !== 'Thinking'
+                    && !text.includes('Streaming...')
+                    && !text.includes('Reconnecting')
+                    && messageElement
+                    && !messageElement.querySelector('.streaming-cursor, .spinner-border')
+                );
+            })
+            """,
+            arg=EXPECTED_RESPONSE,
+            timeout=RESPONSE_TIMEOUT_MS,
+        )
+
+        assistant_message = page.locator(".ai-message .message-text").last
+        assistant_text = (assistant_message.text_content() or "").strip()
+        assert assistant_text, "Expected the assistant response to contain text."
+        if EXPECTED_RESPONSE:
+            assert EXPECTED_RESPONSE in assistant_text, "Expected the model to return the unique CI response marker."
+
         assert page.locator(".toast.show .text-bg-danger, .toast.show.bg-danger, .toast.show .alert-danger").count() == 0
     except Exception:
         page.screenshot(path=screenshot_path, full_page=True)
         raise
     finally:
-        if conversation_id:
-            try:
-                context.request.delete(f"{BASE_URL}/api/conversations/{conversation_id}", timeout=30000)
-            except Exception:
-                pass
-
-        context.tracing.stop(path=trace_path)
-        context.close()
-        browser.close()
+        try:
+            if conversation_id:
+                cleanup = context.request.delete(f"{BASE_URL}/api/conversations/{conversation_id}", timeout=30000)
+                assert cleanup.ok or cleanup.status == 404, f"CI conversation cleanup failed with HTTP {cleanup.status}."
+        finally:
+            context.tracing.stop(path=trace_path)
+            context.close()
+            browser.close()

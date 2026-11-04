@@ -1,8 +1,8 @@
 # test_staging_ui_cicd_workflow.py
 """Functional tests for authenticated validation of an existing staging deployment.
 
-Version: 0.261.400
-Implemented in: 0.241.014; validation-only workflow in 0.261.399; isolated runner-local validation in 0.261.400
+Version: 0.261.401
+Implemented in: 0.241.014; validation-only workflow in 0.261.399; isolated validation in 0.261.400; pinned onboarding in 0.261.401
 
 The workflow must not provision or deploy resources. The standalone, explicitly
 invoked deployment bootstrap remains separate and retains its existing contract.
@@ -52,6 +52,7 @@ def test_staging_workflow_configuration(workflow):
     assert job["environment"]["name"] == "Staging-Validation"
     assert job["if"] == "${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}"
     assert job["env"]["SIMPLECHAT_UI_BASE_URL"] == "${{ vars.SIMPLECHAT_UI_BASE_URL }}"
+    assert job["env"]["SIMPLECHAT_UI_TERMS_SHA256"] == "${{ vars.SIMPLECHAT_UI_TERMS_SHA256 }}"
     assert not any(name.startswith("AZD_") for name in job["env"])
     assert "AZURE_SUBSCRIPTION_ID" not in job["env"]
     assert "PLAYWRIGHT_SERVICE_URL" not in job["env"]
@@ -100,6 +101,8 @@ def test_staging_requires_authentication_and_verified_transport(workflow):
     assert any("npm run test:staging\n" in step.get("run", "") for step in steps)
     assert any("npx playwright install --with-deps chromium" in step.get("run", "") for step in steps)
     assert any('python -m pytest "$PYTEST_TARGET" -m ui -ra' in step.get("run", "") for step in steps)
+    assert any("functional_tests/test_staging_terms_onboarding.py" in step.get("run", "") for step in steps)
+    assert any("node --test functional_tests/test_staging_terms_onboarding.mjs" in step.get("run", "") for step in steps)
     assert not any(step.get("continue-on-error") == "true" for step in steps)
 
 
@@ -150,6 +153,11 @@ def test_staging_smoke_test_configuration():
         "/ci-auth/session", "@pytest.mark.ui", 'page.goto(f"{BASE_URL}/chats"',
         "#new-conversation-btn", "#user-input", "#send-btn",
         ".ai-message .message-text", "context.request.delete", "context.tracing.start",
+        "complete_staging_terms_onboarding", "SIMPLECHAT_UI_TERMS_SHA256",
+        "#new-conversation-btn:visible, #sidebar-new-chat-btn:visible",
+        "EXPECTED_RESPONSE",
+        "arg=EXPECTED_RESPONSE",
+        "text.includes(expectedResponseText)",
     ], "authenticated smoke test")
     tree = ast.parse(source)
     authorization = [
@@ -192,6 +200,10 @@ def test_playwright_workspaces_runner_configuration():
         "/ci-auth/session", "page.goto(`${baseUrl}/chats`",
         "#new-conversation-btn", "#user-input", "#send-btn",
         ".ai-message .message-text", "page.context().request.delete",
+        "completeStagingTermsOnboarding", "SIMPLECHAT_UI_TERMS_SHA256",
+        "#new-conversation-btn:visible, #sidebar-new-chat-btn:visible",
+        "expectedResponse",
+        "text.includes(expectedResponseText)",
     ], "Playwright smoke test")
 
 

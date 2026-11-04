@@ -42,6 +42,7 @@ jobs:
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
       SIMPLECHAT_UI_BASE_URL: ${{ vars.SIMPLECHAT_UI_BASE_URL }}
       SIMPLECHAT_UI_AUTH_RESOURCE: ${{ vars.SIMPLECHAT_UI_AUTH_RESOURCE }}
+      SIMPLECHAT_UI_TERMS_SHA256: ${{ vars.SIMPLECHAT_UI_TERMS_SHA256 }}
       SIMPLECHAT_UI_STORAGE_STATE_B64: ${{ secrets.SIMPLECHAT_UI_STORAGE_STATE_B64 }}
       SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64: ${{ secrets.SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64 }}
       SIMPLECHAT_UI_ARTIFACT_DIR: ui_tests/artifacts
@@ -182,6 +183,13 @@ jobs:
               echo "SIMPLECHAT_UI_STORAGE_STATE=$PWD/ui_tests/artifacts/auth/admin_storage_state.json" >> "$GITHUB_ENV"
             fi
           fi
+
+      - name: Validate pinned CI onboarding guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -p no:cacheprovider functional_tests/test_staging_terms_onboarding.py -q
+          node --test functional_tests/test_staging_terms_onboarding.mjs
 
       - name: Run JavaScript staging UI smoke test
         shell: bash
