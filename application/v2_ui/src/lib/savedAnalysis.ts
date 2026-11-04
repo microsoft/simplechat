@@ -4,6 +4,7 @@
 import { ApiError } from './apiClient';
 import type {
     AnalysisResultContext,
+    AnalysisSemantics,
     AnalysisValidationStatus,
     ChatMessage,
     ChatStreamRequest,
@@ -44,14 +45,27 @@ function analysisRecord(value: unknown): value is SavedAnalysisRecord {
         value.evidence_refs.every((id) => typeof id === 'string');
 }
 
-export function readSavedAnalysis(metadata: unknown): SavedAnalysisDescriptor | null {
-    const value = object(metadata) ? metadata.saved_analysis : null;
+function readSemantics(value: unknown): AnalysisSemantics | null {
+    if (!object(value) || value.version !== 'analysis-options-v2' ||
+        (value.mode !== 'source_observations' && value.mode !== 'reconciled_records')) {
+        return null;
+    }
+    return { version: 'analysis-options-v2', mode: value.mode };
+}
+
+function readDescriptor(value: unknown): SavedAnalysisDescriptor | null {
     if (!object(value) || value.version !== 'analyze-final-v1' ||
         typeof value.conversation_id !== 'string' || !value.conversation_id.trim() ||
         typeof value.message_id !== 'string' || !value.message_id.trim() ||
         typeof value.result_sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(value.result_sha256) ||
         !count(value.record_count) || !count(value.source_count) ||
-        !validationStatus(value.validation_status)) {
+        !validationStatus(value.validation_status) ||
+        (value.label !== undefined && (typeof value.label !== 'string' || !value.label.trim())) ||
+        (value.available !== undefined && typeof value.available !== 'boolean')) {
+        return null;
+    }
+    const semantics = value.semantics === undefined ? undefined : readSemantics(value.semantics);
+    if (semantics === null) {
         return null;
     }
     return {
@@ -63,7 +77,35 @@ export function readSavedAnalysis(metadata: unknown): SavedAnalysisDescriptor | 
         source_count: value.source_count,
         validation_status: value.validation_status,
         available: value.available !== false,
+        ...(typeof value.label === 'string' ? { label: value.label } : {}),
+        ...(semantics ? { semantics } : {}),
     };
+}
+
+export function readSavedAnalysis(metadata: unknown): SavedAnalysisDescriptor | null {
+    return readDescriptor(object(metadata) ? metadata.saved_analysis : null);
+}
+
+/** Null entries remain visible as unavailable results rather than disappearing silently. */
+export function readSavedAnalyses(metadata: unknown): (SavedAnalysisDescriptor | null)[] {
+    if (!object(metadata)) {
+        return [];
+    }
+    const entries: unknown[] = [];
+    if (metadata.saved_analysis != null) {
+        entries.push(metadata.saved_analysis);
+    }
+    if (metadata.saved_analyses != null) {
+        entries.push(...(Array.isArray(metadata.saved_analyses) ? metadata.saved_analyses : [null]));
+    }
+    const results: (SavedAnalysisDescriptor | null)[] = [];
+    for (const entry of entries) {
+        const descriptor = readDescriptor(entry);
+        if (!descriptor || !results.some((prior) => sameAnalysis(prior, descriptor))) {
+            results.push(descriptor);
+        }
+    }
+    return results;
 }
 
 export function analysisResultContext(value: AnalysisResultContext): AnalysisResultContext {
@@ -82,8 +124,10 @@ export function sameAnalysis(
         left.message_id === right.message_id && left.result_sha256 === right.result_sha256);
 }
 
-export function analysisValidationNotice(status: AnalysisValidationStatus): string {
-    return validationNotices[status] ?? validationNotices.not_validated;
+export function analysisValidationNotice(status: AnalysisValidationStatus, semantics?: AnalysisSemantics): string {
+    const notice = validationNotices[status] ?? validationNotices.not_validated;
+    return semantics?.mode === 'source_observations'
+        ? `Source observations, not reconciled values. ${notice}` : notice;
 }
 
 export function analysisNotices(value: unknown): string[] {

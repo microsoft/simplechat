@@ -101,7 +101,7 @@ export function AnalysisResult({
     onUnavailable,
 }: {
     descriptor: SavedAnalysisDescriptor;
-    onUnavailable: () => void;
+    onUnavailable: (descriptor: SavedAnalysisDescriptor) => void;
 }) {
     const [open, setOpen] = useState(false);
     const [offset, setOffset] = useState(0);
@@ -118,7 +118,7 @@ export function AnalysisResult({
     const reportUnavailable = useCallback((message: string) => {
         setUnavailable(message);
         setPage(null);
-        onUnavailable();
+        onUnavailable(descriptor);
         const store = useChatStore.getState();
         if (sameAnalysis(store.analysisResultContext, descriptor)) {
             store.clearAnalysisResultContext();
@@ -157,8 +157,9 @@ export function AnalysisResult({
     const notices = page ? [...analysisNotices(page.validation.limitations), ...analysisNotices(page.validation.issues)] : [];
 
     return (
-        <section aria-label="Saved analysis" className="mt-3 min-w-0 rounded-xl border border-edge p-3">
-            <p className="text-sm font-medium text-text-1">Saved analysis</p>
+        <section aria-label={descriptor.label ? `Saved analysis: ${descriptor.label}` : 'Saved analysis'}
+            className="mt-3 min-w-0 rounded-xl border border-edge p-3">
+            <p className="break-words text-sm font-medium text-text-1">{descriptor.label || 'Saved analysis'}</p>
             {blocked ? (
                 <p role="status" aria-live="polite" className="mt-1 text-sm text-text-2">
                     {unavailable || analysisUnavailableMessage()}
@@ -171,7 +172,7 @@ export function AnalysisResult({
                             ? `Showing ${displayed ? page.offset + 1 : 0}–${page.offset + displayed} of ${page.total_records} records · ${displayedSources} of ${page.source_count} sources on this page.`
                             : `0 of ${descriptor.record_count} records displayed · ${descriptor.source_count} sources in the saved analysis.`)}
                     </p>
-                    <p className="mt-1 text-xs text-text-2">{analysisValidationNotice(status)}</p>
+                    <p className="mt-1 text-xs text-text-2">{analysisValidationNotice(status, descriptor.semantics)}</p>
                     <GlassButton size="sm" className="mt-2" onClick={() => {
                         selectAnalysisResult(descriptor);
                         document.getElementById('composer-input')?.focus();

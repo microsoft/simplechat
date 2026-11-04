@@ -33,6 +33,7 @@ import {
     hydrateSavedAnalysisContext,
     hydrateSavedAnalysisResult,
     initializeSavedAnalysis,
+    readSavedAnalyses,
     setSavedAnalysisMasked,
     syncSavedAnalysisConversation,
 } from './chat-analysis-results.js';
@@ -6018,7 +6019,7 @@ export function appendMessage(
       documentCitations: fullMessageObject?.hybrid_citations || hybridCitations,
     });
     const htmlContent = renderedAiContent.htmlContent;
-    const inlineAssistantExportActionsHtml = renderCompletedAssistantActions && !fullMessageObject?.metadata?.saved_analysis
+    const inlineAssistantExportActionsHtml = renderCompletedAssistantActions && !readSavedAnalyses(fullMessageObject?.metadata).length
       ? buildInlineAssistantExportActionsHtml(messageId)
       : '';
 

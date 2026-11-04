@@ -41,6 +41,7 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 from config import cognitive_services_scope
 from functions_appinsights import log_event, workflow_log_context
+from functions_document_analysis_results import narrative_analysis_options
 from functions_orchestration_context import conversation_reference_messages, resolve_elicitation_candidates
 from functions_orchestration_deliverables import build_deliverable_availability
 from functions_orchestration_events import build_model_reasoning_metadata
@@ -50,6 +51,7 @@ from functions_orchestration_model_routing import (
     DEPENDENCY_ROUTING_INSTRUCTIONS, ROUTING_INSTRUCTIONS, assign_step_models, authorized_routing_candidates,
 )
 from functions_orchestration_registry import (
+    CAPABILITY_DOCUMENT_ANALYZE,
     CAPABILITY_WORKFLOW_HANDOFF,
     CAPABILITY_WORKFLOW_PROPOSE,
     CAPABILITY_WORKFLOW_RESULTS,
@@ -1500,6 +1502,29 @@ def _workflow_planning_for(request_context, available_ids=()):
     return (planning if projection is not None else {}), projection
 
 
+def _with_analysis_semantics(raw, edit_context=None):
+    """New analysis work opts in; an omitted option on an existing draft keeps its meaning."""
+    plan = deepcopy(raw)
+    previous = {
+        step.get('step_id'): step
+        for step in (edit_context or {}).get('current_plan', {}).get('steps') or []
+        if isinstance(step, dict)
+    }
+    for step in plan.get('steps') or []:
+        arguments = step.get('arguments') if isinstance(step, dict) else None
+        if (
+            not isinstance(arguments, dict) or step.get('capability_id') != CAPABILITY_DOCUMENT_ANALYZE
+            or 'analysis_options' in arguments
+        ):
+            continue
+        prior = previous.get(step.get('step_id'))
+        if prior is None or prior.get('capability_id') != CAPABILITY_DOCUMENT_ANALYZE:
+            arguments['analysis_options'] = narrative_analysis_options()
+        elif 'analysis_options' in (prior.get('arguments') or {}):
+            arguments['analysis_options'] = deepcopy(prior['arguments']['analysis_options'])
+    return plan
+
+
 def plan_request(
     user_message,
     planner_context,
@@ -1649,6 +1674,7 @@ def plan_request(
     }
 
     def _normalize(raw, capability_ids, availability, selected_image, **options):
+        raw = _with_analysis_semantics(raw, edit_context)
         if conversation_only and any(
             step.get('enabled', True) and step.get('capability_id') in CONVERSATION_RETRIEVAL_CAPABILITIES
             for step in raw.get('steps') or [] if isinstance(step, dict)

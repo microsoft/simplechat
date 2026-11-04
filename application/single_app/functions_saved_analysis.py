@@ -15,6 +15,7 @@ from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFo
 
 from functions_analysis_access import AnalysisResultUnavailable, analysis_source_snapshot
 from functions_appinsights import log_event
+from functions_document_analysis_results import analysis_result_semantics
 from functions_generated_file_exports import build_saved_analysis_export
 from functions_workflow_context import WorkflowContextBudgetError, calculate_workflow_context_budget
 from functions_workflow_identity import normalize_workflow_iteration_path
@@ -307,12 +308,14 @@ def save_orchestration_analysis(
         max_result_bytes=_quota_bytes(settings or {}),
     )
     authorize(user_id, binding)
+    semantics = analysis_result_semantics(manifest.get("validation") or {})
     return {
         "version": SAVED_ANALYSIS_VERSION, "result_ref": reference, "result_sha256": reference["sha256"],
         "binding": dict(binding), "conversation_id": conversation_id,
         "record_count": envelope["record_count"], "source_count": access["source_count"],
         "validation_status": public_analysis_validation(manifest.get("validation"))["status"],
         "execution_status": manifest["execution"]["status"], "available": True,
+        **({"semantics": semantics} if semantics is not None else {}),
     }
 
 
@@ -346,6 +349,7 @@ def save_chat_analysis(
         max_result_bytes=_quota_bytes(settings or {}),
     )
     authorize(user_id, conversation_id)
+    semantics = analysis_result_semantics(manifest.get("validation") or {})
     return {
         "version": SAVED_ANALYSIS_VERSION,
         "conversation_id": conversation_id,
@@ -358,6 +362,7 @@ def save_chat_analysis(
         "validation_status": public_analysis_validation(manifest.get("validation"))["status"],
         "execution_status": manifest["execution"]["status"],
         "available": True,
+        **({"semantics": semantics} if semantics is not None else {}),
     }
 
 
@@ -925,7 +930,13 @@ def load_saved_analysis(
         checked = _saved_source_provenance(access.get("sources"))
     else:
         raise AnalysisResultUnavailable("analysis_lineage_invalid")
-    public_descriptor = {**deepcopy(descriptor), **context}
+    semantics = analysis_result_semantics(manifest.get("validation") or {})
+    if "semantics" in descriptor and descriptor["semantics"] != semantics:
+        raise ValueError("The saved analysis semantics changed.")
+    public_descriptor = {
+        **deepcopy(descriptor), **context,
+        **({"semantics": semantics} if semantics is not None else {}),
+    }
     return manifest, load, {**checked, "descriptor": public_descriptor}
 
 
@@ -1033,6 +1044,9 @@ def load_orchestration_analysis_input(
         or manifest.get("identity") != binding
     ):
         raise AnalysisResultUnavailable("analysis_lineage_invalid")
+    semantics = analysis_result_semantics(manifest.get("validation") or {})
+    if "semantics" in descriptor and descriptor["semantics"] != semantics:
+        raise ValueError("The saved analysis semantics changed.")
     policy = manifest.get("analysis_access") or {}
     if not isinstance(policy, Mapping) or policy.get("version") != ANALYSIS_SOURCE_ACCESS_VERSION:
         raise AnalysisResultUnavailable("analysis_lineage_invalid")
@@ -1049,11 +1063,62 @@ def load_orchestration_analysis_input(
     return _analysis_explanation_input(manifest, load, access, context), deepcopy(descriptor)
 
 
+def orchestration_analysis_descriptors(
+    record, *, user_id, message_id, load_result=None, authorize_run=None,
+):
+    """Advertise retained native analyses, not previews or an inferred successful answer."""
+    if record.get("user_id") != user_id or not message_id:
+        raise PermissionError("The analysis publication does not belong to this user.")
+    descriptors = []
+    seen = set()
+    for step in record.get("execution_steps") or []:
+        if step.get("status") not in {"completed", "partial"}:
+            continue
+        for descriptor in step.get("saved_analyses") or []:
+            inherited = (record.get("inherited_checkpoints") or {}).get(step["step_id"]) or {}
+            if step.get("reused") and inherited and (
+                inherited.get("source_run_id") != record.get("retry_of_run_id")
+                or (inherited.get("provenance") or {}).get("step_id") != step["step_id"]
+            ):
+                raise AnalysisResultUnavailable("analysis_lineage_invalid")
+            producer_run_id = (
+                (inherited.get("provenance") or {}).get("run_id")
+                if step.get("reused") and inherited else record["id"]
+            )
+            expected = {
+                "kind": "orchestration", "user_id": user_id,
+                "conversation_id": record["conversation_id"],
+                "run_id": producer_run_id, "step_id": step["step_id"],
+            }
+            if not isinstance(descriptor, Mapping) or descriptor.get("binding") != expected:
+                raise AnalysisResultUnavailable("analysis_lineage_invalid")
+            reader, verified = load_orchestration_analysis_input(
+                user_id, descriptor, bounded=True, load_result=load_result, authorize_run=authorize_run,
+            )
+            reader.recheck()
+            manifest = reader.manifest
+            key = (step["step_id"], verified["result_sha256"])
+            if key in seen:
+                continue
+            seen.add(key)
+            semantics = analysis_result_semantics(manifest.get("validation") or {})
+            descriptors.append({
+                **verified, "conversation_id": record["conversation_id"], "message_id": message_id,
+                "label": step.get("title") or "Saved analysis",
+                "record_count": manifest["record_count"], "source_count": reader.access["source_count"],
+                "validation_status": public_analysis_validation(manifest.get("validation"))["status"],
+                "execution_status": manifest["execution"]["status"],
+                **({"semantics": semantics} if semantics is not None else {}),
+            })
+    return descriptors
+
+
 class SavedAnalysisInput:
     """An authorized immutable record reader; never a model-ready preview."""
 
     def __init__(self, manifest, load, access, context, *, reauthorize):
         require_readable_analysis_result(manifest)
+        analysis_result_semantics(manifest.get("validation") or {})
         self.manifest = manifest
         self.context = deepcopy(context)
         self.access = access

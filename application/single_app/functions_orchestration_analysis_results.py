@@ -8,7 +8,9 @@ No source is reconstructed from a preview, report paragraph, or document name.
 from copy import deepcopy
 
 from functions_analysis_access import analysis_source_snapshot
-from functions_document_analysis_results import ANALYSIS_RESPONSE_SHAPE_CODES
+from functions_document_analysis_results import (
+    ANALYSIS_RESPONSE_SHAPE_CODES, SOURCE_OBSERVATIONS, analysis_result_semantics,
+)
 from functions_document_citations import build_document_citation
 from functions_orchestration_result_contracts import (
     Completeness,
@@ -56,6 +58,12 @@ def _native_completeness(reader):
     else:
         raise ResultContractError("result_native_analysis_incomplete")
     checks = ["saved_native_record_identity", "complete_saved_record_iteration"]
+    try:
+        semantics = analysis_result_semantics(validation)
+    except ValueError as exc:
+        raise ResultContractError("result_analysis_semantics_invalid") from exc
+    if semantics is not None:
+        checks.append(f'analysis_semantics:{semantics["mode"]}')
     for check in validation.get("checks") or []:
         if type(check) is not dict or type(check.get("name")) is not str or type(check.get("status")) is not str:
             raise ResultContractError("result_analysis_validation_invalid")
@@ -151,7 +159,8 @@ def persist_saved_analysis_result(
     status, coverage, checks, limitations = _native_completeness(reader)
     limitations = tuple(dict.fromkeys((*limitations, *selection_limitations)))
     count = _count(manifest.get("record_count"))
-    columns = _public_columns(reader)
+    semantics = analysis_result_semantics(manifest.get("validation") or {})
+    columns = () if semantics and semantics["mode"] == SOURCE_OBSERVATIONS else _public_columns(reader)
     projection = SavedAnalysisRecordSource(reader, columns=columns) if status == "complete" and columns else None
     findings = projection.iter_units() if projection is not None else _finding_units(reader)
     outputs = [
