@@ -48,8 +48,10 @@ The V2 editor no longer offers ad hoc custom fields. Use **Advanced → JSON** o
 
 The action includes a `get_document_accessibility_report` function for agents that review documents for accessibility or house style. For one document it returns the stored accessibility metadata (PDF tags, Office structure, comments), the style inventory (fonts, sizes, colours, outlier text, page setup), and the detected issues.
 
+From **0.261.399**, workspace Excel files also expose native workbook properties, cell notes/threaded comments, object alternative text/decorative flags, formatting/layout and header/footer expressions. Modern `.xlsx`/`.xlsm` inspection has explicit saved-state coverage limits; legacy `.xls` is best effort. Use the report for the bounded workbook-wide inventory and document search for sheet/cell-addressed `Excel native inspection` evidence. Enhanced-citation workbooks still index a schema preview plus native evidence, not the complete worksheet data.
+
 - Choose which parts to return with `sections` (`accessibility`, `style`, `issues`); all are returned by default.
-- Pass `page_number` to also get that page or slide's stored text, which includes its structure, formatting, and comment lines.
+- Pass `page_number` to also get that page, slide or Excel indexed evidence segment's stored text. Excel segment numbers are not physical print-page numbers.
 - Chat uploads are not supported; add the file to a workspace. Documents uploaded before this data was extracted need to be re-uploaded.
 - The issues list is heuristic. It is not a formal WCAG, Section 508, or PDF/UA conformance check. To apply your own rules, write them into the agent's instructions and have it compare them with the returned values.
 

@@ -90,6 +90,17 @@ Simple Chat organizes documents into different workspace types:
 - `.xlsx, .xlsm, .xls` - Excel spreadsheets
 - `.csv` - Comma-separated values
 
+From **0.261.399**, Excel workspace uploads also preserve native file properties,
+cell notes/comments, supported object alt text/decorative flags, saved formatting
+and layout, and header/footer expressions. Ask about these directly in chat or use
+the Document Search accessibility report. Enhanced citations keeps the workbook
+in blob storage and indexes a schema preview plus native-inspection evidence, not
+every worksheet row; calculations still use the tabular tools. Modern
+`.xlsx`/`.xlsm` and legacy `.xls` report their inspection limitations explicitly.
+Re-upload existing workbooks to extract the new evidence.
+See [Document accessibility and structure extraction](../explanation/features/DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION.md#excel-native-inspection-0261399)
+for supported objects, saved-state limitations and evidence storage.
+
 **OneNote Notes** (from version **0.261.142** on the React v2 branch, workspace uploads only):
 - `.one` - A section's typed notes and table contents
 - `.onepkg` - An exported notebook, stored as one workspace document with section and page context

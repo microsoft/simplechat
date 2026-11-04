@@ -433,7 +433,9 @@ class DocumentSearchPlugin(BasePlugin):
         name='get_document_accessibility_report',
         description=(
             'Return the complete stored accessibility, structure, and formatting metadata for one accessible '
-            'workspace document: PDF tag tree and document properties, Word and PowerPoint structure, and the full '
+            'workspace document: PDF tag tree and document properties, Word and PowerPoint structure, '
+            'Excel workbook properties, cell notes/threaded comments, object alt text/decorative flags, '
+            'sheet layout and headers/footers with explicit native inspection coverage limits, and the stored '
             'style inventory (fonts, sizes, colours, emphasis, outlier runs, paragraph styles, page setup). '
             'Use it to build custom style-guide or accessibility checks. This is extracted metadata, not a '
             'WCAG or PDF/UA conformance result. Use sections to limit the output and page_number to also '
@@ -446,7 +448,7 @@ class DocumentSearchPlugin(BasePlugin):
         document_id: Annotated[str, 'Document id to read accessibility and formatting metadata for.'],
         doc_scope: Annotated[str, 'all, personal, group, or public.'] = '',
         sections: Annotated[str, 'Optional comma-separated sections: accessibility, style, issues. Defaults to all.'] = '',
-        page_number: Annotated[int, 'Optional 1-based page or slide number whose stored chunk text should also be returned.'] = 0,
+        page_number: Annotated[int, 'Optional 1-based stored page/slide or Excel evidence segment number, not an Excel printed page.'] = 0,
         active_group_ids: Annotated[str, 'Optional comma-separated group ids when resolving group content.'] = '',
         active_public_workspace_id: Annotated[str, 'Optional public workspace id when resolving public content.'] = '',
     ) -> Annotated[dict, 'Stored accessibility, style inventory, and issue metadata for one document.']:

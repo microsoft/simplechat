@@ -1,7 +1,8 @@
-# Document Accessibility, Structure, and Comment Extraction (`PDF`, `Word`, `PowerPoint`)
+# Document Accessibility, Structure, and Comment Extraction (`PDF`, `Word`, `PowerPoint`, `Excel`)
 
 **Implemented in version: 0.261.391** (formatting, style inventory, and programmatic access added in **0.261.392**)  
-**Related config.py version: `0.261.392`**
+**Excel implemented in version: 0.261.399**
+**Related config.py version: `0.261.399`**
 
 ## 1. Overview and Purpose
 
@@ -198,6 +199,8 @@ Accessibility structure alone cannot answer questions such as "is the body text 
 | Word (`.docx`, `.docm`, `.dotx`) | Run properties resolved through the document defaults, style chain, and theme fonts and colours; paragraph alignment and line spacing; section page setup. | Theme colour tint/shade and table styles are not applied. Words with no size anywhere in the chain default to 10 pt. |
 | PowerPoint (`.pptx`) | Run properties resolved through shape, layout placeholder, master text styles, and theme. | The colour map (`clrMap`) is not applied. Text with no size anywhere in the chain is assumed to be 18 pt. |
 | Legacy Word (`.doc`) | Direct character properties from the CHPX/FKP binary tables and the font table. | **Best effort.** There is no style-sheet inheritance, so unset values stay unresolved and the inventory is marked `coverage: "partial"`. It was validated against a synthetic file, not a corpus of Word-authored documents. |
+| Excel (`.xlsx`, `.xlsm`) | Saved cell fonts, sizes, emphasis, colors, fills, number formats and alignment; row/column styles, merged ranges, visibility, panes and print setup. | **Partial native inspection**, not rendered appearance. Theme/indexed colors are resolved where possible; tint is approximated. Conditional formatting, table-style effects and rich-text run overrides are not evaluated. |
+| Legacy Excel (`.xls`) | OLE properties and BIFF reader-exposed notes, fonts and basic sheet layout. | **Best effort.** Object accessibility, threaded comments and header/footer inspection are unavailable. |
 
 Anything that could not be resolved is stated in the inventory's `coverage_notes` rather than guessed.
 
@@ -218,6 +221,38 @@ flowchart LR
 - **AI Search chunk text**: a compact `Formatting (characters): ...` line per page (PDF), slide (PPTX), or word-offset bucket (Word), so retrieval can answer location-specific formatting questions.
 - **Not kept**: the full uncapped list of every run. Style is computed at ingestion, so documents uploaded before 0.261.392 have no style data until they are re-uploaded.
 
+### Excel native inspection (0.261.399)
+
+Excel follows the same **parent metadata plus searchable native evidence** model as the other document formats without turning spreadsheet ingestion into full-data indexing. This lets users ask about the workbook itself, such as who authored it, which comments need review, whether an image has native alternative text, or what prints in a sheet's footer.
+
+`functions_excel_accessibility.py` reads modern workbook packages without saving or executing them. It follows workbook relationships to identify worksheets and chart sheets rather than assuming that a sheet's filename indicates its name or order. It also reads:
+
+- Core properties: title, creator/authors, subject, description, keywords, language, category and available saved timestamps. These are native file properties, not workspace tags or AI-generated descriptions.
+- Traditional cell notes and modern threaded comments: sheet/cell location, author, available date, thread/reply identifiers and explicit saved resolution state. Missing dates or status remain unknown.
+- DrawingML image, chart and shape titles/descriptions and explicit decorative flags, plus their saved anchors. VML form controls, including recognized checkboxes, expose stored alternative text and location where available. Control-property parts are inventoried, not executed.
+- Saved cell formatting and sheet layout, including hidden sheets/rows/columns, column widths, row heights, merged ranges, freeze panes, print settings and conditional-format rule counts.
+- Odd/even/first-page header/footer expressions and their explicit left/center/right sections. Raw Excel formatting and field codes are retained: `&P` means a page-number field, not a calculated page number. Print-title rows/columns and print areas are kept separately.
+
+**Storage and retrieval**
+
+The existing parent Cosmos document receives `accessibility_metadata`, including `properties`, bounded `sheets`, `comments`, `objects`, `style_inventory`, `observed_counts`, and coverage notes. Native title/authors/keywords are also supplied to the normal document metadata fields. Optional AI metadata generation may subsequently update those descriptive fields; the native values remain in `accessibility_metadata.properties`.
+
+With enhanced citations enabled, the original workbook remains in blob storage and the schema summary remains the first indexed segment. Additional AI Search chunks begin with `### Excel native inspection` and contain sheet/cell/object-addressed metadata, comments, formatting and print evidence, **not all worksheet rows**. A compact schema-summary retry does not remove these additional chunks. With enhanced citations disabled, existing worksheet-row indexing continues and the same native evidence is added afterward.
+
+Native evidence uses the original workbook filename and a unique sequential segment number. These segment numbers are retrieval/citation locators, **not physical Excel print-page numbers**. Every split fragment repeats its workbook, sheet and available cell/object location. Blank sheets still contribute print/layout evidence.
+
+Normal spreadsheet calculations continue to use tabular tools; neither preview rows nor saved formatting can establish business-data totals. Native-inspection questions use stored metadata and search evidence, including in mixed-source conversations, rather than requiring numeric analysis. The existing Document Search accessibility report exposes the same parent inventory with the normal workspace authorization and citation rules.
+
+**Coverage, limits and safety**
+
+Modern Excel inspection is marked `partial` because it does not reproduce Excel's rendered appearance or inspect every possible object representation. It never evaluates formulas, executes macros/ActiveX, opens embedded OLE content, follows external relationships, or rewrites workbook bytes. Unsupported controls, including detected newer in-cell-control parts, are reported as uninspected rather than counted as missing alt text. An absent decorative marker remains unknown, not an explicit nondecorative declaration.
+
+Inspection is bounded to 5,000 ZIP entries, 16 MiB per XML part, 64 MiB total XML reads, 100 sheets, 20,000 saved cells, 20,000 style definitions per inspected table, and 2,000 retained comment/object evidence records. Native strings are limited to 4,000 characters; layout evidence retains up to 200 records per sheet, while cell-style evidence shows up to 100 distinct styles and 30 example cell locations per style per sheet. Search evidence is bounded to 1,000,000 characters before embedding-safe splitting; parent metadata is bounded to 500,000 serialized bytes. Coverage notes disclose sampling, truncation, unresolved references and failures. Observed counts describe scanned structures, not guaranteed whole-workbook totals. The style histogram is weighted by the first 60 saved-value characters per inspected cell.
+
+Legacy `.xls` is inspected with the existing OLE/BIFF dependencies. Its metadata and style coverage is best effort; unavailable object, thread and header/footer details are explicitly stated. No new cloud service or dependency is required.
+
+To inspect an existing workbook, re-upload it to a personal, group or public workspace so native evidence is generated. Then ask, for example, "Show the cell notes and threaded comments", "Which objects have saved alt text?", or "What is in the first-page footer?" An agent with Document Search can request `get_document_accessibility_report` and retrieve the relevant native evidence segments for detailed findings. Chat-only uploads do not gain this workspace report.
+
 ### Programmatic Access: `get_document_accessibility_report`
 
 The **Document Search** action exposes a `get_document_accessibility_report` Semantic Kernel function that returns the stored metadata for one document. It is the supported way for a custom agent or workflow to read the complete accessibility, style, and issue data.
@@ -227,7 +262,7 @@ The **Document Search** action exposes a `get_document_accessibility_report` Sem
 | `document_id` | The document to read (required). |
 | `doc_scope` | `all`, `personal`, `group`, or `public`. |
 | `sections` | Comma-separated subset of `accessibility`, `style`, `issues`. Defaults to all three. |
-| `page_number` | Optional 1-based page or slide. Also returns that page's stored chunk text, which carries the inline structure, formatting, and comment lines. |
+| `page_number` | Optional 1-based page, slide, or Excel indexed evidence segment. Also returns that segment's stored chunk text. Excel segments are not physical print pages. |
 
 Access follows the existing Document Search rules: the current user's workspace, group, and public access and the action's allowed scopes. Chat-scope uploads are refused, and documents without stored metadata return guidance to re-upload. There is deliberately no REST endpoint for this.
 
@@ -256,3 +291,5 @@ Rules that need data SimpleChat does not extract (for example full tint/shade co
   - Validates PDF, DOCX (style chain, theme, page setup), PPTX, and legacy `.doc` best-effort style extraction, accumulator caps, and the chat formatting block.
 - **Functional Test**: `functional_tests/test_document_accessibility_report_action.py`
   - Validates `get_document_accessibility_report` section filtering, page chunks, chat-scope and missing-metadata errors, and the plugin and citation wiring.
+- **Functional Test**: `functional_tests/test_excel_document_accessibility_extraction.py` (implemented in **0.261.399**)
+  - Exercises real OOXML and synthetic legacy BIFF workbooks, native properties, comments/replies, alt text/decorative flags, controls, formatting, print metadata, unchanged source bytes, bounded/failing inspection, both tabular ingestion modes, workspace scope propagation, schema retries, authorized report/citations and native-versus-data question routing.

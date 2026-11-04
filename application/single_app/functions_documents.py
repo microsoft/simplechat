@@ -106,6 +106,7 @@ from functions_accessibility import (
     format_pdf_page_annotation_block,
     format_pptx_comment_block,
 )
+from functions_excel_accessibility import build_excel_evidence_chunks
 from functions_document_transform_sources import (
     OFFICE_REFERENCE_MIME_TYPES,
     TEMPLATE_EXTENSIONS,
@@ -10473,7 +10474,7 @@ def _build_tabular_schema_summary(temp_file_path, original_filename, file_ext):
     raise ValueError(f"Unsupported tabular file type: {file_ext}")
 
 
-def process_single_tabular_sheet(df, document_id, user_id, file_name, update_callback, group_id=None, public_workspace_id=None):
+def process_single_tabular_sheet(df, document_id, user_id, file_name, update_callback, group_id=None, public_workspace_id=None, page_number_offset=0):
     """Chunks a pandas DataFrame from a CSV or Excel sheet."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -10525,10 +10526,8 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
         final_chunks_content.append("".join(current_chunk_rows))
 
     num_chunks_final = len(final_chunks_content)
-    # Update total pages estimate once at the start of processing this sheet
-    # Note: This might overwrite previous updates if called multiple times for excel sheets.
-    # Consider accumulating page count in the caller if needed.
-    update_callback(number_of_pages=num_chunks_final)
+    # Keep workbook segment numbering continuous across sheets and native evidence.
+    update_callback(number_of_pages=page_number_offset + num_chunks_final)
 
     # Save chunks, prepending the header to each — use batch processing for speed
     all_chunks = []
@@ -10536,7 +10535,7 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
         chunk_with_header = header_string + chunk_rows_content
         all_chunks.append({
             "page_text_content": chunk_with_header,
-            "page_number": idx,
+            "page_number": page_number_offset + idx,
             "file_name": file_name
         })
 
@@ -10567,6 +10566,22 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
     total_embedding_tokens = 0
     embedding_model_name = None
 
+    native_chunks = []
+    if file_ext in ('.xlsx', '.xlsm', '.xls'):
+        native_metadata, native_evidence = extract_office_accessibility_metadata(temp_file_path, file_ext)
+        native_fields = {'accessibility_metadata': native_metadata}
+        for field in ('title', 'authors', 'keywords', 'language'):
+            if native_metadata.get(field):
+                native_fields[field] = native_metadata[field]
+        if native_metadata.get('subject'):
+            native_fields['abstract'] = native_metadata['subject']
+        native_fields['excel_comment_count'] = native_metadata.get('observed_counts', {}).get('comments', 0)
+        update_callback(**native_fields)
+        native_chunks = build_excel_evidence_chunks(
+            native_evidence, original_filename,
+            get_embedding_safe_chunk_characters(get_settings()),
+        )
+
     # Upload the original file once if enhanced citations are enabled
     if enable_enhanced_citations:
         args = {
@@ -10576,7 +10591,6 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             "blob_filename": original_filename,
             "update_callback": update_callback
         }
-
         if is_public_workspace:
             args["public_workspace_id"] = public_workspace_id
         elif is_group:
@@ -10703,7 +10717,8 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                         "document_id": document_id,
                         "user_id": user_id,
                         "file_name": effective_filename,
-                        "update_callback": update_callback
+                        "update_callback": update_callback,
+                        "page_number_offset": accumulated_total_chunks,
                     }
 
                     if is_public_workspace:
@@ -10728,6 +10743,31 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             update_callback(status=f"Warning: File/sheet is empty - {original_filename}", number_of_pages=0)
         except Exception as e:
             raise Exception(f"Failed processing Tabular file {original_filename}: {e}")
+
+    if native_chunks:
+        scope = {}
+        if is_public_workspace:
+            scope['public_workspace_id'] = public_workspace_id
+        elif is_group:
+            scope['group_id'] = group_id
+        for text in native_chunks:
+            token_usage = save_chunks(
+                page_text_content=text,
+                page_number=total_chunks_saved + 1,
+                file_name=original_filename,
+                user_id=user_id,
+                document_id=document_id,
+                **scope,
+            )
+            total_chunks_saved += 1
+            if token_usage:
+                total_embedding_tokens += token_usage.get('total_tokens', 0)
+                embedding_model_name = embedding_model_name or token_usage.get('model_deployment_name')
+        update_callback(
+            number_of_pages=total_chunks_saved,
+            num_chunks=total_chunks_saved,
+            status="Indexed Excel native inspection evidence",
+        )
 
     settings = get_settings()
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
