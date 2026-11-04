@@ -1,8 +1,9 @@
 # test_document_chunk_bookkeeping.py
 """
 Functional regressions for indexed chunk counts and obsolete metadata warnings.
-Version: 0.261.400
+Version: 0.261.401
 Implemented in: 0.261.400
+Acknowledged deletion entry-point coverage added in: 0.261.401
 
 Execute the real single/batch/video writers, upload/reprocess finalizers, detail
 projection and conditional metadata update with offline Search and Cosmos.
@@ -22,6 +23,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from azure.cosmos._cosmos_responses import CosmosDict
 from azure.cosmos.exceptions import CosmosHttpResponseError
+from azure.search.documents.models import IndexingResult
 from flask import Flask, jsonify
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -52,6 +54,10 @@ class Search:
         self.chunks = {}
         self.visible = None
         self.fail_keys = set()
+        self.delete_fail_keys = set()
+        self.delete_omit_keys = set()
+        self.extra_delete_results = []
+        self.delete_calls = []
         self.searches = []
 
     def upload_documents(self, documents, **kwargs):
@@ -63,12 +69,26 @@ class Search:
             results.append(SimpleNamespace(key=document["id"], succeeded=succeeded))
         return results
 
+    def delete_documents(self, documents, **kwargs):
+        self.delete_calls.append(copy.deepcopy(documents))
+        results = []
+        for document in documents:
+            key = document["id"]
+            if key in self.delete_omit_keys:
+                continue
+            succeeded = key not in self.delete_fail_keys
+            if succeeded:
+                self.chunks.pop(key, None)
+            results.append(IndexingResult(key=key, succeeded=succeeded, status_code=200 if succeeded else 503))
+        return results + self.extra_delete_results
+
     def search(self, **kwargs):
         self.searches.append(kwargs)
-        assert kwargs["select"] == ["id"]
-        assert kwargs["order_by"] == ["id asc"]
+        assert kwargs["select"] in (["id"], "id")
+        if "order_by" in kwargs:
+            assert kwargs["order_by"] == ["id asc"]
         clauses = re.findall(r"(\w+) (eq|gt) ('(?:[^']|'')*'|\d+)", kwargs["filter"])
-        assert len(clauses) in (3, 4), kwargs["filter"]
+        assert len(clauses) in (1, 2, 3, 4), kwargs["filter"]
         rows = list((self.chunks if self.visible is None else self.visible).values())
         for field, operator, raw in clauses:
             value = raw[1:-1].replace("''", "'") if raw.startswith("'") else int(raw)
@@ -76,7 +96,7 @@ class Search:
                 row for row in rows
                 if (row.get(field) == value if operator == "eq" else row[field] > value)
             ]
-        return [{"id": row["id"]} for row in sorted(rows, key=lambda row: row["id"])[:kwargs["top"]]]
+        return [{"id": row["id"]} for row in sorted(rows, key=lambda row: row["id"])[:kwargs.get("top", len(rows))]]
 
 
 @pytest.fixture(params=["personal", "group", "public"])
@@ -131,6 +151,7 @@ def runtime(request, monkeypatch):
         "_resolve_processing_complete_status", "_build_document_scope_args",
         "_update_document_for_job",
         "_update_failed_document_chunk_count", "is_effectively_empty",
+        "delete_document_chunks", "delete_document_version_chunks",
     }, namespace)
     return SimpleNamespace(
         scope=scope, document=document, container=container, namespace=namespace,
@@ -146,6 +167,15 @@ def save(runtime, page_number=1, text="Real indexed text"):
 
 def count(runtime):
     return runtime.namespace["_indexed_chunk_count_for_document"](runtime.container.documents["doc"])
+
+
+def delete(runtime, version=None):
+    arguments = {key: value for key, value in runtime.scope.items() if key != "user_id"}
+    entry_point = "delete_document_chunks"
+    if version is not None:
+        entry_point = "delete_document_version_chunks"
+        arguments["version"] = version
+    return runtime.namespace[entry_point](**arguments)
 
 
 def test_single_batch_and_video_count_unique_acknowledged_keys_despite_search_lag(runtime):
@@ -274,10 +304,80 @@ def test_deleted_keys_are_not_recounted_while_search_is_stale(runtime):
     runtime.search.visible = copy.deepcopy(runtime.search.chunks)
     token = begin_chunk_tracking()
     try:
-        record_chunk_deletions(runtime.search, ["doc_1"])
+        delete(runtime)
         save(runtime, 2)
         actual = count(runtime)
         assert actual == 1
+    finally:
+        end_chunk_tracking(token)
+
+
+@pytest.mark.parametrize("version", [None, 2], ids=["whole-document", "source-version"])
+@pytest.mark.parametrize("outcome", ["success", "cleanup", "partial", "partial-cleanup", "missing", "unacknowledged"])
+def test_delete_entry_points_capture_only_successful_receipts_before_failure(runtime, version, outcome):
+    save(runtime)
+    save(runtime, 2)
+    runtime.search.visible = copy.deepcopy(runtime.search.chunks)
+    runtime.container.documents["doc"]["status"] = "Error: extraction failed"
+    if outcome.startswith("partial"):
+        runtime.search.delete_fail_keys.add("doc_2")
+    elif outcome == "missing":
+        runtime.search.delete_omit_keys.add("doc_2")
+    elif outcome == "unacknowledged":
+        runtime.search.delete_omit_keys.update(("doc_1", "doc_2"))
+    if outcome.endswith("cleanup"):
+        @contextmanager
+        def failing_release(*args, **kwargs):
+            yield
+            raise RuntimeError("Delete fence cleanup failed")
+
+        runtime.namespace["hold_data_management_search_write_slot"] = failing_release
+    expected = {
+        "success": 0, "cleanup": 0, "partial": 1,
+        "partial-cleanup": 1, "missing": 1, "unacknowledged": 2,
+    }[outcome]
+    token = begin_chunk_tracking()
+    try:
+        if outcome in {"success", "missing"}:
+            delete(runtime, version)
+        else:
+            message = "Delete fence cleanup failed" if outcome.endswith("cleanup") else "did not acknowledge"
+            with pytest.raises(RuntimeError, match=message):
+                delete(runtime, version)
+        actual = count(runtime)
+        assert actual == expected
+        assert len(runtime.search.chunks) == expected
+        assert {document["id"] for document in runtime.search.delete_calls[0]} == {"doc_1", "doc_2"}
+        runtime.namespace["_update_failed_document_chunk_count"](
+            **runtime.scope, update_callback=lambda **updates: runtime.namespace["update_document"](
+                **runtime.scope, **updates,
+            ),
+        )
+        saved = runtime.container.documents["doc"]
+        assert saved["num_chunks"] == expected
+        assert saved["indexed_chunk_count_version"] == 2
+        assert saved["status"] == "Error: extraction failed"
+    finally:
+        end_chunk_tracking(token)
+    stale = count(runtime)
+    assert stale == 2
+
+
+def test_version_delete_does_not_remove_unrequested_current_version_receipts(runtime):
+    save(runtime)
+    save(runtime, 2)
+    runtime.search.chunks["old"] = {
+        **copy.deepcopy(runtime.search.chunks["doc_1"]), "id": "old", "version": 1,
+    }
+    runtime.search.visible = copy.deepcopy(runtime.search.chunks)
+    runtime.search.extra_delete_results = [{"key": "doc_1", "succeeded": True}]
+    token = begin_chunk_tracking()
+    try:
+        delete(runtime, version=1)
+        actual = count(runtime)
+        assert actual == 2
+        assert [document["id"] for document in runtime.search.delete_calls[0]] == ["old"]
+        assert set(runtime.search.chunks) == {"doc_1", "doc_2"}
     finally:
         end_chunk_tracking(token)
 
@@ -463,19 +563,27 @@ def test_manual_metadata_retry_clears_obsolete_warning_without_reingestion(runti
     assert runtime.search.chunks == {}
 
 
-def test_reprocess_replaces_old_count_without_recounting_deleted_keys(runtime, tmp_path):
+@pytest.mark.parametrize("delete_failure", [None, "cleanup", "partial"])
+def test_reprocess_replaces_old_count_without_recounting_deleted_keys(runtime, tmp_path, delete_failure):
     save(runtime)
     save(runtime, 2)
     runtime.search.visible = copy.deepcopy(runtime.search.chunks)
     namespace = runtime.namespace
     source = tmp_path / "source.pdf"
     source.write_bytes(b"synthetic source")
+    processed = []
+    if delete_failure == "partial":
+        runtime.search.delete_fail_keys.add("doc_2")
+    elif delete_failure == "cleanup":
+        @contextmanager
+        def failing_release(*args, **kwargs):
+            yield
+            raise RuntimeError("Delete fence cleanup failed")
 
-    def delete_chunks(*args, **kwargs):
-        record_chunk_deletions(runtime.search, list(runtime.search.chunks))
-        runtime.search.chunks.clear()
+        namespace["hold_data_management_search_write_slot"] = failing_release
 
     def process(**kwargs):
+        processed.append(True)
         save(runtime)
         return 999, 3, "embedding"
 
@@ -486,16 +594,25 @@ def test_reprocess_replaces_old_count_without_recounting_deleted_keys(runtime, t
         "EXTRACTION_ENGINE_CONTENT_UNDERSTANDING": "content_understanding",
         "get_document_intelligence_auto_sample_pages": lambda settings: 3,
         "_download_document_source_to_temp_file": lambda *args, **kwargs: str(source),
-        "delete_document_chunks": delete_chunks, "process_di_document": process,
+        "process_di_document": process,
         "IMAGE_EXTENSIONS": set(), "TABULAR_EXTENSIONS": set(), "TEMPLATE_EXTENSIONS": (),
     })
     run_definitions("functions_documents.py", {"_process_document_reprocess_extraction_background_impl"}, namespace)
-    namespace["_process_document_reprocess_extraction_background_impl"](
-        **runtime.scope, target_extraction_mode="layout", safe_errors=True,
-    )
+    arguments = {**runtime.scope, "target_extraction_mode": "layout", "safe_errors": True}
+    if delete_failure:
+        message = "Delete fence cleanup failed" if delete_failure == "cleanup" else "did not acknowledge"
+        with pytest.raises(RuntimeError, match=message):
+            namespace["_process_document_reprocess_extraction_background_impl"](**arguments)
+    else:
+        namespace["_process_document_reprocess_extraction_background_impl"](**arguments)
     saved = runtime.container.documents["doc"]
-    assert saved["num_chunks"] == 1
-    assert saved["status"] == "Processing complete"
+    assert saved["num_chunks"] == (0 if delete_failure == "cleanup" else 1)
+    assert saved["indexed_chunk_count_version"] == 2
+    if delete_failure:
+        assert namespace["is_document_processing_failure"](saved["status"])
+    else:
+        assert saved["status"] == "Processing complete"
+    assert processed == ([] if delete_failure else [True])
     assert saved["version"] == 2
     assert saved["abstract"] == "Keep this abstract"
     assert not source.exists()

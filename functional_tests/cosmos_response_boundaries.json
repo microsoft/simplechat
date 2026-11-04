@@ -7119,7 +7119,7 @@
           "replace_item"
         ],
         "kind": "seam",
-        "imports_sha256": "a0e29de4df051ac6feb134e3b5108a134de0de8ca0af6ee860774293ab8c8b2b"
+        "imports_sha256": "1961cefd3fe0b61bd12fc13c04c8f1402f61297b5e58c0bc8a966b3002c7387b"
       },
       "classification": "fault-injection",
       "contract": "Scoped replace fault injection changes the ETag immediately before the modeled conditional write. The original SDK-shaped container raises 412; the newer ingestion status survives and pytest restores the override.",
@@ -14149,7 +14149,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "response-unused",
       "contract": "_complete_document_search_sync_pass: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -14168,7 +14168,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "response-unused",
       "contract": "_delete_document_search_sync_record: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -14187,7 +14187,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "_get_document_family_items_from_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14214,7 +14214,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "_process_document_upload_background_impl: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Bookkeeping review: final and partial counts use version/scoped Search keys plus acknowledged mutations; Cosmos activity-log points remain mapping consumers.",
@@ -14237,7 +14237,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "_query_current_xsd_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14259,7 +14259,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "_read_document_for_search_sync: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14281,7 +14281,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "_read_document_search_sync_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14303,7 +14303,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "_rebase_document_after_fenced_acl_projection: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14325,7 +14325,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "_replace_document_search_sync_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14362,7 +14362,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "_upsert_document_and_sync_access_index: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14384,7 +14384,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "_workspace_file_name_exists: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14406,7 +14406,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "create_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14453,7 +14453,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "delete_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14480,7 +14480,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "delete_document_revision: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14502,7 +14502,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "delete_from_blob_storage: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14534,7 +14534,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "detect_doc_type: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14556,7 +14556,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "extract_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14578,7 +14578,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "get_chat_upload_workspace_documents_for_collaboration: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14605,7 +14605,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "get_chat_upload_workspace_documents_for_conversation: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14627,7 +14627,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "get_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14649,7 +14649,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "get_document_metadata_for_citations: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14671,7 +14671,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "get_document_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14693,7 +14693,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "get_document_version: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14715,7 +14715,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "get_document_versions: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14737,7 +14737,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "get_documents_shared_with_group: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14759,7 +14759,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "get_documents_shared_with_user: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14781,7 +14781,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "get_latest_version: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14803,7 +14803,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "get_shared_groups_for_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14825,7 +14825,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "get_shared_users_for_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14847,7 +14847,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "get_workspace_tags: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14869,7 +14869,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "is_document_shared_with_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14891,7 +14891,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "is_document_shared_with_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14913,7 +14913,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "process_due_document_search_metadata_syncs: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14935,7 +14935,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "propagate_tags_to_blob_metadata: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -14957,7 +14957,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "response-unused",
       "contract": "queue_group_workspace_upload_from_temp_file: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -14976,7 +14976,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "response-unused",
       "contract": "queue_personal_workspace_upload_from_temp_file: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -14995,7 +14995,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "request_document_search_metadata_sync: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -15017,7 +15017,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "share_document_with_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -15039,7 +15039,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "share_document_with_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -15066,7 +15066,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "sync_chat_upload_workspace_attachment_status: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -15088,7 +15088,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "unshare_document_from_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -15110,7 +15110,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "unshare_document_from_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -15132,7 +15132,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "Workspace-scoped query rows are plain dictionaries. Status predicates only interpret strings; filenames cannot force success/failure or rewrite screening copy. Strict update returns the SDK saved mapping to mapping-compatible callers; read/write ETags, operation guards, access projection and screening holds are preserved. Runtime evidence exercises personal/group/public status writes with installed-SDK point responses and plain query rows. Bookkeeping review: only an exact legacy metadata warning is retired after a successful outcome; that transition uses the existing ETag-conditional storage helper. SDK mappings, query rows, scope and concurrent-state checks remain intact.",
@@ -15158,7 +15158,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "upgrade_legacy_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",
@@ -15180,7 +15180,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa0f3a93097e62400ad31d1fc8e5e65ac969069ea7c1f03b1a3b0ca815f15b87"
+        "module_sha256": "3069229d414393155e3ae4cfe19cfd699d353a5bf777d1c600f1fb95e20023e7"
       },
       "classification": "sdk-compatible",
       "contract": "upload_to_blob: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation.",

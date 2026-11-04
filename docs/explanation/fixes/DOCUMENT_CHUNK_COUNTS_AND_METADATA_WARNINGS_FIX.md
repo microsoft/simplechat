@@ -2,12 +2,13 @@
 layout: page
 title: "Document chunk counts and obsolete metadata warnings"
 description: "Accurate indexed chunk bookkeeping and metadata-only retry status reconciliation."
-version: "0.261.400"
+version: "0.261.401"
 ---
 
 ## Issue and root causes
 
 Fixed/Implemented in version: **0.261.400**.
+Deletion-receipt follow-up implemented in version: **0.261.401**.
 The application version is updated in `application/single_app/config.py`.
 
 Most unscreened upload processors returned a local chunk total, but the shared
@@ -40,6 +41,17 @@ removed even if still visible in Search. Tracking is reset on success, failure,
 and private screening extraction. Partial ingestion failures retain the failure
 status and attempt to record the actual successful partial count; a failed count
 lookup is logged rather than converted to success.
+
+The **0.261.401** follow-up captures deletion receipts inside the shared Search
+write boundary, before batch validation or fence cleanup can raise. Both whole-
+document and version-specific deletes use the SDK's `delete_documents(documents=...)`
+entry point. Only requested keys with successful receipts are removed from the
+tracked count; failed, missing and unrelated receipts do not invent deletions.
+This fixes stale Search visibility incorrectly retaining acknowledged deletes
+during failed-reprocess reconciliation. The original follow-up gap was that the
+whole-document path recorded all requested keys only after the wrapper returned,
+and the version-specific path recorded no receipts and used an invalid `actions`
+keyword in place of the SDK's required `documents` argument.
 
 Authoritative counts carry `indexed_chunk_count_version`, bound to the source
 version. A new processing attempt invalidates that binding until its actual
@@ -113,6 +125,14 @@ screening holds, safe lookup errors, request/ETag-bound detail revalidation,
 known zero versus unknown, Redis cache hits and invalidation in all three scopes,
 and installed-SDK conditional Cosmos writes.
 
+The deletion follow-up executes both real delete entry points and the shared
+write boundary with SDK `IndexingResult` receipts from an offline Search double.
+It covers successful, failed, missing and unrelated receipts, cleanup exceptions,
+and stale visibility in every workspace scope. Reprocess regressions now use
+the real whole-document delete function rather than a replacement, including
+partial-delete and cleanup-failure reconciliation. Deletion-path tests no longer
+call the receipt recorder directly to simulate a completed delete.
+
 The existing workspace metadata, Search projection, group read, OneNote dispatch,
 processing status and screening suites protect related behavior. The group read
 regression verifies that pending shares and held content do not query Search for
@@ -127,7 +147,9 @@ Recorded local results:
 
 | Check | Result |
 | --- | --- |
-| Final bookkeeping suite, including release-proof and fence-cleanup failure cases | 106 passed. |
+| Initial 0.261.400 bookkeeping suite, including release-proof and fence-cleanup failure cases | 106 passed. |
+| 0.261.401 real deletion entry points and failed-reprocess cases | 51 passed normally; 51 passed under optimized Python. |
+| 0.261.401 complete bookkeeping and existing Search/fence/projection consumer suites | 232 passed; four subtests passed. |
 | Broad metadata, scoped reads, status predicates, OneNote and projection regression pass | 484 passed; 15 subtests passed. |
 | Screening, source-read and group/public fixture parity | 272 passed; 50 subtests passed; three pre-existing model-fixture cases excluded. |
 | Final strict count policy and fence-cleanup cases under optimized Python | 11 passed. |

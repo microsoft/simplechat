@@ -274,6 +274,10 @@ def _execute_document_search_write(
             results = list(getattr(search_client, operation_name)(*args, **kwargs))
             if vector_write:
                 record_chunk_uploads(search_client, documents, results)
+            if operation_name == "delete_documents":
+                record_chunk_deletions(
+                    search_client, (document["id"] for document in documents), results,
+                )
     if not _search_indexing_results_succeeded(results):
         raise RuntimeError(
             f"Azure AI Search did not acknowledge every {operation_name} document mutation."
@@ -7026,14 +7030,11 @@ def delete_document_chunks(document_id, group_id=None, public_workspace_id=None)
             return
 
         documents_to_delete = [{"id": doc_id} for doc_id in ids_to_delete]
-        batch = IndexDocumentsBatch()
-        batch.add_delete_actions(documents_to_delete)
-        result = _execute_document_search_write(
+        _execute_document_search_write(
             search_client,
-            "index_documents",
-            batch,
+            "delete_documents",
+            documents=documents_to_delete,
         )
-        record_chunk_deletions(search_client, ids_to_delete)
     except Exception as e:
         raise
 
@@ -7047,7 +7048,7 @@ def delete_document_version_chunks(document_id, version, group_id=None, public_w
     _execute_document_search_write(
         search_client,
         "delete_documents",
-        actions=[
+        documents=[
             {"@search.action": "delete", "id": chunk['id']} for chunk in
             search_client.search(
                 search_text="*",

@@ -54,15 +54,19 @@ def end_chunk_tracking(token):
     _chunk_writes.reset(token)
 
 
-def record_chunk_uploads(search_client, documents, results):
-    writes = _chunk_writes.get()
-    if writes is None:
-        return
-    succeeded_keys = {
+def _acknowledged_chunk_keys(results):
+    return {
         result.get("key") if isinstance(result, dict) else result.key
         for result in results
         if (result.get("succeeded", False) if isinstance(result, dict) else result.succeeded)
     }
+
+
+def record_chunk_uploads(search_client, documents, results):
+    writes = _chunk_writes.get()
+    if writes is None:
+        return
+    succeeded_keys = _acknowledged_chunk_keys(results)
     for document in documents:
         if document["id"] in succeeded_keys:
             writes[(id(search_client), document["id"])] = {
@@ -71,11 +75,13 @@ def record_chunk_uploads(search_client, documents, results):
             }
 
 
-def record_chunk_deletions(search_client, keys):
+def record_chunk_deletions(search_client, keys, results):
     writes = _chunk_writes.get()
     if writes is not None:
+        succeeded_keys = _acknowledged_chunk_keys(results)
         for key in keys:
-            writes[(id(search_client), key)] = None
+            if key in succeeded_keys:
+                writes[(id(search_client), key)] = None
 
 
 def count_indexed_chunks(search_client, document_id, version, scope_field, scope_value):
