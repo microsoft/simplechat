@@ -1,8 +1,9 @@
 # test_v2_document_source_selection.py
 """
 Runtime regressions for workspace-sidebar discovery and additive source admission.
-Version: 0.261.395
+Version: 0.261.400
 Implemented in: 0.261.395
+Real configuration container naming covered in: 0.261.400
 
 Real contract/discovery modules run with storage and identity boundaries replaced;
 no cloud clients or network calls are initialized.
@@ -37,7 +38,7 @@ def sources(monkeypatch):
     conversation = {"scope_locked": False}
     config = ModuleType("config")
     config.cosmos_conversations_container = SimpleNamespace(query_items=Mock(side_effect=lambda **kwargs: [conversation]))
-    for kind in ("documents", "group_documents", "public_documents"):
+    for kind in ("user_documents", "group_documents", "public_documents"):
         setattr(config, f"cosmos_{kind}_container", SimpleNamespace(query_items=Mock(return_value=[])))
     monkeypatch.setitem(sys.modules, "config", config)
     dependency(monkeypatch, "functions_settings", get_settings=lambda: settings)
@@ -143,7 +144,7 @@ def test_directory_is_independently_paged_and_finds_name_only_matches(sources):
 
 
 def test_document_matches_survive_beyond_suggestion_caps_and_pages(sources):
-    personal = sources.config.cosmos_documents_container
+    personal = sources.config.cosmos_user_documents_container
     def query_items(**kwargs):
         query = kwargs["query"]
         if "GROUP BY" in query:
@@ -164,7 +165,7 @@ def test_document_matches_survive_beyond_suggestion_caps_and_pages(sources):
 
 
 def test_discovery_failure_is_not_an_empty_success(sources):
-    sources.config.cosmos_documents_container.query_items.side_effect = RuntimeError("offline")
+    sources.config.cosmos_user_documents_container.query_items.side_effect = RuntimeError("offline")
     with pytest.raises(RuntimeError, match="offline"):
         sources.discovery.discover_document_sources("reader", sources.settings)
 
@@ -209,7 +210,7 @@ def test_shared_metadata_counts_and_document_rows_use_the_same_workspace(sources
     )
     assert result["source_total"] == 1
     assert result["documents"][0]["scope"]["id"] == "group-1"
-    personal_queries = sources.config.cosmos_documents_container.query_items.call_args_list
+    personal_queries = sources.config.cosmos_user_documents_container.query_items.call_args_list
     assert "ARRAY_CONTAINS(c.shared_user_ids, @approved_user)" in personal_queries[0].kwargs["query"]
 
 

@@ -135,4 +135,4 @@ Deleting, rejecting or screening a document again works the same way. To reflect
 - [Security settings]({{ '/admin/security/' | relative_url }})
 - [Knowledge settings]({{ '/admin/knowledge/' | relative_url }})
 - [Review approval requests]({{ '/guides/review-approval-requests/' | relative_url }})
-- [Framework specification]({{ '/explanation/features/CONTENT_SCREENING_FRAMEWORK/' | relative_url }})
+- [Framework specification](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CONTENT_SCREENING_FRAMEWORK.md)

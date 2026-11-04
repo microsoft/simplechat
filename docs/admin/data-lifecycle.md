@@ -137,10 +137,16 @@ The defaults offer the same periods in both interfaces: no automatic deletion, 1
 
 ### Document Classification {#document-classification-section}
 
+{% include media.html id="slide-document-classification" %}
+
 Classification lets people label each document with one of a fixed list of categories. The
 label shows as a coloured badge on the document, and on the conversations that cite it, so a
 reader sees how sensitive the source is before relying on an answer. Documents can be filtered
 by it.
+
+These labels support awareness and handling decisions, not permission enforcement.
+A Confidential label does not narrow workspace access, and a Public label does
+not authorize disclosure or publish the document into a public workspace.
 
 The categories are offered in the order you list them. In the new interface each category is a
 row you edit in place: its label, its colour (picked or typed as a hex value), and buttons to
@@ -168,6 +174,9 @@ With archiving on, a deleted conversation and its messages are copied to the arc
 they are removed, and a single deleted message is hidden rather than erased. Deleted messages no
 longer appear in the conversation, in search results, or in the context sent to the model.
 Archived copies are not shown to users; they are kept for compliance and audit review.
+
+Archiving is not legal hold, an immutable record store, or a tested recovery
+mechanism. Plan it separately from [Backup & Recovery]({{ '/admin/backup-recovery/' | relative_url }}).
 
 Retention follows this setting too: conversations past their period are archived before they
 are removed. Documents are always deleted permanently, whether archiving is on or off.

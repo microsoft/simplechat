@@ -14,6 +14,13 @@ accepted findings for later review. Both classic chat and React V2 keep the
 readable answer in the conversation, with a compact **Saved analysis** section
 under it. A supporting file becoming ready does not replace that answer.
 
+{% include media.html id="slide-analyze-and-compare" %}
+
+The illustration contrasts reviewing selected documents with comparing a
+baseline and targets. This guide concerns retained Analyze findings: opening
+or discussing them is not a new Analyze or Compare pass. For the comparison
+capability, see [Document Compare]({{ '/features/document-compare/' | relative_url }}).
+
 Implemented in version: **0.261.109**. Application version alignment is tracked in
 `application/single_app/config.py`.
 

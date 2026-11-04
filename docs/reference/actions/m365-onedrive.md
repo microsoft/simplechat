@@ -48,7 +48,7 @@ Cited files, and every file whose content was captured or read for an answer,
 are listed under **SharePoint & OneDrive** in the conversation's **Documents**
 pane with **Open online**. A list of files uses one line per file:
 "**File name** — OneDrive, modified Sep 1, 2026", followed by its chip. See
-[Microsoft 365 Source Citations]({{ '/explanation/features/M365_SOURCE_CITATIONS/' | relative_url }}).
+[Microsoft 365 Source Citations](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/M365_SOURCE_CITATIONS.md).
 
 ## What sharing means
 

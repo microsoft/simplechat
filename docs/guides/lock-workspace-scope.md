@@ -10,6 +10,13 @@ audience: user
 
 Workspace scope lock keeps a conversation associated with the workspace scope used for grounded chat. The chat header shows **Scope locked** when locked scope metadata exists.
 
+{% include media.html id="slide-workspace-scope-lock" %}
+
+The lock binds workspace context, not a frozen copy of its files. Documents
+can change, current permissions still apply, and configured web, Microsoft 365,
+or other actions have their own access and governance rules. It is not
+immutable storage or a universal external-tool isolation boundary.
+
 {% include media.html type="video"
                       title="Lock workspace scope in chat walkthrough"
                       poster="video-posters/guide-lock-workspace-scope.png"
@@ -17,15 +24,20 @@ Workspace scope lock keeps a conversation associated with the workspace scope us
 
 ## Why you would use this
 
-Use scope lock when a conversation should stay inside one team's documents or one workspace context. It prevents accidental drift into other accessible sources; unlock or start a new chat when you intentionally need a different source set.
+Use scope lock when grounded retrieval should stay associated with one team's documents or selected workspace context. It prevents accidental workspace drift; unlock when permitted, or start a new chat, when you intentionally need a different workspace set.
 
 ## Before you start
 
 - Workspace chat must be available through `enable_user_workspace`, `enable_group_workspaces`, or `enable_public_workspaces`.
-- Admins can enforce the lock with `enforce_workspace_scope_lock`; see [Workspaces settings]({{ '/admin/workspaces/' | relative_url }}).
+- Admins can enforce the lock with `enforce_workspace_scope_lock`; see [Chat settings]({{ '/admin/chat/' | relative_url }}).
 - You need access to the workspace documents you plan to use.
 
 ## Steps
+
+These steps use the classic **Grounded Search** controls. In V2, workspace
+and document context is selected through **Documents**; see the
+[document-source picker]({{ '/reference/chat-controls/#react-v2-document-source-picker' | relative_url }}).
+The scope boundary and enforcement policy remain separate from that interface choice.
 
 1. Open **Chat**.
 2. Select **Workspaces** to open **Grounded Search**.
@@ -62,4 +74,5 @@ The conversation continues to show the locked scope, and conflicting workspace s
 
 - [Use tags in chat]({{ '/guides/use-tags-in-chat/' | relative_url }})
 - [Fork a conversation]({{ '/guides/fork-a-conversation/' | relative_url }})
-- [Workspaces settings]({{ '/admin/workspaces/' | relative_url }})
+- [Chat settings]({{ '/admin/chat/' | relative_url }})
+- [Workspace scope lock]({{ '/features/workspace-scope-lock/' | relative_url }})

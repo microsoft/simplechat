@@ -55,7 +55,7 @@ From **0.261.399**, workspace Excel files also expose native workbook properties
 - Chat uploads are not supported; add the file to a workspace. Documents uploaded before this data was extracted need to be re-uploaded.
 - The issues list is heuristic. It is not a formal WCAG, Section 508, or PDF/UA conformance check. To apply your own rules, write them into the agent's instructions and have it compare them with the returned values.
 
-See [Document accessibility, structure, and comment extraction]({{ '/explanation/features/DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION/' | relative_url }}) for what is extracted for each file type.
+See [Document accessibility, structure, and comment extraction](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION.md) for what is extracted for each file type.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 

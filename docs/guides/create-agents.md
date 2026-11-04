@@ -88,5 +88,5 @@ Create agents around a specific job to be done, not around a vague persona. The 
 
 - [Create Your First Agent]({{ '/guides/create-your-first-agent/' | relative_url }})
 - [Admin Configuration Reference]({{ '/admin_configuration/' | relative_url }})
-- [API Reference](../reference/api_reference.md)
+- [API Reference]({{ '/reference/api_reference/' | relative_url }})
 - [ServiceNow Agent Examples]({{ '/guides/servicenow/' | relative_url }})
