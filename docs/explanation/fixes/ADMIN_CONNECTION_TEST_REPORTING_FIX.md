@@ -83,3 +83,18 @@ checks also passed.
 
 All regression coverage is local and synthetic. No live image generation,
 vault operations, settings changes, or backup operations are required.
+
+## Cold-process test diagnostics (v0.261.401)
+
+The real-route regression still uses a fresh interpreter, both import orders,
+normal and optimized Python, and its original 120-second deadline. It now emits
+named wall/CPU phases and a delayed stack every 30 seconds while running. The
+stack timer is canceled during interpreter exit hooks to avoid running it during
+finalization.
+
+Timeout failures retain the child's partial phase output and stacks instead of
+printing the entire embedded command. An exit-hook phase helps distinguish
+an import/body stall from a process-exit wait. Harness regression cases verify
+that timeouts, import failures, and incomplete child runs remain failures and that
+the four original command shapes and deadlines are preserved. These diagnostics
+do not themselves establish the cause of an intermittent timeout.
