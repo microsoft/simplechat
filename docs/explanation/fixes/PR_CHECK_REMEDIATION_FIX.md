@@ -195,9 +195,11 @@ The earlier GitHub authorization blocker is resolved. After the owner restored
 permissions, the current CLI credential was verified with repository admin,
 maintain and push access, and reading the CodeQL administrative configuration
 succeeded. No additional GitHub permission is currently needed. The remaining
-GitHub step is approved publication/promotion of the prepared changes, followed
-by the coverage-preserving settings cutover and fresh CI runs. No automatic
-account switch or token-permission expansion was performed.
+GitHub step is publication/promotion of the prepared changes, followed by the
+coverage-preserving settings cutover and fresh CI runs. Publishing an isolated
+feature branch for contract verification does not promote the workflows or
+authorize a merge or application deployment. No automatic account switch or
+token-permission expansion was performed.
 
 The older deployment-capable workflow is enabled, although no run was in
 progress at the final check. Do not update its tenant credentials before the
@@ -205,8 +207,8 @@ validation-only definition is activated: the old definition can still provision
 or deploy resources.
 
 Release-note and GitHub issue-publishing updates were not approved at the
-source-validation checkpoint and remain unchanged. No issue or remote
-publication was created.
+source-validation checkpoint and remain unchanged. No issue or pull request was
+created at that checkpoint.
 
 ## Future phase work
 
