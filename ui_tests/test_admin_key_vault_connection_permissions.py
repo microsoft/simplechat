@@ -1,8 +1,9 @@
 # test_admin_key_vault_connection_permissions.py
 """
 Classic/V2 Key Vault diagnostic workflows with Azure Playwright.
-Version: 0.261.125
+Version: 0.261.400
 Implemented in: 0.261.125
+V2 partial-result reporting added in: 0.261.400
 
 Verify draft identity selection, busy states, actionable write/cleanup errors,
 successful cleanup, and safe rendering without touching real Azure secrets.
@@ -95,4 +96,31 @@ def test_classic_configuration_guide_explains_runtime_identity_and_probe(page):
     expect(guide).to_contain_text("Key Vault Secrets Officer")
     expect(guide).to_contain_text("system-assigned identity")
     expect(guide).to_contain_text("soft-deleted metadata remains")
+    fixture.assert_clean()
+
+
+def test_v2_partial_probe_shows_checks_and_exact_cleanup_name(page):
+    fixture = V2KeyVaultFixture(page)
+    name = "simplechat-connection-test-0123456789abcdef0123456789abcdef"
+    message = (
+        f"Key Vault cleanup failed. Cleanup of temporary test secret '{name}' could not be confirmed. "
+        "An administrator should remove it if it still exists."
+    )
+    details = [
+        "List secrets: passed", "Write test secret: passed",
+        "Read-back test secret: passed", "Clean up test secret: failed",
+    ]
+    fixture.probe_response = {
+        "success": False, "error": message, "failed_stage": "cleanup",
+        "cleanup_secret_name": name,
+        "checks": {"list": "passed", "write": "passed", "read": "passed", "cleanup": "failed"},
+        "details": details,
+    }
+    fixture.probe_status = 400
+    fixture.open()
+    page.get_by_role("button", name="Test Key Vault connection", exact=True).click()
+    result = page.get_by_role("status").filter(has_text="Key Vault cleanup failed")
+    expect(result).to_contain_text(message)
+    expect(result.get_by_role("listitem")).to_have_text(details)
+    assert fixture.patches == []
     fixture.assert_clean()

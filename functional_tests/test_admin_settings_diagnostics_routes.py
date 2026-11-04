@@ -1,8 +1,9 @@
 # test_admin_settings_diagnostics_routes.py
 """
 Real-module regression coverage for administrator diagnostics and save revisions.
-Version: 0.261.125
+Version: 0.261.400
 Implemented in: 0.261.125
+Image result contracts and Key Vault cleanup reporting added in: 0.261.400
 
 Fresh processes retain the real configuration, route registration, dispatcher,
 settings store, embedding maintenance fence, and Key Vault credential factory.
@@ -52,6 +53,7 @@ with offline_app_imports(), ExitStack() as stack:
     import route_backend_v2 as v2
     from app_settings_store import AppSettingsStore
     from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, resolve_embedding_profile
+    from functions_image_api_route import ImageGenerationError
     from functions_keyvault_errors import KeyVaultSecretStorageError
     from test_ai_connection_embedding_runtime import custom_settings
     from test_app_settings_store_consistency import FakeCosmos
@@ -162,6 +164,46 @@ with offline_app_imports(), ExitStack() as stack:
         check(response.status_code == 500, "An unknown index-read failure triggered index creation")
         check(search.create_index.call_count == 0, "Creation continued after an uncertain read")
 
+    endpoints = ("/api/admin/settings/test_connection", "/api/v2/admin/settings/test-connection")
+    image_selection = {"endpoint_id": "saved-images", "model_id": "image-model", "provider": "aoai"}
+    for endpoint in endpoints:
+        for image_payload in (
+            {"test_type": "image", "selection": image_selection},
+            {"test_type": "image", "direct": {"endpoint": "https://offline.openai.azure.com", "auth_type": "managed_identity"}},
+        ):
+            before = copy.deepcopy(store.read(use_cosmos=True))
+            with patch.object(classic, "request_generated_image_source", return_value="data:image/png;base64,synthetic") as generate:
+                response = client.post(endpoint, json=image_payload)
+                body = response.get_json()
+                check(response.status_code == 200 and body.get("success") is True, str(body))
+                check(body["message"] == "Image generation connection successful", "Legacy success message changed")
+                check("synthetic" not in str(body), "Image data was returned by the connection test")
+                check(generate.call_count == 1, "The image operation was not exercised exactly once")
+                tested_settings = generate.call_args.args[0]
+                check(tested_settings["enable_image_generation"] is True, "The explicit image test was disabled")
+                if "selection" in image_payload:
+                    check(tested_settings["image_generation_model_selection"] == image_selection, "Saved binding was replaced")
+            check(store.read(use_cosmos=True) == before, "The image test changed saved settings")
+
+        for error, expected_status, expected_code in (
+            (ImageGenerationError("The image service returned no usable image.", "image_output_missing"), 502, "image_output_missing"),
+            (ImageGenerationError("Image generation was blocked by content safety policies.", "image_content_refused", 400), 400, "image_content_refused"),
+            (ImageGenerationError("The selected image service is unavailable.", "image_service_unavailable", 503), 503, "image_service_unavailable"),
+            (RuntimeError("private provider details"), 502, "image_generation_failed"),
+        ):
+            with patch.object(classic, "request_generated_image_source", side_effect=error):
+                response = client.post(endpoint, json={"test_type": "image", "selection": image_selection})
+                body = response.get_json()
+                check(response.status_code == expected_status and body.get("success") is False, str(body))
+                check(body["error_code"] == expected_code and body.get("error"), "The safe image diagnostic was lost")
+                check("private provider details" not in str(body), "Image provider details leaked")
+
+        with patch.object(classic, "_resolve_admin_settings_test_secrets", side_effect=RuntimeError("private provider details")):
+            response = client.post(endpoint, json={"test_type": "image", "selection": image_selection})
+            body = response.get_json()
+            check(response.status_code == 502 and body.get("success") is False, str(body))
+            check("private provider details" not in str(body), "Secret resolution details leaked")
+
     credential = MagicMock()
     credential.__enter__.return_value = credential
     credential.__exit__.return_value = False
@@ -169,7 +211,7 @@ with offline_app_imports(), ExitStack() as stack:
     vault = ProbeClient()
     stack.enter_context(patch.object(vault_probe, "SecretClient", return_value=vault))
     draft_id = "11111111-2222-3333-4444-555555555555"
-    for endpoint in ("/api/admin/settings/test_connection", "/api/v2/admin/settings/test-connection"):
+    for endpoint in endpoints:
         response = client.post(endpoint, json={
             "test_type": "key_vault", "vault_name": "draft-vault", "client_id": draft_id,
         })
@@ -185,6 +227,16 @@ with offline_app_imports(), ExitStack() as stack:
         check(response.status_code == 400 and body["code"] == "key_vault_write_forbidden", str(body))
         check("Key Vault Secrets Officer" in body["error"], "The failed write is not actionable")
         check(factory.call_args.kwargs["managed_identity_client_id"] is None, "Blank identity did not select the system identity")
+        vault.failures.clear()
+        vault.failures["cleanup"] = TypeError("private provider details")
+        response = client.post(endpoint, json={
+            "test_type": "key_vault", "vault_name": "draft-vault", "client_id": "",
+        })
+        body = response.get_json()
+        check(response.status_code == 400 and body["success"] is False, str(body))
+        check(body["checks"] == {"list": "passed", "write": "passed", "read": "passed", "cleanup": "failed"}, str(body))
+        check(len(body["details"]) == 4 and body["cleanup_secret_name"] in body["error"], "Partial cleanup reporting was lost")
+        check("private provider details" not in str(body), "SDK exception details leaked")
         vault.failures.clear()
 
     current_endpoint = settings["model_endpoints"][0]
