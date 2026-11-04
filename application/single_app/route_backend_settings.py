@@ -1960,7 +1960,7 @@ def _image_connection_test_error_response(exc):
         extra=image_generation_error_log_context(exc),
     )
     error_payload, status_code = image_generation_error_response(exc)
-    return jsonify(error_payload), status_code
+    return jsonify({**error_payload, 'success': False}), status_code
 
 
 def _test_image_gen_connection(payload):
@@ -1990,7 +1990,7 @@ def _test_image_gen_connection(payload):
                 'azure_apim_image_gen_subscription_key': apim.get('subscription_key'),
             }
         request_generated_image_source(settings, 'A scenic mountain at sunrise')
-        return jsonify({'message': 'Image generation connection successful'}), 200
+        return jsonify({'success': True, 'message': 'Image generation connection successful'}), 200
     except Exception as exc:
         return _image_connection_test_error_response(exc)
 

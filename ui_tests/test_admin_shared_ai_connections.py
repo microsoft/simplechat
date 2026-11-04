@@ -1,8 +1,9 @@
 # test_admin_shared_ai_connections.py
 """
 Browser coverage for independent chat/image/embedding defaults and connection availability.
-Version: 0.261.108
+Version: 0.261.400
 Implemented in: 0.261.105; embeddings added in 0.261.106
+Strict image-test response regression coverage added in: 0.261.400
 
 Exercise the real built SPA, production schema and protected API shapes without live services.
 """
@@ -137,6 +138,35 @@ def test_image_tests_require_saved_bindings_and_actual_image_success(ai_ui):
     ai_ui.reject_image_test = False
     page.get_by_role("button", name="Test image generation", exact=True).click()
     expect(page.get_by_text("The saved image model generated an image successfully.", exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize("payload,status,message", [
+    ({}, 200, "The saved image model did not return a valid result."),
+    ({"message": "Image generation connection successful"}, 200, "The saved image model did not return a valid result."),
+    ({"success": "true"}, 200, "The saved image model did not return a valid result."),
+    ({"success": 1}, 200, "The saved image model did not return a valid result."),
+    ({"success": False, "error": "The saved model did not return an image."}, 200, "The saved model did not return an image."),
+    ({"success": True, "error": "The image service is unavailable."}, 503, "The image service is unavailable."),
+])
+def test_image_test_never_infers_success_from_http_status(ai_ui, payload, status, message):
+    page = ai_ui.page
+    submissions = []
+
+    def respond(route):
+        submissions.append(route.request.post_data_json)
+        if status >= 400:
+            ai_ui.expected_http_errors += 1
+        route.fulfill(status=status, json=payload)
+
+    page.route("**/api/v2/admin/settings/test-connection", respond)
+    ai_ui.open()
+    before = copy.deepcopy(ai_ui.selections)
+    picker = page.get_by_test_id("capability-picker-image_generation")
+    picker.get_by_role("button", name="Test image generation", exact=True).click()
+    expect(picker.get_by_role("alert")).to_have_text(message)
+    expect(picker.get_by_text("The saved image model generated an image successfully.", exact=True)).to_have_count(0)
+    assert submissions == [{"test_type": "image", "selection": before["image_generation"]}]
+    assert ai_ui.selections == before and ai_ui.selection_writes == [] and ai_ui.patches == []
 
 
 def test_migration_notice_and_unknown_default_are_safe_and_actionable(ai_ui):
