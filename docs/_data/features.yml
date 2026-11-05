@@ -180,6 +180,8 @@ enhanced-citations:
   reference:
     - title: "Feature reference"
       url: /reference/features/
+    - title: "Inspect Excel workbooks"
+      url: /guides/inspect-excel-workbooks/
 chat-memory:
   name: "Chat memory"
   area: "Chat and retrieval"
@@ -533,7 +535,7 @@ tabular-analysis:
   name: "Tabular analysis"
   area: "Media and ingestion"
   audience: "End users"
-  summary: "Runs structured CSV and spreadsheet analysis with durable planning, batching, checkpoints, and response controls."
+  summary: "Runs structured CSV and spreadsheet analysis with table/range-aware headers, durable planning, batching, checkpoints, and bounded responses."
   why: "Use this when users need computed answers, grouped results, exports, or charts from spreadsheet data rather than prose guesses. The many rollout flags exist because large workbook analysis needs reliability controls for planning, retries, batching, and durable checkpoints. The Analyze All Documents target stays off and hidden because no chat or workflow screen offers it yet."
   visual_sections:
     - heading: "Compute from the intended rows, not a sample"
@@ -541,7 +543,7 @@ tabular-analysis:
         Schema inspection helps plan a calculation; the intended underlying rows
         must supply its totals and grouped results. Distinguish a computed table
         from the model's explanation and from an actual exported file. Check
-        source coverage, worksheet selection, validation notices, and limitations
+        source coverage, worksheet and table/range selection, validation notices, and limitations
         before relying on the result. The illustrated data is synthetic, not a
         benchmark or a capacity promise.
       media_id: slide-tabular-analysis

@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from xml.sax.saxutils import escape as escape_xml_text
 
+import pandas
 from azure.core import MatchConditions
 from azure.core.exceptions import ResourceExistsError
 from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
@@ -28,6 +29,7 @@ from flask import current_app, has_app_context
 from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
 from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
 from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
+from excel_workbook_reader import EXCEL_WORKBOOK_SCHEMA_VERSION, ExcelWorkbookReader
 
 from blob_container_readiness import (
     BlobContainerUnavailableError,
@@ -3165,7 +3167,7 @@ def _get_versioned_source_blob_client(source_descriptor):
     if isinstance(blob_properties, dict):
         current_etag = current_etag or str(blob_properties.get('etag') or '').strip()
     if current_etag != expected_etag:
-        raise ValueError('Source CSV changed after the export was queued')
+        raise ValueError('The tabular source changed after the computation was queued.')
     return blob_client
 
 
@@ -3581,6 +3583,41 @@ def _checkpoint_source_input_batch(run, batch_rows, source_scan_row_count):
     return _replace_claimed_run(run)
 
 
+def _iter_excel_table_source_chunks(reader, table, source_chunk_rows, source_row_offset=0):
+    """Keep only a bounded table batch, with physical worksheet provenance."""
+    columns = [column['name'] for column in table['columns']]
+    rows, physical_rows, missing = [], [], {}
+    batch_start = source_row_offset
+
+    def build_chunk():
+        frame = pandas.DataFrame(
+            rows, columns=columns, index=range(batch_start, batch_start + len(rows)),
+        )
+        frame.attrs.update({
+            'excel_table': deepcopy(table), 'excel_tables': [deepcopy(table)],
+            'excel_row_numbers': tuple(physical_rows),
+            'excel_row_table_ids': (table['id'],) * len(rows),
+            'excel_table_ranges': {table['id']: table['range']},
+            'excel_missing_formula_caches': deepcopy(missing),
+            'excel_index_offset': batch_start,
+        })
+        return frame
+
+    for physical_row, cells in reader.iter_table_rows(table):
+        ordinal = len(rows)
+        rows.append(['' if cell['value'] is None else str(cell['value']) for cell in cells])
+        physical_rows.append(physical_row)
+        for column, cell in zip(columns, cells):
+            if cell['value_status'] == 'cache_missing':
+                missing.setdefault(column, set()).add(ordinal)
+        if len(rows) >= source_chunk_rows:
+            yield build_chunk()
+            batch_start += len(rows)
+            rows, physical_rows, missing = [], [], {}
+    if rows:
+        yield build_chunk()
+
+
 def _iter_versioned_tabular_source_rows(
     source_descriptor,
     source_format,
@@ -3588,8 +3625,14 @@ def _iter_versioned_tabular_source_rows(
     resume_source_row,
     user_id=None,
 ):
+    if type(resume_source_row) is not int or resume_source_row < 0:
+        raise ValueError('The source replay cursor is invalid.')
+    source_chunk_rows = max(1, min(10000, int(source_chunk_rows or 1)))
     blob_path = str(source_descriptor.get('blob_path') or '').strip()
+    container_name = source_descriptor.get('container')
     tabular_plugin = TabularProcessingPlugin(authorized_user_id=user_id)
+    tabular_plugin._assert_blob_screening_access(container_name, blob_path)
+    assert_evidence_available(source_descriptor, user_id=user_id)
 
     if source_format == 'csv':
         source_blob_client = _get_versioned_source_blob_client(source_descriptor)
@@ -3610,52 +3653,124 @@ def _iter_versioned_tabular_source_rows(
                 tabular_plugin=tabular_plugin,
                 start_source_row=resume_source_row,
             )
-            yield from source_rows
+            for row_number, row in source_rows:
+                yield row_number, row
+        tabular_plugin._assert_blob_screening_access(container_name, blob_path)
+        _get_versioned_source_blob_client(source_descriptor)
         return
 
-    _get_versioned_source_blob_client(source_descriptor)
-    sheet_names = [
-        str(sheet_name or '').strip()
-        for sheet_name in source_descriptor.get('sheet_names') or []
-        if str(sheet_name or '').strip()
-    ]
-    if not sheet_names:
-        raise ValueError('Source-backed workbook replay requires an explicit worksheet scope')
+    if (
+        type(source_descriptor.get('version')) is not int or source_descriptor.get('version') != 2
+        or source_descriptor.get('selection_semantics') != 'excel-tables-v2'
+        or source_descriptor.get('workbook_schema_version') != EXCEL_WORKBOOK_SCHEMA_VERSION
+    ):
+        # A v1 job meant the entire worksheet with row 1 as its header. Table
+        # discovery is not an equivalent resume of that historical operation.
+        raise ValueError(
+            'This queued workbook uses legacy worksheet-header semantics. Start a new computation to select its tables explicitly.'
+        )
+    selections = source_descriptor.get('table_selections')
+    source_row_count = source_descriptor.get('source_row_count')
+    sheet_names = source_descriptor.get('sheet_names')
+    numeric_scope = source_descriptor.get('numeric_conversion_scope')
+    if (
+        not isinstance(selections, list) or not isinstance(sheet_names, list) or not sheet_names
+        or any(not isinstance(name, str) or not name for name in sheet_names)
+        or len(set(sheet_names)) != len(sheet_names)
+        or (
+            source_descriptor.get('selected_sheet') is not None
+            and source_descriptor.get('selected_sheet') not in sheet_names
+        )
+        or type(source_row_count) is not int or source_row_count < 0
+        or resume_source_row > source_row_count
+        or any(not isinstance(table, dict) for table in selections)
+        or numeric_scope not in ('table', 'sheet')
+    ):
+        raise ValueError('The saved workbook table selection or replay cursor is invalid.')
+    source_blob_client = _get_versioned_source_blob_client(source_descriptor)
+    source_bytes = source_blob_client.download_blob(
+        etag=source_descriptor.get('blob_etag'), match_condition=MatchConditions.IfNotModified,
+    ).readall()
+    if hashlib.sha256(source_bytes).hexdigest() != source_descriptor.get('source_sha256'):
+        raise ValueError('The saved workbook source identity no longer matches.')
     parsed_return_columns = tabular_plugin._parse_optional_column_list_argument(
         source_descriptor.get('return_columns')
     )
-    source_row_offset = 0
-    for sheet_name in sheet_names:
-        source_dataframe = tabular_plugin._read_tabular_blob_to_dataframe(
-            source_descriptor.get('container'),
-            blob_path,
-            sheet_name=sheet_name,
-            require_explicit_sheet=True,
+    query = validate_tabular_csv_query_expression(source_descriptor.get('query_expression'))
+    with ExcelWorkbookReader(source_bytes, extension=f'.{source_format}') as reader:
+        if any(name not in reader.sheet_names for name in sheet_names):
+            raise ValueError('The saved workbook worksheet selection is invalid.')
+        manifest = reader.build_manifest()
+        metadata = {
+            'tables': [table for sheet in manifest['sheets'] for table in sheet['tables']],
+            'tables_by_sheet': {sheet['name']: sheet['tables'] for sheet in manifest['sheets']},
+        }
+        resolved_tables = []
+        for sheet_name in sheet_names:
+            resolved_tables.extend(tabular_plugin._select_excel_tables(
+                reader, metadata, sheet_name, source_descriptor.get('table_id'),
+                source_descriptor.get('cell_range'), source_descriptor.get('header_row'),
+                allow_heterogeneous=True,
+            ))
+        selected_table = (
+            resolved_tables[0]['id'] if len(resolved_tables) == 1 else source_descriptor.get('table_id')
         )
-        source_dataframe = tabular_plugin._try_numeric_conversion(source_dataframe)
-        source_dataframe.index = range(
-            source_row_offset,
-            source_row_offset + len(source_dataframe),
-        )
-        source_row_offset += len(source_dataframe)
-        filtered_dataframe, _ = tabular_plugin._apply_query_expression_with_fallback(
-            source_dataframe,
-            query_expression=source_descriptor.get('query_expression'),
-            normalize_match=False,
-        )
-        selected_columns = [
-            column_name
-            for column_name in (parsed_return_columns or list(filtered_dataframe.columns))
-            if column_name in filtered_dataframe.columns
-        ]
-        output_records = tabular_plugin._build_row_output_records(
-            filtered_dataframe,
-            selected_columns,
-        )
-        for source_row_index, output_record in zip(filtered_dataframe.index, output_records):
-            source_row_number = int(source_row_index) + 1
-            if source_row_number > resume_source_row:
-                yield source_row_number, output_record
+        if (
+            resolved_tables != selections or selected_table != source_descriptor.get('selected_table')
+            or sum(table['row_count'] for table in resolved_tables) != source_row_count
+        ):
+            raise ValueError('The saved workbook table, range, or header selection no longer matches.')
+        numeric_columns_by_scope = {}
+        for table in resolved_tables:
+            scope_key = table['sheet'] if numeric_scope == 'sheet' else table['id']
+            columns = {column['name'] for column in table['columns']}
+            numeric_columns = numeric_columns_by_scope.setdefault(scope_key, set(columns))
+            numeric_columns.intersection_update(columns)
+            actual_rows = 0
+            for source_chunk in _iter_excel_table_source_chunks(reader, table, source_chunk_rows):
+                actual_rows += len(source_chunk)
+                for column in list(numeric_columns):
+                    try:
+                        pandas.to_numeric(source_chunk[column])
+                    except (ValueError, TypeError):
+                        numeric_columns.discard(column)
+            if actual_rows != table['row_count']:
+                raise ValueError('The saved workbook table row count no longer matches.')
+            tabular_plugin._assert_blob_screening_access(container_name, blob_path)
+            _get_versioned_source_blob_client(source_descriptor)
+        source_row_offset = 0
+        for table in resolved_tables:
+            scope_key = table['sheet'] if numeric_scope == 'sheet' else table['id']
+            numeric_columns = numeric_columns_by_scope[scope_key]
+            actual_rows = table['row_count']
+            if source_row_offset + actual_rows <= resume_source_row:
+                source_row_offset += actual_rows
+                continue
+            for source_chunk in _iter_excel_table_source_chunks(
+                reader, table, source_chunk_rows, source_row_offset,
+            ):
+                if source_chunk.index[-1] < resume_source_row:
+                    continue
+                for column in numeric_columns:
+                    source_chunk[column] = pandas.to_numeric(source_chunk[column])
+                source_chunk = source_chunk.loc[source_chunk.index >= resume_source_row]
+                filtered_chunk, _ = tabular_plugin._apply_query_expression_with_fallback(
+                    source_chunk, query_expression=query, normalize_match=False,
+                )
+                selected_columns = [
+                    column for column in (parsed_return_columns or list(filtered_chunk.columns))
+                    if column in filtered_chunk.columns
+                ]
+                records = tabular_plugin._build_row_output_records(filtered_chunk, selected_columns)
+                tabular_plugin._assert_blob_screening_access(container_name, blob_path)
+                assert_evidence_available(source_descriptor, user_id=user_id)
+                _get_versioned_source_blob_client(source_descriptor)
+                for source_row_index, record in zip(filtered_chunk.index, records):
+                    if source_descriptor.get('include_sheet_column') is True:
+                        record['_sheet'] = table['sheet']
+                    yield int(source_row_index) + 1, record
+            source_row_offset += actual_rows
+    tabular_plugin._assert_blob_screening_access(container_name, blob_path)
     _get_versioned_source_blob_client(source_descriptor)
 
 
@@ -3692,7 +3807,14 @@ def _stage_tabular_generated_output_source(run, settings):
         minimum=1,
         maximum=TABULAR_EXPORT_MAX_SOURCE_BATCH_CHARS,
     )
-    resume_source_row = _safe_int(run.get('source_scan_row_count'))
+    resume_source_row = run.get('source_scan_row_count', 0)
+    if (
+        type(resume_source_row) is not int or resume_source_row < 0
+        or resume_source_row < _safe_int(run.get('source_staged_rows'))
+    ):
+        raise ValueError('The saved source staging cursor is invalid.')
+    if _safe_int(run.get('source_staged_rows')) > expected_row_count:
+        raise ValueError('The saved source staging row count is invalid.')
     pending_rows = []
     pending_chars = 0
     last_source_row_number = resume_source_row
@@ -3705,6 +3827,11 @@ def _stage_tabular_generated_output_source(run, settings):
     )
 
     for source_row_number, source_row in source_rows:
+        if (
+            type(source_row_number) is not int or source_row_number <= last_source_row_number
+            or not isinstance(source_row, dict)
+        ):
+            raise ValueError('The source replay returned an invalid or repeated cursor.')
         source_row_text = _dump_generated_output_json(source_row)
         current_batch_row_limit = _get_tabular_source_batch_row_limit(
             source_descriptor,
@@ -3760,7 +3887,21 @@ def _stage_tabular_generated_output_source(run, settings):
         ))
         if not isinstance(batch_rows, list):
             raise ValueError(f'Source input checkpoint {batch_number}/{staged_batch_count} was not a JSON array')
+        expected_rows = _prepare_tabular_source_rows(
+            batch_rows, start_row=sum(staged_chunk_row_counts), token_namespace=run.get('id'),
+        )
+        for row, expected in zip(batch_rows, expected_rows):
+            if not isinstance(row, dict) or any(
+                row.get(field) != expected[field] for field in (
+                    TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD,
+                    TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD,
+                    TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD,
+                )
+            ):
+                raise ValueError('A source input checkpoint has invalid row identity or order.')
         staged_chunk_row_counts.append(len(batch_rows))
+    if sum(staged_chunk_row_counts) != staged_row_count:
+        raise ValueError('The source input checkpoints do not match the staged row count.')
 
     chunk_manifest = _write_chunk_manifest_for_run(
         run.get('user_id'),

@@ -9,6 +9,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from pathlib import Path
+from typing import Callable
 
 from content_screening.contracts import (
     CONTENT_METADATA_FIELDS,
@@ -43,6 +44,8 @@ class ExtractionCapture:
     completed: bool = False
     preloaded_text: bool = False
     failure_code: str | None = None
+    artifact_storage: object | None = field(default=None, repr=False, compare=False)
+    heartbeat: Callable[[], None] | None = field(default=None, repr=False, compare=False)
 
     def _append(self, target, unit):
         self.characters += len(unit.text)

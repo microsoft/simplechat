@@ -93,6 +93,7 @@ PRIVATE_DOCUMENT_FIELDS = frozenset({
     "group_document_collaboration_operation", "document_share_details",
     "public_document_projection_writer",
     "public_document_collaboration_operation",
+    "excel_native_inventory",
     # Recomputed per request from current authorization, so a stored copy is
     # always stale. The group projection re-adds them after serialization.
     "document_actions", "document_collaboration_actions",
@@ -1068,6 +1069,23 @@ def _with_origin_kind(payload, document):
     return payload
 
 
+def _with_current_excel_metadata(payload, document):
+    metadata = payload.get("accessibility_metadata")
+    marker = document.get(SCREENING_FIELD)
+    if (
+        not isinstance(metadata, Mapping) or metadata.get("format") not in {"xlsx", "xlsm", "xls"}
+        or not isinstance(marker, Mapping)
+    ):
+        return payload
+    active = marker.get("active_blob")
+    inventory = metadata.get("inventory_storage")
+    digest = inventory.get("source_sha256") if isinstance(inventory, Mapping) else None
+    if not isinstance(active, Mapping) or not digest or active.get("content_hash") != digest:
+        payload.pop("accessibility_metadata", None)
+        payload["native_inspection_status"] = "requires_active_source_inspection"
+    return payload
+
+
 def public_document_payload(document):
     if not isinstance(document, Mapping):
         return {}
@@ -1080,7 +1098,7 @@ def public_document_payload(document):
         payload["status"] = resolve_metadata_completion_status(
             document.get("status"), document.get("metadata_extraction_status"),
         )
-        return payload
+        return _with_current_excel_metadata(payload, document)
     try:
         _require_available_metadata(document)
         config = import_module("config")
@@ -1116,7 +1134,7 @@ def public_document_payload(document):
             document.get("status"), document.get("metadata_extraction_status"),
         )
     payload["num_chunks"] = chunk_count_for_response(document)
-    return payload
+    return _with_current_excel_metadata(payload, document)
 
 
 def public_documents_payload(documents, user_id=None, *, metadata_reader=None):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for enhanced-citation tabular schema summary fallback fix.
-Version: 0.240.023
+Version: 0.261.405
 Implemented in: 0.240.023
 
 This test ensures enhanced-citation tabular uploads stay in schema-summary mode,
@@ -20,6 +20,9 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'application', 'single_app'))
 
+from excel_workbook_reader import ExcelWorkbookReader  # noqa: E402
+from functions_tabular_csv_query import read_tabular_csv  # noqa: E402
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 FUNCTIONS_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'functions_documents.py')
 CONFIG_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'config.py')
 TARGET_FUNCTIONS = {
@@ -58,6 +61,8 @@ def load_tabular_schema_helpers():
     namespace = {
         'os': os,
         'pandas': pandas,
+        'ExcelWorkbookReader': ExcelWorkbookReader,
+        'read_tabular_csv': read_tabular_csv,
     }
     exec(compile(module, FUNCTIONS_FILE, 'exec'), namespace)
     return namespace, source
@@ -137,7 +142,7 @@ def test_version_bump_applied():
 
     try:
         version = read_config_version()
-        assert version == '0.240.023', version
+        assert_app_version_at_least("0.240.023")
 
         print('✅ Config version bump passed')
         return True

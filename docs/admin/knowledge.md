@@ -190,8 +190,8 @@ there is nothing further to configure.
 
 ### Images Inside Office Files {#office-embedded-image-section}
 
-Neither extraction engine describes figures embedded in Word and PowerPoint files, so a
-chart pasted into a slide deck is invisible to search. With this on, embedded images are
+Native extraction does not describe the pixels of images embedded in Word, PowerPoint,
+or Excel files. With this on, embedded images are
 extracted from the file, analysed with whichever engine backs the selected extraction mode,
 and indexed as their own citable chunks. It works with Standard extraction as well as
 Enhanced.
@@ -312,8 +312,8 @@ already captures the surrounding structure.
 | Content Understanding Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_content_understanding_key` |
 | API Version | Default: | Not specified in defaults | `azure_content_understanding_api_version` |
 | Document Analyzer | Default: | Not specified in defaults | `azure_content_understanding_analyzer_id` |
-| Image Analyzer | Content Understanding analyzer that describes images embedded in DOCX and PPTX files, and standalone images when the document analyzer finds no text in them. Its `Summary` field is indexed as the image description. | prebuilt-imageSearch | `azure_content_understanding_image_analyzer_id` |
-| Analyze images embedded in DOCX and PPTX files | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_office_embedded_image_analysis`; capability toggle |
+| Image Analyzer | Content Understanding analyzer that describes images embedded in DOCX, PPTX, and OOXML Excel workbooks, and standalone images when the document analyzer finds no text in them. Its `Summary` field is indexed as the image description. Excel descriptions retain their worksheet/cell placements separately from saved alternative text. | prebuilt-imageSearch | `azure_content_understanding_image_analyzer_id` |
+| Analyze images embedded in DOCX, PPTX, and Excel files | Adds configured image descriptions/OCR during ingestion or reprocessing, retaining available worksheet/object anchors separately from saved alternative text. Excel support was added in 0.261.405. | On | `enable_office_embedded_image_analysis`; capability toggle |
 | Minimum Image Size (pixels) | Images narrower or shorter than this are skipped as icons or spacers. | Not specified in defaults | `office_embedded_image_min_pixels` |
 | Maximum Images Per Document | Caps per-document cost. Duplicate images are analyzed once. | Not specified in defaults | `office_embedded_image_max_per_document` |
 | Use APIM instead of direct Document Intelligence endpoint | Routes Document Intelligence calls through APIM instead of calling the service endpoint directly. | Off | `enable_document_intelligence_apim`; capability toggle |

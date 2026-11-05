@@ -169,7 +169,14 @@ from flask import Response, copy_current_request_context, g, has_request_context
 from functions_authentication import *
 from functions_search import *
 from functions_search_service import get_document_accessibility_payload, search_documents, search_relevant_tabular_candidates
-from functions_excel_accessibility import EXCEL_EVIDENCE_MARKER, is_excel_native_inspection_question
+from functions_excel_accessibility import (
+    EXCEL_EVIDENCE_MARKER,
+    build_excel_native_chat_evidence,
+    excel_native_question_sections,
+    has_excel_native_inspection_intent,
+    is_excel_native_inspection_question,
+    merge_excel_native_evidence,
+)
 from functions_accessibility import format_accessibility_metadata_for_chat
 from functions_public_workspaces import resolve_public_chat_workspace_ids
 from public_chat_scope_state import aggregate_public_workspace_ids
@@ -13993,41 +14000,52 @@ def _execute_excel_native_inspection_evidence(
             'active_group_ids': [source['group_id']] if source.get('group_id') else None,
             'active_public_workspace_id': source.get('public_workspace_id'),
         }
+        sections = excel_native_question_sections(question)
         report = get_document_accessibility_payload(
-            source['document_id'], user_id, conversation_id=conversation_id, **scope,
+            source['document_id'], user_id, conversation_id=conversation_id,
+            native_section=sections[0], _native_max_bytes=10000, **scope,
         )
         metadata = report.get('accessibility_metadata') or {}
         if metadata.get('format') not in ('xlsx', 'xlsm', 'xls'):
             raise ValueError('This source has no native Excel inspection metadata')
-        summary = format_accessibility_metadata_for_chat({
-            **metadata, 'style_inventory': report.get('style_inventory') or {},
-        })
-        reference = annotate_document_search_payload(
-            {'document': report['document']}, 'get_document_accessibility_report',
-        )
-        excerpts = search_documents(
-            query=f"Excel native inspection {question}", user_id=user_id,
-            document_ids=[source['document_id']], top_n=5, **scope,
-        )
-        native_results = [
-            item for item in excerpts.get('results', [])
-            if EXCEL_EVIDENCE_MARKER in str(item.get('chunk_text') or '')
-        ]
-        excerpts = annotate_document_search_payload({'results': native_results}, 'search_documents')
-        text = f"{summary[:6000]}\n{reference.get('citation', '')}"
-        if len(summary) > 6000:
-            text += "\n[Parent summary shortened; request the stored report for remaining details.]"
-        for item in native_results[:3]:
-            content = str(item.get('chunk_text') or '')
-            text += f"\n\n{content[:2500]}\n{item.get('citation', '')}"
-            if len(content) > 2500:
-                text += "\n[Search excerpt shortened; request this evidence segment for remaining details.]"
-        if not native_results:
-            text += "\nNo native evidence excerpts matched this query; only the stored parent summary is available."
+        pages = []
+        if (report.get('excel_inspection') or {}).get('page'):
+            pages.append(report['excel_inspection']['page'])
+        for section in sections[1:]:
+            section_report = get_document_accessibility_payload(
+                source['document_id'], user_id, conversation_id=conversation_id,
+                native_section=section, _native_max_bytes=10000, **scope,
+            )
+            section_page = (section_report.get('excel_inspection') or {}).get('page')
+            if section_page:
+                pages.append(section_page)
+        if pages:
+            report.setdefault('excel_inspection', {})['pages'] = pages
+        reference = annotate_document_search_payload(report, 'get_document_accessibility_report')
+        native_evidence = build_excel_native_chat_evidence(reference, question)
+        text = f"{native_evidence['summary']}\n{reference.get('citation', '')}"
+        native_results = []
+        if not native_evidence['returned_records']:
+            excerpts = search_documents(
+                query=f"Excel native inspection {question}", user_id=user_id,
+                document_ids=[source['document_id']], top_n=5, **scope,
+            )
+            native_results = [
+                item for item in excerpts.get('results', [])
+                if EXCEL_EVIDENCE_MARKER in str(item.get('chunk_text') or '')
+            ]
+            excerpts = annotate_document_search_payload({'results': native_results}, 'search_documents')
+            for item in excerpts['results']:
+                content = str(item.get('chunk_text') or '')
+                addition = f"\n\n{content}\n{item.get('citation', '')}"
+                if len((text + addition).encode('utf-8')) > 16000:
+                    native_evidence['partial'] = True
+                    continue
+                text += addition
         source_citations = [{
             'tool_name': 'document_search.get_document_accessibility_report',
             'plugin_name': 'document_search', 'function_name': 'get_document_accessibility_report',
-            'function_arguments': {'document_id': source['document_id']},
+            'function_arguments': {'document_id': source['document_id'], 'native_section': sections[0]},
             'function_result': reference, 'success': True,
         }]
         if native_results:
@@ -14045,7 +14063,11 @@ def _execute_excel_native_inspection_evidence(
             'summary': text, 'citations': source_citations,
             'coverage': {
                 'execution_mode': 'native_inspection', 'worksheet_data_computed': False,
+                'worksheet_data_read': native_evidence['worksheet_data_read'],
                 'native_coverage': metadata.get('coverage'),
+                'native_records_returned': native_evidence['returned_records'],
+                'native_records_partial': native_evidence['partial'],
+                'native_next_cursor': native_evidence['next_cursor'],
                 'matched_evidence_segments': len(native_results),
             },
         }
@@ -14087,6 +14109,18 @@ def _execute_mixed_source_tabular_evidence(
             tabular_sources, user_question, user_id, conversation_id, selection_mode,
             cancel_requested=cancel_requested,
             request_correlation_id=request_correlation_id,
+        )
+    excel_native_sources = [
+        source for source in tabular_sources
+        if str(source.get('file_name') or '').lower().endswith(('.xlsx', '.xlsm', '.xls'))
+    ]
+    native_result = None
+    if excel_native_sources and has_excel_native_inspection_intent(
+        user_question, file_names=[source.get('file_name') for source in excel_native_sources],
+    ):
+        native_result = _execute_excel_native_inspection_evidence(
+            excel_native_sources, user_question, user_id, conversation_id, selection_mode,
+            cancel_requested=cancel_requested, request_correlation_id=request_correlation_id,
         )
     source_contexts = build_tabular_file_contexts_from_manifest(tabular_sources)
     if has_request_context():
@@ -14130,7 +14164,7 @@ def _execute_mixed_source_tabular_evidence(
             del source
             raise RuntimeError('Tabular processing is unavailable')
 
-        return {
+        return merge_excel_native_evidence({
             'evidence_envelopes': execute_tabular_evidence_sources(
                 tabular_sources,
                 fail_unavailable_tabular_source,
@@ -14145,7 +14179,7 @@ def _execute_mixed_source_tabular_evidence(
             'invocations': [],
             'executed': False,
             'token_usage': None,
-        }
+        }, native_result, user_question)
 
     execute_tabular = should_run_tabular_evidence(
         user_question,
@@ -14359,7 +14393,7 @@ def _execute_mixed_source_tabular_evidence(
         request_correlation_id=request_correlation_id,
         user_id=user_id,
     )
-    return {
+    return merge_excel_native_evidence({
         'evidence_envelopes': evidence_envelopes,
         'system_messages': system_messages,
         'agent_citations': agent_citations,
@@ -14367,7 +14401,7 @@ def _execute_mixed_source_tabular_evidence(
         'invocations': all_invocations,
         'executed': execute_tabular,
         'token_usage': token_usage if token_usage['request_count'] else None,
-    }
+    }, native_result, user_question)
 
 
 def _exclude_xsd_contract_sources_from_evidence(manifest, xsd_generation_contract):

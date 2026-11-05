@@ -2,8 +2,9 @@
 # test_tabular_group_blob_context_and_sheet_whitespace.py
 """
 Functional test for tabular group blob context and sheet whitespace handling.
-Version: 0.240.031
+Version: 0.261.405
 Implemented in: 0.240.031
+Request-scoped authorization fixture updated in: 0.261.405
 
 This test ensures workbook tabs with trailing whitespace still resolve
 correctly and that tabular analysis can reuse pre-resolved group blob
@@ -14,7 +15,9 @@ import asyncio
 import importlib.util
 import os
 import sys
+from unittest.mock import patch
 
+from flask import Flask, g
 import pandas as pd
 
 
@@ -148,12 +151,35 @@ def test_resolved_group_blob_override_survives_missing_group_id():
             'group-123/CCO-Legal File Plan 2025_Final Approved.xlsx',
         )
 
-        resolved_container, resolved_blob = plugin._resolve_blob_location_with_fallback(
-            'test-user',
-            'test-conversation',
-            'CCO-Legal File Plan 2025_Final Approved.xlsx',
-            'group',
-        )
+        location = ('group-documents', 'group-123/CCO-Legal File Plan 2025_Final Approved.xlsx')
+
+        def authorize_group(user_id, group_id, **kwargs):
+            assert (user_id, group_id) == ('test-user', 'group-123')
+
+        def authorize_blob(container, blob, *, purpose='native'):
+            assert (container, blob) == location
+            return None, 'test-user'
+
+        app = Flask(__name__)
+        with app.test_request_context('/'), patch.object(
+            PLUGIN_MODULE, 'get_current_user_id', return_value='test-user',
+        ), patch.object(
+            PLUGIN_MODULE, 'assert_group_role', side_effect=authorize_group,
+        ) as membership_check, patch.object(
+            PLUGIN_MODULE, 'resolve_available_blob_location',
+            side_effect=lambda container, blob, **kwargs: (container, blob),
+        ), patch.object(plugin, '_assert_blob_screening_access', side_effect=authorize_blob):
+            g.authorized_chat_context = {
+                'user_id': 'test-user', 'conversation_id': 'test-conversation',
+                'active_group_ids': ['group-123'], 'active_group_id': 'group-123',
+            }
+            resolved_container, resolved_blob = plugin._resolve_blob_location_with_fallback(
+                'test-user',
+                'test-conversation',
+                'CCO-Legal File Plan 2025_Final Approved.xlsx',
+                'group',
+            )
+            assert membership_check.call_count == 1
 
         assert resolved_container == 'group-documents', (resolved_container, resolved_blob)
         assert resolved_blob == 'group-123/CCO-Legal File Plan 2025_Final Approved.xlsx', (resolved_container, resolved_blob)

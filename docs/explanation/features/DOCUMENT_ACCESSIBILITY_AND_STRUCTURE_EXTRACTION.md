@@ -2,7 +2,8 @@
 
 **Implemented in version: 0.261.391** (formatting, style inventory, and programmatic access added in **0.261.392**)  
 **Excel implemented in version: 0.261.399**
-**Related config.py version: `0.261.399`**
+**Excel native content/table improvements implemented in version: 0.261.405**
+**Related config.py version: `0.261.405`**
 
 ## 1. Overview and Purpose
 
@@ -223,6 +224,16 @@ flowchart LR
 
 ### Excel native inspection (0.261.399)
 
+The original extraction below was expanded in **0.261.405** with canonical
+thread/reply handling, saved-cell context, streaming table discovery, and
+revision-bound full-inventory paging. See
+[Scalable Excel Native Inspection](EXCEL_NATIVE_INSPECTION.md) for current
+storage/scale behavior and the
+[comment/header fix](../fixes/EXCEL_COMMENT_CONTENT_AND_TABLE_HEADERS_FIX.md).
+Existing retained Excel originals can be inspected without re-uploading.
+The historical parent-record/style-sample limits below do not mean every
+worksheet has one table or that complete native records must fit the parent.
+
 Excel follows the same **parent metadata plus searchable native evidence** model as the other document formats without turning spreadsheet ingestion into full-data indexing. This lets users ask about the workbook itself, such as who authored it, which comments need review, whether an image has native alternative text, or what prints in a sheet's footer.
 
 `functions_excel_accessibility.py` reads modern workbook packages without saving or executing them. It follows workbook relationships to identify worksheets and chart sheets rather than assuming that a sheet's filename indicates its name or order. It also reads:
@@ -251,7 +262,7 @@ Inspection is bounded to 5,000 ZIP entries, 16 MiB per XML part, 64 MiB total XM
 
 Legacy `.xls` is inspected with the existing OLE/BIFF dependencies. Its metadata and style coverage is best effort; unavailable object, thread and header/footer details are explicitly stated. No new cloud service or dependency is required.
 
-To inspect an existing workbook, re-upload it to a personal, group or public workspace so native evidence is generated. Then ask, for example, "Show the cell notes and threaded comments", "Which objects have saved alt text?", or "What is in the first-page footer?" An agent with Document Search can request `get_document_accessibility_report` and retrieve the relevant native evidence segments for detailed findings. Chat-only uploads do not gain this workspace report.
+From 0.261.405, existing active workbook originals can be inspected on demand without re-uploading. Reprocessing can add configured image-analysis enrichment; a new upload is needed only when required originals/inventories are unavailable. Ask, for example, "Show the cell notes and threaded comments", "Which objects have saved alt text?", or "What is in the first-page footer?" An agent with Document Search can request `get_document_accessibility_report` and follow native inventory continuations for detailed findings. Chat-only uploads do not gain workspace-report access.
 
 ### Programmatic Access: `get_document_accessibility_report`
 

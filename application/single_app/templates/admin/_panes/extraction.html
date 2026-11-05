@@ -248,7 +248,7 @@
                     <div class="card p-3 mb-3 bg-body-tertiary" id="office-embedded-image-section">
                         <h6 class="mb-2"><i class="bi bi-images me-2"></i>Images Inside Office Files</h6>
                         <p class="text-muted small">
-                            Neither extraction engine describes figures inside Word and PowerPoint files. When this is on,
+                            Native extraction does not describe the pixels of images inside Word, PowerPoint, or Excel files. When this is on,
                             embedded images are pulled out of the file, analyzed with whichever engine backs the selected
                             extraction mode, and indexed as their own citable chunks. This works with Standard extraction
                             too, using Document Intelligence.
@@ -262,7 +262,7 @@
                                 {% if settings.enable_office_embedded_image_analysis %}checked{% endif %}
                             >
                             <label class="form-check-label" for="enable_office_embedded_image_analysis">
-                                Analyze images embedded in DOCX and PPTX files
+                                Analyze images embedded in DOCX, PPTX, and Excel files
                             </label>
                         </div>
                         <div class="row g-3 {% if not settings.enable_office_embedded_image_analysis %}d-none{% endif %}" id="office_embedded_image_options">

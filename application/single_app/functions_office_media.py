@@ -548,7 +548,7 @@ def _build_office_media_accessibility_map(archive):
     return media_a11y_map
 
 
-def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_pixels=150, max_images=25):
+def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_pixels=150, max_images=25, native_media_metadata=None):
     """Extract embedded images and report what was skipped and why.
 
     Without the diagnostics a document containing only unsupported figures is indistinguishable
@@ -586,6 +586,9 @@ def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_p
             media_slide_map = _build_pptx_media_slide_map(archive)
             media_word_offsets, total_body_words = build_docx_image_word_offsets(archive)
             media_a11y_map = _build_office_media_accessibility_map(archive)
+            if native_media_metadata is not None:
+                media_a11y_map.update(native_media_metadata)
+            native_seen_images = {}
             diagnostics['total_body_words'] = total_body_words
 
             candidate_names = [
@@ -626,6 +629,9 @@ def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_p
 
                 digest = hashlib.sha256(image_bytes).hexdigest()
                 if digest in seen_digests:
+                    if native_media_metadata is not None and digest in native_seen_images:
+                        placements = (media_a11y_map.get(media_name) or {}).get('placements') or []
+                        native_seen_images[digest]['placements'].extend(placements)
                     _record_skip(diagnostics, 'duplicate_image')
                     continue
 
@@ -678,17 +684,24 @@ def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_p
                     'height': height,
                     'slide_number': media_slide_map.get(media_name),
                     'word_offset': media_word_offsets.get(media_name),
-                    'position_known': media_name in media_word_offsets or media_name in media_slide_map,
+                    'position_known': media_name in media_word_offsets or media_name in media_slide_map or bool(a11y_info.get('sheet_name')),
                     'source_format': source_extension.lstrip('.'),
                     'rasterized': is_vector,
                     'embedded_text': embedded_text,
                     'alt_text': a11y_info.get('alt_text', ''),
                     'title_text': a11y_info.get('title_text', ''),
-                    'is_decorative': bool(a11y_info.get('is_decorative', False)),
+                    'is_decorative': a11y_info.get('is_decorative') if a11y_info.get('sheet_name') else bool(a11y_info.get('is_decorative', False)),
                     'placement': a11y_info.get('placement', 'inline'),
                     'allow_overlap': bool(a11y_info.get('allow_overlap', False)),
                     'behind_doc': bool(a11y_info.get('behind_doc', False)),
+                    **({
+                        'sheet_name': a11y_info.get('sheet_name'), 'cell': a11y_info.get('cell'),
+                        'object_id': a11y_info.get('object_id'), 'media_part': media_name,
+                        'placements': list(a11y_info.get('placements') or []),
+                    } if native_media_metadata is not None else {}),
                 })
+                if native_media_metadata is not None:
+                    native_seen_images[digest] = extracted_images[-1]
     except (zipfile.BadZipFile, FileNotFoundError, OSError):
         return [], diagnostics
 
@@ -1079,4 +1092,3 @@ def strip_appended_word_comments(text):
     if text.startswith(f"{WORD_COMMENTS_SECTION_HEADING}\n\n"):
         return ''
     return text
-
