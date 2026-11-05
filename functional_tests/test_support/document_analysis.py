@@ -1,7 +1,7 @@
 # document_analysis.py
 """Original-source fixtures and isolated SDK seams for the real Analyze producer.
 
-Version: 0.261.405
+Version: 0.261.407
 Implemented in: 0.261.109
 """
 

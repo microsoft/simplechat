@@ -45,6 +45,9 @@ from functions_orchestration_result_contracts import (
 )
 # The merge engine imports only the standard library, so the registry stays importable alone.
 from functions_tabular_merge import TABULAR_COLUMN_MAPPING_PROFILE
+from functions_web_iq import (
+    WebIQError, available_web_iq_types, get_web_search_provider, web_iq_policy,
+)
 
 # The schema marker every saved plan carries. A plan without it, or with the earlier value,
 # was written by the removed legacy contract and is never opened or run.
@@ -1310,6 +1313,11 @@ CAPABILITY_REGISTRY = (
             'type': 'object',
             'properties': {
                 'query': {'type': 'string', 'minLength': 1},
+                'result_types': {
+                    'type': 'array', 'minItems': 1, 'maxItems': 4, 'uniqueItems': True,
+                    'items': {'type': 'string', 'enum': ['web', 'news', 'image', 'video']},
+                    'description': 'Relevant enabled discovery types. Omit for ordinary web search.',
+                },
             },
             'required': ['query'],
             'additionalProperties': False,
@@ -1393,6 +1401,11 @@ CAPABILITY_REGISTRY = (
                     'type': 'string',
                     'minLength': 1,
                     'description': 'What to establish. Phrase it as the question to answer.',
+                },
+                'result_types': {
+                    'type': 'array', 'minItems': 1, 'maxItems': 4, 'uniqueItems': True,
+                    'items': {'type': 'string', 'enum': ['web', 'news', 'image', 'video']},
+                    'description': 'Relevant enabled discovery types within the research query budget.',
                 },
             },
             'required': ['query'],
@@ -2213,6 +2226,30 @@ def resolve_available_capabilities(
     reasons = unavailable
     available = []
     for capability in _build_capabilities(candidate_ids):
+        if capability['id'] in (CAPABILITY_WEB_SEARCH, CAPABILITY_DEEP_RESEARCH):
+            try:
+                provider = get_web_search_provider(settings)
+                types = available_web_iq_types(settings) if provider == 'web_iq' else ['web']
+                policy = web_iq_policy(settings) if provider == 'web_iq' else {}
+            except WebIQError as exc:
+                log_event('[ORCHESTRATION_REGISTRY] Invalid web discovery configuration.',
+                          level=logging.WARNING, extra={'code': exc.code})
+                continue
+            if not settings.get('enable_web_search'):
+                types = []
+            if types:
+                capability['inputs']['properties']['result_types']['items']['enum'] = types
+            else:
+                capability['inputs']['properties'].pop('result_types')
+            capability['discovery'] = {'provider': provider, 'result_types': types, 'media_policy': policy}
+            if provider == 'web_iq':
+                capability['when_to_use'] += (
+                    ' Web IQ Gather can use only advertised result_types: News for current announcements; '
+                    'Images for visual examples; Videos for tutorials and demonstrations. Select only '
+                    'types useful to this task, not all enabled endpoints. Image/video text_only returns '
+                    'descriptions and source links but prohibits thumbnails/players; with_media permits '
+                    'only media selected for the answer. Provider descriptions are not proof of viewing media.'
+                )
         dormant_setting = capability.get('dormant_unless_setting')
         if dormant_setting and settings.get(dormant_setting) is not True:
             # Not part of this deployment until an administrator turns it on, so it is skipped
@@ -2335,6 +2372,7 @@ def build_planner_capability_projection(capabilities):
             'role': capability['role'],
             'summary': capability['summary'],
             'when_to_use': capability['when_to_use'],
+            **({'discovery': deepcopy(capability['discovery'])} if 'discovery' in capability else {}),
             'inputs': capability['inputs'],
             'cost': capability['cost_class'],
             'produces': list(capability.get('produces') or ()),
@@ -2371,6 +2409,7 @@ def build_capability_client_projection(capabilities):
             'role': capability['role'],
             'summary': capability['summary'],
             'cost': capability['cost_class'],
+            **({'discovery': deepcopy(capability['discovery'])} if 'discovery' in capability else {}),
         })
     return projection
 

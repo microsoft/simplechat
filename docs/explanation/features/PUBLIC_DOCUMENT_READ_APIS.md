@@ -1,4 +1,4 @@
-# Public Document Read APIs (v0.261.405)
+# Public Document Read APIs (v0.261.407)
 
 ## Overview
 
@@ -48,7 +48,7 @@ surface, so they follow the current rule rather than the earlier precedent.
 
 ### Indexed workspace discovery
 
-Implemented in version: **0.261.405**, tracked in
+Implemented in version: **0.261.407**, tracked in
 `application/single_app/config.py`. The named workspace list, facets, tags, and
 current-document counts discover candidates through the maintained document
 access index. Current source metadata is loaded in bounded ID batches before

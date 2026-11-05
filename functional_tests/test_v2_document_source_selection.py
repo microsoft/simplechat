@@ -1,7 +1,7 @@
 # test_v2_document_source_selection.py
 """
 Runtime regressions for workspace-sidebar discovery and additive source admission.
-Version: 0.261.405
+Version: 0.261.407
 Implemented in: 0.261.395
 Real configuration container naming covered in: 0.261.400
 DAI-first discovery and source fallback implemented in: 0.261.404

@@ -1336,11 +1336,15 @@ def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
             web_search_citations_list=web_citations,
             web_search_runs_list=web_runs,
             search_context_label='chat_orchestration',
+            result_types=arguments.get('result_types'),
+            cancel_requested=cancel_requested,
             **invocation_kwargs,
         )
         invocation_kwargs['invocation_capture'].require_valid(captured=True)
     except OrchestrationExecutionStopped:
         raise
+    except MixedSourceCancellationError:
+        return _cancelled_result('Web search was cancelled.')
     except OrchestrationInvocationCancelledError:
         return _cancelled_result('Web search authorization was cancelled.')
     except (
@@ -1352,7 +1356,7 @@ def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
         run = web_runs[-1] if web_runs else None
         if (
             isinstance(run, dict) and run.get('success') is False
-            and run.get('status') in ('foundry_invocation_error', 'unexpected_error')
+            and run.get('status') in ('foundry_invocation_error', 'unexpected_error', 'web_iq_error')
         ):
             # The provider failed before anything was acquired, so nothing could be attested.
             # Report that provider failure; a retry starts a fresh capture.
@@ -1737,6 +1741,7 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
                 active_public_workspace_id=_ctx(context, 'active_public_workspace_id', None),
                 # Use the resolved current request, not the step's context-derived objective.
                 web_search_query_text=build_web_search_query_text(user_message),
+                result_types=arguments.get('result_types'),
                 system_messages_for_augmentation=[],
                 agent_citations_list=[],
                 web_search_citations_list=[],
@@ -1850,7 +1855,8 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
         return finalized
 
     citations_by_url = {citation['url']: citation for citation in search_citations}
-    citations_by_url.update({citation['url']: citation for citation in finalized['citations']})
+    for citation in finalized['citations']:
+        citations_by_url[citation['url']] = {**citation, **citations_by_url.get(citation['url'], {})}
     finalized['citations'] = list(citations_by_url.values())
     finalized['notes'] = _string_list(finalized['notes'] + search_notes)
     successful_queries = sum(item['success'] for item in query_results)

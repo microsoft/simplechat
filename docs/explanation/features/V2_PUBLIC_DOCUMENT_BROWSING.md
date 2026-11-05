@@ -5,7 +5,7 @@
 Implemented in version: **0.261.132**, tracked in
 `application/single_app/config.py`.
 
-Index-first discovery implemented in version: **0.261.405**, tracked in the
+Index-first discovery implemented in version: **0.261.407**, tracked in the
 same configuration file. Lists, facets, tags, and counts use the maintained
 access index when ready, with scoped source fallback. Current source metadata
 and permissions are still checked; this does not add a separate index

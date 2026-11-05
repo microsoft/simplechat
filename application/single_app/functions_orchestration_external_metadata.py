@@ -36,6 +36,7 @@ from functions_orchestration_result_contracts import (
     ProducerIdentity, ResultContractError, canonical_bytes, identifier,
 )
 from functions_orchestration_results import ResultUnavailableError
+from functions_web_iq import get_web_search_provider, web_iq_configuration_snapshot
 
 
 _CAPABILITIES = {
@@ -553,6 +554,9 @@ def _current_foundry(read, local, settings, *, max_completion_tokens=None):
 
 
 def _current_web(read, settings):
+    if get_web_search_provider(settings) == "web_iq":
+        read.check()
+        return _envelope("web_iq", configuration=read.call(web_iq_configuration_snapshot, settings))
     web = _mapping(settings.get("web_search_agent"))
     other = _mapping(web.get("other_settings"))
     return _current_foundry(read, other.get("azure_ai_foundry"), settings)

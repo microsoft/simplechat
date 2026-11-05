@@ -10,7 +10,7 @@ workspace selected in another tab.
 Implemented in version: **0.261.128**, recorded in
 `application/single_app/config.py`.
 
-Index-first discovery implemented in version: **0.261.405**, recorded in the
+Index-first discovery implemented in version: **0.261.407**, recorded in the
 same configuration file.
 
 This page records the M2A read foundation.

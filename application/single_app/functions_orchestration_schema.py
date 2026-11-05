@@ -55,6 +55,7 @@ from agent_execution_context import AgentDelegationTimeout
 from functions_m365_operations import M365_SOURCES
 from functions_model_catalog import ModelCatalogError
 from functions_document_analysis_results import normalize_analysis_options
+from functions_web_iq import WebIQError, get_web_search_provider, resolve_web_iq_types
 from functions_orchestration_registry import (
     APPROVAL_FLOOR_MANUAL,
     CAPABILITY_ACTION_INVOKE,
@@ -1044,6 +1045,16 @@ def validate_dependency_plan(
             if not Draft202012Validator(capability['inputs']).is_valid(arguments):
                 raise PlanValidationError('Step arguments do not match the capability contract.')
             arguments = deepcopy(arguments)
+            if capability_id in ('web_search', 'deep_research') and 'result_types' in arguments:
+                try:
+                    if get_web_search_provider(settings) == 'web_iq':
+                        resolve_web_iq_types(settings, arguments['result_types'])
+                    elif arguments['result_types'] != ['web']:
+                        raise WebIQError('result_type_disabled')
+                    if not settings.get('enable_web_search'):
+                        raise WebIQError('result_type_disabled')
+                except WebIQError as exc:
+                    raise PlanValidationError('A requested web discovery type is disabled.') from exc
             if capability_id == 'document_analyze' and 'analysis_options' in arguments:
                 try:
                     arguments['analysis_options'] = normalize_analysis_options(arguments['analysis_options'])

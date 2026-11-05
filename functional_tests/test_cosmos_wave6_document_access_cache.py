@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 6 document access Redis cache.
-Version: 0.261.405
+Version: 0.261.407
 Implemented in: 0.250.029
 DAI cache TTL default updated in: 0.250.031
 DAI version marker TTL hygiene added in: 0.250.043

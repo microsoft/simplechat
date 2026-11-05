@@ -1,4 +1,4 @@
-# Group Document Read APIs (v0.261.405)
+# Group Document Read APIs (v0.261.407)
 
 ## Overview
 
@@ -107,7 +107,7 @@ Responses are private and non-cacheable. Provider failures are logged using
 ## Read architecture and limitations
 
 `functions_group_document_reads.py` implements the strict read boundary.
-Index-first discovery was implemented in version **0.261.405**, tracked in
+Index-first discovery was implemented in version **0.261.407**, tracked in
 `application/single_app/config.py`. Explicit lists, facets, tags, and current
 document counts use the maintained document access index when its schema,
 backfill, and repair checks permit reads. They load current source metadata

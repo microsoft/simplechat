@@ -1,7 +1,7 @@
 # test_public_document_read_apis.py
 """
 Functional tests for immutable-target, read-only public workspace document APIs.
-Version: 0.261.405
+Version: 0.261.407
 Implemented in: 0.261.132
 Reader downloads: the list flag and per-document actions surface download for a reader
 when downloads are enabled for the workspace: 0.261.186

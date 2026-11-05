@@ -3,8 +3,9 @@
 """
 Functional test for the V2 chat rail scrolling as one panel, and the workflow alert notice
 hanging from the bell.
-Version: 0.261.236
+Version: 0.261.406
 Implemented in: 0.261.236
+Conversation menu cleanup implemented in: 0.261.406
 
 On the V2 chat page the rail used to keep its whole height for the navigation and the
 administrator's link groups, and the conversation list scrolled in whatever was left. With a
@@ -75,8 +76,8 @@ def test_the_chat_rail_scrolls_as_one_panel():
     assert "const showConversations = onChatPage && !collapsed;" in body, (
         "The region scrolls exactly when the conversation list is drawn: the chat page, full rail"
     )
-    assert "className={clsx('flex-1', showConversations && 'min-h-0 overflow-y-auto')}" in body, (
-        "The region must fill the rail and scroll only while the conversation list is shown"
+    assert "className={clsx('flex-1', (showConversations || mobile) && 'min-h-0 overflow-y-auto')}" in body, (
+        "The region must fill the rail and scroll for conversations or the mobile navigation drawer"
     )
 
     start, footer, region = _scroll_region(body)
@@ -192,6 +193,9 @@ def test_rows_keep_clear_of_the_held_header():
     )
     assert "header.getBoundingClientRect().bottom - target.getBoundingClientRect().top" in body
     assert "root.scrollTop -= covered + FOCUS_CLEARANCE_PX;" in body
+    assert "!root.contains(target)" in body, (
+        "Portalled action controls are not sidebar rows and must not scroll the sidebar on focus"
+    )
 
     # Neither CSS mechanism does the job here, and one of them actively harms.
     assert "scroll-mt-" not in rail, (
@@ -204,6 +208,27 @@ def test_rows_keep_clear_of_the_held_header():
     )
 
     print("Focus clearance test passed!")
+    return True
+
+
+def test_conversation_actions_escape_the_rail_and_keep_accessible_triggers():
+    """The row reuses the body popover, including a scroll boundary and mobile touch targets."""
+    rail = _read(RAIL_TSX)
+    popover = _read(V2_SRC / "components" / "ui" / "ActionPopover.tsx")
+    css = _read(V2_SRC / "styles" / "theme.css")
+
+    assert "<ActionPopover" in rail
+    assert 'placement="auto"' in rail and "boundaryRef={scrollRootRef}" in rail
+    assert "aria-expanded={menuOpen}" in rail and "aria-controls={menuOpen ? menuId : undefined}" in rail
+    assert "Reference Conversation" not in rail and "Use in current conversation" not in rail
+    assert "Use in this chat" in rail and "Send to conversation" in rail and "Copy reference" in rail
+    assert "createPortal" in popover and "document.body" in popover
+    assert "window.visualViewport" in popover and "new ResizeObserver(measure)" in popover
+    assert "panel.scrollHeight + panel.offsetHeight - panel.clientHeight" in popover
+    assert ".conversation-actions-popover button," in css
+    assert "event.currentTarget.contains(event.target)" in rail, (
+        "Portalled menu shortcuts must not change conversation selection behind the menu"
+    )
     return True
 
 
@@ -322,6 +347,7 @@ if __name__ == "__main__":
         test_the_held_header_is_marked_without_rerendering_the_list,
         test_paging_and_the_marker_watch_the_rail_region,
         test_rows_keep_clear_of_the_held_header,
+        test_conversation_actions_escape_the_rail_and_keep_accessible_triggers,
         test_the_workflow_alert_notice_hangs_from_the_bell,
         test_an_alert_that_needs_acknowledgment_takes_a_row_under_the_bell,
         test_version_is_at_least_the_implementation_version,

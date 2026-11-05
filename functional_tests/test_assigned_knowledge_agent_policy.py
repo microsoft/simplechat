@@ -1,7 +1,7 @@
 # test_assigned_knowledge_agent_policy.py
 """
 Functional test for Assigned Knowledge agent policy.
-Version: 0.261.405
+Version: 0.261.407
 Implemented in: 0.241.068
 
 This test ensures that Assigned Knowledge is normalized, constrained by

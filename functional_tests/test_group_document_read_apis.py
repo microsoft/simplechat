@@ -1,7 +1,7 @@
 # test_group_document_read_apis.py
 """
 Functional tests for explicitly scoped group document browsing.
-Version: 0.261.405
+Version: 0.261.407
 Implemented in: 0.261.128
 
 The real group read module, route registrar, group membership helpers, document

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 5A/5B document access index read path.
-Version: 0.261.405
+Version: 0.261.407
 Implemented in: 0.250.022
 Public workspace UI coverage updated in: 0.250.023
 Tag listing coverage updated in: 0.250.024

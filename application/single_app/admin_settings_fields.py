@@ -1470,11 +1470,22 @@ ADMIN_SETTINGS_FIELDS = {
     # ------------------------------------------------------------------
     "web-search-section": [
         {
+            "key": "web_search_provider",
+            "type": "select",
+            "label": "Web search provider",
+            "help": "Web IQ is available in V2 on Azure Public only. Switching providers preserves each connection.",
+            "default": "foundry",
+            "options": [
+                {"value": "foundry", "label": "Foundry · Grounding with Bing"},
+                {"value": "web_iq", "label": "Microsoft Web IQ"},
+            ],
+        },
+        {
             "key": "enable_web_search",
             "type": "switch",
-            "label": "Enable Web Search via Foundry Agent",
+            "label": "Enable Web Search",
             "help": (
-                "Routes web search queries through an Azure AI Foundry agent. Only the "
+                "Routes web search queries through the selected provider. Only the "
                 "user's current message is sent; conversation history is not."
             ),
             "default": False,
@@ -8789,6 +8800,120 @@ ADMIN_SETTINGS_FIELDS = {
 }
 
 
+# Provider-specific controls share the section without discarding inactive connections.
+for _web_field in ADMIN_SETTINGS_FIELDS["web-search-section"]:
+    if (_web_field.get("group") or {}).get("id") == "connection":
+        _web_field["depends_on"] = {
+            "all_of": [
+                _web_field.get("depends_on", {}),
+                {"key": "web_search_provider", "not_equals": "web_iq"},
+            ]
+        }
+        if _web_field.get("test_payload"):
+            _web_field["test_payload"]["web_search_provider"] = {"value": "foundry"}
+
+_WEB_IQ_DEPENDENCY = {
+    "all_of": [
+        {"key": "enable_web_search", "equals": True},
+        {"key": "web_search_provider", "equals": "web_iq"},
+    ]
+}
+_WEB_IQ_GROUP = {"id": "web-iq-connection", "label": "Web IQ connection", "variant": "connection"}
+_WEB_IQ_MEDIA_OPTIONS = [
+    {"value": "off", "label": "Off"},
+    {"value": "text_only", "label": "Text only · source links and descriptions"},
+    {"value": "with_media", "label": "With media · cited previews and source links"},
+]
+_WEB_IQ_FIELDS = [
+    {
+        "key": "web_iq_consent_accepted",
+        "type": "switch",
+        "label": "Accept Web IQ data processing terms",
+        "help": "Required separately from Foundry consent before Web IQ can send searches outside the tenant.",
+        "default": False,
+        "requires_acknowledgement": {
+            "key": "web_iq_terms_acknowledged",
+            "when": "enabled",
+            "title": "Web IQ consent required",
+            "message": (
+                "Web IQ sends the current search query to Microsoft's public Web IQ service, "
+                "outside your tenant and Azure compliance boundary. Review the applicable "
+                "Web IQ terms, data processing and residency requirements before accepting. "
+                "Foundry Grounding with Bing consent does not authorize Web IQ."
+            ),
+        },
+    },
+    {"key": "web_iq_news_enabled", "type": "switch", "label": "Include news", "default": False,
+     "help": "Allow current news sources alongside web pages."},
+    {"key": "web_iq_image_mode", "type": "select", "label": "Image results", "default": "off",
+     "options": _WEB_IQ_MEDIA_OPTIONS,
+     "help": "Previews appear only for images selected and cited in the answer."},
+    {"key": "web_iq_video_mode", "type": "select", "label": "Video results", "default": "off",
+     "options": _WEB_IQ_MEDIA_OPTIONS,
+     "help": "Cited videos open on their source page; hosted video pages are not embedded."},
+]
+for _name, _label, _type, _default in [
+    ("endpoint", "Web IQ endpoint", "text", "https://api.microsoft.ai/v3"),
+    ("authentication_type", "Authentication type", "select", "key"),
+    ("key", "Web IQ API key", "secret", ""),
+    ("tenant_id", "Tenant ID", "text", ""),
+    ("client_id", "Client ID", "text", ""),
+    ("client_secret", "Client secret", "secret", ""),
+    ("app_id", "App ID", "text", ""),
+    ("language", "Language", "text", "en"),
+    ("region", "Region", "text", "US"),
+    ("max_results", "Maximum results", "number", 10),
+    ("max_length", "Maximum result length", "number", 3000),
+]:
+    _field = {
+        "key": f"web_iq_{_name}", "type": _type, "label": _label,
+        "default": _default, "paths": [f"web_iq.{_name}"], "group": _WEB_IQ_GROUP,
+    }
+    if _name in ("endpoint", "authentication_type", "key", "tenant_id", "client_id", "client_secret", "app_id"):
+        _field["required"] = True
+    if _name == "authentication_type":
+        _field["options"] = [
+            {"value": "key", "label": "API key"},
+            {"value": "service_principal", "label": "Service principal"},
+        ]
+    if _name in ("key", "tenant_id", "client_id", "client_secret", "app_id"):
+        _field["depends_on"] = {
+            "all_of": [
+                _WEB_IQ_DEPENDENCY,
+                {"key": "web_iq_authentication_type",
+                 "equals": "key" if _name == "key" else "service_principal"},
+            ]
+        }
+    if _name == "max_results":
+        _field.update({"min": 1, "max": 50, "step": 1})
+    if _name == "max_length":
+        _field.update({"min": 1, "max": 3000, "step": 1})
+    _WEB_IQ_FIELDS.append(_field)
+
+_WEB_IQ_FIELDS.append({
+    "type": "component", "component": "connection-test", "label": "Test Web IQ",
+    "help": "Runs a web search with the draft connection. Credentials stay on the server.",
+    "test_type": "web_search",
+    "test_payload": {
+        "web_search_provider": {"value": "web_iq"},
+        "enabled": {"key": "enable_web_search"},
+        "web_iq_consent_accepted": {"key": "web_iq_consent_accepted"},
+        "query": {"value": "What is Azure AI Foundry?"},
+        **{
+            f"web_iq.{name}": {"key": f"web_iq_{name}"}
+            for name in (
+                "endpoint", "authentication_type", "key", "tenant_id", "client_id",
+                "client_secret", "app_id", "language", "region", "max_results", "max_length",
+            )
+        },
+    },
+    "group": _WEB_IQ_GROUP,
+})
+for _field in _WEB_IQ_FIELDS:
+    _field.setdefault("depends_on", _WEB_IQ_DEPENDENCY)
+ADMIN_SETTINGS_FIELDS["web-search-section"][2:2] = _WEB_IQ_FIELDS[:4]
+ADMIN_SETTINGS_FIELDS["web-search-section"].extend(_WEB_IQ_FIELDS[4:])
+
 # Maps each schema key to the field name(s) the server-rendered form submits.
 # Most match exactly and are omitted. The entries below are the places where the
 # two shapes genuinely differ, and the parity test uses them to resolve a V1
@@ -10343,7 +10468,7 @@ def _apply_nested_paths(normalized, current_settings, warnings=None):
         value = normalized.pop(key)
         root = path[0]
         if root not in containers:
-            stored = current_settings.get(root)
+            stored = normalized.get(root, current_settings.get(root))
             containers[root] = copy.deepcopy(stored) if isinstance(stored, dict) else {}
 
         node = containers[root]
@@ -10369,7 +10494,7 @@ def _apply_nested_paths(normalized, current_settings, warnings=None):
                 continue
 
             if root not in containers:
-                stored = current_settings.get(root)
+                stored = normalized.get(root, current_settings.get(root))
                 containers[root] = copy.deepcopy(stored) if isinstance(stored, dict) else {}
             write_nested_setting(containers[root], remainder, value)
 
@@ -10463,6 +10588,10 @@ def _check_acknowledgements(updates, current_settings, errors):
         key = field.get("key")
         if not acknowledgement or not key or key not in updates:
             continue
+        if key == "enable_web_search" and updates.get(
+            "web_search_provider", current_settings.get("web_search_provider", "foundry")
+        ) == "web_iq":
+            continue
 
         turning_on = _coerce_bool(updates[key])
         already_on = _coerce_bool(current_settings.get(key, False))
@@ -10501,6 +10630,27 @@ def normalize_admin_settings_updates(updates, current_settings=None):
 
         if key in NON_PATCHABLE_KEYS:
             errors[key] = NON_PATCHABLE_KEYS[key]
+            continue
+
+        if key == "web_iq":
+            if not isinstance(value, dict):
+                errors[key] = "Web IQ configuration must be an object."
+                continue
+            stored = current.get("web_iq")
+            connection = copy.deepcopy(stored) if isinstance(stored, dict) else {}
+            for name, candidate in value.items():
+                field = get_field_definition(f"web_iq_{name}")
+                if not field or not field.get("paths"):
+                    errors[key] = "Unknown Web IQ connection field."
+                    continue
+                field_value, error, warning = _normalize_field_value(f"web_iq_{name}", candidate, field)
+                if error:
+                    errors[f"web_iq_{name}"] = error
+                elif field_value is not SECRET_UNCHANGED:
+                    connection[name] = field_value
+                if warning:
+                    warnings[f"web_iq_{name}"] = warning
+            normalized[key] = connection
             continue
 
         field = get_field_definition(key)
@@ -10630,6 +10780,8 @@ def normalize_admin_settings_updates(updates, current_settings=None):
         normalized[key] = field_value
 
     _check_acknowledgements(updates, current, errors)
+    if _coerce_bool(updates.get("web_search_consent_accepted")):
+        normalized["web_search_consent_accepted"] = True
 
     # A switch turned on may bring companion values with it. Applied before the
     # checks below so they judge the state that will actually be stored.
@@ -10646,6 +10798,7 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     # Applied last so the checks above still see flat keys, which is the shape
     # they and the schema are written against.
     _apply_nested_paths(normalized, current, warnings)
+    _check_web_iq_settings(normalized, current, errors)
 
     # Same reasoning for settings that constrain each other: the pair may be edited
     # together or one at a time, so the merged state is the only thing worth
@@ -10664,6 +10817,31 @@ def normalize_admin_settings_updates(updates, current_settings=None):
         _apply_retention_schedule(normalized, current)
 
     return normalized, errors, warnings
+
+
+def _check_web_iq_settings(normalized, current, errors):
+    """Validate the merged connection without dropping inactive credentials."""
+    relevant = {
+        "web_search_provider", "enable_web_search", "web_iq", "web_iq_consent_accepted",
+        "web_iq_news_enabled", "web_iq_image_mode", "web_iq_video_mode",
+    }
+    if not relevant.intersection(normalized):
+        return
+    # Kept local: this schema is imported by isolated tools before app bootstrap.
+    from functions_web_iq import WebIQError, get_web_iq_config, web_iq_policy
+
+    merged = {**current, **normalized}
+    if merged.get("web_search_provider", "foundry") != "web_iq" and "web_iq" not in normalized:
+        return
+    try:
+        get_web_iq_config(merged)
+        web_iq_policy(merged)
+    except WebIQError as error:
+        errors["web_search_provider"] = str(error)
+    if merged.get("web_search_provider") == "web_iq" and _coerce_bool(merged.get("enable_web_search")) and not _coerce_bool(
+        merged.get("web_iq_consent_accepted")
+    ):
+        errors["web_iq_consent_accepted"] = "Accept Web IQ data processing terms before enabling Web IQ."
 
 
 def _validate_control_center_refresh_time(value):

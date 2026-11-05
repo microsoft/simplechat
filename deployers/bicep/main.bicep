@@ -284,6 +284,24 @@ var allowedIpAddressesArray = [for ip in allowedIpAddressesSplit: trim(ip)]
 
 // optional services
 
+@allowed(['preserve', 'none', 'foundry', 'web_iq'])
+@description('Missing old AZD selections preserve configured services. Foundry reuses a compatible classic project/agent.')
+param webSearchProvider string = 'preserve'
+@allowed(['create', 'reuse'])
+param webIqResourceMode string = 'create'
+param existingWebIqName string = ''
+param existingWebIqResourceGroup string = ''
+param existingWebIqSubscriptionId string = subscription().subscriptionId
+@allowed(['preserve', 'none', 'create', 'reuse'])
+param contentUnderstandingMode string = 'preserve'
+param contentUnderstandingLocation string = location
+param existingContentUnderstandingName string = ''
+param existingContentUnderstandingResourceGroup string = ''
+param existingContentUnderstandingSubscriptionId string = subscription().subscriptionId
+param contentUnderstandingModels array = []
+@description('Object ID of the deployment runner for Content Understanding defaults/readiness data-plane access.')
+param optionalServicesDeploymentPrincipalId string = ''
+
 @description('''Enable deployment of Content Safety service and related resources.
 - Default is false''')
 param deployContentSafety bool
@@ -425,6 +443,68 @@ resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
   location: location
   tags: tags
 }
+
+// Cloud incompatibility is rejected by preprovision before any external service write.
+// Direct Bicep callers must run the same preflight; resource creation never silently changes clouds.
+var createWebIq = webSearchProvider == 'web_iq' && webIqResourceMode == 'create' && scCloudEnvironment == 'public'
+var createCu = contentUnderstandingMode == 'create' && scCloudEnvironment == 'public'
+var useCu = contains(['create', 'reuse'], contentUnderstandingMode) && scCloudEnvironment == 'public'
+var cuName = contentUnderstandingMode == 'reuse' ? existingContentUnderstandingName : toLower('${appName}-${environment}-cu')
+var cuGroup = contentUnderstandingMode == 'reuse' ? existingContentUnderstandingResourceGroup : rg.name
+var cuSubscription = contentUnderstandingMode == 'reuse' && !empty(existingContentUnderstandingSubscriptionId) ? existingContentUnderstandingSubscriptionId : subscription().subscriptionId
+
+module webIq 'modules/webIq.bicep' = if (createWebIq) {
+  name: 'webIq'
+  scope: rg
+  params: {
+    accountName: toLower('${appName}-${environment}-webiq')
+    tags: tags
+  }
+}
+module contentUnderstanding 'modules/contentUnderstanding.bicep' = if (createCu) {
+  name: 'contentUnderstanding'
+  scope: rg
+  params: {
+    accountName: cuName
+    location: contentUnderstandingLocation
+    models: contentUnderstandingModels
+    tags: tags
+  }
+}
+resource existingContentUnderstanding 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = if (contentUnderstandingMode == 'reuse') {
+  name: existingContentUnderstandingName
+  scope: resourceGroup(cuSubscription, cuGroup)
+}
+module contentUnderstandingAccess 'modules/contentUnderstandingAccess.bicep' = if (useCu) {
+  name: 'contentUnderstandingAccess'
+  scope: resourceGroup(cuSubscription, cuGroup)
+  params: {
+    accountName: cuName
+    webAppName: appService.outputs.name
+    webAppResourceGroup: rg.name
+    webAppSubscriptionId: subscription().subscriptionId
+    deploymentPrincipalId: optionalServicesDeploymentPrincipalId
+  }
+  dependsOn: [contentUnderstanding]
+}
+module nativeContentUnderstandingAccess 'modules/contentUnderstandingAccess.bicep' = if (useCu && deployNativePythonWebApp) {
+  name: 'nativeContentUnderstandingAccess'
+  scope: resourceGroup(cuSubscription, cuGroup)
+  params: {
+    accountName: cuName
+    webAppName: nativeAppService.outputs.name
+    webAppResourceGroup: rg.name
+    webAppSubscriptionId: subscription().subscriptionId
+    deploymentPrincipalId: ''
+  }
+  dependsOn: [contentUnderstanding]
+}
+
+output var_webSearchProvider string = webSearchProvider
+output var_webIqResourceId string = webSearchProvider == 'web_iq' ? (createWebIq ? webIq.outputs.resourceId : resourceId(empty(existingWebIqSubscriptionId) ? subscription().subscriptionId : existingWebIqSubscriptionId, existingWebIqResourceGroup, 'Microsoft.WebIQ/accounts', existingWebIqName)) : ''
+output var_webIqOnboardingUrl string = webSearchProvider == 'web_iq' ? 'https://webiq.microsoft.ai/profiles' : ''
+output var_webIqOnboardingState string = webSearchProvider == 'web_iq' ? 'pending_admin_connection_test_and_consent' : ''
+output var_contentUnderstandingEndpoint string = useCu ? (contentUnderstandingMode == 'reuse' ? 'https://${existingContentUnderstanding.properties.customSubDomainName}.services.ai.azure.com' : contentUnderstanding.outputs.endpoint) : ''
 
 module rgDeleteLock 'modules/resourceGroupLock.bicep' = {
   scope: rg

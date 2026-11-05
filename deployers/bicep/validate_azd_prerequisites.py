@@ -499,6 +499,14 @@ def _validate_monitor_private_link(enable_private_networking: bool, enabled: boo
 
 
 def main() -> int:
+    try:
+        # Old environments have no optional selections: avoid loading new optional dependencies.
+        if os.getenv("WEB_SEARCH_PROVIDER", "preserve") not in ("preserve", "none") or os.getenv("CONTENT_UNDERSTANDING_MODE", "preserve") not in ("preserve", "none"):
+            from optional_services import preflight as optional_services_preflight
+            optional_services_preflight(dict(os.environ))
+    except (ValueError, subprocess.SubprocessError) as error:
+        print(f"Optional service preflight stopped: {error}")
+        return 1
     enable_private_networking = _to_bool(_get_env('AZURE_ENV_ENABLE_PRIVATE_NETWORKING', 'ENABLE_PRIVATE_NETWORKING'))
     enable_monitor_private_link = _to_bool(_get_env('AZURE_ENV_ENABLE_AZURE_MONITOR_PRIVATE_LINK', 'ENABLE_AZURE_MONITOR_PRIVATE_LINK'))
     existing_vnet_id = _get_env('AZURE_ENV_EXISTING_VNET_RESOURCE_ID', 'EXISTING_VNET_RESOURCE_ID').strip()

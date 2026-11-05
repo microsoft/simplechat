@@ -15,7 +15,7 @@ Updated in version: **0.241.118**
 Updated in version: **0.241.119**
 
 Index-first discovery and runtime inventory fix implemented in version:
-**0.261.405**, tracked in `application/single_app/config.py`.
+**0.261.407**, tracked in `application/single_app/config.py`.
 
 ## Overview
 

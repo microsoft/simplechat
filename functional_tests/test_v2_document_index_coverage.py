@@ -1,8 +1,8 @@
 # test_v2_document_index_coverage.py
 """
 Runtime regressions for shared V2 document access index coverage.
-Version: 0.261.405
-Implemented in: 0.261.405
+Version: 0.261.407
+Implemented in: 0.261.407
 
 Real application owners execute with network blocked. Storage point responses
 use the installed SDK CosmosDict, query rows are plain dictionaries, and the

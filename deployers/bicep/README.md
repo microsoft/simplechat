@@ -1,5 +1,191 @@
 # Deploying SimpleChat with AZD
 
+## Optional web search and Content Understanding
+
+Implemented in application version **0.261.405** (parent change in `application/single_app/config.py`),
+deployer version **1.0.37** (`deployers/version.txt`). Refs [#1887](https://github.com/microsoft/simplechat/issues/1887).
+
+Web search adds public-web evidence; Content Understanding adds model-backed document/image
+extraction. Neither is needed for the standard Document Intelligence deployment. They are
+**public Azure only**: Government and custom clouds do not offer these deployer choices.
+Incompatible explicit/noninteractive selections fail during preprovision, before service creation.
+
+### Choices and upgrades
+
+Set values in the selected AZD environment with `azd env set NAME VALUE`. The web choice is
+`WEB_SEARCH_PROVIDER=none|foundry|web_iq`; Content Understanding is
+`CONTENT_UNDERSTANDING_MODE=none|create|reuse`. Missing values default to `preserve`, so older
+environments and inactive credentials survive upgrades. `none` does not delete resources;
+web `none` explicitly disables search but retains saved provider connections. CU `none` skips
+provisioning/configuration and retains existing extraction connections.
+
+For a guided selection before the initialization script creates ACR/OpenAI:
+
+```powershell
+.\deployers\Initialize-AzureEnvironment.ps1 -ResourceGroupName <group> -AzureRegion <region> `
+    -ACRName <registry> -OpenAiName <openai> -AzdEnvironment <azd-environment> -ConfigureOptionalServices
+```
+
+The script reads and saves only the explicitly named AZD environment. Noninteractive callers
+omit `-ConfigureOptionalServices` and set the same inputs beforehand. Preprovision also validates
+the actual Azure CLI cloud, provider registration/API/location availability and resource reuse.
+CU creation checks model availability, SKU quota and resource/role-assignment permissions.
+These checks are read-only; register providers through your organization's normal approval process.
+Install the existing `deployers\bicep\requirements.txt` dependencies before using the guided
+initializer's explicit AZD-environment loading; the ordinary preprovision policy checks use
+only the Python standard library.
+
+### Web IQ billing account and pending onboarding
+
+```powershell
+azd env set WEB_SEARCH_PROVIDER web_iq
+azd env set WEB_IQ_RESOURCE_MODE create
+azd env set WEB_SEARCH_TERMS_ACKNOWLEDGED true
+azd env set WEB_IQ_SUBSCRIPTION_ELIGIBLE true
+azd env set WEB_IQ_NEWS_ENABLED false
+azd env set WEB_IQ_IMAGE_MODE off
+azd env set WEB_IQ_VIDEO_MODE off
+```
+
+Review [Web IQ terms](https://www.microsoft.com/en-us/webiq/webiq-legal) before acknowledging.
+The subscription eligibility input is your confirmation of a **paid subscription with Microsoft
+Web IQ access**, not a discovery API or a guarantee of service activation. Azure credits are not
+eligible. Microsoft documents no entitlement-discovery or portal/AppID onboarding API; subscription
+enablement may still require your Microsoft account representative.
+
+News supports `false|true` (Off/On). Images and videos each support
+`off|text_only|with_media`. Text-only allows descriptions and titled source links, not previews.
+The account is shared across result types; no separate News/Image/Video accounts are created.
+Unspecified media inputs preserve existing settings, defaulting new configurations to Off.
+
+Creation uses exactly `Microsoft.WebIQ/accounts@2026-06-01-preview`, global location,
+`WebIQ.Grounding` kind, `G3` SKU, and `statisticsEnabled=false`, as documented in the
+[official CLI deployment guide](https://learn.microsoft.com/en-us/web-iq/get-started/deploy-azure-cli).
+The stable account name is `<appName>-<environment>-webiq`; repeated runs reuse the ARM identity.
+To adopt an external account, set `WEB_IQ_RESOURCE_MODE=reuse`,
+`EXISTING_WEB_IQ_NAME`, `EXISTING_WEB_IQ_RESOURCE_GROUP`, and optionally
+`EXISTING_WEB_IQ_SUBSCRIPTION_ID`. Its kind, global location and G3 SKU are validated.
+
+Outputs contain only the account resource ID, onboarding URL and pending-state instruction.
+**Account creation does not generate runtime credentials or enable search.** Bind the resource ID
+at [Web IQ profiles](https://webiq.microsoft.ai/profiles), create credentials, and check the profile's
+Allowed Services includes the result types you want. No portal steps, AppID binding, permission
+expansion or consent are automated. Missing endpoint permissions are not empty search results.
+
+Supply credentials using existing deployment Key Vault secrets, never ARM outputs:
+`WEB_IQ_KEY_SECRET_NAME` names an API-key secret in `var_keyVaultUri`. For documented app-only Entra
+authentication, set `WEB_IQ_AUTHENTICATION_TYPE=service_principal`, `WEB_IQ_TENANT_ID`,
+`WEB_IQ_CLIENT_ID`, `WEB_IQ_APP_ID`, and `WEB_IQ_CLIENT_SECRET_SECRET_NAME`.
+The endpoint must be exactly `https://api.microsoft.ai/v3`; managed identity is not offered here.
+Optional request defaults use `WEB_IQ_LANGUAGE`, `WEB_IQ_REGION`, `WEB_IQ_MAX_RESULTS` (1–50),
+and `WEB_IQ_MAX_LENGTH` (1–3000); omitted values preserve configured values.
+The runner needs secret **get/set** permission on the actual deployment vault. Postconfig validates
+the supplied secret with `get_secret`; arbitrary names are copied into a new
+`web-iq--model-endpoint--global--<key-or-client-secret>-<UUID>` reference. Only that scoped reference,
+never the resolved credential, is published to Cosmos DB or its shared cache. Source secrets are
+never overwritten or deleted. Already-scoped supplied references are validated and retained;
+reruns reuse a staged reference when its value is unchanged. Changed values get a new immutable
+staged name, leaving earlier references intact.
+
+Postconfig enables `enable_key_vault_secret_storage` and sets `key_vault_name` from the actual
+`var_keyVaultUri`, checking `var_keyVaultName` when present. An existing different vault, an enabled
+vault without a name, or a nonpublic/mismatched vault URI fails explicitly rather than migrating
+unrelated secrets. Existing `key_vault_identity` and unrelated settings are preserved. The runtime
+identity must already have the documented vault access; supplying a custom identity does not
+grant it access automatically. Vault context is guarded against concurrent administrator edits,
+even when its values would otherwise be unchanged. A failed publication can leave an unreferenced
+staged secret; no destructive secret cleanup is attempted.
+
+Postconfig leaves new/changed Web IQ connections disabled with `web_iq_consent_accepted=false`.
+An administrator must test the connection and accept **Web IQ-specific runtime data sharing** in V2
+before enabling search. Deployment terms acknowledgement and existing Foundry consent do not
+authorize that sharing. An unchanged, already configured and consented connection is preserved
+on reruns. The emitted onboarding instruction is not a live credential/entitlement validation.
+
+### Foundry compatibility and creation limitation
+
+`WEB_SEARCH_PROVIDER=foundry` reuses a compatible classic Foundry project and existing search
+agent using `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_AGENT_ID`, and
+`WEB_SEARCH_TERMS_ACKNOWLEDGED=true`. Verify the project already has a supported agent model,
+Grounding with Bing Search connection and access for the SimpleChat app identity. New/changed
+connections remain disabled until administrator validation/consent; unchanged saved connections
+are not erased. Provisioning does not invoke the agent or claim its Bing tool was smoke-tested.
+
+**New Foundry classic project/Bing connection/agent creation is deliberately blocked.**
+[Microsoft's classic Bing grounding documentation](https://learn.microsoft.com/en-us/azure/foundry-classic/agents/how-to/tools-classic/bing-grounding)
+deprecates classic Agents for retirement on March 31, 2027 and directs new deployments to a
+different Agents API. SimpleChat's compatible classic runtime is preserved; this deployer does
+not silently migrate it or invent compatible creation APIs. Create/validate a compatible resource
+separately and use `FOUNDRY_RESOURCE_MODE=reuse`. Classic Bing grounding does not support private
+agent network endpoints, and paid/PAYG subscription and provider terms still apply.
+
+### Content Understanding models and analyzer readiness
+
+Set `CONTENT_UNDERSTANDING_MODE=create`, select an independently supported
+`CONTENT_UNDERSTANDING_LOCATION`, and set `OPTIONAL_SERVICES_DEPLOYMENT_PRINCIPAL_ID` to the
+deployment runner's object ID. Creation deploys a distinct `AIServices` S0 Foundry resource
+`<appName>-<environment>-cu`; it does not replace Document Intelligence or change its credentials.
+The deployment grants **Cognitive Services User** at the CU resource to the main app, optional
+native app, and supplied runner; resource administration roles are not granted to the app.
+
+Supply `CONTENT_UNDERSTANDING_MODELS` as a JSON array with `modelName`, `modelVersion`,
+`skuName`, and positive integer `skuCapacity`. Model deployment names match model names.
+Select versions/SKUs from the region's current catalog and quota, not the chat model defaults.
+For example, documented GA-compatible completion options include `gpt-4.1` and `gpt-4.1-mini`
+version `2025-04-14`, together with `text-embedding-3-large`; availability/capacity is subscription-
+and region-dependent. No model capacity is purchased by validation tests.
+
+`CONTENT_UNDERSTANDING_MODEL_DEFAULTS` is a JSON alias-to-deployment object containing
+`prebuilt-analyzer-completion`, `prebuilt-analyzer-completion-mini` and
+`prebuilt-analyzer-embedding`. For those model names:
+
+```json
+{
+  "prebuilt-analyzer-completion": "gpt-4.1",
+  "prebuilt-analyzer-completion-mini": "gpt-4.1-mini",
+  "prebuilt-analyzer-embedding": "text-embedding-3-large"
+}
+```
+
+Postconfig uses documented `GET/PATCH /contentunderstanding/defaults?api-version=2025-11-01`
+and `GET /contentunderstanding/analyzers/{id}`. It patches defaults only for newly owned
+resources with no conflicting mapping, rereads them, and verifies both `prebuilt-documentSearch`
+and `prebuilt-imageSearch` are `ready`, have all referenced defaults, and support the mapped
+models with successful ARM deployments. Only then does it publish CU's managed-identity
+connection settings. It never uploads a sample document or runs a paid analysis.
+
+For reuse set `CONTENT_UNDERSTANDING_MODE=reuse`,
+`EXISTING_CONTENT_UNDERSTANDING_NAME`, `EXISTING_CONTENT_UNDERSTANDING_RESOURCE_GROUP`,
+optionally `EXISTING_CONTENT_UNDERSTANDING_SUBSCRIPTION_ID`, and the resource's actual region.
+The resource must be `AIServices`; existing defaults/models are inspected, **not overwritten**.
+Cross-resource model connections are not automatically onboarded or attested: use supported
+local model deployments for automatic readiness, or configure and verify cross-resource capacity
+separately. Missing quota, default mappings, unsupported models, unready analyzers, runner RBAC,
+or network access stop settings publication rather than pretending Enhanced extraction is ready.
+
+Optional service settings use the existing revision-safe Cosmos/Redis publication. Only changed
+owned values are written. Concurrent changes to those values cause a conflict instead of
+overwriting an administrator edit; unrelated values are merged from the latest document.
+Active Redis migrations still require administrator-managed handling.
+
+References: [CU model defaults](https://learn.microsoft.com/en-us/azure/ai-services/content-understanding/concepts/models-deployments),
+[CU regions](https://learn.microsoft.com/en-us/azure/ai-services/content-understanding/language-region-support),
+[analyzer metadata API](https://learn.microsoft.com/en-us/rest/api/contentunderstanding/content-analyzers/get?view=rest-contentunderstanding-2025-11-01).
+
+### Offline validation
+
+```powershell
+az bicep build --file .\deployers\bicep\main.bicep --outfile .\deployers\bicep\main.json
+python -m pytest functional_tests\test_deployer_optional_services.py functional_tests\test_deployment_configuration.py functional_tests\test_deployer_version_tracking.py -q
+```
+
+These tests use fake services and validate policy combinations, old-environment preservation,
+pending onboarding, secret-preserving reruns, analyzer/default readiness, compiled resource shape
+and concurrent settings edits. Compilation needs a recent Bicep supporting the existing spread
+syntax; standalone Bicep 0.22 is too old, while Azure CLI Bicep 0.44.1 compiles this template.
+Live subscription entitlement, portal profile permissions and agent/analysis smoke tests remain
+administrator checks requiring an authorized Azure environment.
+
 >Strongly encourage administrators to use Visual Studio Code and Dev Containers for this deployment type.
 
 ## Table of Contents</br>

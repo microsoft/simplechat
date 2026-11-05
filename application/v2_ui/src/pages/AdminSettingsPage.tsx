@@ -932,7 +932,9 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
             if (!field.key) {
                 return;
             }
-            const acknowledgement = field.requires_acknowledgement;
+            const provider = draft.web_search_provider ?? settings.web_search_provider;
+            const acknowledgement = field.key === 'enable_web_search' && provider === 'web_iq'
+                ? undefined : field.requires_acknowledgement;
             const alreadyOn = asBoolean(settings[field.key]);
 
             if (acknowledgement && next && !alreadyOn) {
@@ -957,7 +959,7 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                 setDraft((current) => applyEnableEffect(current, settings, field, next, fieldsByKey));
             }
         },
-        [settings, setValue, fieldsByKey],
+        [settings, draft.web_search_provider, setValue, fieldsByKey],
     );
 
     const discard = useCallback(() => {

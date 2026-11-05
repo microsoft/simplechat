@@ -1,8 +1,8 @@
-# V2 document access index coverage fix (v0.261.405)
+# V2 document access index coverage fix (v0.261.407)
 
 ## Issue and root cause
 
-Fixed/Implemented in version: **0.261.405**, tracked by `VERSION` in
+Fixed/Implemented in version: **0.261.407**, tracked by `VERSION` in
 `application/single_app/config.py`.
 
 The V2 source picker was not the only document path using older queries.
@@ -114,6 +114,22 @@ patch a removed token-limit helper, and one workflow retry test in
 `test_analyze_live_write_fences.py` omits `completeness_policy` from its extracted
 namespace. All seven reproduce against an isolated, unchanged `b6c1c8acd`
 snapshot. Those pre-existing fixtures are not changed by this fix.
+
+### Base synchronization
+
+The base branch advanced to version 0.261.406 before this change merged.
+The conflict resolution retains both branches and assigns this fix version
+**0.261.407**. Its focused source/index/orchestration selection passes 95 tests;
+documentation coverage and quality checks pass 7/7 and 6/6.
+
+The base at `860c27c84` already has 39 stale Cosmos owner reviews following its
+Web IQ changes. The 30 reviews for the combined chat module are renewed only
+after verifying that storage-function ASTs and point/query/batch consumers are
+identical in both parents and the merged file, retaining owner-runtime evidence.
+The remaining nine stale owners in the untouched `functions_settings.py` and
+`deployers/bicep/postconfig.py` produce 11 inventory errors, including the
+postconfiguration owner's source-only/runtime-evidence checks. They are
+inherited base issues, not repaired or exempted by this index change.
 
 The before/after contract is index-first discovery when the maintained
 projection is usable, not elimination of current source authorization or

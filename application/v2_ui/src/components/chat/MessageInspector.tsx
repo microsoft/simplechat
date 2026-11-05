@@ -40,6 +40,8 @@ import { ChatUploadExtractionLoader } from './ChatUploadExtraction';
 import { EvidenceStatusDetails } from './EvidenceStatus';
 import { readEvidenceStatus, type EvidenceStatus } from '../../lib/evidenceStatus';
 import { readMaskState } from '../../lib/masking';
+import { WebProviderBadge } from './WebCitationCards';
+import { safeWebSourceUrl } from '../../lib/webCitations';
 
 export type InspectorSection = 'details' | 'sources' | 'reasoning';
 
@@ -235,7 +237,7 @@ function SourcesSection({ sources, evidence }: { sources: MessageSources; eviden
                             const url = String(citation.url ?? '').trim();
                             // Only http(s) is linkable; anything else is shown as text so a
                             // javascript: or data: URL can never become a live link.
-                            const safe = /^https?:\/\//i.test(url) ? url : '';
+                            const safe = safeWebSourceUrl(url);
                             const label = String(citation.title ?? '').trim() || url;
                             return (
                                 <li key={`${url}-${index}`} className="text-xs">
@@ -252,7 +254,12 @@ function SourcesSection({ sources, evidence }: { sources: MessageSources; eviden
                                             />
                                             <span className="min-w-0 flex-1 break-all">
                                                 {label}
+                                                {citation.description && <span className="mt-1 block text-text-2">{citation.description}</span>}
+                                                {citation.source_kind && citation.source_kind !== 'web' && (
+                                                    <span className="mt-1 block text-[11px] text-text-3">{citation.source_kind}</span>
+                                                )}
                                             </span>
+                                            <WebProviderBadge citation={citation} />
                                         </a>
                                     ) : (
                                         <span className="block rounded-lg bg-surface-sunken px-2.5 py-1.5 text-text-2">

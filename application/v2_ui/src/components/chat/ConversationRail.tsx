@@ -16,7 +16,7 @@
 // it carries the navigation above out of view, and the search (with the bulk bar under it)
 // is held at the top of the rail's scroll region instead of scrolling away.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
     Copy,
@@ -61,6 +61,7 @@ import {
     summarizeRemoval,
 } from '../../lib/conversationSelection';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { ActionPopover } from '../ui/ActionPopover';
 import { Skeleton } from '../ui/primitives';
 import { ConversationExportDialog } from './ConversationExportDialog';
 import { WorkflowRunningTag } from './WorkflowRunningTag';
@@ -196,6 +197,7 @@ function ConversationRow({
     conversation,
     selected,
     anySelected,
+    scrollRootRef,
     onExport,
     onRequestDelete,
     onSendToConversation,
@@ -203,6 +205,7 @@ function ConversationRow({
     conversation: Conversation;
     selected: boolean;
     anySelected: boolean;
+    scrollRootRef: RefObject<HTMLElement>;
     onExport: (conversationId: string) => void;
     onRequestDelete: (conversation: Conversation) => void;
     onSendToConversation: (source: ConversationSource) => void;
@@ -222,6 +225,12 @@ function ConversationRow({
     const [menuOpen, setMenuOpen] = useState(false);
     const [renaming, setRenaming] = useState(false);
     const [draftTitle, setDraftTitle] = useState(conversation.title);
+    const menuTriggerRef = useRef<HTMLButtonElement>(null);
+    const menuId = useId();
+    const closeMenu = useCallback((returnFocus: boolean) => {
+        setMenuOpen(false);
+        if (returnFocus) menuTriggerRef.current?.focus({ preventScroll: true });
+    }, []);
     const openPanel = useCollaborationStore((state) => state.openPanel);
     const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
     const collaborationEnabled = useBootstrapStore((state) =>
@@ -242,6 +251,9 @@ function ConversationRow({
     // legible — and it matters more here than in a table, because a plain click clears the
     // selection, so the user has to be able to see there is one to lose.
     const showCheckbox = selected || anySelected;
+    const menuRowClass =
+        'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm font-normal disabled:cursor-not-allowed disabled:opacity-40';
+    const menuItemClass = clsx(menuRowClass, 'hover:bg-surface-2');
 
     const commitRename = () => {
         const trimmed = draftTitle.trim();
@@ -349,7 +361,10 @@ function ConversationRow({
 
             <button
                 type="button"
+                ref={menuTriggerRef}
                 aria-label={`Actions for ${conversation.title || 'conversation'}`}
+                aria-expanded={menuOpen}
+                aria-controls={menuOpen ? menuId : undefined}
                 onClick={() => setMenuOpen((open) => !open)}
                 className={clsx(
                     'absolute top-1.5 right-1 rounded-md p-1 text-text-3 transition-opacity',
@@ -361,127 +376,126 @@ function ConversationRow({
             </button>
 
             {menuOpen && (
-                <>
-                    {/* Click-away layer; keeps the menu dismissible without a global listener. */}
-                    <div
-                        className="fixed inset-0 z-40"
-                        aria-hidden="true"
-                        onClick={() => setMenuOpen(false)}
-                    />
-                    <div className="glass-modal absolute top-8 right-1 z-50 w-56 rounded-xl p-1">
-                        {privateEligible && (
-                            <div className="mb-1 border-b border-edge pb-1">
-                                <button
-                                    type="button"
-                                    onClick={(event) => event.stopPropagation()}
-                                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm font-medium text-text-1 hover:bg-surface-2"
-                                >
-                                    <MessageSquare size={14} /> Reference Conversation
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={isActive || activeConversationKind === 'collaborative'}
-                                    onClick={() => {
-                                        setMenuOpen(false);
-                                        addComposerConversationReference(sourceDescriptor);
-                                    }}
-                                    className="flex w-full items-center gap-2 rounded-lg py-1.5 pr-2.5 pl-6 text-left text-xs text-text-2 hover:bg-surface-2 hover:text-text-1 disabled:cursor-not-allowed disabled:opacity-40"
-                                >
-                                    Use in current conversation
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setMenuOpen(false);
-                                        const text = portableConversationReference(
-                                            { kind: 'conversation', id: conversation.id },
-                                            window.location.origin,
-                                        );
-                                        void navigator.clipboard?.writeText(text)
-                                            .then(() => toast.success('Copied conversation reference'))
-                                            .catch(() => { /* Clipboard access can be denied. */ });
-                                    }}
-                                    className="flex w-full items-center gap-2 rounded-lg py-1.5 pr-2.5 pl-6 text-left text-xs text-text-2 hover:bg-surface-2 hover:text-text-1"
-                                >
-                                    <Copy size={12} /> Copy reference
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setMenuOpen(false);
-                                        onSendToConversation(sourceDescriptor);
-                                    }}
-                                    className="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-text-1 hover:bg-surface-2"
-                                >
-                                    <Send size={14} /> Send To Conversation
-                                </button>
-                            </div>
-                        )}
+                <ActionPopover
+                    id={menuId}
+                    label={`Actions for ${conversation.title || 'conversation'}`}
+                    anchorRef={menuTriggerRef}
+                    onClose={closeMenu}
+                    placement="auto"
+                    boundaryRef={scrollRootRef}
+                    className="conversation-actions-popover w-56 text-text-1"
+                >
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setMenuOpen(false);
+                            setRenaming(true);
+                        }}
+                        className={menuItemClass}
+                    >
+                        <Pencil size={14} /> Rename
+                    </button>
+                    {shareable && (
                         <button
                             type="button"
                             onClick={() => {
                                 setMenuOpen(false);
-                                setRenaming(true);
+                                // The panel loads its own copy of the membership into its
+                                // own slot. Loading it here as well would write the
+                                // conversation on screen's slot with a different
+                                // conversation's document.
+                                openPanel(
+                                    panelTargetForConversation(conversation.id, conversation),
+                                );
                             }}
-                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-text-1 hover:bg-surface-2"
+                            className={menuItemClass}
                         >
-                            <Pencil size={14} /> Rename
+                            <Users size={14} /> {shared ? 'People' : 'Share'}
                         </button>
-                        {shareable && (
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setMenuOpen(false);
+                            void togglePinned(conversation.id);
+                        }}
+                        className={menuItemClass}
+                    >
+                        <Pin size={14} /> {conversation.is_pinned ? 'Unpin' : 'Pin'}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setMenuOpen(false);
+                            void toggleHidden(conversation.id);
+                        }}
+                        className={menuItemClass}
+                    >
+                        <EyeOff size={14} /> Hide
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setMenuOpen(false);
+                            onExport(conversation.id);
+                        }}
+                        className={menuItemClass}
+                    >
+                        <Download size={14} /> Export
+                    </button>
+                    {privateEligible && (
+                        <div className="mt-1 border-t border-edge-strong pt-1">
                             <button
                                 type="button"
                                 onClick={() => {
                                     setMenuOpen(false);
-                                    // The panel loads its own copy of the membership into its
-                                    // own slot. Loading it here as well would write the
-                                    // conversation on screen's slot with a different
-                                    // conversation's document.
-                                    openPanel(
-                                        panelTargetForConversation(conversation.id, conversation),
-                                    );
+                                    onSendToConversation(sourceDescriptor);
                                 }}
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-text-1 hover:bg-surface-2"
+                                className={menuItemClass}
                             >
-                                <Users size={14} /> {shared ? 'People' : 'Share'}
+                                <Send size={14} /> Send to conversation
                             </button>
-                        )}
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setMenuOpen(false);
-                                void togglePinned(conversation.id);
-                            }}
-                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-text-1 hover:bg-surface-2"
-                        >
-                            <Pin size={14} /> {conversation.is_pinned ? 'Unpin' : 'Pin'}
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setMenuOpen(false);
-                                void toggleHidden(conversation.id);
-                            }}
-                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-text-1 hover:bg-surface-2"
-                        >
-                            <EyeOff size={14} /> Hide
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setMenuOpen(false);
-                                onExport(conversation.id);
-                            }}
-                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-text-1 hover:bg-surface-2"
-                        >
-                            <Download size={14} /> Export
-                        </button>
+                            <button
+                                type="button"
+                                disabled={isActive || activeConversationKind === 'collaborative'}
+                                onClick={() => {
+                                    setMenuOpen(false);
+                                    addComposerConversationReference(sourceDescriptor);
+                                }}
+                                className={menuItemClass}
+                            >
+                                <MessageSquare size={14} /> Use in this chat
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setMenuOpen(false);
+                                    const text = portableConversationReference(
+                                        { kind: 'conversation', id: conversation.id },
+                                        window.location.origin,
+                                    );
+                                    if (!navigator.clipboard?.writeText) {
+                                        toast.error('Clipboard access is unavailable in this browser.');
+                                        return;
+                                    }
+                                    void navigator.clipboard.writeText(text)
+                                        .then(() => toast.success('Copied conversation reference'))
+                                        .catch(() => toast.error('Could not copy the reference. Check clipboard permissions and try again.'));
+                                }}
+                                className={menuItemClass}
+                            >
+                                <Copy size={14} /> Copy reference
+                            </button>
+                        </div>
+                    )}
+                    <div className="mt-2 border-t border-edge-strong pt-2">
                         <button
                             type="button"
                             onClick={() => {
                                 setMenuOpen(false);
                                 onRequestDelete(conversation);
                             }}
-                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-danger hover:bg-danger-soft"
+                            className={clsx(menuRowClass, 'text-danger hover:bg-danger-soft')}
                         >
                             {/* Named for what it will actually do, through the same helper
                                 the confirmation and the request use. Only an owner can
@@ -498,7 +512,7 @@ function ConversationRow({
                             )}
                         </button>
                     </div>
-                </>
+                </ActionPopover>
             )}
         </li>
     );
@@ -701,7 +715,8 @@ export function ConversationRail({
         const header = headerRef.current;
         const root = scrollRootRef.current;
         const target = event.target;
-        if (!header || !root || !(target instanceof HTMLElement) || !target.matches(':focus-visible')) {
+        if (!header || !root || !(target instanceof HTMLElement)
+            || !root.contains(target) || !target.matches(':focus-visible')) {
             return;
         }
         const covered = header.getBoundingClientRect().bottom - target.getBoundingClientRect().top;
@@ -748,7 +763,8 @@ export function ConversationRail({
                 // control that opened it — so without this guard, Escape would dismiss the
                 // dialog *and* clear the selection behind it, losing what the user was
                 // cancelling out of.
-                if (exportRequest || pendingRemoval || handoffSource) {
+                if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)
+                    || exportRequest || pendingRemoval || handoffSource) {
                     return;
                 }
                 if (event.key === 'Escape' && anySelected) {
@@ -909,6 +925,7 @@ export function ConversationRail({
                             conversation={conversation}
                             selected={selectedIdSet.has(conversation.id)}
                             anySelected={anySelected}
+                            scrollRootRef={scrollRootRef}
                             onExport={(id) => setExportRequest({ ids: [id], skipSelection: true })}
                             onRequestDelete={(target) =>
                                 setPendingRemoval({ conversations: [target], bulk: false })

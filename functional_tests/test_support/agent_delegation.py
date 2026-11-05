@@ -1,7 +1,7 @@
 # agent_delegation.py
 """Isolated external-service seams for the real agent delegation contract.
 
-Version: 0.261.405
+Version: 0.261.407
 Implemented in: 0.261.093
 Point reads return the SDK's dictionary subclass in: 0.261.291 (#1699)
 

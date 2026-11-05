@@ -1,7 +1,8 @@
+# test_v2_media_gallery_wiring.py
 #!/usr/bin/env python3
 """
 Functional test for V2 media galleries, the media viewer and the drawer's Media section.
-Version: 0.261.262
+Version: 0.261.405
 Implemented in: 0.261.262
 
 This test ensures that:
@@ -52,7 +53,12 @@ def test_renderer_wires_galleries_without_raw_html():
     """The plugin regroups existing elements; nothing in the pipeline parses or injects HTML."""
     print("Testing the renderer wiring...")
     markdown = _read(CHAT_DIR / "AssistantMarkdown.tsx")
-    assert "rehypePlugins={[rehypeRichBlockIndex, rehypeMediaGallery, rehypeHighlightSubset]}" in markdown
+    assert re.search(
+        r"rehypePlugins=\{\[\s*rehypeRichBlockIndex,\s*"
+        r"\[rehypeWebCitationMedia, \{ citations: webCitations \}\],\s*"
+        r"rehypeMediaGallery, rehypeHighlightSubset,?\s*\]\}",
+        markdown,
+    ), "Web IQ delivery policy must run before generic media gallery discovery"
     assert "import { readMediaGallery, readMediaTileIndex, rehypeMediaGallery } from '../../lib/mediaGallery';" in markdown
     assert "const items = readMediaGallery(node);" in markdown
     assert "<MediaGallery items={items}>{children}</MediaGallery>" in markdown

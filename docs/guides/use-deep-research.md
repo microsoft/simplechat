@@ -42,6 +42,25 @@ The same deployment permissions and research limits apply. See
 [Orchestration settings]({{ '/admin/orchestration/' | relative_url }}) for how the planner
 balances evidence needs and cost.
 
+### Web IQ discovery in Gather
+
+Starting in **0.261.405**, a V2 research plan can gather relevant Web IQ News, Image,
+and Video evidence when your administrator permits those types. The planner sees the
+active provider and each delivery policy before selecting its Gather steps. News is
+useful for announcements; images can identify visual examples; videos can identify
+tutorials and demonstrations. A type being available is not a reason to call it for
+every research question.
+
+Images and Videos in **Text-only** mode still contribute descriptions and source-page
+citations, without previews. **With media** allows only selected answer media. Generated
+captions and summaries remain provider metadata, distinct from inspected page evidence.
+Additional endpoints share the discovery query/result budgets.
+
+The existing Source Review engine continues to read approved pages and follow selected
+links within page, depth, time, robots, and domain limits. URL Access uses that same
+reader; Web IQ Browse and Auto are not used. Search provenance labels the discovery
+provider, not child pages fetched by the local reader.
+
 ## Before you start
 
 - Admins must enable `enable_source_review`; deeper behavior may depend on `enable_deep_source_review`; see [Search and Extract]({{ '/admin/knowledge/' | relative_url }}).
