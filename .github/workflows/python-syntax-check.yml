@@ -28,7 +28,10 @@ jobs:
         echo "🔍 Running Python compilation checks on all .py files..."
         failed_files=()
         
-        for file in *.py; do
+        # Walk the whole tree. A single-level glob (for file in *.py) matched only
+        # the files directly in application/single_app and silently skipped every
+        # nested package, including all of semantic_kernel_plugins/.
+        while IFS= read -r -d '' file; do
           echo ""
           echo "=== Compiling $file ==="
           if python -m py_compile "$file" 2>&1; then
@@ -37,7 +40,7 @@ jobs:
             echo "✗ $file - FAILED"
             failed_files+=("$file")
           fi
-        done
+        done < <(find . -type f -name '*.py' -not -path '*/__pycache__/*' -print0 | sort -z)
         
         echo ""
         echo "================================"
