@@ -137,7 +137,7 @@ def redis_connection_signature(settings):
     )
 
 
-def persist_settings(container, original, desired, credential):
+def persist_settings(container, original, desired, credential, guarded_fields=()):
     excluded = settings_store.COSMOS_METADATA_FIELDS | {settings_store.SETTINGS_REVISION_FIELD, "public_workspace_labels"}
     updates = {
         key: copy.deepcopy(value)
@@ -165,6 +165,10 @@ def persist_settings(container, original, desired, credential):
         def merge(current):
             if {key: current.get(key) for key in REDIS_FIELDS} != before_redis:
                 raise settings_store.SettingsConflictError("Redis settings changed during deployment; reload and retry.")
+            if any(key in updates for key in guarded_fields) and any(
+                current.get(key) != original.get(key) for key in guarded_fields
+            ):
+                raise settings_store.SettingsConflictError("Optional service settings changed during deployment; reload and retry.")
             current.update(copy.deepcopy(updates))
             current.pop("public_workspace_labels", None)
             return current

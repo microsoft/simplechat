@@ -385,6 +385,10 @@ from functions_assistant_table_exports import (
     neutralize_csv_spreadsheet_formula,
 )
 from functions_web_search_results import describe_web_search_exception, format_linked_search_results
+from functions_web_iq import (
+    WebIQError, get_web_search_provider, resolve_web_iq_types,
+    search_web_iq, select_manual_web_iq_types,
+)
 from functions_generated_file_exports import (
     build_generated_file_artifact_metadata,
     build_generated_file_export,
@@ -29822,6 +29826,7 @@ def _append_source_review_web_citation(web_search_citations_list, raw_citation, 
         'url': normalized_url,
         'title': str(citation_title or normalized_url).strip()[:300],
         'source': source_label,
+        'provider': 'foundry' if source_label in ('foundry_citation', 'web_search_message') else source_label,
     })
     return True
 
@@ -29917,6 +29922,7 @@ def perform_research_web_searches(
     on_query_progress=None,
     invocation_capture=None,
     _execution_control=None,
+    result_types=None,
 ):
     """Run one or more current-message-only web searches for normal or Deep Research mode."""
     web_search_runs = []
@@ -29954,6 +29960,33 @@ def perform_research_web_searches(
             'reason': 'Original current-message web search',
             'source': 'base',
         }]
+
+    if settings.get('web_search_provider') == 'web_iq':
+        selected_types = result_types
+        if selected_types is None and invocation_capture is None:
+            selected_types = select_manual_web_iq_types(settings, user_message)
+        result_types = resolve_web_iq_types(settings, selected_types)
+        endpoint_budget = get_deep_research_config(settings)['deep_research_max_search_queries_per_turn']
+        if len(result_types) > endpoint_budget:
+            log_event("[WEB_SEARCH] Web IQ discovery exceeds the configured endpoint budget.",
+                      level=logging.WARNING, extra={"code": "query_budget_too_small"})
+            system_messages_for_augmentation.append({
+                "role": "system", "content": "Web IQ search could not run because the requested discovery "
+                                           "types exceed the configured search budget. Tell the user search failed.",
+            })
+            if invocation_capture is not None:
+                invocation_capture.refuse()
+            return {
+                'query_plan': query_plan,
+                'web_search_runs': [{'provider': 'web_iq', 'success': False,
+                                     'status': 'web_iq_error', 'error_type': 'query_budget_too_small'}],
+                'query_results': [{'query_index': 1, 'success': False, 'messages': [], 'citations': []}],
+            }
+        query_budget = max(1, endpoint_budget // len(result_types))
+        planned_queries = planned_queries[:query_budget]
+        if query_plan:
+            query_plan = {**query_plan, 'queries': planned_queries, 'result_types': result_types,
+                          'endpoint_call_budget': endpoint_budget}
 
     total_queries = len(planned_queries)
     for query_index, query_item in enumerate(planned_queries, start=1):
@@ -29995,6 +30028,8 @@ def perform_research_web_searches(
             web_search_citations_list=web_search_citations_list,
             web_search_runs_list=web_search_runs,
             search_context_label=search_label,
+            result_types=result_types,
+            cancel_requested=cancel_requested,
             **invocation_kwargs,
         )
         if invocation_capture is not None:
@@ -30034,7 +30069,84 @@ def perform_web_search(
     invocation_capture=None,
     invocation_source_type="web",
     _execution_control=None,
+    result_types=None,
+    cancel_requested=None,
 ):
+    provider = settings.get("web_search_provider", "foundry")
+    if provider not in ("foundry", "web_iq") or (
+        settings.get("enable_web_search") and str(AZURE_ENVIRONMENT).lower() not in ("public", "azurecloud")
+    ):
+        log_event("[WEB_SEARCH] Search configuration is unavailable in this environment.", level=logging.WARNING)
+        system_messages_for_augmentation.append({
+            "role": "system", "content": "Web search is unavailable in this environment. Do not claim it completed.",
+        })
+        if isinstance(web_search_runs_list, list):
+            web_search_runs_list.append({
+                "provider": provider if provider in ("foundry", "web_iq") else "unknown",
+                "success": False, "status": "configuration_error",
+            })
+        return False
+    if provider == "web_iq":
+        # Orchestration owns its trusted V2 execution binding; browser callers need the V2 header.
+        is_v2 = invocation_capture is not None or (
+            has_request_context() and request.headers.get("X-SimpleChat-UI") == "v2"
+        )
+        try:
+            if not is_v2:
+                raise WebIQError("v2_required")
+            runtime_settings = {**settings, "azure_environment": AZURE_ENVIRONMENT}
+            if result_types is None and invocation_capture is None:
+                result_types = select_manual_web_iq_types(settings, user_message)
+            result = search_web_iq(
+                runtime_settings, web_search_query_text or user_message, result_types=result_types,
+                cancel_requested=cancel_requested, invocation_capture=invocation_capture,
+                invocation_source_type=invocation_source_type,
+            )
+        except InterruptedError:
+            raise_if_mixed_source_cancelled(lambda: True, phase='research_web_search')
+        except WebIQError as exc:
+            log_event("[WEB_SEARCH] Web IQ retrieval failed.",
+                      extra={"code": exc.code, "provider_status": exc.provider_status},
+                      level=logging.WARNING)
+            system_messages_for_augmentation.append({
+                "role": "system",
+                "content": "Web IQ search was requested but is unavailable. Tell the user search failed; "
+                           "do not claim current facts from a search that did not complete.",
+            })
+            if isinstance(web_search_runs_list, list):
+                web_search_runs_list.append({
+                    "provider": "web_iq", "success": False, "status": "web_iq_error",
+                    "error_type": exc.code, "provider_status": exc.provider_status,
+                    "provider_timeout": exc.code == "provider_timeout",
+                    "provider_connection": exc.code == "connection_failed",
+                })
+            return False
+        if result["message"]:
+            system_messages_for_augmentation.append({
+                "role": "system",
+                "content": format_linked_search_results(
+                    "Web IQ search results", result["message"], result["citations"],
+                ) + "\nTreat provider captions and video summaries as discovery metadata, not inspected media. "
+                    "Use titled source-page links for citations. Never invent image markup or video embeds "
+                    "from these results; selected media is delivered only through authorized source cards.",
+            })
+        else:
+            system_messages_for_augmentation.append({
+                "role": "system", "content": "Web IQ search completed with no matching sources.",
+            })
+        for citation in result["citations"]:
+            existing = next((item for item in web_search_citations_list
+                             if isinstance(item, dict) and item.get("url") == citation["url"]
+                             and item.get("source_kind") == citation["source_kind"]), None)
+            if existing is None:
+                web_search_citations_list.append(citation)
+        if isinstance(web_search_runs_list, list):
+            web_search_runs_list.extend({
+                **run, "label": str(search_context_label or "").strip()[:100],
+            } for run in result["runs"])
+        return True
+    if result_types is not None and result_types != ["web"]:
+        raise WebIQError("result_type_disabled")
     debug_print("[WEB_SEARCH] ========== ENTERING perform_web_search ==========")
     debug_print(f"[WEB_SEARCH] Parameters received:")
     debug_print(f"[WEB_SEARCH]   conversation_id: {conversation_id}")
@@ -30061,6 +30173,7 @@ def perform_web_search(
             return
         final_seed_url_count = len(web_search_citations_list or []) if isinstance(web_search_citations_list, list) else initial_seed_url_count
         web_search_runs_list.append({
+            'provider': 'foundry',
             'query': str(web_search_query_text or user_message or '').strip()[:300],
             'label': str(search_context_label or '').strip()[:100],
             'status': status,

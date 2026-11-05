@@ -1,8 +1,9 @@
 # test_v2_sidebar_conversation_scroll.py
 """
 Browser regressions for the V2 chat rail scrolling as one panel.
-Version: 0.261.325
+Version: 0.261.406
 Implemented in: 0.261.236
+Conversation menu cleanup implemented in: 0.261.406
 
 On the chat page, the rail kept its whole height for the navigation and the administrator's
 link groups, and the conversation list scrolled in what was left: two rows in a 720px-tall
@@ -17,6 +18,8 @@ settings. No live model, deployment or workspace content is used. Screenshots of
 search in both themes are written to ui_tests/artifacts/sidebar-conversation-scroll/.
 
 Local Chromium is the default; the shared connect_options fixture supports Azure Playwright.
+Conversation action regressions cover flat labels, viewport placement, focus isolation,
+clipboard feedback, private-source eligibility, and touch targets with production CSS.
 
 Build CSS with the existing V2 build, keeping outputs in UI test artifacts:
 npm --prefix .\\application\\v2_ui run build -- --outDir ..\\..\\ui_tests\\artifacts\\orchestration-plan-editor
@@ -201,6 +204,8 @@ class RailApi:
             route.fulfill(json={"approvals": []})
         elif method == "GET" and path == "/api/user/collaboration-suggestions":
             route.fulfill(json={"results": []})
+        elif method == "GET" and path == "/api/action-credentials/pending":
+            route.fulfill(json={"success": True, "requests": []})
         elif is_pending_actions_list(method, path):
             route.fulfill(json=pending_actions_payload())
         else:
@@ -248,7 +253,7 @@ def open_page(editor_browser, editor_assets):
         assert not api.errors, f"Unexpected browser errors: {api.errors}"
 
 
-def mount(page, api, *, experience="ChatExperience", entry="/chat", rows=PAGE_SIZE, props=None):
+def mount(page, api, *, experience="ChatExperience", entry="/chat", rows=PAGE_SIZE, props=None, features=None):
     page.goto(editor_tests.ORIGIN + editor_tests.HARNESS)
     page.wait_for_function("() => Boolean(window.OrchHarness)")
     for url in api.assets:
@@ -259,7 +264,7 @@ def mount(page, api, *, experience="ChatExperience", entry="/chat", rows=PAGE_SI
             const H = window.OrchHarness;
             H.reset();
             H.stores.bootstrap.useBootstrapStore.setState({data: {
-                features: {}, settings: {},
+                features: spec.features, settings: {},
                 user: {id: 'tester', display_name: 'Riley Chen'},
                 branding: {app_title: 'Simple Chat'},
                 catalogs: {models: [], agents: [], prompts: []},
@@ -275,7 +280,7 @@ def mount(page, api, *, experience="ChatExperience", entry="/chat", rows=PAGE_SI
             }});
             H.mount('mount-a', spec.experience, spec.props, {initialEntries: [spec.entry]});
         }""",
-        {"experience": experience, "entry": entry, "props": props or {}},
+        {"experience": experience, "entry": entry, "props": props or {}, "features": features or {}},
     )
     if rows:
         expect(row_items(page)).to_have_count(rows)
@@ -555,3 +560,227 @@ def test_the_held_search_is_drawn_on_the_themes_solid_surface(open_page, theme):
 
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     page.locator("#primary-navigation").screenshot(path=str(ARTIFACTS / f"{theme}-held.png"))
+
+
+def visible_action(page, edge="bottom"):
+    """Find a fully visible trigger without asking Playwright to scroll it into view."""
+    return page.evaluate(
+        """(edge) => {
+            const region = document.querySelector('[data-rail-scroll-region]');
+            const bounds = region.getBoundingClientRect();
+            const floor = document.querySelector('[data-conversation-rail-header]').getBoundingClientRect().bottom;
+            const buttons = [...region.querySelectorAll('button[aria-label^="Actions for "]')]
+                .filter((button) => {
+                    const rect = button.getBoundingClientRect();
+                    return rect.top >= floor && rect.bottom <= bounds.bottom;
+                });
+            const button = edge === 'top' ? buttons[0] : buttons.at(-1);
+            if (!button) throw new Error('No fully visible conversation action trigger');
+            return {name: button.getAttribute('aria-label'), scrollTop: region.scrollTop};
+        }""",
+        edge,
+    )
+
+
+def menu_geometry(menu):
+    return menu.evaluate(
+        """(panel) => {
+            const box = (element) => {
+                const rect = element.getBoundingClientRect();
+                return {top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right,
+                    height: rect.height, width: rect.width};
+            };
+            const buttons = [...panel.querySelectorAll('button')].map((button) => {
+                const rect = button.getBoundingClientRect();
+                const text = [...button.childNodes].find((node) =>
+                    node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+                const range = document.createRange();
+                range.selectNodeContents(text);
+                return {
+                    ...box(button), label: button.textContent.trim(), textLeft: range.getBoundingClientRect().left,
+                    font: getComputedStyle(button).fontSize, weight: getComputedStyle(button).fontWeight,
+                    color: getComputedStyle(button).color, icon: box(button.querySelector('svg')),
+                    hit: button.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)),
+                };
+            });
+            return {box: box(panel), portalled: panel.parentElement === document.body, buttons,
+                scrollHeight: panel.scrollHeight, clientHeight: panel.clientHeight,
+                scrollTop: document.querySelector('[data-rail-scroll-region]').scrollTop,
+                viewport: {width: innerWidth, height: innerHeight}};
+        }"""
+    )
+
+
+def assert_menu_in_view(found):
+    box = found["box"]
+    assert box["left"] >= 11 and box["right"] <= found["viewport"]["width"] - 11, found
+    assert box["top"] >= 11 and box["bottom"] <= found["viewport"]["height"] - 11, found
+    assert found["portalled"], "The dropdown must escape the sidebar's clipping and containing block."
+
+
+@pytest.mark.parametrize("viewport", [DESKTOP, PHONE], ids=["desktop", "phone"])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_bottom_conversation_menu_is_flat_aligned_and_not_clipped(open_page, viewport, theme):
+    page, api = open_page(viewport)
+    mount(page, api, rows=0, features={"enable_collaborative_conversations": True})
+    if viewport == PHONE:
+        page.get_by_role("button", name="Open navigation", exact=True).click()
+    expect(row_items(page)).to_have_count(PAGE_SIZE)
+    if theme == "dark":
+        page.get_by_role("button", name="Switch to dark theme", exact=True).click()
+    wheel_rail(page, 900)
+    target = visible_action(page)
+    trigger = page.get_by_role("button", name=target["name"], exact=True)
+    trigger.click()
+    menu = page.get_by_role("group", name=target["name"], exact=True)
+    expect(menu).to_be_visible()
+    found = menu_geometry(menu)
+    assert_menu_in_view(found)
+    assert found["box"]["bottom"] <= trigger.bounding_box()["y"] - 7, found
+    assert found["scrollTop"] == target["scrollTop"], "Opening a low menu must not scroll the sidebar."
+    assert found["scrollHeight"] <= found["clientHeight"] + 1, "This viewport fits the full menu."
+    assert [button["label"] for button in found["buttons"]] == [
+        "Rename", "Share", "Pin", "Hide", "Export",
+        "Send to conversation", "Use in this chat", "Copy reference", "Delete",
+    ]
+    assert all(button["hit"] for button in found["buttons"]), "A menu action is covered by other content."
+    assert {button["weight"] for button in found["buttons"]} == {"400"}
+    assert len({button["font"] for button in found["buttons"]}) == 1
+    assert max(button["textLeft"] for button in found["buttons"]) - min(
+        button["textLeft"] for button in found["buttons"]
+    ) < 1
+    assert all(button["icon"]["width"] == 14 for button in found["buttons"])
+    assert found["buttons"][-1]["top"] - found["buttons"][-2]["bottom"] >= 12
+    assert found["buttons"][-1]["color"] != found["buttons"][0]["color"]
+    if viewport == PHONE:
+        assert all(button["height"] >= 44 for button in found["buttons"])
+
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    device = "phone" if viewport == PHONE else "desktop"
+    page.screenshot(path=str(ARTIFACTS / f"menu-{device}-{theme}.png"))
+    page.keyboard.press("End")
+    expect(menu.get_by_role("button", name="Delete", exact=True)).to_be_focused()
+    after_navigation = geometry(page)
+    assert after_navigation["region"]["scrollTop"] == target["scrollTop"]
+    page.keyboard.press("Escape")
+    expect(menu).to_have_count(0)
+    expect(trigger).to_be_focused()
+    if viewport == PHONE:
+        expect(search_box(page)).to_be_visible()
+
+
+def test_top_menu_opens_below_and_keyboard_does_not_change_selection_or_scroll(open_page):
+    page, api = open_page()
+    mount(page, api)
+    wheel_rail(page, 900)
+    target = visible_action(page, "top")
+    title = target["name"].removeprefix("Actions for ")
+    page.get_by_role("checkbox", name=f"Select {title}", exact=True).check()
+    target = visible_action(page, "top")
+    trigger = page.get_by_role("button", name=target["name"], exact=True)
+    trigger.focus()
+    trigger.press("Enter")
+    menu = page.get_by_role("group", name=target["name"], exact=True)
+    expect(menu.get_by_role("button", name="Rename", exact=True)).to_be_focused()
+    found = menu_geometry(menu)
+    assert_menu_in_view(found)
+    assert found["box"]["top"] >= trigger.bounding_box()["y"] + trigger.bounding_box()["height"] + 7
+    page.keyboard.press("Control+a")
+    expect(page.get_by_text("1 selected", exact=True)).to_be_visible()
+    page.keyboard.press("End")
+    page.keyboard.press("Home")
+    page.keyboard.press("ArrowDown")
+    expect(menu.get_by_role("button", name="Pin", exact=True)).to_be_focused()
+    after_navigation = geometry(page)
+    assert after_navigation["region"]["scrollTop"] == target["scrollTop"]
+    page.keyboard.press("Escape")
+    expect(trigger).to_be_focused()
+    expect(page.get_by_text("1 selected", exact=True)).to_be_visible()
+
+
+def test_switching_menus_outside_click_resize_and_anchor_scroll_dismissal(open_page):
+    page, api = open_page()
+    mount(page, api)
+    wheel_rail(page, 900)
+    bottom = visible_action(page)
+    top = visible_action(page, "top")
+    page.get_by_role("button", name=bottom["name"], exact=True).click()
+    page.get_by_role("button", name=top["name"], exact=True).click()
+    menu = page.locator(".conversation-actions-popover")
+    expect(menu).to_have_count(1)
+    expect(menu).to_have_attribute("aria-label", top["name"])
+    page.get_by_role("button", name="Switch to dark theme", exact=True).click()
+    expect(menu).to_have_count(0)
+    page.get_by_role("button", name=bottom["name"], exact=True).click()
+    page.set_viewport_size({"width": 1000, "height": 900})
+    expect(menu).to_be_visible()
+    assert_menu_in_view(menu_geometry(menu))
+    page.locator("[data-rail-scroll-region]").evaluate("(region) => { region.scrollTop = 0; }")
+    expect(menu).to_have_count(0)
+
+
+@pytest.mark.parametrize("large_text", [False, True], ids=["short-viewport", "large-text"])
+def test_constrained_menu_scrolls_itself_not_the_sidebar(open_page, large_text):
+    page, api = open_page(DESKTOP if large_text else {"width": 1280, "height": 380})
+    mount(page, api)
+    if large_text:
+        page.locator("html").evaluate("(root) => root.setAttribute('data-font-size', 'xl')")
+    wheel_rail(page, 1300)
+    target = visible_action(page)
+    page.get_by_role("button", name=target["name"], exact=True).click()
+    menu = page.get_by_role("group", name=target["name"], exact=True)
+    expect(menu).to_be_visible()
+    page.keyboard.press("End")
+    delete = menu.get_by_role("button", name="Delete", exact=True)
+    expect(delete).to_be_focused()
+    found = menu_geometry(menu)
+    assert_menu_in_view(found)
+    assert found["scrollHeight"] > found["clientHeight"]
+    assert found["buttons"][-1]["hit"], "Delete must be reachable inside the bounded menu."
+    assert found["scrollTop"] == target["scrollTop"], found
+    page.keyboard.press("Escape")
+
+
+def test_flat_reference_actions_copy_and_attach_the_same_private_source(open_page):
+    page, api = open_page()
+    mount(page, api)
+    page.evaluate(
+        """() => Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {
+            writeText: async (text) => { window.copiedConversationReference = text; },
+        }})"""
+    )
+    wheel_rail(page, 900)
+    target = visible_action(page)
+    title = target["name"].removeprefix("Actions for ")
+    source = next(item for item in api.conversations if item["title"] == title)
+    trigger = page.get_by_role("button", name=target["name"], exact=True)
+    trigger.click()
+    page.get_by_role("button", name="Copy reference", exact=True).click()
+    copied = page.evaluate("() => window.copiedConversationReference")
+    assert copied == f"simplechat-conversation:v1:{editor_tests.ORIGIN}/v2/chat?conversationId={source['id']}"
+    expect(page.locator(".conversation-actions-popover")).to_have_count(0)
+    trigger.click()
+    page.get_by_role("button", name="Use in this chat", exact=True).click()
+    expect(page.get_by_role("button", name=f"Remove conversation {title}", exact=True)).to_be_visible()
+    expect(page.locator(".conversation-actions-popover")).to_have_count(0)
+
+
+@pytest.mark.parametrize("available", [False, True], ids=["unavailable", "denied"])
+def test_copy_reference_reports_clipboard_failure(open_page, available):
+    page, api = open_page()
+    mount(page, api)
+    page.evaluate(
+        """(available) => Object.defineProperty(navigator, 'clipboard', {configurable: true,
+            value: available ? {writeText: async () => { throw new DOMException('Denied', 'NotAllowedError'); }} : undefined,
+        })""",
+        available,
+    )
+    wheel_rail(page, 900)
+    target = visible_action(page)
+    page.get_by_role("button", name=target["name"], exact=True).click()
+    page.get_by_role("button", name="Copy reference", exact=True).click()
+    message = (
+        "Could not copy the reference. Check clipboard permissions and try again."
+        if available else "Clipboard access is unavailable in this browser."
+    )
+    expect(page.get_by_text(message, exact=True)).to_be_visible()

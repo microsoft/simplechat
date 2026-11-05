@@ -63,6 +63,7 @@
 
     .mobile-navigation-controls button,
     #primary-navigation button,
+    .conversation-actions-popover button,
     #primary-navigation a,
     #workspace-section-navigation a,
     .chat-header-actions button,
@@ -164,6 +165,10 @@
 .header-action-popover .header-action {
     min-height: 44px;
     justify-content: flex-start;
+}
+
+.conversation-actions-popover svg {
+    flex-shrink: 0;
 }
 
 @media (max-height: 600px) {

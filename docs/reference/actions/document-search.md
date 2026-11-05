@@ -59,7 +59,7 @@ See [Document accessibility, structure, and comment extraction](https://github.c
 
 ### Paged Excel inspection
 
-Implemented in version: **0.261.405** (`application/single_app/config.py`).
+Implemented in version: **0.261.407** (`application/single_app/config.py`).
 Use `native_section` to request `comments`, `tables`, `objects`,
 `property_records`, `custom_properties`, `extended_properties`, `defined_names`,
 `hyperlinks`, `validations`, or available `image_analyses`. The default is

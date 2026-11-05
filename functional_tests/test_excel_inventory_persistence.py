@@ -1,8 +1,8 @@
 # test_excel_inventory_persistence.py
 """
 Functional tests for private, complete, revision-bound Excel inventories.
-Version: 0.261.405
-Implemented in: 0.261.405
+Version: 0.261.407
+Implemented in: 0.261.407
 
 The real private artifact store runs against the existing Azure-like blob double.
 Tests prove paging, full-text continuations, source binding, publication failures,

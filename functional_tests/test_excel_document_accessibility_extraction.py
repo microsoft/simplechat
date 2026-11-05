@@ -1,7 +1,7 @@
 # test_excel_document_accessibility_extraction.py
 """
 Functional tests for native Excel inspection and workspace evidence persistence.
-Version: 0.261.405
+Version: 0.261.407
 Implemented in: 0.261.399
 
 Real workbook packages exercise saved properties, styles, notes, threaded comments,

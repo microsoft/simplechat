@@ -673,7 +673,15 @@ bind an offered source-set output. External discovery does not gain permission t
 merely by declaring a dependency.
 
 Research depth. Prefer the least costly plan that adequately meets the request's evidence
-and discovery needs. For web gathering, weigh the expected benefit of additional coverage
+and discovery needs. Web IQ discovery types advertised by each Gather capability can be
+selected in arguments.result_types: news for current announcements, image for visual
+examples, video for tutorials/demonstrations, and web for general sources. Select only
+types relevant to the task and enabled by the server. Off types cannot be used. Text-only
+image/video discovery provides descriptions and titled source links, not media delivery;
+with-media permits only selected answer previews. Discovery does not generate images,
+inspect image bytes, watch videos, or transcribe them. Omit result_types for ordinary web
+search. Deep Research can select those same types within its existing query budget.
+For web gathering, weigh the expected benefit of additional coverage
 against the extra effort. web_search suits focused lookups and limited discovery, including
 current facts; it can already return multiple sources. Consider deep_research when deliberate
 discovery across different perspectives or alternatives, detailed source reading, or

@@ -211,7 +211,7 @@ web-search:
   name: "Web search"
   area: "Chat and retrieval"
   audience: "End users"
-  summary: "Adds Bing-backed web search through a configured Azure AI Foundry agent for current external information."
+  summary: "Adds current public evidence through Foundry Grounding with Bing Search or V2 Microsoft Web IQ, including policy-controlled news and media discovery."
   why: "Use this when users need current public information that is not in workspace documents. Do not use it for sensitive prompts unless users understand that the current message can be sent to Bing for search."
   visual_sections:
     - heading: "Discover public sources before reviewing their claims"
@@ -227,6 +227,11 @@ web-search:
   setting_keys:
     - enable_web_search
     - enable_web_search_user_notice
+    - web_search_provider
+    - web_iq_consent_accepted
+    - web_iq_news_enabled
+    - web_iq_image_mode
+    - web_iq_video_mode
   guides:
     - title: "Use web search in chat"
       url: /guides/use-web-search/

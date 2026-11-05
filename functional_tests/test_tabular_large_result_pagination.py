@@ -2,9 +2,9 @@
 # test_tabular_large_result_pagination.py
 """
 Functional test for tabular SK large-result pagination and output trimming.
-Version: 0.261.405
+Version: 0.261.407
 Implemented in: 0.242.067; bounded CSV query path in 0.250.060; source descriptor generalization in 0.250.127; serialized row-size estimation in 0.250.152; contains replay semantics in 0.250.155
-Explicit offline source authorization fixtures updated in: 0.261.405
+Explicit offline source authorization fixtures updated in: 0.261.407
 
 This test ensures row-returning tabular processing tools support start_row/max_rows
 pagination, avoid skipped rows after auto-trimming oversized output, honor

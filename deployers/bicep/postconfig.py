@@ -2,6 +2,7 @@
 import copy
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import AzureCliCredential
+from azure.keyvault.secrets import SecretClient
 import json
 import os
 import shutil
@@ -15,6 +16,12 @@ from deployment_configuration import (
     persist_settings,
 )
 from deployment_cosmos import create_deployment_cosmos_client
+from optional_services import (
+    OPTIONAL_SETTINGS_FIELDS,
+    configure_optional_settings,
+    cu_request_for_credential,
+    stage_web_iq_secret,
+)
 
 load_deployment_environment()
 credential = AzureCliCredential(tenant_id=os.environ["AZURE_TENANT_ID"])
@@ -565,8 +572,20 @@ item["speech_service_location"] = var_speechServiceLocation
 if var_authenticationType == "key" and "speech_service_key" in core_service_keys:
     item["speech_service_key"] = core_service_keys["speech_service_key"]
 
+def stage_optional_secret(name, existing_reference, field):
+    with SecretClient(vault_url=os.environ["var_keyVaultUri"], credential=credential) as optional_secrets:
+        return stage_web_iq_secret(optional_secrets, name, existing_reference, field)
+
+
+configure_optional_settings(
+    item, dict(os.environ), credential,
+    stage_secret=stage_optional_secret,
+    cu_request=cu_request_for_credential(credential),
+)
 created_indexes = configure_search(item, credential)
-response = persist_settings(container, original_item, item, credential)
+response = persist_settings(container, original_item, item, credential, guarded_fields=OPTIONAL_SETTINGS_FIELDS)
+if item.get("web_search_provider") == "web_iq" and not item.get("enable_web_search"):
+    print("Web IQ is pending: bind the billing resource in https://webiq.microsoft.ai/profiles, verify Allowed Services, then test credentials and accept Web IQ consent in V2 Admin Settings.")
 print(f"Settings saved and verified. Search indexes created: {', '.join(created_indexes) or 'none (already exist)'}.")
 print("Restart the web service to activate any changed Redis session configuration.")
 client.close()

@@ -2,8 +2,8 @@
 
 **Implemented in version: 0.261.391** (formatting, style inventory, and programmatic access added in **0.261.392**)  
 **Excel implemented in version: 0.261.399**
-**Excel native content/table improvements implemented in version: 0.261.405**
-**Related config.py version: `0.261.405`**
+**Excel native content/table improvements implemented in version: 0.261.407**
+**Related config.py version: `0.261.407`**
 
 ## 1. Overview and Purpose
 
@@ -224,7 +224,7 @@ flowchart LR
 
 ### Excel native inspection (0.261.399)
 
-The original extraction below was expanded in **0.261.405** with canonical
+The original extraction below was expanded in **0.261.407** with canonical
 thread/reply handling, saved-cell context, streaming table discovery, and
 revision-bound full-inventory paging. See
 [Scalable Excel Native Inspection](EXCEL_NATIVE_INSPECTION.md) for current
@@ -262,7 +262,7 @@ Inspection is bounded to 5,000 ZIP entries, 16 MiB per XML part, 64 MiB total XM
 
 Legacy `.xls` is inspected with the existing OLE/BIFF dependencies. Its metadata and style coverage is best effort; unavailable object, thread and header/footer details are explicitly stated. No new cloud service or dependency is required.
 
-From 0.261.405, existing active workbook originals can be inspected on demand without re-uploading. Reprocessing can add configured image-analysis enrichment; a new upload is needed only when required originals/inventories are unavailable. Ask, for example, "Show the cell notes and threaded comments", "Which objects have saved alt text?", or "What is in the first-page footer?" An agent with Document Search can request `get_document_accessibility_report` and follow native inventory continuations for detailed findings. Chat-only uploads do not gain workspace-report access.
+From 0.261.407, existing active workbook originals can be inspected on demand without re-uploading. Reprocessing can add configured image-analysis enrichment; a new upload is needed only when required originals/inventories are unavailable. Ask, for example, "Show the cell notes and threaded comments", "Which objects have saved alt text?", or "What is in the first-page footer?" An agent with Document Search can request `get_document_accessibility_report` and follow native inventory continuations for detailed findings. Chat-only uploads do not gain workspace-report access.
 
 ### Programmatic Access: `get_document_accessibility_report`
 

@@ -1,8 +1,8 @@
 # test_tabular_table_aware_analytics_replay.py
 """
 Real-package tests for table-aware analytics and version-pinned durable replay.
-Version: 0.261.405
-Implemented in: 0.261.405
+Version: 0.261.407
+Implemented in: 0.261.407
 
 The existing offline native runtime replaces external I/O, not the workbook
 reader, public analytical tools, source staging, checkpoints, or result reader.

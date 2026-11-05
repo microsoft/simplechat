@@ -4,7 +4,7 @@ title: "Reference and send between conversations"
 description: "Pull bounded evidence from another private conversation with ~ or delegate a queued AI task with Send To Conversation."
 section: "Guides"
 audience: user
-version: "0.261.381"
+version: "0.261.406"
 ---
 
 ## What this does
@@ -36,14 +36,17 @@ Long projects often work better as separate conversations: one thread for raw re
 1. In the V2 chat composer, orchestration plan editor **Ask AI**, or workflow **Ask AI**, type `~` at the start of the message or after a space.
 2. Type part of a conversation title, or switch to content search in the picker to match visible message text.
 3. Select the conversation from the list. SimpleChat inserts an inline `~[Conversation title]` token and adds a conversation pill above the composer.
-4. You can also open any private conversation's menu (`...`) in the left rail and choose **Reference Conversation**:
-   - **Use in current conversation** attaches that conversation as a pill in the open composer.
-   - **Copy reference** copies a portable reference that you can paste into another composer to attach the same conversation.
+4. You can also open an eligible private conversation's menu (`...`) in the left rail. Below **Export**, choose **Use in this chat** to attach that conversation as a pill in the open composer, or **Copy reference** to copy a portable reference for another composer.
 5. Send your message. SimpleChat retrieves bounded excerpts from the latest visible messages of each referenced conversation and cites the source conversation in the reply.
+
+The menu keeps management actions first and separates **Delete** from the reuse
+actions. It opens upward when needed to stay on screen. **Use in this chat** is
+disabled when the source is the conversation already open or the open destination
+is collaborative; copying a reference does not change the current draft.
 
 ## Send a task to another conversation
 
-1. In the conversation rail, open the actions menu (`...`) on the source conversation and select **Send To Conversation**.
+1. In the conversation rail, open the actions menu (`...`) on the source conversation and select **Send to conversation**, below **Export**.
 2. Choose the destination private conversation and write the instruction you want the destination conversation to run.
 3. Review the destination conversation's resolved model or agent and the bounded source preview.
 4. Select **Send and start AI**.
@@ -70,6 +73,8 @@ Long projects often work better as separate conversations: one thread for raw re
 | A conversation does not appear in the `~` menu | It is shared/collaborative, belongs to a group, or is the conversation currently open as the destination | Reference a different private personal conversation. |
 | Referenced evidence says coverage is partial | The source conversation has more than 200 visible messages or exceeds the per-turn excerpt budget | Narrow the question or reference specific messages/turns. |
 | A handoff stays in **Queued** status | The destination conversation is finishing an earlier turn or waiting on an approval card | Let the active turn finish or cancel the queued handoff from its status card. |
+| The whole actions menu cannot fit in a very short window | The available screen height is smaller than the menu | Scroll inside the menu to reach the remaining actions; the conversation list does not need to move. |
+| Copy reference reports a clipboard error | Clipboard access is unavailable or the browser denied permission | Check clipboard permissions and retry in a supported browser. |
 
 ## Related
 

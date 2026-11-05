@@ -1,6 +1,6 @@
 # Excel Comment Content and Table Headers Fix
 
-Fixed in version: **0.261.405**.
+Fixed in version: **0.261.407**.
 Application version is maintained in `application/single_app/config.py`.
 
 ## Issue and root cause

@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.405"
+version: "0.261.407"
 ---
 
 ## How to use this reference
@@ -31,11 +31,17 @@ evidence with `~` or delegated a follow-up AI turn with **Send To Conversation**
 Shared and group conversations are excluded so private thread content is not
 implicitly widened across audiences.
 
+The row menu layout was updated in **0.261.406**: management actions come first,
+reuse actions follow **Export**, and **Delete** or **Leave** has its own separation.
+All rows use the same text size and weight. Menus open above low rows when needed
+and float outside the scrolling sidebar.
+
 | V2 control | Purpose | Availability |
 | --- | --- | --- |
 | `~` conversation shortcut | Opens the private conversation picker in the V2 composer, plan editor Ask AI, and workflow Ask AI, inserting a `~[Title]` token backed by a conversation ID. | V2 chat composer and Ask AI editors |
-| Reference Conversation (`Use in current conversation` / `Copy reference`) | Attaches the selected private conversation to the active composer or copies a portable reference token for pasting into another composer. | Private conversation row menu in V2 |
-| Send To Conversation | Opens a review dialog that sends an instruction and bounded source reference to another private conversation and starts AI work there, queueing in FIFO order when the destination is busy. | Private conversation row menu in V2 |
+| Use in this chat | Attaches the selected private conversation to the active composer as a reference. Disabled for the currently open source or a collaborative destination. | Eligible private conversation row menu in V2, below Export |
+| Copy reference | Copies a portable reference token for pasting into another composer without changing the open draft. Clipboard failures display an error. | Eligible private conversation row menu in V2, below Export |
+| Send to conversation | Opens a review dialog that sends an instruction and bounded source reference to another private conversation and starts AI work there, queueing in FIFO order when the destination is busy. | Private conversation row menu in V2, below Export |
 | Cancel handoff | Stops a queued or in-flight handoff from its outgoing status card without removing existing destination history. | Outgoing handoff status card |
 
 See [Reference and send between conversations]({{ '/guides/reference-and-send-conversations/' | relative_url }})
@@ -45,7 +51,7 @@ for source selection, handoff review, and the private-conversation boundary.
 
 ### Workbook citation preview
 
-Implemented in version: **0.261.405** (`application/single_app/config.py`).
+Implemented in version: **0.261.407** (`application/single_app/config.py`).
 Workbook citations show the selected worksheet and table/range independently
 from their originally cited passage.
 
@@ -361,7 +367,7 @@ being presented as a model answer that no documents exist.
 | `search-documents-btn` | Opens the grounded search panel for searching workspace documents from chat. | Use it when the answer should come from personal or group workspace content instead of general model knowledge. | [`enable_group_workspaces`]({{ '/admin/workspaces/' | relative_url }})<br>[`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}) |
 | `choose-file-btn` | Lets you select a supported local file and starts chat upload processing for the conversation. | Use it when the file is the immediate subject of the conversation and you do not want to visit Workspace first. | [`enable_chat_file_uploads`]({{ '/admin/workspaces/' | relative_url }}) |
 | `upload-btn` | Adds the selected upload to the chat after file selection. | Use it to confirm an upload before asking questions about that file. | [`enable_web_search`]({{ '/admin/knowledge/' | relative_url }}) |
-| `search-web-btn` | Sends the current message to an admin-configured Azure AI Foundry agent, which searches the public web through Grounding with Bing Search and returns results with citations. | Use it for current events, public facts, or external pages that are not in your workspaces. Only the message you type is sent externally, never conversation history or workspace content. | [`enable_web_search`]({{ '/admin/knowledge/' | relative_url }}) |
+| `search-web-btn` | Discovers public sources through Foundry Grounding with Bing Search or V2 Microsoft Web IQ. Web IQ can add relevant admin-approved news, image, and video discovery. | Use it for current events and external evidence. Only current-message-derived queries leave the search boundary. Text-only media keeps descriptions/source links without previews; With media permits selected answer cards. | [`enable_web_search`]({{ '/admin/knowledge/' | relative_url }}) |
 | `url-access-btn` | Opens review for URLs pasted into the message so they can be inspected by the chat flow. | Use it when pasted links should be fetched or reasoned over instead of treated as plain text. | [`enable_url_access`]({{ '/admin/knowledge/' | relative_url }}) |
 | `source-review-btn` | Starts Deep Research so SimpleChat can inspect search results and linked source pages within configured crawl limits. | Use it for research tasks where source review and evidence collection matter more than a quick answer. | [`enable_source_review`]({{ '/admin/knowledge/' | relative_url }}) |
 | `send-btn` | Sends the current composer message to the selected model or agent. | Use it once the prompt, files, scope, and optional tools are ready. | Always available |

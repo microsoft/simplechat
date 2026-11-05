@@ -1,6 +1,6 @@
 # Scalable Excel Native Inspection
 
-Implemented in version: **0.261.405**.
+Implemented in version: **0.261.407**.
 Related application version: `application/single_app/config.py`.
 
 ## Overview

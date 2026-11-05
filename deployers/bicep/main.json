@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "15288510406592690340"
+      "templateHash": "14814241508469552508"
     }
   },
   "parameters": {
@@ -391,6 +391,76 @@
         "description": "Comma separated list of IP addresses or ranges to allow access to resources when private networking is enabled.\nLeave blank if not using private networking.\n- Format for single IP: 'x.x.x.x'\n- Format for range: 'x.x.x.x/y'\n- Example:  1.2.3.4, 2.3.4.5/32\n"
       }
     },
+    "webSearchProvider": {
+      "type": "string",
+      "defaultValue": "preserve",
+      "allowedValues": [
+        "preserve",
+        "none",
+        "foundry",
+        "web_iq"
+      ],
+      "metadata": {
+        "description": "Missing old AZD selections preserve configured services. Foundry reuses a compatible classic project/agent."
+      }
+    },
+    "webIqResourceMode": {
+      "type": "string",
+      "defaultValue": "create",
+      "allowedValues": [
+        "create",
+        "reuse"
+      ]
+    },
+    "existingWebIqName": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingWebIqResourceGroup": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingWebIqSubscriptionId": {
+      "type": "string",
+      "defaultValue": "[subscription().subscriptionId]"
+    },
+    "contentUnderstandingMode": {
+      "type": "string",
+      "defaultValue": "preserve",
+      "allowedValues": [
+        "preserve",
+        "none",
+        "create",
+        "reuse"
+      ]
+    },
+    "contentUnderstandingLocation": {
+      "type": "string",
+      "defaultValue": "[parameters('location')]"
+    },
+    "existingContentUnderstandingName": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingContentUnderstandingResourceGroup": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingContentUnderstandingSubscriptionId": {
+      "type": "string",
+      "defaultValue": "[subscription().subscriptionId]"
+    },
+    "contentUnderstandingModels": {
+      "type": "array",
+      "defaultValue": []
+    },
+    "optionalServicesDeploymentPrincipalId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Object ID of the deployment runner for Content Understanding defaults/readiness data-plane access."
+      }
+    },
     "deployContentSafety": {
       "type": "bool",
       "metadata": {
@@ -528,7 +598,13 @@
     "inferredVirtualNetworkId": "[if(variables('hasExistingAppServiceSubnetId'), split(parameters('existingAppServiceSubnetId'), '/subnets/')[0], if(variables('hasExistingPrivateEndpointSubnetId'), split(parameters('existingPrivateEndpointSubnetId'), '/subnets/')[0], ''))]",
     "resolvedExistingVirtualNetworkId": "[if(not(empty(parameters('existingVirtualNetworkId'))), parameters('existingVirtualNetworkId'), variables('inferredVirtualNetworkId'))]",
     "useExistingVirtualNetwork": "[and(parameters('enablePrivateNetworking'), or(or(not(empty(variables('resolvedExistingVirtualNetworkId'))), variables('hasExistingAppServiceSubnetId')), variables('hasExistingPrivateEndpointSubnetId')))]",
-    "allowedIpsForCosmos": "[union(createArray('0.0.0.0'), variables('allowedIpAddressesArray'))]"
+    "allowedIpsForCosmos": "[union(createArray('0.0.0.0'), variables('allowedIpAddressesArray'))]",
+    "createWebIq": "[and(and(equals(parameters('webSearchProvider'), 'web_iq'), equals(parameters('webIqResourceMode'), 'create')), equals(variables('scCloudEnvironment'), 'public'))]",
+    "createCu": "[and(equals(parameters('contentUnderstandingMode'), 'create'), equals(variables('scCloudEnvironment'), 'public'))]",
+    "useCu": "[and(contains(createArray('create', 'reuse'), parameters('contentUnderstandingMode')), equals(variables('scCloudEnvironment'), 'public'))]",
+    "cuName": "[if(equals(parameters('contentUnderstandingMode'), 'reuse'), parameters('existingContentUnderstandingName'), toLower(format('{0}-{1}-cu', parameters('appName'), parameters('environment'))))]",
+    "cuGroup": "[if(equals(parameters('contentUnderstandingMode'), 'reuse'), parameters('existingContentUnderstandingResourceGroup'), variables('rgName'))]",
+    "cuSubscription": "[if(and(equals(parameters('contentUnderstandingMode'), 'reuse'), not(empty(parameters('existingContentUnderstandingSubscriptionId')))), parameters('existingContentUnderstandingSubscriptionId'), subscription().subscriptionId)]"
   },
   "resources": {
     "rg": {
@@ -537,6 +613,434 @@
       "name": "[variables('rgName')]",
       "location": "[parameters('location')]",
       "tags": "[variables('tags')]"
+    },
+    "existingContentUnderstanding": {
+      "condition": "[equals(parameters('contentUnderstandingMode'), 'reuse')]",
+      "existing": true,
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2025-06-01",
+      "subscriptionId": "[variables('cuSubscription')]",
+      "resourceGroup": "[variables('cuGroup')]",
+      "name": "[parameters('existingContentUnderstandingName')]",
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "webIq": {
+      "condition": "[variables('createWebIq')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "webIq",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "accountName": {
+            "value": "[toLower(format('{0}-{1}-webiq', parameters('appName'), parameters('environment')))]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "15745009116956964478"
+            }
+          },
+          "parameters": {
+            "accountName": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {}
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.WebIQ/accounts",
+              "apiVersion": "2026-06-01-preview",
+              "name": "[parameters('accountName')]",
+              "location": "global",
+              "kind": "WebIQ.Grounding",
+              "sku": {
+                "name": "G3"
+              },
+              "properties": {
+                "statisticsEnabled": false
+              },
+              "tags": "[parameters('tags')]"
+            }
+          ],
+          "outputs": {
+            "resourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.WebIQ/accounts', parameters('accountName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "contentUnderstanding": {
+      "condition": "[variables('createCu')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "contentUnderstanding",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "accountName": {
+            "value": "[variables('cuName')]"
+          },
+          "location": {
+            "value": "[parameters('contentUnderstandingLocation')]"
+          },
+          "models": {
+            "value": "[parameters('contentUnderstandingModels')]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "606199855110923873"
+            }
+          },
+          "parameters": {
+            "accountName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "models": {
+              "type": "array"
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {}
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.CognitiveServices/accounts",
+              "apiVersion": "2025-06-01",
+              "name": "[parameters('accountName')]",
+              "location": "[parameters('location')]",
+              "kind": "AIServices",
+              "sku": {
+                "name": "S0"
+              },
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "customSubDomainName": "[parameters('accountName')]",
+                "disableLocalAuth": true,
+                "publicNetworkAccess": "Enabled"
+              },
+              "tags": "[parameters('tags')]"
+            },
+            {
+              "copy": {
+                "name": "deployments",
+                "count": "[length(parameters('models'))]"
+              },
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "[format('{0}-{1}', parameters('accountName'), parameters('models')[copyIndex()].modelName)]",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "parent": {
+                    "value": "[parameters('accountName')]"
+                  },
+                  "modelName": {
+                    "value": "[parameters('models')[copyIndex()].modelName]"
+                  },
+                  "modelVersion": {
+                    "value": "[parameters('models')[copyIndex()].modelVersion]"
+                  },
+                  "skuName": {
+                    "value": "[parameters('models')[copyIndex()].skuName]"
+                  },
+                  "skuCapacity": {
+                    "value": "[parameters('models')[copyIndex()].skuCapacity]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "1013492894400488975"
+                    }
+                  },
+                  "parameters": {
+                    "parent": {
+                      "type": "string"
+                    },
+                    "modelName": {
+                      "type": "string"
+                    },
+                    "modelVersion": {
+                      "type": "string"
+                    },
+                    "skuName": {
+                      "type": "string"
+                    },
+                    "skuCapacity": {
+                      "type": "int"
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.CognitiveServices/accounts/deployments",
+                      "apiVersion": "2025-06-01",
+                      "name": "[format('{0}/{1}', parameters('parent'), parameters('modelName'))]",
+                      "properties": {
+                        "model": {
+                          "format": "OpenAI",
+                          "name": "[parameters('modelName')]",
+                          "version": "[parameters('modelVersion')]"
+                        }
+                      },
+                      "sku": {
+                        "name": "[parameters('skuName')]",
+                        "capacity": "[parameters('skuCapacity')]"
+                      }
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "endpoint": {
+              "type": "string",
+              "value": "[format('https://{0}.services.ai.azure.com', parameters('accountName'))]"
+            },
+            "resourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "contentUnderstandingAccess": {
+      "condition": "[variables('useCu')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "contentUnderstandingAccess",
+      "subscriptionId": "[variables('cuSubscription')]",
+      "resourceGroup": "[variables('cuGroup')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "accountName": {
+            "value": "[variables('cuName')]"
+          },
+          "webAppName": {
+            "value": "[reference('appService').outputs.name.value]"
+          },
+          "webAppResourceGroup": {
+            "value": "[variables('rgName')]"
+          },
+          "webAppSubscriptionId": {
+            "value": "[subscription().subscriptionId]"
+          },
+          "deploymentPrincipalId": {
+            "value": "[parameters('optionalServicesDeploymentPrincipalId')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "10457664038897280051"
+            }
+          },
+          "parameters": {
+            "accountName": {
+              "type": "string"
+            },
+            "webAppName": {
+              "type": "string"
+            },
+            "webAppResourceGroup": {
+              "type": "string"
+            },
+            "webAppSubscriptionId": {
+              "type": "string"
+            },
+            "deploymentPrincipalId": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "userRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('webAppSubscriptionId'), parameters('webAppResourceGroup')), 'Microsoft.Web/sites', parameters('webAppName')), variables('userRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[variables('userRoleId')]",
+                "principalId": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('webAppSubscriptionId'), parameters('webAppResourceGroup')), 'Microsoft.Web/sites', parameters('webAppName')), '2024-04-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[not(empty(parameters('deploymentPrincipalId')))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), parameters('deploymentPrincipalId'), variables('userRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[variables('userRoleId')]",
+                "principalId": "[parameters('deploymentPrincipalId')]"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "appService",
+        "contentUnderstanding",
+        "rg"
+      ]
+    },
+    "nativeContentUnderstandingAccess": {
+      "condition": "[and(variables('useCu'), parameters('deployNativePythonWebApp'))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "nativeContentUnderstandingAccess",
+      "subscriptionId": "[variables('cuSubscription')]",
+      "resourceGroup": "[variables('cuGroup')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "accountName": {
+            "value": "[variables('cuName')]"
+          },
+          "webAppName": {
+            "value": "[reference('nativeAppService').outputs.name.value]"
+          },
+          "webAppResourceGroup": {
+            "value": "[variables('rgName')]"
+          },
+          "webAppSubscriptionId": {
+            "value": "[subscription().subscriptionId]"
+          },
+          "deploymentPrincipalId": {
+            "value": ""
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "10457664038897280051"
+            }
+          },
+          "parameters": {
+            "accountName": {
+              "type": "string"
+            },
+            "webAppName": {
+              "type": "string"
+            },
+            "webAppResourceGroup": {
+              "type": "string"
+            },
+            "webAppSubscriptionId": {
+              "type": "string"
+            },
+            "deploymentPrincipalId": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "userRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('webAppSubscriptionId'), parameters('webAppResourceGroup')), 'Microsoft.Web/sites', parameters('webAppName')), variables('userRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[variables('userRoleId')]",
+                "principalId": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('webAppSubscriptionId'), parameters('webAppResourceGroup')), 'Microsoft.Web/sites', parameters('webAppName')), '2024-04-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[not(empty(parameters('deploymentPrincipalId')))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), parameters('deploymentPrincipalId'), variables('userRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[variables('userRoleId')]",
+                "principalId": "[parameters('deploymentPrincipalId')]"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "contentUnderstanding",
+        "nativeAppService",
+        "rg"
+      ]
     },
     "rgDeleteLock": {
       "type": "Microsoft.Resources/deployments",
@@ -2669,7 +3173,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "3083805934796935509"
+              "templateHash": "3810140885783678261"
             }
           },
           "parameters": {
@@ -2746,6 +3250,39 @@
               "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
               "apiVersion": "2023-01-01",
               "name": "[format('{0}/{1}/{2}', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default', 'group-documents')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default', 'public-documents')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default', 'personal-chat')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default', 'group-chat')]",
               "properties": {
                 "publicAccess": "None"
               },
@@ -11730,6 +12267,26 @@
     }
   },
   "outputs": {
+    "var_webSearchProvider": {
+      "type": "string",
+      "value": "[parameters('webSearchProvider')]"
+    },
+    "var_webIqResourceId": {
+      "type": "string",
+      "value": "[if(equals(parameters('webSearchProvider'), 'web_iq'), if(variables('createWebIq'), reference('webIq').outputs.resourceId.value, resourceId(if(empty(parameters('existingWebIqSubscriptionId')), subscription().subscriptionId, parameters('existingWebIqSubscriptionId')), parameters('existingWebIqResourceGroup'), 'Microsoft.WebIQ/accounts', parameters('existingWebIqName'))), '')]"
+    },
+    "var_webIqOnboardingUrl": {
+      "type": "string",
+      "value": "[if(equals(parameters('webSearchProvider'), 'web_iq'), 'https://webiq.microsoft.ai/profiles', '')]"
+    },
+    "var_webIqOnboardingState": {
+      "type": "string",
+      "value": "[if(equals(parameters('webSearchProvider'), 'web_iq'), 'pending_admin_connection_test_and_consent', '')]"
+    },
+    "var_contentUnderstandingEndpoint": {
+      "type": "string",
+      "value": "[if(variables('useCu'), if(equals(parameters('contentUnderstandingMode'), 'reuse'), format('https://{0}.services.ai.azure.com', reference('existingContentUnderstanding').customSubDomainName), reference('contentUnderstanding').outputs.endpoint.value), '')]"
+    },
     "var_acrName": {
       "type": "string",
       "value": "[toLower(format('{0}{1}acr', parameters('appName'), parameters('environment')))]"

@@ -1,7 +1,7 @@
 # test_deployment_configuration.py
 """Postconfig environment, cache publication and create-only Search regressions.
 
-Version: 0.261.264
+Version: 0.261.405
 Implemented in: 0.261.028
 Video Indexer settings preservation and region coverage added in: 0.261.264
 Uses the real settings store with fake services; never contacts Azure.
@@ -24,6 +24,7 @@ import yaml
 from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 
 from test_app_settings_store_consistency import FakeCosmos, FakeRedis
+from test_deployer_optional_services import FakeVault, MODULE as OPTIONAL_MODULE, WEB_VALUES, vault_stager
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +37,7 @@ SPEC.loader.exec_module(MODULE)
 
 @pytest.fixture
 def world(monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "deployers" / "bicep"))
     cosmos, redis = FakeCosmos(), FakeRedis()
     redis.ping = Mock(return_value=True)
     redis.close = Mock()
@@ -135,6 +137,72 @@ def test_concurrent_redis_change_is_not_overwritten(world):
         MODULE.persist_settings(world.cosmos, original, desired_redis(original), Mock())
     assert world.cosmos.document["redis_url"] == "configured-by-admin"
     assert world.cosmos.writes == 0
+
+
+def test_concurrent_optional_service_change_is_not_overwritten(world):
+    original = copy.deepcopy(world.cosmos.document)
+    desired = {**original, "web_iq": {"endpoint": "https://api.microsoft.ai/v3"}}
+    world.cosmos.document["web_iq"] = {"key": "administrator-change"}
+    with pytest.raises(MODULE.settings_store.SettingsConflictError, match="Optional service"):
+        MODULE.persist_settings(world.cosmos, original, desired, Mock(), guarded_fields=("web_iq",))
+    assert world.cosmos.document["web_iq"]["key"] == "administrator-change"
+    assert world.cosmos.writes == 0
+
+
+@pytest.mark.parametrize("authentication_type,field", [("key", "key"), ("service_principal", "client_secret")])
+@pytest.mark.parametrize("already_enabled", [False, True])
+def test_web_iq_final_cosmos_and_cache_publication_contains_only_secret_references(world, authentication_type, field, already_enabled):
+    world.cosmos.document.update(
+        enable_key_vault_secret_storage=already_enabled,
+        key_vault_name="deployment-vault" if already_enabled else "",
+        key_vault_identity="existing-compatible-identity",
+        operator_setting="preserve-unrelated-settings",
+    )
+    original = copy.deepcopy(world.cosmos.document)
+    desired = desired_redis(original)
+    raw_secret = "raw-dummy-web-iq-secret-never-publish"
+    vault = FakeVault({"portal-source": raw_secret})
+    OPTIONAL_MODULE.configure_optional_settings(
+        desired, {
+            **WEB_VALUES, "WEB_IQ_AUTHENTICATION_TYPE": authentication_type,
+            f"WEB_IQ_{field.upper()}_SECRET_NAME": "portal-source",
+            "WEB_IQ_TENANT_ID": "tenant", "WEB_IQ_CLIENT_ID": "client", "WEB_IQ_APP_ID": "app",
+        }, Mock(), stage_secret=vault_stager(vault),
+    )
+    stored = MODULE.persist_settings(
+        world.cosmos, original, desired, Mock(), guarded_fields=OPTIONAL_MODULE.OPTIONAL_SETTINGS_FIELDS,
+    )
+    published = json.loads(world.redis.raw)["document"]
+    assert raw_secret not in json.dumps(world.cosmos.document)
+    assert raw_secret.encode("utf-8") not in world.redis.raw
+    assert OPTIONAL_MODULE.is_web_iq_secret_reference(stored["web_iq"][field])
+    assert published == stored
+    assert stored["enable_key_vault_secret_storage"] is True
+    assert stored["key_vault_name"] == "deployment-vault"
+    assert stored["key_vault_identity"] == "existing-compatible-identity"
+    assert stored["operator_setting"] == "preserve-unrelated-settings"
+    assert vault.secrets["portal-source"] == raw_secret
+    assert vault.writes == [stored["web_iq"][field]]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("key_vault_name", "concurrently-selected-vault"),
+    ("enable_key_vault_secret_storage", False),
+    ("key_vault_identity", "concurrently-selected-identity"),
+])
+def test_concurrent_unchanged_vault_context_dependency_blocks_web_iq_publication(world, field, value):
+    world.cosmos.document.update(
+        key_vault_name="deployment-vault", enable_key_vault_secret_storage=True, key_vault_identity="",
+    )
+    original = copy.deepcopy(world.cosmos.document)
+    desired = {**original, "web_iq": {"key": OPTIONAL_MODULE.WEB_IQ_SECRET_PREFIX + "staged-key"}}
+    world.cosmos.document[field] = value
+    with pytest.raises(MODULE.settings_store.SettingsConflictError, match="Optional service"):
+        MODULE.persist_settings(
+            world.cosmos, original, desired, Mock(), guarded_fields=OPTIONAL_MODULE.OPTIONAL_SETTINGS_FIELDS,
+        )
+    assert world.cosmos.writes == 0
+    assert world.cosmos.document[field] == value
 
 
 def test_repeated_redis_configuration_preserves_values(world):

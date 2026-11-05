@@ -1,8 +1,8 @@
 # test_excel_native_images_and_release.py
 """
 Functional tests for Excel image anchors and release-safe metadata.
-Version: 0.261.405
-Implemented in: 0.261.405
+Version: 0.261.407
+Implemented in: 0.261.407
 
 Real OOXML drawings retain worksheet/cell locations through existing image
 extraction. Cleared/sanitized source hashes cannot borrow original metadata.

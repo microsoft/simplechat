@@ -2,7 +2,7 @@
 # test_tabular_preview_json_sanitization_fix.py
 """
 Functional test for tabular preview JSON sanitization.
-Version: 0.261.405
+Version: 0.261.407
 Implemented in: 0.240.030
 
 This test ensures the enhanced citation tabular preview converts pandas null-like

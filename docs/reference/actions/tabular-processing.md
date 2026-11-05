@@ -48,7 +48,7 @@ Use Tabular Processing when users ask exact questions about spreadsheets or CSV 
 
 ## Tables, ranges, and saved formulas
 
-Implemented in version: **0.261.405** (`application/single_app/config.py`).
+Implemented in version: **0.261.407** (`application/single_app/config.py`).
 Describe a workbook before choosing a table when a worksheet contains several
 regions. Named tables retain their saved definitions; ordinary blocks expose
 their detected ranges and labelled inferred headers. A title row is not a

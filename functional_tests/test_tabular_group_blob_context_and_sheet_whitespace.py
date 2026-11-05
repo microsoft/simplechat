@@ -2,9 +2,9 @@
 # test_tabular_group_blob_context_and_sheet_whitespace.py
 """
 Functional test for tabular group blob context and sheet whitespace handling.
-Version: 0.261.405
+Version: 0.261.407
 Implemented in: 0.240.031
-Request-scoped authorization fixture updated in: 0.261.405
+Request-scoped authorization fixture updated in: 0.261.407
 
 This test ensures workbook tabs with trailing whitespace still resolve
 correctly and that tabular analysis can reuse pre-resolved group blob
