@@ -1136,7 +1136,7 @@ class HarnessExecution:
                 _log_failure("Execution progress delivery stopped.", self.record, exc)
 
     def _progress(self, event):
-        if type(event) is dict and event.get("type") == "action_credentials_required":
+        if type(event) is dict and event.get("type") in {"action_credentials_required", "user_input_required"}:
             from functions_orchestration_events import serialize_sse
 
             self._send(serialize_sse(event))
@@ -1730,7 +1730,7 @@ class HarnessExecution:
             "message_saved": False, "finalization_status": "pending",
         }
         if status == "waiting" and any(
-            wait.get("kind") == "action_credentials" for wait in updates["pending_results"].values()
+            wait.get("kind") in {"action_credentials", "user_input"} for wait in updates["pending_results"].values()
         ):
             updates["credential_wait_started_at"] = current.get("credential_wait_started_at") or _now_iso()
         if not self._delivery_only:
@@ -1961,7 +1961,7 @@ class HarnessExecution:
             if step["status"] in {"failed", "cancelled"}:
                 return "failed"
             wait = step.get("wait") or {}
-            if step["status"] == "waiting" and wait.get("kind") == "action_credentials" and (
+            if step["status"] == "waiting" and wait.get("kind") in {"action_credentials", "user_input"} and (
                 wait.get("request_id") and wait["request_id"] != item["id"]
             ):
                 return "superseded"

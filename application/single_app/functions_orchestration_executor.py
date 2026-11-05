@@ -1055,7 +1055,7 @@ def _run_dependency_step(
         if step['role'] == 'render':
             return _validate_render_step_result(step, result)
         task = result.get('task_result')
-        if result.get("status") == STEP_STATUS_WAITING and (result.get("wait") or {}).get("kind") == "action_credentials":
+        if result.get("status") == STEP_STATUS_WAITING and (result.get("wait") or {}).get("kind") in {"action_credentials", "user_input"}:
             from functions_orchestration_result_contracts import TaskResult
 
             task = TaskResult(context.result_producer(step), step["role"], "pending", ())
@@ -1284,7 +1284,7 @@ def resume_waiting_dependency_step(
     wait = context.pending_results.get(step['step_id'])
     if type(wait) is not dict:
         raise ResultContractError('result_wait_required')
-    if wait.get("kind") == "action_credentials":
+    if wait.get("kind") in {"action_credentials", "user_input"}:
         from functions_action_credentials import authorize_request
         from functions_orchestration_adapters import _credential_step_continuation
 
@@ -1302,7 +1302,12 @@ def resume_waiting_dependency_step(
                 raise PermissionError("The credential execution identity is unavailable.")
             # Catalog authorization uses legacy request helpers, just like action invocation.
             with identity.bridge({}):
-                request, _manifest = authorize_request(user_id, wait["request_id"])
+                if wait["kind"] == "user_input":
+                    from functions_user_input import read_request
+
+                    request = read_request(user_id, wait["request_id"])
+                else:
+                    request, _manifest = authorize_request(user_id, wait["request_id"])
         except Exception as error:
             log_event(
                 f"{_LOG_PREFIX} Credential resume authorization failed.",
@@ -1321,11 +1326,11 @@ def resume_waiting_dependency_step(
             request["continuation"].get(key) != descriptor.get(key) for key in ("run_id", "step_id", "checkpoint_id")
         ):
             raise ResultContractError("result_wait_invalid")
-        if request["status"] in {"pending", "ready", "saving"}:
+        if request["status"] in {"pending", "ready", "saving", "answered"}:
             # A sibling's explicit Continue never consumes this credential interaction.
             return build_step_result(
                 status=STEP_STATUS_WAITING, task_result=context.task_results[step["step_id"]],
-                wait=wait, summary="Waiting for personal action credentials.",
+                wait=wait, summary="Waiting for your answers." if wait["kind"] == "user_input" else "Waiting for personal action credentials.",
             )
         if request["status"] != "continuing":
             raise ResultContractError("result_wait_invalid")

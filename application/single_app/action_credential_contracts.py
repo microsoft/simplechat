@@ -5,6 +5,7 @@ from copy import deepcopy
 import hashlib
 import json
 from urllib.parse import urlsplit
+from agent_interaction_contracts import AgentInteractionRequired
 
 from functions_action_manifest import get_action_origin, resolve_action_type
 from functions_yamcs_operations import (
@@ -23,7 +24,7 @@ class ActionCredentialError(RuntimeError):
         super().__init__("Action credentials are unavailable. Refresh the credential request.")
 
 
-class ActionCredentialsRequired(ActionCredentialError):
+class ActionCredentialsRequired(ActionCredentialError, AgentInteractionRequired):
     """A connector has stopped before model interpretation of an authentication failure."""
 
     def __init__(self, request):

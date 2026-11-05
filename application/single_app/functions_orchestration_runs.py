@@ -783,6 +783,29 @@ def get_pending_elicitation(user_id, conversation_id, turn_id):
     return record
 
 
+def list_pending_questions(user_id, conversation_id):
+    """Public question projection only; never return private planning context."""
+    rows = cosmos_orchestration_runs_container.query_items(
+        query="SELECT TOP 1 c.question FROM c WHERE c.user_id = @user AND c.conversation_id = @conversation "
+              "AND c.record_type = 'pending_elicitation' AND c.status IN ('pending', 'processing') "
+              "ORDER BY c.created_at DESC",
+        parameters=[{"name": "@user", "value": user_id}, {"name": "@conversation", "value": conversation_id}],
+        partition_key=conversation_id,
+    )
+    return [deepcopy(row["question"]) for row in rows]
+
+
+def cancel_pending_question(user_id, conversation_id, turn_id, question_id, revision):
+    record = get_pending_elicitation(user_id, conversation_id, turn_id)
+    if not record or record["question"]["elicitation_id"] != question_id or record["question"]["revision"] != revision:
+        raise ElicitationStateError("This question changed. Refresh the conversation.")
+    if record.get("status") == "completed" and record.get("cancelled"):
+        return
+    if record.get("status") != "pending" or record.get("claim"):
+        raise ElicitationStateError("This question is already being continued.")
+    _replace_pending(record, {"status": "completed", "cancelled": True})
+
+
 def create_pending_elicitation(
     question, turn_context, user_id, conversation_id, turn_id, *, expected_pending=None,
 ):
