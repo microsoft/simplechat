@@ -85,3 +85,13 @@ Production recovery requires deployment of the fixed application and a separate
 authenticated check of initial loading, searching, browsing, and pagination.
 The investigation and local validation do not establish that the currently
 deployed beta application has recovered.
+
+## Follow-up in version: **0.261.404**
+
+The import correction exposed a separate query compatibility failure. The
+picker's new discovery path bypassed the existing Document Access Index and
+used cross-partition `GROUP BY`, which the Python Cosmos SDK cannot execute.
+Version **0.261.404** restores DAI-first discovery with the established
+per-container source fallback, without grouped queries. See
+[V2 document sources DAI fallback fix](V2_DOCUMENT_SOURCES_DAI_FALLBACK_FIX.md)
+for the confirmed telemetry, regression coverage, and deployment boundary.

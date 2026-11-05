@@ -1,9 +1,10 @@
 # test_v2_document_source_selection.py
 """
 Runtime regressions for workspace-sidebar discovery and additive source admission.
-Version: 0.261.400
+Version: 0.261.404
 Implemented in: 0.261.395
 Real configuration container naming covered in: 0.261.400
+DAI-first discovery and source fallback implemented in: 0.261.404
 
 Real contract/discovery modules run with storage and identity boundaries replaced;
 no cloud clients or network calls are initialized.
@@ -16,6 +17,8 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+
+from test_support.cosmos_query_guard import assert_cosmos_query_supported
 
 
 APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -38,20 +41,38 @@ def sources(monkeypatch):
     conversation = {"scope_locked": False}
     config = ModuleType("config")
     config.cosmos_conversations_container = SimpleNamespace(query_items=Mock(side_effect=lambda **kwargs: [conversation]))
+    records = {kind: [] for kind in ("personal", "group", "public")}
+
+    def metadata_query(kind, **kwargs):
+        assert_cosmos_query_supported(kwargs["query"])
+        return list(records[kind])
+
     for kind in ("user_documents", "group_documents", "public_documents"):
-        setattr(config, f"cosmos_{kind}_container", SimpleNamespace(query_items=Mock(return_value=[])))
+        scope = {"user_documents": "personal", "group_documents": "group", "public_documents": "public"}[kind]
+        setattr(config, f"cosmos_{kind}_container", SimpleNamespace(
+            query_items=Mock(side_effect=lambda scope=scope, **kwargs: metadata_query(scope, **kwargs)),
+        ))
     monkeypatch.setitem(sys.modules, "config", config)
+    index = Mock(return_value={"success": False, "status": "backfill_not_ready"})
+    dependency(monkeypatch, "functions_document_access_index", query_document_access_index_documents=index)
+    dependency(monkeypatch, "functions_documents", select_current_documents=lambda rows: list(rows))
     dependency(monkeypatch, "functions_settings", get_settings=lambda: settings)
     dependency(monkeypatch, "functions_group", get_user_groups=lambda user_id: groups)
     dependency(monkeypatch, "functions_public_workspaces",
                get_all_public_workspaces=lambda: public,
                resolve_public_chat_workspace_ids=lambda *args, **kwargs: [row["id"] for row in public])
     documents = {"doc-1": {"id": "doc-1", "group_id": "group-1"}}
+
+    def read_metadata(document_id, user_id, *, scope_type, **kwargs):
+        return next(row for row in records[scope_type] if row["id"] == document_id)
+
     dependency(monkeypatch, "content_screening.access",
                assert_document_available=lambda document_id, **kwargs: documents[document_id],
+               _read_authorized_document=read_metadata,
                public_document_payload=lambda row: row)
     return SimpleNamespace(contract=contract, discovery=discovery, settings=settings, groups=groups,
-                           public=public, conversation=conversation, config=config, documents=documents)
+                           public=public, conversation=conversation, config=config, documents=documents,
+                           records=records, index=index)
 
 
 def selected(*items):
@@ -145,22 +166,21 @@ def test_directory_is_independently_paged_and_finds_name_only_matches(sources):
 
 def test_document_matches_survive_beyond_suggestion_caps_and_pages(sources):
     personal = sources.config.cosmos_user_documents_container
-    def query_items(**kwargs):
-        query = kwargs["query"]
-        if "GROUP BY" in query:
-            return [{"owner": "reader", "count": 90}]
-        offset = next(p["value"] for p in kwargs["parameters"] if p["name"] == "@offset")
-        limit = next(p["value"] for p in kwargs["parameters"] if p["name"] == "@limit")
-        return [{"id": f"policy-{i}", "file_name": f"Policy {i}.pdf"} for i in range(offset, min(offset + limit, 90))]
-    personal.query_items.side_effect = query_items
+    sources.records["personal"] = [
+        {"id": f"policy-{i:04}", "file_name": f"Policy {i}.pdf", "user_id": "reader"} for i in range(1105)
+    ]
     first = sources.discovery.discover_document_sources("reader", sources.settings, query="policy")
     second = sources.discovery.discover_document_sources("reader", sources.settings, query="policy", source_offset=40)
-    assert first["source_total"] == second["source_total"] == 90
+    assert first["source_total"] == second["source_total"] == 1105
     assert first["source_next"] == 40 and second["source_next"] == 80
-    assert second["documents"][0]["document"]["id"] == "policy-40"
+    assert second["documents"][0]["document"]["id"] == "policy-0040"
+    last = sources.discovery.discover_document_sources(
+        "reader", sources.settings, query="policy", source_offset=1080,
+    )
+    assert len(last["documents"]) == 25 and last["source_next"] is None
     assert {s["kind"] for s in first["workspaces"]} == {"personal", "public"}
     for call in personal.query_items.call_args_list:
-        assert "CONTAINS(c.title" in call.kwargs["query"] and "c.tags" in call.kwargs["query"]
+        assert "c.title" in call.kwargs["query"] and "c.tags" in call.kwargs["query"]
         assert "chunk_text" not in call.kwargs["query"] and "SELECT *" not in call.kwargs["query"]
 
 
@@ -195,16 +215,10 @@ def test_approved_group_shares_are_selectable_without_widening_to_other_workspac
 
 def test_shared_metadata_counts_and_document_rows_use_the_same_workspace(sources):
     sources.settings["enable_file_sharing"] = True
-    group = sources.config.cosmos_group_documents_container
-    def query_items(**kwargs):
-        query = kwargs["query"]
-        if "GROUP BY REPLACE" in query:
-            return [{"owner": "group-1", "count": 1}]
-        if "GROUP BY" in query or "DISTINCT" in query:
-            return []
-        assert "ARRAY_CONTAINS(c.shared_group_ids, @approved_owner)" in query
-        return [{"id": "shared", "file_name": "Shared policy.pdf"}]
-    group.query_items.side_effect = query_items
+    sources.records["group"] = [{
+        "id": "shared", "file_name": "Shared policy.pdf", "group_id": "outside",
+        "shared_group_ids": ["group-1", "group-1,approved", "group-2,pending"],
+    }]
     result = sources.discovery.discover_document_sources(
         "reader", sources.settings, query="policy", workspace="group:group-1",
     )
@@ -212,6 +226,112 @@ def test_shared_metadata_counts_and_document_rows_use_the_same_workspace(sources
     assert result["documents"][0]["scope"]["id"] == "group-1"
     personal_queries = sources.config.cosmos_user_documents_container.query_items.call_args_list
     assert "ARRAY_CONTAINS(c.shared_user_ids, @approved_user)" in personal_queries[0].kwargs["query"]
+
+
+def test_ready_index_is_primary_and_empty_index_results_do_not_fall_back(sources):
+    sources.index.return_value = {"success": True, "documents": []}
+    sources.records["personal"] = [{"id": "source-only", "user_id": "reader"}]
+    page = sources.discovery.discover_document_sources("reader", sources.settings)
+    assert page["source_total"] == 0 and page["documents"] == []
+    assert page["matching_workspace_count"] == 67
+    assert sources.index.call_count == 3
+    assert sources.index.call_args_list[1].kwargs["group_ids"] == [group["id"] for group in sources.groups]
+    for kind in ("user", "group", "public"):
+        getattr(sources.config, f"cosmos_{kind}_documents_container").query_items.assert_not_called()
+
+
+@pytest.mark.parametrize("fallback_kind", ["personal", "group", "public"])
+def test_mixed_readiness_falls_back_only_for_the_affected_container(sources, fallback_kind):
+    for kind, field, owner in (
+        ("personal", "user_id", "reader"), ("group", "group_id", "group-1"),
+        ("public", "public_workspace_id", "public-1"),
+    ):
+        sources.records[kind] = [{"id": f"{kind}-document", field: owner, "file_name": f"{kind}.pdf"}]
+
+    def index_read(**kwargs):
+        kind = kwargs["source_scope"]
+        return ({"success": False, "status": "query_failed"} if kind == fallback_kind
+                else {"success": True, "documents": list(sources.records[kind])})
+
+    sources.index.side_effect = index_read
+    page = sources.discovery.discover_document_sources("reader", sources.settings)
+    assert page["source_total"] == 3 and len(page["documents"]) == 3
+    for kind, container in (("personal", "user"), ("group", "group"), ("public", "public")):
+        assert getattr(sources.config, f"cosmos_{container}_documents_container").query_items.call_count == (
+            1 if kind == fallback_kind else 0
+        )
+
+
+@pytest.mark.parametrize("indexed", [False, True])
+def test_discovery_uses_one_eligible_set_for_counts_tags_and_paging(sources, indexed):
+    sources.settings["enable_file_sharing"] = True
+    sources.records["personal"] = [
+        {"id": "a", "user_id": "reader", "file_name": "a.pdf", "tags": ["Policy"]},
+        {"id": "b", "user_id": "other", "shared_user_ids": ["reader,approved"], "title": "Policy"},
+        {"id": "pending", "user_id": "other", "shared_user_ids": ["reader,not_approved"], "title": "Policy"},
+        {"id": "deleted", "user_id": "reader", "is_deleted": True, "title": "Policy"},
+        {"id": "old", "user_id": "reader", "is_current_version": False, "title": "Policy"},
+        {"id": "promotion", "user_id": "reader", "generated_artifact_promotion_status": "pending_approval", "title": "Policy"},
+        {"id": "approval", "user_id": "reader", "status": "Pending Approval", "title": "Policy"},
+    ]
+    sources.records["group"] = [{
+        "id": "a", "group_id": "outside", "file_name": "policy.pdf", "tags": ["policy", "topic"],
+        "shared_group_ids": ["group-1", "group-1,approved", "group-2,not_approved"],
+    }]
+    if indexed:
+        sources.index.side_effect = lambda **kwargs: {
+            "success": True, "documents": list(sources.records[kwargs["source_scope"]]),
+        }
+    page = sources.discovery.discover_document_sources("reader", sources.settings, query=" POLICY ", page_size=1)
+    assert page["source_total"] == 3 and page["source_next"] == 1
+    assert page["matching_workspace_count"] == 3  # Includes the public workspace-name match.
+    second = sources.discovery.discover_document_sources(
+        "reader", sources.settings, query="policy", source_offset=1, page_size=1,
+    )
+    assert second["documents"][0]["document"]["id"] == "b" and second["source_next"] == 2
+    group = sources.discovery.discover_document_sources(
+        "reader", sources.settings, query="policy", workspace="group:group-1",
+    )
+    assert group["source_total"] == 1 and group["tags"] == ["policy"]
+    assert group["documents"][0]["scope"]["id"] == "group-1"
+
+
+def test_index_candidates_do_not_override_live_share_revocation_or_scope(sources):
+    sources.records["group"] = [
+        {"id": "a-revoked", "group_id": "outside", "shared_group_ids": ["group-1,not_approved"]},
+        {"id": "b-allowed", "group_id": "group-1"},
+    ]
+    sources.index.side_effect = lambda **kwargs: {
+        "success": True, "documents": (
+            [{"id": "a-revoked", "group_id": "outside", "shared_group_ids": ["group-1,approved"]},
+             {"id": "b-allowed", "group_id": "group-1"}] if kwargs["source_scope"] == "group" else []
+        ),
+    }
+    page = sources.discovery.discover_document_sources(
+        "reader", sources.settings, workspace="group:group-1", page_size=1,
+    )
+    assert [row["document"]["id"] for row in page["documents"]] == ["b-allowed"]
+    assert page["source_next"] is None
+
+
+def test_discovery_only_queries_enabled_scopes_and_keeps_personal_sharing_disabled(sources):
+    sources.settings.update(enable_group_workspaces=False, enable_public_workspaces=False)
+    sources.records["personal"] = [
+        {"id": "owner", "user_id": "reader", "tags": ["visible"]},
+        {"id": "shared", "user_id": "other", "shared_user_ids": ["reader,approved"], "tags": ["hidden"]},
+    ]
+    sources.index.side_effect = lambda **kwargs: {"success": True, "documents": sources.records["personal"]}
+    page = sources.discovery.discover_document_sources("reader", sources.settings, workspace="personal:")
+    assert page["source_total"] == 1 and page["tags"] == ["visible"]
+    sources.index.assert_called_once_with(source_scope="personal", user_id="reader", settings=sources.settings)
+
+
+def test_scope_locked_discovery_never_queries_outside_its_catalog(sources):
+    sources.conversation.update(scope_locked=True, locked_contexts=[{"scope": "group", "id": "group-1"}])
+    sources.index.return_value = {"success": True, "documents": []}
+    page = sources.discovery.discover_document_sources("reader", sources.settings, conversation_id="chat")
+    assert page["eligible_workspace_count"] == 1
+    sources.index.assert_called_once_with(source_scope="group", group_ids=["group-1"], settings=sources.settings)
 
 
 def test_direct_reads_respect_scoped_tag_document_workspace_union_and_restore_context(sources):
