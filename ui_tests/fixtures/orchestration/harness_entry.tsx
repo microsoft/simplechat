@@ -44,6 +44,7 @@ import { OrchestrationRunView } from '../../../application/v2_ui/src/components/
 import { OrchestrationMapView } from '../../../application/v2_ui/src/components/chat/OrchestrationMapView';
 import { OrchestrationPlanEditorHost } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanEditor';
 import { MessageList } from '../../../application/v2_ui/src/components/chat/MessageList';
+import { EnhancedCitationViewer } from '../../../application/v2_ui/src/components/chat/EnhancedCitationViewer';
 import { ConversationDrawer } from '../../../application/v2_ui/src/components/chat/ConversationDrawer';
 import { Composer } from '../../../application/v2_ui/src/components/chat/Composer';
 import { ComposerEditor } from '../../../application/v2_ui/src/components/chat/ComposerEditor';
@@ -246,6 +247,7 @@ type ComponentName =
     | 'WorkflowEditorDialog'
     | 'WorkflowRunHistory'
     | 'M365Cards'
+    | 'EnhancedCitationViewer'
     | 'Toaster';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -260,6 +262,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     OrchestrationRunView,
     OrchestrationMapView,
     MessageList,
+    EnhancedCitationViewer,
     ConversationDrawer,
     Composer,
     PromptExperience,

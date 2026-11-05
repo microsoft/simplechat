@@ -1,7 +1,7 @@
 # test_excel_document_accessibility_extraction.py
 """
 Functional tests for native Excel inspection and workspace evidence persistence.
-Version: 0.261.399
+Version: 0.261.408
 Implemented in: 0.261.399
 
 Real workbook packages exercise saved properties, styles, notes, threaded comments,
@@ -172,7 +172,8 @@ def test_native_excel_properties_comments_objects_styles_and_printing(workbook_p
     assert any(item["color"] == "#FF0000" for item in style["colors"])
     body = "\n".join(item["content"] for item in evidence)
     assert "Thread reply" in body and "$0.00" in body and "#FFFF00" in body
-    assert "Operations" not in body, "Native evidence must not become a copy of worksheet rows"
+    assert "Theme color" not in body, "Unannotated worksheet values must not become native row indexing"
+    assert any(item["cell"] == "A2" and item["cell_value"] == "Operations" for item in notes)
     assert "No worksheet rows" in body, "Blank sheets still have native evidence"
     assert any("External relationships" in note for note in metadata["coverage_notes"])
     summary = format_accessibility_metadata_for_chat(metadata)
@@ -399,6 +400,10 @@ def _ingestion_namespace(fail_schema=False, fail_index=False):
         "pandas": pandas, "os": os, "logging": logging,
         "log_event": lambda *args, **kwargs: None,
         "extract_office_accessibility_metadata": extract_office_accessibility_metadata,
+        "_extract_excel_native_inventory": lambda document_id, user_id, path, extension, **scope: (
+            *extract_office_accessibility_metadata(path, extension), None,
+        ),
+        "EXCEL_INVENTORY_FIELD": "excel_native_inventory",
         "build_excel_evidence_chunks": excel.build_excel_evidence_chunks,
         "get_embedding_safe_chunk_characters": lambda settings: 900,
         "get_settings": lambda: {"enable_extract_meta_data": True},
@@ -436,7 +441,7 @@ def test_ingestion_modes_scopes_native_properties_and_chunk_identity(workbook_pa
     assert native and all(len(item["page_text_content"]) <= 900 for item in native)
     if enhanced:
         assert chunks[0]["page_text_content"] == "schema preview"
-        assert all("Operations" not in item["page_text_content"] for item in native)
+        assert all("Theme color" not in item["page_text_content"] for item in native)
     assert any(item.get("num_chunks") == count for item in updates)
     assert any(item.get("title") == "AI-generated title" for item in updates) is auto_metadata
 
@@ -562,6 +567,10 @@ def test_mixed_source_inspection_uses_report_search_authorization_and_citations(
         "annotate_document_search_payload": annotate_document_search_payload,
         "format_accessibility_metadata_for_chat": format_accessibility_metadata_for_chat,
         "EXCEL_EVIDENCE_MARKER": excel.EXCEL_EVIDENCE_MARKER,
+        "build_excel_native_chat_evidence": excel.build_excel_native_chat_evidence,
+        "excel_native_question_sections": excel.excel_native_question_sections,
+        "has_excel_native_inspection_intent": excel.has_excel_native_inspection_intent,
+        "merge_excel_native_evidence": excel.merge_excel_native_evidence,
         "execute_tabular_evidence_sources": execute,
     }
     _load_functions("route_backend_chats.py", {"_execute_excel_native_inspection_evidence"}, namespace)

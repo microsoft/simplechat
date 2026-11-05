@@ -19,8 +19,13 @@ from openpyxl.styles.colors import COLOR_INDEX
 from openpyxl.styles.numbers import BUILTIN_FORMATS
 from openpyxl.utils.cell import get_column_letter
 
+from excel_workbook_reader import (
+    EXCEL_WORKBOOK_SCHEMA_VERSION,
+    ExcelWorkbookReader,
+    cell_coordinates,
+)
 from functions_appinsights import log_event
-from functions_document_style import StyleAccumulator
+from functions_document_style import StyleAccumulator, format_style_inventory_for_chat
 from functions_office_media import OFFICE_ZIP_MAX_ENTRIES, _read_zip_entry_bounded
 
 
@@ -64,12 +69,20 @@ def _on(value):
 
 
 class _Inspection:
-    def __init__(self, extension):
+    def __init__(self, extension, record_sink=None, progress_callback=None):
         self.meta = {
-            "format": extension.lstrip("."), "schema_version": "1.0",
+            "format": extension.lstrip("."), "schema_version": EXCEL_WORKBOOK_SCHEMA_VERSION,
             "coverage": "partial", "coverage_notes": list(EXCEL_COVERAGE_NOTES),
             "properties": {}, "sheets": [], "comments": [], "objects": [], "issues": [],
+            "tables": [], "defined_names": [], "hyperlinks": [], "validations": [],
+            "property_records": [], "custom_properties": [], "extended_properties": [],
+            "comment_summary": {
+                "legacy_notes": 0, "thread_roots": 0, "replies": 0,
+                "thread_messages": 0, "compatibility_copies": 0, "raw_records": 0,
+            },
         }
+        self.record_sink = record_sink
+        self.progress_callback = progress_callback
         self.evidence = []
         self.evidence_chars = 0
         self.bytes_read = 0
@@ -77,6 +90,8 @@ class _Inspection:
         self.cells = 0
         self.cache = {}
         self.parent_record_bytes = 0
+        self.image_placement_count = 0
+        self.image_map_bytes = 0
         self.styles = StyleAccumulator("sheet_cell")
         self.counts = Counter()
 
@@ -88,7 +103,7 @@ class _Inspection:
                 inventory["coverage_notes"].append(message)
 
     def clean(self, value):
-        text = str(value or "")
+        text = str(value) if value is not None else ""
         if len(text) > EXCEL_MAX_TEXT:
             self.note("Long native strings were truncated to the per-field limit.")
             return text[:EXCEL_MAX_TEXT] + " [truncated]"
@@ -148,18 +163,62 @@ class _Inspection:
 
     def record(self, collection, sheet, record):
         self.counts[collection] += 1
+        record = {"sheet": sheet, **record}
+        if collection == "objects" and record.get("media_part"):
+            if self.image_placement_count < 100:
+                images = self.meta.setdefault("image_locations", {})
+                existing = images.get(record["media_part"])
+                image = dict(existing) if existing else {
+                    "alt_text": str(record.get("alt_text") or "")[:1000],
+                    "title_text": str(record.get("title") or "")[:1000],
+                    "is_decorative": record.get("is_decorative"), "sheet_name": sheet,
+                    "cell": record.get("cell"), "object_id": record.get("id"), "placements": [],
+                }
+                image["placements"] = list(image["placements"]) + [{
+                    "sheet_name": sheet, "cell": record.get("cell"), "object_id": record.get("id"),
+                }]
+                size = len(json.dumps(image, ensure_ascii=True).encode())
+                previous = len(json.dumps(existing, ensure_ascii=True).encode()) if existing else 0
+                if self.image_map_bytes + size - previous <= 65536:
+                    images[record["media_part"]] = image
+                    self.image_map_bytes += size - previous
+                    self.image_placement_count += 1
+                else:
+                    self.note("The embedded-image placement preview reached its byte limit; full native object records are separate.")
+            else:
+                self.note("The embedded-image analysis placement map is limited to 100 anchors; the full object inventory is separate.")
+        if self.record_sink is not None:
+            self.record_sink(collection, record)
+        self.emit(sheet, collection, record)
         if self.records >= EXCEL_MAX_RECORDS:
-            self.note("Native comment/object records were truncated at the record limit.")
+            self.note("Parent native records were truncated at the record limit; full inventory requires its paged source.")
             return
         self.records += 1
-        record = {"sheet": sheet, **record}
-        record_bytes = len(json.dumps(record, ensure_ascii=True).encode("utf-8"))
+        preview = self.preview(record)
+        record_bytes = len(json.dumps(preview, ensure_ascii=True).encode("utf-8"))
         if self.parent_record_bytes + record_bytes <= EXCEL_MAX_PARENT_BYTES // 2:
-            self.meta[collection].append(record)
+            self.meta.setdefault(collection, []).append(preview)
             self.parent_record_bytes += record_bytes
         else:
-            self.note("Parent comment/object inventory was capped; location-specific search evidence is separate.")
-        self.emit(sheet, collection, record)
+            self.note("Parent native inventory was capped; location-specific search evidence and full inventory are separate.")
+
+    def preview(self, value):
+        if isinstance(value, dict):
+            result = {key: self.preview(item) for key, item in value.items()}
+            for key, item in value.items():
+                if (
+                    isinstance(item, str) and len(item) > EXCEL_MAX_TEXT
+                    or isinstance(item, list) and len(item) > 100
+                ):
+                    result[f"{key}_truncated"] = True
+            return result
+        if isinstance(value, list):
+            if len(value) > 100:
+                self.note("Parent native collection previews show at most 100 entries; use the full inventory for the remainder.")
+            return [self.preview(item) for item in value[:100]]
+        if isinstance(value, str):
+            return self.clean(value)
+        return value
 
     def finish(self):
         self.meta["observed_counts"] = dict(self.counts)
@@ -201,9 +260,15 @@ class _Inspection:
             "coverage": "partial; unsupported control types are not accessibility failures",
         }
         # Search evidence keeps the location-specific records; Cosmos remains a bounded inventory.
-        while len(json.dumps(self.meta, ensure_ascii=True).encode("utf-8")) > EXCEL_MAX_PARENT_BYTES - 1024:
+        reserve = min(8192, EXCEL_MAX_PARENT_BYTES // 6)
+        while len(json.dumps(self.meta, ensure_ascii=True).encode("utf-8")) > EXCEL_MAX_PARENT_BYTES - reserve:
             style = self.meta["style_inventory"]
-            candidates = [self.meta[key] for key in ("comments", "objects", "sheets") if self.meta[key]]
+            candidates = [
+                self.meta[key] for key in (
+                    "comments", "objects", "sheets", "tables", "defined_names", "hyperlinks",
+                    "validations", "property_records", "custom_properties", "extended_properties",
+                ) if self.meta[key]
+            ]
             candidates.extend(style[key] for key in ("outliers", "colors") if style[key])
             candidates.extend(value["sheets"] for value in (style["layout"], style["page_setup"]) if value["sheets"])
             if not candidates:
@@ -222,12 +287,24 @@ class _Inspection:
             style["outliers_truncated"] = len(style["outliers"]) < style["outlier_run_count"]
             self.note("Parent inventory was truncated at its serialized byte limit; search evidence is separate.")
 
+        self.meta["inventory_coverage"] = {
+            key: {
+                "observed": count, "retained": len(self.meta.get(key) or []),
+                "complete": count == len(self.meta.get(key) or []) and not any(
+                    any(name.endswith("_truncated") and value is True for name, value in item.items())
+                    for item in self.meta.get(key) or []
+                ),
+            }
+            for key, count in self.counts.items()
+        }
+
         def coverage_content():
             return f"{EXCEL_EVIDENCE_MARKER}\nWorkbook properties and inspection coverage:\n" + json.dumps({
                 "properties": self.meta["properties"],
                 "coverage": self.meta["coverage"],
                 "coverage_notes": self.meta["coverage_notes"],
                 "observed_counts": self.meta["observed_counts"],
+                "comment_summary": self.meta["comment_summary"],
             }, ensure_ascii=True)
 
         while self.evidence and self.evidence_chars + len(coverage_content()) > EXCEL_MAX_EVIDENCE_CHARS:
@@ -242,13 +319,41 @@ def _core_properties(state, root):
     if root is None:
         return
     names = {"title", "creator", "subject", "keywords", "description", "language",
-             "category", "created", "modified", "lastModifiedBy"}
+             "category", "created", "modified", "lastModifiedBy", "identifier",
+             "version", "revision", "lastPrinted", "contentStatus"}
     properties = {_local(item.tag): state.clean(item.text) for item in root if _local(item.tag) in names}
     state.meta["properties"] = properties
     for key in ("title", "subject", "description", "language", "category"):
         state.meta[key] = properties.get(key, "")
     state.meta["authors"] = [part.strip() for part in re.split(r"[;,]", properties.get("creator", "")) if part.strip()]
     state.meta["keywords"] = [part.strip() for part in re.split(r"[;,]", properties.get("keywords", "")) if part.strip()]
+    for element in root:
+        if _local(element.tag) in names:
+            state.record("property_records", "(workbook)", {
+                "kind": "core", "name": _local(element.tag), "value": element.text or "",
+            })
+
+
+def _additional_properties(state, archive, relationships):
+    for kind, fallback, collection in (
+        ("extended-properties", "docProps/app.xml", "extended_properties"),
+        ("custom-properties", "docProps/custom.xml", "custom_properties"),
+    ):
+        part = next((path for relation, path in relationships.values() if relation == kind), fallback)
+        root = state.xml(archive, part)
+        if root is None:
+            continue
+        for element in root:
+            name = element.get("name") or _local(element.tag)
+            children = list(element)
+            values = [
+                {"type": _local(child.tag), "value": _text(child)}
+                for child in children
+            ]
+            state.record(collection, "(workbook)", {
+                "name": name, "value": values if children else element.text or "",
+                "property_id": element.get("pid"),
+            })
 
 
 def _color(element, theme, state, palette=COLOR_INDEX):
@@ -372,7 +477,240 @@ def _header_sections(expression):
     return {key: value for key, value in sections.items() if value}
 
 
+def normalize_excel_comments(records):
+    """Correlate only identifiable same-cell compatibility copies of real threads."""
+    threaded, notes = [], []
+    for item in records:
+        if not isinstance(item, dict):
+            raise ValueError("A stored Excel comment record is invalid.")
+        record = dict(item)
+        (threaded if record.get("kind") == "threaded_comment" else notes).append(record)
+    roots = {
+        (record.get("sheet"), str(record["id"]).casefold()): record
+        for record in threaded if record.get("id") and not record.get("parent_id")
+    }
+    summary = {
+        "legacy_notes": 0, "thread_roots": sum(not record.get("parent_id") for record in threaded),
+        "replies": sum(bool(record.get("parent_id")) for record in threaded),
+        "thread_messages": len(threaded), "compatibility_copies": 0,
+        "raw_records": len(threaded) + len(notes),
+    }
+    genuine_notes = []
+    for note in notes:
+        author = str(note.get("author") or "")
+        root = roots.get((note.get("sheet"), author[3:].strip().casefold())) if author.lower().startswith("tc=") else None
+        text = str(note.get("text") or "")
+        compatibility = (
+            root is not None and root.get("cell") == note.get("cell")
+            and text.lstrip().casefold().startswith("[threaded comment]")
+            and bool(str(root.get("text") or "").strip())
+            and str(root["text"]).strip() in text
+        )
+        if compatibility:
+            summary["compatibility_copies"] += 1
+        else:
+            genuine_notes.append(note)
+    summary["legacy_notes"] = len(genuine_notes)
+    return threaded + genuine_notes, summary
+
+
+def format_excel_comment_for_chat(record):
+    """Keep feedback, saved values, and unavailable fields separate in model evidence."""
+    if record.get("record_fragment"):
+        return (
+            f"### Partial native record at {record.get('sheet')}!{record.get('cell')}\n"
+            "This is an explicitly continued JSON record, not a complete comment. "
+            "Use the supplied continuation cursor to read the remainder.\n"
+            f"{record.get('record_json_fragment') or ''}"
+        )
+    location = f"{record.get('sheet', '?')}!{record.get('cell', '?')}"
+    kind = "thread reply" if record.get("parent_id") else "thread root" if record.get("kind") == "threaded_comment" else "legacy note"
+    saved = {
+        "value": record.get("cell_value"), "value_type": record.get("cell_value_type"),
+        "status": record.get("cell_value_status", "not inspected"),
+        "formula": record.get("formula"), "cached_value_available": record.get("cached_value_available"),
+    }
+    details = {
+        key: record.get(key) for key in ("author", "date", "id", "parent_id", "resolved")
+    }
+    text = (
+        f"### Reviewer feedback: {kind} at {location}\n"
+        f"Saved cell evidence (not the requested change): {json.dumps(saved, ensure_ascii=False)}\n"
+        f"Saved comment fields (null means unknown): {json.dumps(details, ensure_ascii=False)}\n"
+        f"Reviewer feedback text:\n{record.get('text') or ''}"
+    )
+    if record.get("text_truncated"):
+        text += "\n[Parent text preview is shortened; retrieve the full native inventory text.]"
+    return text
+
+
+def excel_native_question_sections(question):
+    text = str(question or "").lower()
+    sections = []
+    for section, expression in (
+        ("comments", r"\b(comments?|notes?|reviewer|feedback|replies|threaded)\b"),
+        ("custom_properties", r"\bcustom propert"),
+        ("extended_properties", r"\b(extended propert|application propert|company|manager)\b"),
+        ("property_records", r"\b(propert|metadata|authors?|keywords?|document title)"),
+        ("tables", r"\b(tables?|columns?|schema|named ranges?)\b"),
+        ("objects", r"\b(objects?|charts?|images?|pictures?|alt[- ]?text|decorative|shapes?)\b"),
+        ("image_analyses", r"\b(images?|pictures?|figures?)\b"),
+        ("hyperlinks", r"\b(hyperlinks?|links?)\b"),
+        ("validations", r"\bvalidations?\b"),
+        ("defined_names", r"\b(defined names?|named ranges?|print areas?|print titles?)\b"),
+    ):
+        if re.search(expression, text):
+            sections.append(section)
+    return sections or ["comments"]
+
+
+def build_excel_native_chat_evidence(report, question, *, max_bytes=15000):
+    """Include whole requested records before optional layout/style summaries."""
+    metadata = report.get("accessibility_metadata") or {}
+    inspection = report.get("excel_inspection") or {}
+    page = inspection.get("page") or {}
+    pages = inspection.get("pages") or ([page] if page else [])
+    comments, counts = normalize_excel_comments(metadata.get("comments") or [])
+    counts = metadata.get("comment_summary") or counts
+    header = (
+        f"{EXCEL_EVIDENCE_MARKER}\n"
+        f"Workbook: {(report.get('document') or {}).get('file_name') or 'Selected workbook'}\n"
+        f"Canonical comment counts: {json.dumps(counts, ensure_ascii=True)}\n"
+        f"Native coverage: {metadata.get('coverage', 'unknown')}. "
+        "Saved native state is not rendered appearance or a conformance certificate. "
+        "Reviewer feedback is not the workbook's saved data. "
+        "No formulas, macros, or external links were executed.\n"
+    )
+    parts, used, included, omitted = [header], len(header.encode("utf-8")), 0, 0
+
+    def append(value, record=False):
+        nonlocal used, included, omitted
+        size = len(value.encode("utf-8")) + 2
+        if used + size > max_bytes - 1024:
+            if record:
+                omitted += 1
+            return False
+        parts.append(value)
+        used += size
+        included += int(record)
+        return True
+
+    requested = excel_native_question_sections(question)
+    for section in requested:
+        section_page = next((item for item in pages if item.get("section") == section), {})
+        records = section_page.get("records") if section_page else metadata.get(section)
+        if section == "comments":
+            records = section_page.get("records") if section_page else comments
+        for record in records or []:
+            content = format_excel_comment_for_chat(record) if section == "comments" else (
+                f"### Saved native {section}\n{json.dumps(record, ensure_ascii=False)}"
+            )
+            append(content, record=True)
+    for cell in inspection.get("cells") or []:
+        append(
+            f"### Saved cell {cell.get('sheet')}!{cell.get('cell')}\n{json.dumps(cell, ensure_ascii=True)}",
+            record=True,
+        )
+    append(f"Saved workbook properties: {json.dumps(metadata.get('properties') or {}, ensure_ascii=True)}")
+    if "image_analyses" in requested:
+        append(
+            "Image-analysis coverage (not saved alt text): "
+            + json.dumps(metadata.get("image_analysis_summary") or {
+                "status": "not_generated", "guidance": "Configured image analysis may require document reprocessing; saved native object metadata is separate.",
+            }, ensure_ascii=True)
+        )
+    for sheet in metadata.get("sheets") or []:
+        append(
+            f"Sheet {sheet.get('name')}: state={sheet.get('state')}; "
+            f"headers/footers={json.dumps(sheet.get('header_footer') or {}, ensure_ascii=True)}"
+        )
+    for note in metadata.get("coverage_notes") or []:
+        append(f"Coverage limitation: {note}")
+    if re.search(r"\b(font|format|style|size|colou?r)", str(question or ""), re.IGNORECASE):
+        for line in format_style_inventory_for_chat(report.get("style_inventory") or metadata.get("style_inventory")):
+            append(line)
+    incomplete = bool(any(item.get("has_more") for item in pages) or omitted)
+    if incomplete:
+        parts.append(
+            f"Returned {included} complete records/fragments in this bounded handoff; "
+            f"{omitted} additional selected records did not fit. Do not call this an exhaustive list. "
+            f"Native page continuations: {json.dumps({item['section']: item.get('next_cursor') for item in pages if item.get('has_more')}, ensure_ascii=True)}."
+        )
+    return {
+        "summary": "\n\n".join(parts), "returned_records": included,
+        "records_omitted": omitted, "partial": incomplete,
+        "next_cursor": page.get("next_cursor"), "total_records": page.get("total_records"),
+        "worksheet_data_read": bool(inspection.get("cells")) or any("cell_value_status" in record for record in comments),
+    }
+
+
+def has_excel_native_inspection_intent(question, file_names=None):
+    """Recognize native requirements independently from a simultaneous calculation."""
+    text = re.sub(
+        r"\b(sum|average|median|aggregate|calculate|compute)\b|\btotal\s+(sales|revenue|tax|amount|cost)",
+        "", str(question or ""), flags=re.IGNORECASE,
+    )
+    return is_excel_native_inspection_question(text, file_names=file_names)
+
+
+def merge_excel_native_evidence(result, native_result, question):
+    """Keep both evidence kinds within the existing per-source summary budget."""
+    if not native_result:
+        return result
+    result = dict(result)
+    native_by_source = {
+        envelope["document_id"]: envelope for envelope in native_result.get("evidence_envelopes") or []
+    }
+    reports = {
+        citation.get("function_arguments", {}).get("document_id"): citation.get("function_result")
+        for citation in native_result.get("agent_citations") or []
+        if citation.get("function_name") == "get_document_accessibility_report"
+    }
+    envelopes = []
+    for existing in result.get("evidence_envelopes") or []:
+        envelope = dict(existing)
+        native = native_by_source.get(envelope.get("document_id"))
+        if native is None:
+            envelopes.append(envelope)
+            continue
+        summary = str(envelope.get("summary") or "")
+        computed_lines, computed_size = [], 0
+        for line in summary.splitlines(keepends=True):
+            size = len(line.encode("utf-8"))
+            if computed_size + size > 10000:
+                break
+            computed_lines.append(line)
+            computed_size += size
+        computed = "".join(computed_lines)
+        computed_shortened = computed != summary
+        report = reports.get(envelope["document_id"])
+        if isinstance(report, dict):
+            evidence = build_excel_native_chat_evidence(
+                report, question, max_bytes=max(2500, 15000 - computed_size),
+            )
+            native_summary = evidence["summary"]
+            native_partial = evidence["partial"]
+        else:
+            native_summary = str(native.get("summary") or "Native inspection was unavailable.")
+            native_partial = True
+        envelope["summary"] = (
+            f"{native_summary}\n\nComputed tabular evidence:\n{computed}"
+            + ("\n[Computed summary is shortened; the full tool result remains available.]" if computed_shortened else "")
+        )
+        envelope["coverage"] = {
+            **dict(envelope.get("coverage") or {}),
+            "native_inspection_included": True, "native_records_partial": native_partial,
+            "native_status": native.get("status"), "computed_summary_shortened": computed_shortened,
+        }
+        envelope["citations"] = list(envelope.get("citations") or []) + list(native.get("citations") or [])
+        envelopes.append(envelope)
+    result["evidence_envelopes"] = envelopes
+    result["agent_citations"] = list(result.get("agent_citations") or []) + list(native_result.get("agent_citations") or [])
+    return result
+
+
 def _comments(state, archive, sheet, relationships, persons):
+    threaded, notes = [], []
     for kind, path in relationships.values():
         if kind not in ("comments", "threadedComment", "threadedComments"):
             continue
@@ -388,14 +726,49 @@ def _comments(state, archive, sheet, relationships, persons):
             else:
                 author = persons.get(item.get("personId"))
             text = "".join(_text(child) for child in item if _local(child.tag) == "text")
-            state.record("comments", sheet, {
+            record = {
+                "sheet": sheet,
                 "kind": "note" if name == "comment" else "threaded_comment",
-                "cell": state.clean(item.get("ref")), "text": state.clean(text),
+                "cell": state.clean(item.get("ref")), "text": text,
                 "author": author, "date": state.clean(item.get("dT")) or None,
                 "id": state.clean(item.get("id")) or None,
                 "parent_id": state.clean(item.get("parentId")) or None,
                 "resolved": _on(item.get("done")) if "done" in item.attrib else None,
-            })
+                "source_part": path,
+            }
+            (notes if name == "comment" else threaded).append(record)
+    records, summary = normalize_excel_comments(threaded + notes)
+    for key, count in summary.items():
+        state.meta["comment_summary"][key] += count
+    return records
+
+
+def _chart_content(state, archive, chart_part):
+    root = state.xml(archive, chart_part, required=True)
+    series = []
+    for element in root.iter():
+        if _local(element.tag) != "ser":
+            continue
+        values = []
+        references = []
+        for item in element.iter():
+            if _local(item.tag) == "f":
+                references.append(item.text or "")
+            elif _local(item.tag) == "pt":
+                value = _first(item, "v")
+                values.append({"index": item.get("idx"), "value": _text(value)})
+        series.append({
+            "references": references, "cached_points": values,
+            "cached_point_count": len(values),
+        })
+    return {
+        "chart_part": chart_part,
+        "chart_text": "\n".join(
+            item.text for item in root.iter() if _local(item.tag) == "t" and item.text
+        ),
+        "series": series,
+        "coverage": "Saved chart text, references and caches only; chart formulas are not evaluated.",
+    }
 
 
 def _objects(state, archive, sheet, relationships):
@@ -425,12 +798,16 @@ def _objects(state, archive, sheet, relationships):
                 state.record("objects", sheet, {
                     "type": control_type or "vml_shape", "id": state.clean(shape.get("id")),
                     "cell": f"{get_column_letter(int(column.text) + 1)}{int(row.text) + 1}" if row is not None and column is not None else None,
-                    "alt_text": state.clean(shape.get("alt")), "title": state.clean(_attr(shape, "title")),
+                    "alt_text": shape.get("alt") or "", "title": _attr(shape, "title") or "",
+                    "saved_control_properties": {
+                        _local(item.tag): _text(item) for item in client
+                    } if client is not None else {},
                     "is_decorative": None, "alt_inspected": True,
                 })
             state.note("VML decorative status is unavailable; absent marking remains unknown.")
             continue
         parents = {child: parent for parent in root.iter() for child in parent}
+        drawing_relationships = state.rels(archive, path)
         for anchor in root:
             start = _first(anchor, "from")
             row = _first(start, "row") if start is not None else None
@@ -447,103 +824,110 @@ def _objects(state, archive, sheet, relationships):
                     "chart" if owner is not None and owner_type == "graphicFrame" and _first(owner, "chart") is not None else
                     "group" if owner_type == "grpSp" else "shape"
                 )
-                state.record("objects", sheet, {
+                record = {
                     "type": object_type, "id": state.clean(properties.get("id")),
                     "name": state.clean(properties.get("name")), "cell": cell,
-                    "alt_text": state.clean(properties.get("descr")), "title": state.clean(properties.get("title")),
+                    "alt_text": properties.get("descr") or "", "title": properties.get("title") or "",
                     "is_decorative": _on(decorative.get("val")) if decorative is not None else None,
                     "alt_inspected": True,
-                })
+                    "text": "\n".join(
+                        item.text for item in owner.iter()
+                        if _local(item.tag) == "t" and item.text
+                    ) if owner is not None else "",
+                    "drawing_part": path,
+                }
+                chart = _first(owner, "chart") if owner is not None else None
+                if chart is not None:
+                    relationship = drawing_relationships.get(_attr(chart, "id"))
+                    if relationship and relationship[0] == "chart":
+                        record.update(_chart_content(state, archive, relationship[1]))
+                    else:
+                        record["chart_coverage"] = "The saved chart part was unavailable."
+                        state.note("A drawing referenced a chart without an available internal chart relationship.")
+                image = _first(owner, "blip") if owner is not None else None
+                if image is not None:
+                    relationship = drawing_relationships.get(_attr(image, "embed"))
+                    if relationship and relationship[0] == "image":
+                        record["media_part"] = relationship[1]
+                state.record("objects", sheet, record)
 
 
-def _sheet(state, archive, entry, path, kind, definitions, shared_strings, persons):
+def _sheet(state, archive, entry, path, kind, definitions, reader, persons):
     name = state.clean(entry.get("name"))[:128]
-    root = state.xml(archive, path, required=True)
-    sheet = {"name": name, "state": entry.get("state", "visible"), "type": kind, "part": path}
-    state.meta["sheets"].append(sheet)
-    layout_names = {"mergeCell", "col", "pane", "pageMargins", "pageSetup", "printOptions",
-                    "sheetFormatPr", "sheetView", "autoFilter", "sheetPr"}
-    layout = []
-    for element in root.iter():
-        local = _local(element.tag)
-        if local in layout_names or local == "row" and any(key in element.attrib for key in ("ht", "hidden", "s")):
-            if len(layout) < 200:
-                record = {"type": local, **{key: state.clean(value) for key, value in element.attrib.items()}}
-                style_id = element.get("style") if local == "col" else element.get("s") if local == "row" else None
-                if style_id is not None and 0 <= int(style_id) < len(definitions):
-                    record["saved_style"] = definitions[int(style_id)]
-                layout.append(record)
-            else:
-                state.note("Sheet layout ranges were truncated to 200 records per sheet.")
-    sheet["layout"] = layout
-    sheet["conditional_format_rules"] = sum(_local(element.tag) == "cfRule" for element in root.iter())
-    header_footer = _first(root, "headerFooter")
-    sheet["header_footer"] = {}
-    if header_footer is not None:
-        sheet["header_footer"] = {
-            "flags": dict(header_footer.attrib),
-            "expressions": {_local(child.tag): state.clean(child.text) for child in header_footer},
-            "sections": {_local(child.tag): _header_sections(state.clean(child.text)) for child in header_footer},
-        }
-    state.emit(name, "Sheet layout, headers and footers (raw Excel control codes; not evaluated)", sheet)
     relationships = state.rels(archive, path)
-    _comments(state, archive, name, relationships, persons)
-    _objects(state, archive, name, relationships)
-    if _first(root, "oleObjects") is not None or any(kind in ("oleObject", "activeXControl", "control") for kind, _ in relationships.values()):
-        state.note("This workbook contains unsupported OLE/ActiveX controls; their alt text was not inspected.")
-    if any(_local(element.tag) in ("cellControl", "featurePropertyBag") for element in root.iter()):
-        state.note("Modern in-cell controls were detected; their accessibility metadata is unsupported.")
-    column_styles = [(int(column.get("min")), int(column.get("max")), column.get("style"))
-                     for column in root.iter() if _local(column.tag) == "col" and column.get("style") is not None]
-    row_styles = {row.get("r"): row.get("s") for row in root.iter()
-                  if _local(row.tag) == "row" and row.get("s") is not None}
+    comments = _comments(state, archive, name, relationships, persons)
     saved_styles = {}
-    for element in root.iter():
-        if _local(element.tag) != "c":
-            continue
-        if state.cells >= EXCEL_MAX_CELLS:
-            state.note(f"Cell formatting inspection sampled the first {EXCEL_MAX_CELLS} saved cells.")
-            break
-        state.cells += 1
-        ref = state.clean(element.get("r"))[:32]
-        column_match = re.match(r"([A-Z]+)(\d+)$", ref)
-        inherited_style = None
-        if column_match:
-            column_index = 0
-            for letter in column_match[1]:
-                column_index = column_index * 26 + ord(letter) - ord("A") + 1
-            inherited_style = next((style for low, high, style in column_styles if low <= column_index <= high), None)
-            inherited_style = row_styles.get(column_match[2], inherited_style)
-        style_index = int(element.get("s", inherited_style or 0))
-        spec = definitions[style_index] if 0 <= style_index < len(definitions) else {}
-        if not spec:
-            state.note("Some cell style references could not be resolved.")
-        value = _first(element, "v")
-        raw = _text(value)
-        if element.get("t") == "s":
-            index = int(raw) if raw else -1
-            raw = shared_strings[index] if 0 <= index < len(shared_strings) else "[unresolved shared string]"
-        elif element.get("t") == "inlineStr":
-            raw = _text(_first(element, "is"))
-        # Text is used only for the bounded style accumulator, not copied to search evidence.
-        snippet = state.clean(raw)[:60]
-        if raw == "[unresolved shared string]":
-            state.note("Some shared-string references were outside the inspected string range.")
-        location = f"{name}!{ref}"
-        state.styles.add(location, snippet, **{key: spec.get(key) for key in (
-            "font", "size_pt", "color", "bold", "italic", "underline"
-        )})
-        if style_index not in saved_styles:
-            if len(saved_styles) >= 100:
-                state.note("Per-sheet formatting evidence was capped at 100 distinct cell styles.")
-                continue
-            saved_styles[style_index] = {"style_id": style_index, "cells": [], "observed_cell_count": 0, **spec}
-        group = saved_styles[style_index]
-        group["observed_cell_count"] += 1
-        if len(group["cells"]) < 30:
-            group["cells"].append(ref)
-        else:
-            state.note("Style location lists show the first 30 cells per saved style per sheet.")
+
+    def inspect_styles(row, cells, attributes):
+        if state.progress_callback is not None and row % 1024 == 0:
+            state.progress_callback()
+        for cell in cells.values():
+            if state.cells >= EXCEL_MAX_CELLS:
+                state.note(f"Cell formatting inspection sampled the first {EXCEL_MAX_CELLS} saved cells.")
+                return
+            state.cells += 1
+            style_index = cell["style_id"]
+            spec = definitions[style_index] if 0 <= style_index < len(definitions) else {}
+            if not spec:
+                state.note("Some cell style references could not be resolved.")
+            reference = cell["cell"]
+            state.styles.add(
+                f"{name}!{reference}", state.clean(cell["value"])[:60],
+                **{key: spec.get(key) for key in ("font", "size_pt", "color", "bold", "italic", "underline")},
+            )
+            if style_index not in saved_styles:
+                if len(saved_styles) >= 100:
+                    state.note("Per-sheet formatting evidence was capped at 100 distinct cell styles.")
+                    continue
+                saved_styles[style_index] = {"style_id": style_index, "cells": [], "observed_cell_count": 0, **spec}
+            group = saved_styles[style_index]
+            group["observed_cell_count"] += 1
+            if len(group["cells"]) < 30:
+                group["cells"].append(reference)
+            else:
+                state.note("Style location lists show the first 30 cells per saved style per sheet.")
+
+    sheet, cells = reader.scan_sheet(
+        name, row_callback=inspect_styles, wanted_cells={record["cell"] for record in comments},
+    )
+    expressions = sheet.get("header_footer", {}).get("expressions") or {}
+    if expressions:
+        sheet["header_footer"]["sections"] = {
+            key: _header_sections(value) for key, value in expressions.items()
+        }
+    for record in sheet["layout"]:
+        style_id = record.get("style") if record["type"] == "col" else record.get("s")
+        if style_id is not None and 0 <= int(style_id) < len(definitions):
+            record["saved_style"] = definitions[int(style_id)]
+    state.meta["sheets"].append(state.preview(sheet))
+    state.meta["scanned_sheet_count"] = state.meta.get("scanned_sheet_count", 0) + 1
+    state.meta["scanned_cells"] = state.meta.get("scanned_cells", 0) + sheet["scanned_cells"]
+    state.emit(name, "Sheet layout, headers and footers (raw Excel control codes; not evaluated)", sheet)
+    for table in sheet["tables"]:
+        state.record("tables", name, table)
+    for key in ("hyperlinks", "validations"):
+        for record in sheet.get(key) or []:
+            state.record(key, name, record)
+    for record in comments:
+        cell = cells[record["cell"]]
+        row, column = cell_coordinates(record["cell"])
+        record.update({
+            "cell_value": cell["value"], "cell_value_raw": cell["raw_value"],
+            "cell_value_type": cell["value_type"], "cell_value_status": cell["value_status"],
+            "formula": cell["formula"], "formula_type": cell["formula_type"],
+            "formula_reference": cell["formula_reference"],
+            "cached_value_available": cell["cached_value_available"],
+            "number_format": cell.get("number_format"),
+            "table_ids": [
+                table["id"] for table in sheet["tables"]
+                if table["min_row"] <= row <= table["max_row"]
+                and table["min_column"] <= column <= table["max_column"]
+            ],
+        })
+        state.record("comments", name, record)
+    _objects(state, archive, name, relationships)
+    if sheet.get("unsupported_controls") or any(kind in ("oleObject", "activeXControl", "control") for kind, _ in relationships.values()):
+        state.note("This workbook contains unsupported OLE/ActiveX controls; their alt text was not inspected.")
     for group in saved_styles.values():
         state.emit(name, "Saved cell formatting (not worksheet data)", group)
 
@@ -559,18 +943,14 @@ def _extract_ooxml(state, file_path):
         workbook_path = next((path for kind, path in relationships.values() if kind == "officeDocument"), "xl/workbook.xml")
         core_path = next((path for kind, path in relationships.values() if kind == "core-properties"), "docProps/core.xml")
         _core_properties(state, state.xml(archive, core_path))
+        _additional_properties(state, archive, relationships)
         workbook = state.xml(archive, workbook_path, required=True)
         workbook_rels = state.rels(archive, workbook_path)
         definitions = _style_definitions(state, archive, workbook_rels)
         state.emit("(workbook)", "Saved default cell style", definitions[0])
-        shared_strings, persons = [], {}
+        persons = {}
         for kind, path in workbook_rels.values():
-            if kind == "sharedStrings":
-                root = state.xml(archive, path, required=True)
-                shared_strings = [state.clean(_text(item)) for item in islice(root, EXCEL_MAX_CELLS)]
-                if len(root) > EXCEL_MAX_CELLS:
-                    state.note("Shared strings were truncated at the cell inspection limit.")
-            elif kind in ("person", "persons"):
+            if kind in ("person", "persons"):
                 root = state.xml(archive, path, required=True)
                 persons = {element.get("id"): state.clean(element.get("displayName"))
                            for element in root.iter() if _local(element.tag) == "person"}
@@ -579,26 +959,35 @@ def _extract_ooxml(state, file_path):
         state.meta["sheet_count"] = len(entries)
         if len(entries) > EXCEL_MAX_SHEETS:
             state.note(f"Only the first {EXCEL_MAX_SHEETS} sheets were inspected.")
-        for entry in entries[:EXCEL_MAX_SHEETS]:
-            relationship = workbook_rels.get(_attr(entry, "id"))
-            if not relationship or relationship[0] not in ("worksheet", "chartsheet"):
-                state.note("A sheet relationship is unsupported or unavailable.")
-                continue
-            try:
-                _sheet(state, archive, entry, relationship[1], relationship[0], definitions, shared_strings, persons)
-            except (ValueError, KeyError, OSError, ParseError, DefusedXmlException, zipfile.BadZipFile) as exc:
-                state.note(f"A sheet could not be completely inspected ({type(exc).__name__}).")
-                log_event("[DOCUMENT_METADATA] Excel sheet inspection incomplete.", level=30,
-                          extra={"error_type": type(exc).__name__})
+        with ExcelWorkbookReader(archive, extension="." + state.meta["format"]) as reader:
+            for entry in entries[:EXCEL_MAX_SHEETS]:
+                relationship = workbook_rels.get(_attr(entry, "id"))
+                if not relationship or relationship[0] not in ("worksheet", "chartsheet"):
+                    state.note("A sheet relationship is unsupported or unavailable.")
+                    continue
+                try:
+                    _sheet(state, archive, entry, relationship[1], relationship[0], definitions, reader, persons)
+                except (ValueError, KeyError, OSError, ParseError, DefusedXmlException, zipfile.BadZipFile) as exc:
+                    state.note(f"A sheet could not be completely inspected ({type(exc).__name__}).")
+                    state.meta.setdefault("incomplete_sheets", []).append(state.clean(entry.get("name")))
+                    log_event("[DOCUMENT_METADATA] Excel sheet inspection incomplete.", level=30,
+                              extra={"error_type": type(exc).__name__})
+            state.meta["xml_scan_bytes"] = reader.scanned_xml_bytes
+            for note in reader.coverage_notes:
+                state.note(note)
         defined_names = [
             {"name": state.clean(item.get("name")), "sheet_index": item.get("localSheetId"),
-             "expression": state.clean(item.text)}
+             "expression": item.text or "", "hidden": item.get("hidden") in ("1", "true")}
             for item in workbook.iter() if _local(item.tag) == "definedName"
-            and item.get("name") in ("_xlnm.Print_Titles", "_xlnm.Print_Area")
+        ]
+        for record in defined_names:
+            state.record("defined_names", "(workbook)", record)
+        state.meta["print_defined_names"] = [
+            record for record in defined_names if record["name"] in ("_xlnm.Print_Titles", "_xlnm.Print_Area")
         ][:EXCEL_MAX_SHEETS * 2]
-        state.meta["print_defined_names"] = defined_names
-        if defined_names:
-            state.emit("(workbook)", "Print titles and print areas (not header/footer text)", defined_names)
+        if state.meta["print_defined_names"]:
+            state.emit("(workbook)", "Print titles and print areas (not header/footer text)", state.meta["print_defined_names"])
+        state.meta["table_count"] = state.counts["tables"]
 
 
 def _extract_xls(state, file_path):
@@ -642,10 +1031,15 @@ def _extract_xls(state, file_path):
             state.meta["sheets"].append(info)
             state.emit(name, "Legacy sheet layout", info)
             for (row, column), note in sheet.cell_note_map.items():
+                value = sheet.cell_value(row, column) if row < sheet.nrows and column < sheet.row_len(row) else None
+                state.meta["comment_summary"]["raw_records"] += 1
+                state.meta["comment_summary"]["legacy_notes"] += 1
                 state.record("comments", name, {
                     "kind": "note", "cell": f"{get_column_letter(column + 1)}{row + 1}",
-                    "text": state.clean(note.text), "author": state.clean(note.author),
+                    "text": note.text, "author": state.clean(note.author),
                     "date": None, "resolved": None,
+                    "cell_value": value, "cell_value_status": "blank" if value is None or value == "" else "saved",
+                    "formula": None, "cached_value_available": None,
                 })
             for row in range(sheet.nrows):
                 if state.cells >= EXCEL_MAX_CELLS:
@@ -671,9 +1065,9 @@ def _extract_xls(state, file_path):
         workbook.release_resources()
 
 
-def extract_excel_accessibility_metadata(file_path, extension):
+def extract_excel_accessibility_metadata(file_path, extension, *, record_sink=None, progress_callback=None):
     """Return bounded parent metadata and location-specific native evidence."""
-    state = _Inspection(extension)
+    state = _Inspection(extension, record_sink=record_sink, progress_callback=progress_callback)
     try:
         if extension == ".xls":
             _extract_xls(state, file_path)
@@ -735,5 +1129,7 @@ def is_excel_native_inspection_question(question, file_names=None):
         r"hidden (?:rows?|columns?|sheets?)|freeze panes?|conditional formatting|"
         r"document (?:title|properties)|workbook properties|keywords|"
         r"(?:cell |threaded )?(?:comments|notes)|author(?:s|ship)?|"
-        r"checkbox(?:es)?|check boxes|fill colo[u]?r|number formats?)\b", text,
-    ))
+        r"checkbox(?:es)?|check boxes|fill colo[u]?r|number formats?|"
+        r"custom properties|metadata|named ranges?|defined names?|hyperlinks?|data validation|"
+        r"cell values?|cell formulas?|saved formulas?|cached values?)\b", text,
+    ) or re.search(r"\bcells?\s+[a-z]{1,3}[1-9]\d*|!\$?[a-z]{1,3}\$?[1-9]\d*", text))

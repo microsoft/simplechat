@@ -5,7 +5,7 @@
 // falls back to the plain text citation, because a citation that cannot render its source
 // is still more useful as a readable passage than as a dead click.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { clsx } from 'clsx';
 import {
     ChevronLeft,
@@ -159,21 +159,20 @@ function PdfViewer({ docId, location, onFail }: ViewerProps) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * What ingestion extracted from a cited image.
+ * The original cited passage, independent of worksheet/table preview navigation.
  *
- * An image has no page to scroll to, so the picture alone cannot show why it was cited. The
- * cited passage is the text the assistant actually read -- any recognised text plus the
- * image's description -- and is shown beneath the picture rather than instead of it.
- * Nothing is drawn when the passage cannot be loaded; the image is still the source.
+ * The passage remains tied to the citation rather than the table currently being previewed.
  */
-function CitedImagePassage({
+function CitedSourcePassage({
     citationId,
     docId,
     location,
+    sourceLabel = 'What was extracted from this image',
 }: {
     citationId: string;
     docId: string;
     location: string;
+    sourceLabel?: string;
 }) {
     const [passage, setPassage] = useState<string | null>(null);
     const [failed, setFailed] = useState(false);
@@ -214,7 +213,7 @@ function CitedImagePassage({
             className="max-h-[40%] shrink-0 overflow-y-auto border-t border-edge px-5 py-3"
         >
             <summary className="cursor-pointer text-xs font-medium text-text-3 hover:text-text-1">
-                What was extracted from this image
+                {sourceLabel}
             </summary>
             {passage === null ? (
                 <p className="mt-2 flex items-center gap-2 text-sm text-text-3">
@@ -252,7 +251,7 @@ function ImageViewer({ docId, location, metadata, onFail, citationId }: ViewerPr
                 />
             </div>
             {citationId ? (
-                <CitedImagePassage citationId={citationId} docId={docId} location={location} />
+                <CitedSourcePassage citationId={citationId} docId={docId} location={location} />
             ) : null}
         </div>
     );
@@ -311,34 +310,61 @@ function MediaViewer({ docId, location, metadata, onFail, kind }: ViewerProps & 
 /* Tabular                                                                     */
 /* -------------------------------------------------------------------------- */
 
-function TabularViewer({ docId, location, onFail, citationId }: ViewerProps) {
+function TabularViewer({ docId, location, metadata, onFail, citationId }: ViewerProps) {
     const [preview, setPreview] = useState<TabularPreview | null>(null);
-    const [sheet, setSheet] = useState<string | undefined>(
-        // A sheet citation carries the sheet name where a page citation carries a number.
-        Number.isNaN(Number.parseInt(location, 10)) ? location || undefined : undefined,
-    );
+    const [sheet, setSheet] = useState<string | undefined>();
+    const [tableId, setTableId] = useState<string | undefined>();
+    const [startRow, setStartRow] = useState(0);
+    const [previousStarts, setPreviousStarts] = useState<number[]>([]);
+    const [jumpRecord, setJumpRecord] = useState('1');
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [retry, setRetry] = useState(0);
+    const hasLoaded = useRef(false);
+    const initialLocationApplied = useRef(false);
+    const sheetButtons = useRef(new Map<string, HTMLButtonElement>());
+    const panelId = useId();
+    const tableSelectId = useId();
+    const recordInputId = useId();
 
     useEffect(() => {
         let cancelled = false;
+        let redirected = false;
+        const controller = new AbortController();
         setLoading(true);
+        setError('');
 
         void (async () => {
             try {
-                const result = await fetchTabularPreview(docId, { sheetName: sheet });
+                const result = await fetchTabularPreview(
+                    docId, { sheetName: sheet, tableId, startRow }, controller.signal,
+                );
                 if (!cancelled) {
+                    if (!initialLocationApplied.current) {
+                        initialLocationApplied.current = true;
+                        const requested = (result.sheet_names ?? []).find((name) =>
+                            name === location || `${name}!` === location.slice(0, name.length + 1),
+                        );
+                        if (requested && requested !== result.selected_sheet) {
+                            redirected = true;
+                            setSheet(requested);
+                            return;
+                        }
+                    }
                     setPreview(result);
+                    setJumpRecord(String((result.start_row ?? startRow) + 1));
+                    hasLoaded.current = true;
                 }
             } catch (error) {
                 if (!cancelled) {
-                    onFail(
-                        error instanceof Error
-                            ? error.message
-                            : 'Could not load the spreadsheet.',
-                    );
+                    const message = error instanceof Error ? error.message : 'Could not load the spreadsheet.';
+                    setError(message);
+                    if (!hasLoaded.current) {
+                        onFail(message);
+                    }
                 }
             } finally {
-                if (!cancelled) {
+                if (!cancelled && !redirected) {
                     setLoading(false);
                 }
             }
@@ -346,8 +372,9 @@ function TabularViewer({ docId, location, onFail, citationId }: ViewerProps) {
 
         return () => {
             cancelled = true;
+            controller.abort();
         };
-    }, [docId, sheet, onFail]);
+    }, [docId, location, sheet, tableId, startRow, retry, onFail]);
 
     if (loading && !preview) {
         return <ViewerLoading label="Loading the spreadsheet…" />;
@@ -358,19 +385,66 @@ function TabularViewer({ docId, location, onFail, citationId }: ViewerProps) {
     }
 
     const sheets = preview.sheet_names ?? [];
+    const tables = preview.tables ?? [];
+    const selectedSheet = preview.selected_sheet ?? sheets[0];
+    const currentStart = preview.start_row ?? 0;
+    const rowCount = preview.rows?.length ?? 0;
+    const hasMore = preview.has_more ?? preview.truncated ?? false;
+    const nextStart = preview.next_start_row ?? currentStart + rowCount;
+
+    function changeSheet(name: string) {
+        if (name === selectedSheet && !loading && !error) {
+            return;
+        }
+        setLoading(true);
+        setSheet(name);
+        setTableId(undefined);
+        setStartRow(0);
+        setPreviousStarts([]);
+    }
+
+    function moveSheet(event: ReactKeyboardEvent<HTMLButtonElement>, index: number) {
+        let next: number;
+        if (event.key === 'ArrowRight') {
+            next = (index + 1) % sheets.length;
+        } else if (event.key === 'ArrowLeft') {
+            next = (index - 1 + sheets.length) % sheets.length;
+        } else if (event.key === 'Home') {
+            next = 0;
+        } else if (event.key === 'End') {
+            next = sheets.length - 1;
+        } else {
+            return;
+        }
+        event.preventDefault();
+        changeSheet(sheets[next]);
+        sheetButtons.current.get(sheets[next])?.focus();
+    }
 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
             {sheets.length > 1 && (
-                <div className="flex shrink-0 flex-wrap gap-1 border-b border-edge px-4 py-2">
-                    {sheets.map((name) => (
+                <div role="tablist" aria-label="Workbook worksheets" className="flex shrink-0 flex-wrap gap-1 border-b border-edge px-4 py-2">
+                    {sheets.map((name, index) => (
                         <button
                             key={name}
                             type="button"
-                            onClick={() => setSheet(name)}
+                            role="tab"
+                            aria-selected={selectedSheet === name}
+                            aria-controls={panelId}
+                            tabIndex={selectedSheet === name ? 0 : -1}
+                            ref={(element) => {
+                                if (element) {
+                                    sheetButtons.current.set(name, element);
+                                } else {
+                                    sheetButtons.current.delete(name);
+                                }
+                            }}
+                            onClick={() => changeSheet(name)}
+                            onKeyDown={(event) => moveSheet(event, index)}
                             className={clsx(
-                                'rounded-lg px-2 py-1 text-xs transition-colors',
-                                (preview.selected_sheet ?? sheets[0]) === name
+                                'min-h-11 rounded-lg px-3 py-1 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-accent',
+                                selectedSheet === name
                                     ? 'bg-accent-soft text-accent'
                                     : 'text-text-2 hover:bg-surface-2',
                             )}
@@ -381,13 +455,58 @@ function TabularViewer({ docId, location, onFail, citationId }: ViewerProps) {
                 </div>
             )}
 
-            <div className="min-h-0 flex-1 overflow-auto p-4">
-                <table className="w-full border-collapse text-sm">
+            <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-edge px-4 py-2">
+                <p className="min-w-0 text-sm text-text-2" aria-live="polite">
+                    {selectedSheet ? `Worksheet: ${selectedSheet}` : 'CSV data'}
+                    {preview.table_range ? ` · ${preview.table_range}` : ''}
+                    {preview.header_row ? ` · Header row ${preview.header_row}` : ''}
+                    {preview.header_status === 'inferred' ? ' (detected)' : ''}
+                    {preview.header_status === 'ambiguous' ? ' · Header is unconfirmed; cell coordinates are retained.' : ''}
+                </p>
+                {tables.length > 1 && (
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <label htmlFor={tableSelectId} className="text-sm text-text-2">Table</label>
+                        <select
+                            id={tableSelectId}
+                            value={preview.table_id ?? tables[0].id}
+                            disabled={loading}
+                            onChange={(event) => {
+                                setLoading(true);
+                                setTableId(event.target.value);
+                                setStartRow(0);
+                                setPreviousStarts([]);
+                            }}
+                            className="min-h-11 min-w-0 max-w-full rounded-lg border border-edge-strong bg-surface-1 px-2 py-1 text-base text-text-1 sm:max-w-md sm:text-sm"
+                        >
+                            {tables.map((table) => (
+                                <option key={table.id} value={table.id}>{table.name} · {table.range}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+            </div>
+            {error && (
+                <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-edge p-3 text-sm text-danger">
+                    <span>{error}</span>
+                    <button type="button" onClick={() => setRetry((current) => current + 1)} className="min-h-11 rounded-lg px-3 underline">
+                        Retry preview
+                    </button>
+                </div>
+            )}
+            <div id={panelId} role="tabpanel" aria-label={selectedSheet ? `${selectedSheet} data preview` : 'CSV data preview'} aria-busy={loading} className="min-h-0 flex-1 overflow-auto p-4">
+                {loading ? <ViewerLoading label="Loading the selected worksheet and table…" /> : rowCount === 0 ? (
+                    <p className="text-sm text-text-3">No data rows in this selection.</p>
+                ) : <table className="w-full border-collapse text-sm">
+                    <caption className="sr-only">{preview.table_name || selectedSheet || 'CSV'} data preview</caption>
                     <thead>
                         <tr>
+                            <th scope="col" className="sticky top-0 border border-edge-strong bg-surface-3 px-2 py-1 text-left font-semibold">
+                                {sheets.length ? 'Worksheet row' : 'File row'}
+                            </th>
                             {(preview.columns ?? []).map((column, index) => (
                                 <th
                                     key={`${column}-${index}`}
+                                    scope="col"
                                     className="sticky top-0 border border-edge-strong bg-surface-3 px-2 py-1 text-left font-semibold"
                                 >
                                     {column}
@@ -398,6 +517,9 @@ function TabularViewer({ docId, location, onFail, citationId }: ViewerProps) {
                     <tbody>
                         {(preview.rows ?? []).map((row, rowIndex) => (
                             <tr key={rowIndex}>
+                                <th scope="row" className="border border-edge-strong bg-surface-2 px-2 py-1 text-left font-normal text-text-3">
+                                    {preview.row_numbers?.[rowIndex] ?? currentStart + rowIndex + 2}
+                                </th>
                                 {row.map((cell, cellIndex) => (
                                     <td
                                         key={cellIndex}
@@ -409,17 +531,79 @@ function TabularViewer({ docId, location, onFail, citationId }: ViewerProps) {
                             </tr>
                         ))}
                     </tbody>
-                </table>
+                </table>}
             </div>
 
-            {preview.truncated && (
-                <p className="shrink-0 border-t border-edge px-4 py-2 text-xs text-text-3">
-                    Showing the first {preview.rows?.length ?? 0} rows. Download the file for
-                    the rest.
+            <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-edge px-4 py-2">
+                <p className="text-xs text-text-3" aria-live="polite">
+                    {rowCount ? `Records ${currentStart + 1}–${currentStart + rowCount}` : '0 records'}
+                    {preview.total_rows != null ? ` of ${preview.total_rows}` : ''}
+                    {hasMore ? ' · More records available' : ''}
                 </p>
+                <button
+                    type="button"
+                    disabled={loading || previousStarts.length === 0}
+                    onClick={() => {
+                        const previous = previousStarts[previousStarts.length - 1];
+                        if (previous !== undefined) {
+                            setLoading(true);
+                            setStartRow(previous);
+                            setPreviousStarts((starts) => starts.slice(0, -1));
+                        }
+                    }}
+                    className="min-h-11 rounded-lg border border-edge px-3 text-sm text-text-2 hover:bg-surface-2 disabled:opacity-40"
+                >Previous records</button>
+                <button
+                    type="button"
+                    disabled={loading || !hasMore || rowCount === 0}
+                    onClick={() => {
+                        setLoading(true);
+                        setPreviousStarts((starts) => [...starts, currentStart]);
+                        setStartRow(nextStart);
+                    }}
+                    className="min-h-11 rounded-lg border border-edge px-3 text-sm text-text-2 hover:bg-surface-2 disabled:opacity-40"
+                >Next records</button>
+                <form
+                    className="flex min-w-0 flex-wrap items-center gap-2"
+                    onSubmit={(event) => {
+                        event.preventDefault();
+                        const record = Number(jumpRecord);
+                        if (!Number.isSafeInteger(record) || record < 1 || (preview.total_rows != null && record > preview.total_rows)) {
+                            setError('Choose a record number within this table.');
+                            return;
+                        }
+                        if (record - 1 === currentStart) {
+                            if (error) {
+                                setRetry((current) => current + 1);
+                            }
+                            return;
+                        }
+                        setLoading(true);
+                        setPreviousStarts((starts) => [...starts, currentStart]);
+                        setStartRow(record - 1);
+                    }}
+                >
+                    <label htmlFor={recordInputId} className="text-xs text-text-3">Go to record</label>
+                    <input
+                        id={recordInputId}
+                        type="number"
+                        min={1}
+                        max={preview.total_rows ?? undefined}
+                        value={jumpRecord}
+                        onChange={(event) => setJumpRecord(event.target.value)}
+                        className="min-h-11 w-24 rounded-lg border border-edge-strong bg-surface-1 px-2 text-base text-text-1 sm:text-sm"
+                    />
+                    <button type="submit" disabled={loading || rowCount === 0} className="min-h-11 rounded-lg px-3 text-sm text-accent hover:bg-accent-soft disabled:opacity-40">Go</button>
+                </form>
+            </div>
+            {(preview.columns_truncated || preview.cell_text_truncated) && (
+                <p className="shrink-0 px-4 pb-2 text-xs text-text-3">Some preview columns or long cell text are shortened. Inspect a smaller cell range or download the original for full content.</p>
             )}
             {citationId ? (
-                <CitedImagePassage citationId={citationId} docId={docId} location={location} />
+                <CitedSourcePassage
+                    citationId={citationId} docId={docId} location={location}
+                    sourceLabel={metadata.file_name?.toLowerCase().endsWith('.csv') ? 'Cited CSV evidence' : 'Cited workbook evidence'}
+                />
             ) : null}
         </div>
     );
@@ -572,7 +756,9 @@ export function EnhancedCitationViewer({
                         </h2>
                         <p className="text-xs text-text-3">
                             {VIEWER_LABELS[type]}
-                            {location ? ` · ${locationLabel} ${location}` : ''}
+                            {location ? type === 'tabular'
+                                ? ` · ${/^\d+$/.test(location) ? `Evidence segment ${location}` : locationLabel === 'Sheet' ? `Sheet ${location}` : location}`
+                                : ` · ${locationLabel} ${location}` : ''}
                         </p>
                     </div>
 
@@ -600,7 +786,7 @@ export function EnhancedCitationViewer({
                     {type === 'image' && <ImageViewer {...viewerProps} />}
                     {type === 'video' && <MediaViewer {...viewerProps} kind="video" />}
                     {type === 'audio' && <MediaViewer {...viewerProps} kind="audio" />}
-                    {type === 'tabular' && <TabularViewer {...viewerProps} />}
+                    {type === 'tabular' && <TabularViewer key={`${docId}:${location}`} {...viewerProps} />}
                     {type === 'visio' && <VisioViewer {...viewerProps} />}
                 </div>
             </GlassPanel>

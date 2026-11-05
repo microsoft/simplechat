@@ -36,6 +36,8 @@ def resolve_citation_location(
     if sheet_name not in (None, ''):
         return 'Sheet', str(sheet_name)
     normalized_chunk_text = str(chunk_text or '').strip()
+    if is_tabular and normalized_chunk_text.startswith('### Excel native inspection'):
+        return 'Location', f"Native evidence segment {page_number}" if page_number not in (None, '') else 'Workbook native inspection'
     if is_tabular and (
         normalized_chunk_text.startswith('Tabular workbook:')
         or normalized_chunk_text.startswith('Tabular data file:')

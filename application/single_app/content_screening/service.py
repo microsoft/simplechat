@@ -472,7 +472,7 @@ def process_screened_upload(document_id, user_id, temp_file_path, original_filen
 def _extract_and_inspect(scan, actor_id, source_path, processor, *, repository, storage, extraction_mode_override=None):
     subject = Subject.from_dict(scan["subject"])
     scan, owner = _claim_scan(repository, _read_scan(repository, scan["id"]))
-    capture = ExtractionCapture(subject, scan["id"], scan["original_file_name"])
+    capture = ExtractionCapture(subject, scan["id"], scan["original_file_name"], artifact_storage=storage)
     last_heartbeat = _now()
 
     def heartbeat():
@@ -1049,6 +1049,11 @@ def reprocess_document(subject, actor_id, extraction_mode, *, repository=None, s
 def prepare_document_deletion(document, actor_id, *, repository=None, storage=None):
     """Revoke a screened document before removing private evidence and originals."""
     if SCREENING_FIELD not in document:
+        if (
+            "excel_native_inventory" in document
+            or str(document.get("file_name") or "").lower().endswith((".xlsx", ".xlsm", ".xls"))
+        ):
+            _storage(storage).delete_revision(subject_from_document(document))
         return
     repository = _repository(repository)
     subject = subject_from_document(document)

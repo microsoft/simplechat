@@ -2557,10 +2557,10 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "enable_office_embedded_image_analysis",
             "type": "switch",
-            "label": "Analyze images embedded in DOCX and PPTX files",
+            "label": "Analyze images embedded in DOCX, PPTX, and Excel files",
             "help": (
-                "Neither extraction engine describes figures inside Word and PowerPoint "
-                "files. With this on, embedded images are pulled out, analysed with "
+                "Native extraction does not describe image pixels inside Word, PowerPoint, "
+                "or Excel files. With this on, embedded images are pulled out, analysed with "
                 "whichever engine backs the selected extraction mode, and indexed as "
                 "their own citable chunks. Works with Standard extraction too."
             ),

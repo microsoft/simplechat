@@ -1406,6 +1406,16 @@ export async function fetchEnhancedCitationPdf(
     };
 }
 
+export interface WorkbookPreviewTable {
+    id: string;
+    name: string;
+    range: string;
+    origin: 'named' | 'inferred' | 'range';
+    header_row?: number | null;
+    header_status?: string;
+    row_count?: number;
+}
+
 export interface TabularPreview {
     filename?: string;
     selected_sheet?: string | null;
@@ -1416,11 +1426,32 @@ export interface TabularPreview {
     columns?: string[];
     rows?: string[][];
     truncated?: boolean;
+    tables?: WorkbookPreviewTable[];
+    table_count?: number;
+    table_id?: string;
+    table_name?: string;
+    table_range?: string;
+    header_row?: number | null;
+    header_status?: string;
+    row_numbers?: number[];
+    start_row?: number;
+    has_more?: boolean;
+    next_start_row?: number | null;
+    columns_truncated?: boolean;
+    cell_text_truncated?: boolean;
 }
 
 export function fetchTabularPreview(
     docId: string,
-    options: { sheetName?: string; maxRows?: number } = {},
+    options: {
+        sheetName?: string;
+        tableId?: string;
+        startRow?: number;
+        maxRows?: number;
+        cellRange?: string;
+        headerRow?: number;
+    } = {},
+    signal?: AbortSignal,
 ) {
     const params = new URLSearchParams({ doc_id: docId });
     if (options.sheetName) {
@@ -1429,8 +1460,21 @@ export function fetchTabularPreview(
     if (options.maxRows) {
         params.set('max_rows', String(options.maxRows));
     }
+    if (options.tableId) {
+        params.set('table_id', options.tableId);
+    }
+    if (options.startRow !== undefined) {
+        params.set('start_row', String(options.startRow));
+    }
+    if (options.cellRange) {
+        params.set('cell_range', options.cellRange);
+    }
+    if (options.headerRow !== undefined) {
+        params.set('header_row', String(options.headerRow));
+    }
     return api.get<TabularPreview>(
         `/api/enhanced_citations/tabular_preview?${params.toString()}`,
+        signal,
     );
 }
 

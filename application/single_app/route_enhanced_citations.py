@@ -12,6 +12,7 @@ import requests
 import mimetypes
 import io
 import uuid
+import zipfile
 from urllib.parse import quote
 import pandas
 import fitz
@@ -28,6 +29,7 @@ from content_screening.access import (
     read_available_document_bytes,
 )
 from content_screening.contracts import ScreeningError
+from excel_workbook_reader import build_excel_table_preview
 from functions_authentication import login_required, user_required, get_current_user_id, get_current_user_info
 from functions_appinsights import log_event
 from functions_artifact_publication import publish_generated_chat_artifact_for_user
@@ -142,6 +144,17 @@ def _serialize_tabular_preview_table(df_preview):
         for row in df_preview.itertuples(index=False, name=None)
     ]
     return columns, rows
+
+
+def _preview_integer(value, name, default, minimum=0, maximum=None):
+    if value is None:
+        return default
+    if not isinstance(value, str) or not value.isascii() or not value.isdigit():
+        raise ValueError(f"{name} must be an integer.")
+    parsed = int(value)
+    if parsed < minimum or maximum is not None and parsed > maximum:
+        raise ValueError(f"{name} is outside the supported preview range.")
+    return parsed
 
 
 def _resolve_document_blob_reference(raw_doc):
@@ -920,7 +933,7 @@ def register_enhanced_citations_routes(bp):
         doc_id = request.args.get("doc_id")
         sheet_name = request.args.get("sheet_name")
         sheet_index = request.args.get("sheet_index")
-        max_rows = min(request.args.get("max_rows", 200, type=int), 500)
+        table_id = request.args.get("table_id")
         if not doc_id:
             return jsonify({"error": "doc_id is required"}), 400
 
@@ -929,6 +942,9 @@ def register_enhanced_citations_routes(bp):
             return jsonify({"error": "User not authenticated"}), 401
 
         try:
+            max_rows = _preview_integer(request.args.get("max_rows"), "max_rows", 200, 1, 500)
+            start_row = _preview_integer(request.args.get("start_row"), "start_row", 0)
+            header_row = _preview_integer(request.args.get("header_row"), "header_row", None, 0, 1048576)
             doc_response, status_code = get_document(user_id, doc_id)
             if status_code != 200:
                 return doc_response, status_code
@@ -952,99 +968,54 @@ def register_enhanced_citations_routes(bp):
                 return jsonify({"error": "File is too large to preview"}), 400
             raw_doc, data = read_available_document_bytes(raw_doc, user_id=user_id, purpose="preview")
 
-            # Read into DataFrame, limiting rows for preview efficiency
-            # Read max_rows + 1 so we can detect truncation without loading the full file
-            nrows_limit = max_rows + 1
-            selected_sheet = None
-            sheet_names = []
             if ext == 'csv':
+                # Keep the optional CSV decoder out of Excel-only preview requests.
                 from functions_tabular_csv_query import read_tabular_csv
-                df = read_tabular_csv(io.BytesIO(data), keep_default_na=False, dtype=str, nrows=nrows_limit)
-            elif ext in ('xlsx', 'xlsm'):
-                excel_file = pandas.ExcelFile(io.BytesIO(data), engine='openpyxl')
-                sheet_names = list(excel_file.sheet_names)
-                if not sheet_names:
-                    return jsonify({"error": "Workbook does not contain any readable sheets"}), 400
-
-                if sheet_name:
-                    requested_sheet_name = sheet_name.strip()
-                    matching_sheet_name = next(
-                        (candidate for candidate in sheet_names if candidate.lower() == requested_sheet_name.lower()),
-                        None,
-                    )
-                    if not matching_sheet_name:
-                        return jsonify({
-                            "error": f"Sheet '{requested_sheet_name}' was not found. Available sheets: {sheet_names}"
-                        }), 400
-                    selected_sheet = matching_sheet_name
-                elif sheet_index not in (None, ''):
-                    try:
-                        resolved_sheet_index = int(sheet_index)
-                    except ValueError:
-                        return jsonify({"error": "sheet_index must be an integer"}), 400
-                    if resolved_sheet_index < 0 or resolved_sheet_index >= len(sheet_names):
-                        return jsonify({
-                            "error": f"sheet_index {resolved_sheet_index} is out of range. Available sheets: {sheet_names}"
-                        }), 400
-                    selected_sheet = sheet_names[resolved_sheet_index]
-                else:
-                    selected_sheet = sheet_names[0]
-
-                df = excel_file.parse(selected_sheet, keep_default_na=False, dtype=str, nrows=nrows_limit)
-            elif ext == 'xls':
-                excel_file = pandas.ExcelFile(io.BytesIO(data), engine='xlrd')
-                sheet_names = list(excel_file.sheet_names)
-                if not sheet_names:
-                    return jsonify({"error": "Workbook does not contain any readable sheets"}), 400
-
-                if sheet_name:
-                    requested_sheet_name = sheet_name.strip()
-                    matching_sheet_name = next(
-                        (candidate for candidate in sheet_names if candidate.lower() == requested_sheet_name.lower()),
-                        None,
-                    )
-                    if not matching_sheet_name:
-                        return jsonify({
-                            "error": f"Sheet '{requested_sheet_name}' was not found. Available sheets: {sheet_names}"
-                        }), 400
-                    selected_sheet = matching_sheet_name
-                elif sheet_index not in (None, ''):
-                    try:
-                        resolved_sheet_index = int(sheet_index)
-                    except ValueError:
-                        return jsonify({"error": "sheet_index must be an integer"}), 400
-                    if resolved_sheet_index < 0 or resolved_sheet_index >= len(sheet_names):
-                        return jsonify({
-                            "error": f"sheet_index {resolved_sheet_index} is out of range. Available sheets: {sheet_names}"
-                        }), 400
-                    selected_sheet = sheet_names[resolved_sheet_index]
-                else:
-                    selected_sheet = sheet_names[0]
-
-                df = excel_file.parse(selected_sheet, keep_default_na=False, dtype=str, nrows=nrows_limit)
+                frames, seen, selected = [], 0, 0
+                columns = []
+                with read_tabular_csv(
+                    io.BytesIO(data), keep_default_na=False, dtype=str, chunksize=10000,
+                ) as chunks:
+                    for frame in chunks:
+                        columns = frame.columns.tolist()
+                        if seen + len(frame) > start_row:
+                            window = frame.iloc[max(0, start_row - seen):]
+                            window = window.head(max_rows + 1 - selected)
+                            frames.append(window)
+                            selected += len(window)
+                        seen += len(frame)
+                        if selected > max_rows:
+                            break
+                frame = pandas.concat(frames, ignore_index=True) if frames else pandas.DataFrame(columns=columns)
+                has_more = len(frame) > max_rows
+                frame = frame.head(max_rows)
+                names, rows = _serialize_tabular_preview_table(frame)
+                result = {
+                    "selected_sheet": None, "sheet_names": [], "sheet_count": 0,
+                    "tables": [], "table_count": 0, "total_rows": None if has_more else seen,
+                    "total_columns": len(names), "columns": names, "rows": rows,
+                    "row_numbers": list(range(start_row + 2, start_row + 2 + len(rows))),
+                    "start_row": start_row, "has_more": has_more, "truncated": has_more,
+                    "next_start_row": start_row + len(rows) if has_more else None,
+                }
             else:
-                return jsonify({"error": f"Unsupported file type: {ext}"}), 400
+                result = build_excel_table_preview(
+                    data, "." + ext, sheet_name=sheet_name, sheet_index=sheet_index,
+                    table_id=table_id, start_row=start_row, max_rows=max_rows,
+                    cell_range=request.args.get("cell_range"), header_row=header_row,
+                )
+                frame = pandas.DataFrame(result["rows"], columns=result["columns"])
+                result["columns"], result["rows"] = _serialize_tabular_preview_table(frame)
+            return jsonify({"filename": file_name, **result})
 
-            total_rows = len(df)
-            truncated = total_rows > max_rows
-            preview = df.head(max_rows)
-            columns, rows = _serialize_tabular_preview_table(preview)
-
-            return jsonify({
-                "filename": file_name,
-                "selected_sheet": selected_sheet,
-                "sheet_names": sheet_names,
-                "sheet_count": len(sheet_names),
-                "total_rows": total_rows if not truncated else None,
-                "total_columns": len(df.columns),
-                "columns": columns,
-                "rows": rows,
-                "truncated": truncated
-            })
-
-        except Exception as e:
-            debug_print(f"Error generating tabular preview: {e}")
-            return jsonify({"error": str(e)}), 500
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
+        except (ValueError, zipfile.BadZipFile, pandas.errors.EmptyDataError) as error:
+            _log_enhanced_citations_error("Spreadsheet preview selection failed.", error, document_id=doc_id)
+            return jsonify({"error": "The spreadsheet selection is invalid or unavailable. Choose a valid worksheet, table, and row window."}), 400
+        except Exception as error:
+            _log_enhanced_citations_error("Spreadsheet preview failed.", error, document_id=doc_id)
+            return jsonify({"error": "Unable to load the spreadsheet preview."}), 500
 
     @bp.route("/api/enhanced_citations/visio", methods=["GET"])
     @swagger_route(security=get_auth_security())

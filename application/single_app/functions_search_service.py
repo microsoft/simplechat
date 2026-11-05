@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from openai import AzureOpenAI
+from openpyxl.utils.cell import get_column_letter
+from azure.core.exceptions import ResourceNotFoundError
 
 from content_screening import access as screening_access
 from content_screening.access import (
@@ -25,15 +27,23 @@ from content_screening.access import (
     strict_source_authority_enabled,
 )
 from content_screening.contracts import SourceAuthorityUnverifiedError
+from content_screening.storage import ScreeningStorage
 from config import (
     CLIENTS,
     cognitive_services_scope,
     cosmos_conversations_container,
     cosmos_messages_container,
+    storage_account_content_screening_container_name,
 )
+from excel_workbook_reader import ExcelWorkbookReader, bounded_range
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_documents import get_document_record, get_ordered_document_chunks
+from functions_excel_inventory import (
+    EXCEL_INVENTORY_SECTIONS,
+    open_excel_inventory,
+    open_stored_excel_inventory,
+)
 from functions_group import get_user_groups
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from model_endpoint_clients import build_openai_client_timeout_options
@@ -1112,6 +1122,74 @@ def _normalize_accessibility_sections(sections):
     return requested or list(ACCESSIBILITY_REPORT_SECTIONS)
 
 
+def _read_excel_inspection(
+    document_context, user_id, *, native_section="comments", native_cursor=None,
+    native_page_size=100, sheet_name=None, cell_range=None,
+    max_bytes=14000,
+):
+    document = document_context["document"]
+    source_evidence = {PROVENANCE_FIELD: document_provenance(document)}
+
+    def authorize():
+        assert_evidence_available(source_evidence, user_id, cached=True)
+
+    if native_section not in EXCEL_INVENTORY_SECTIONS:
+        raise ValueError("The Excel inspection section is invalid.")
+    if type(native_page_size) is not int or not 1 <= native_page_size <= 200:
+        raise ValueError("The Excel inspection page size must be between 1 and 200.")
+    storage = ScreeningStorage(
+        client=CLIENTS.get("storage_account_office_docs_client"),
+        container_name=storage_account_content_screening_container_name,
+    )
+    try:
+        inventory = open_stored_excel_inventory(document, storage=storage, authorize=authorize)
+    except ResourceNotFoundError:
+        inventory = None
+        log_event(
+            "[DOCUMENT_METADATA] Rebuilding an unavailable derived Excel inventory.",
+            level=logging.INFO, extra={"document_id": document["id"]},
+        )
+    source_bytes = None
+    extension = "." + str(document.get("file_name") or "").rsplit(".", 1)[-1].lower()
+    if inventory is None or cell_range:
+        fresh_document, source_bytes = screening_access.read_available_document_bytes(
+            document, user_id=user_id, group_id=document_context.get("group_id"),
+            public_workspace_id=document_context.get("public_workspace_id"), purpose="accessibility",
+        )
+        document_context["document"] = fresh_document
+        if inventory is None:
+            inventory = open_excel_inventory(
+                fresh_document, source_bytes, extension, storage=storage, authorize=authorize,
+                cache_namespace=(
+                    storage_account_content_screening_container_name,
+                    id(CLIENTS.get("storage_account_office_docs_client")),
+                ),
+            )
+    metadata = inventory.metadata
+    page = inventory.page(native_section, cursor=native_cursor, page_size=native_page_size, max_bytes=max_bytes)
+    result = {"metadata": metadata, "page": page}
+    if cell_range:
+        low_column, low_row, high_column, high_row = bounded_range(cell_range)
+        if (high_column - low_column + 1) * (high_row - low_row + 1) > 2000:
+            raise ValueError("The Excel cell range exceeds its 2000-cell inspection limit.")
+        with ExcelWorkbookReader(source_bytes, extension=extension) as reader:
+            if not sheet_name:
+                if len(reader.sheet_names) != 1:
+                    raise ValueError("Select a worksheet for cell inspection.")
+                sheet_name = reader.sheet_names[0]
+            references = [
+                f"{get_column_letter(column)}{row}"
+                for row in range(low_row, high_row + 1)
+                for column in range(low_column, high_column + 1)
+            ]
+            cells = reader.read_cells(sheet_name, references)
+            result["cells"] = [
+                {"sheet": sheet_name, **cells[reference]} for reference in references
+            ]
+        authorize()
+    return result
+
+
 def get_document_accessibility_payload(
     document_id,
     user_id,
@@ -1121,6 +1199,12 @@ def get_document_accessibility_payload(
     conversation_id=None,
     sections=None,
     page_number=None,
+    native_section="comments",
+    native_cursor=None,
+    native_page_size=100,
+    sheet_name=None,
+    cell_range=None,
+    _native_max_bytes=14000,
 ):
     """Return the complete stored accessibility, style, and issue metadata for one document.
 
@@ -1156,12 +1240,35 @@ def get_document_accessibility_payload(
     source_evidence = {PROVENANCE_FIELD: document_provenance(current_document)}
 
     stored_metadata = current_document.get("accessibility_metadata")
+    file_name = str(current_document.get("file_name") or "")
+    extension = "." + file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+    if not stored_metadata and extension in (".xlsx", ".xlsm", ".xls") and (
+        current_document.get("source_file_available") or current_document.get("enhanced_citations")
+        or current_document.get("blob_path") or current_document.get("archived_blob_path")
+    ):
+        stored_metadata = {"format": extension.lstrip(".")}
     if not isinstance(stored_metadata, dict) or not stored_metadata:
         raise LookupError(
             "No accessibility metadata is stored for this document. It may have been uploaded before "
             "accessibility extraction was available or may be an unsupported file type; "
             "re-upload the file to extract it."
         )
+
+    excel_inspection = None
+    if stored_metadata.get("format") in ("xlsx", "xlsm", "xls") and (
+        current_document.get("source_file_available") or current_document.get("enhanced_citations")
+        or current_document.get("blob_path") or current_document.get("archived_blob_path")
+        or current_document.get("excel_native_inventory")
+    ):
+        excel_inspection = _read_excel_inspection(
+            document_context, user_id, native_section=native_section,
+            native_cursor=native_cursor, native_page_size=native_page_size,
+            sheet_name=sheet_name, cell_range=cell_range,
+            max_bytes=_native_max_bytes,
+        )
+        stored_metadata = excel_inspection["metadata"]
+    elif native_cursor or cell_range:
+        raise LookupError("The original workbook or full native inventory is unavailable for this inspection.")
 
     requested_sections = _normalize_accessibility_sections(sections)
     report = {}
@@ -1177,14 +1284,22 @@ def get_document_accessibility_payload(
         report["issues"] = stored_metadata.get(ACCESSIBILITY_REPORT_ISSUES_KEY) or []
 
     page_chunks = None
+    chunks = []
     if page_number not in (None, ""):
-        resolved_page = _coerce_positive_int(page_number, default_value=1)
         chunks = get_ordered_document_chunks(
-            document_id=document_id,
-            user_id=user_id,
+            document_id=document_id, user_id=user_id,
             group_id=document_context.get("group_id"),
             public_workspace_id=document_context.get("public_workspace_id"),
         )
+    elif stored_metadata.get("format") in ("xlsx", "xlsm", "xls"):
+        chunks = get_ordered_document_chunks(
+            document_id=document_id, user_id=user_id,
+            group_id=document_context.get("group_id"),
+            public_workspace_id=document_context.get("public_workspace_id"),
+            max_chunks=1, native_only=True,
+        )
+    if page_number not in (None, ""):
+        resolved_page = _coerce_positive_int(page_number, default_value=1)
         page_chunks = [
             chunk for chunk in (chunks or [])
             if chunk.get("page_number") == resolved_page
@@ -1202,6 +1317,23 @@ def get_document_accessibility_payload(
     if page_chunks is not None:
         payload["page_number"] = _coerce_positive_int(page_number, default_value=1)
         payload["page_chunks"] = page_chunks
+    if stored_metadata.get("format") in ("xlsx", "xlsm", "xls"):
+        native_chunk = next(
+            (chunk for chunk in chunks or [] if str(chunk.get("chunk_text") or "").startswith("### Excel native inspection")),
+            None,
+        )
+        if native_chunk is not None:
+            payload["citation_chunk"] = native_chunk
+    if excel_inspection is not None:
+        payload["excel_inspection"] = {
+            key: value for key, value in excel_inspection.items() if key != "metadata"
+        }
+        page = excel_inspection["page"]
+        if native_section == "comments" and "accessibility_metadata" in payload:
+            payload["accessibility_metadata"]["comments"] = page["records"]
+            payload["accessibility_metadata"]["comment_page"] = {
+                key: value for key, value in page.items() if key != "records"
+            }
     return payload
 
 

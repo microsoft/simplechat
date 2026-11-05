@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.406"
+version: "0.261.408"
 ---
 
 ## How to use this reference
@@ -48,6 +48,23 @@ See [Reference and send between conversations]({{ '/guides/reference-and-send-co
 for source selection, handoff review, and the private-conversation boundary.
 
 ## Conversation header and status
+
+### Workbook citation preview
+
+Implemented in version: **0.261.408** (`application/single_app/config.py`).
+Workbook citations show the selected worksheet and table/range independently
+from their originally cited passage.
+
+| V2 control | Purpose | Availability |
+| --- | --- | --- |
+| Workbook worksheet tabs | Select a worksheet with mouse or Arrow/Home/End keys; the selected identity remains visible even when two sheets have identical values. | Enhanced workbook citation with multiple sheets |
+| Table | Chooses one independently detected/named table instead of applying one header to the whole sheet. | Selected sheet has multiple tables |
+| Previous records / Next records | Loads a bounded page rather than rendering the entire dataset. | Spreadsheet/CSV citation preview |
+| Go to record | Navigates to a one-based data-record position; worksheet row labels preserve physical source coordinates. | Spreadsheet/CSV citation preview |
+| Retry preview | Retries a failed selection without relabelling previously loaded data as the failed sheet/table. | Preview load failure |
+| Cited workbook evidence / Cited CSV evidence | Shows the original cited extraction passage, not a new passage inferred from preview navigation. | Cited passage is available |
+
+See [Inspect Excel workbooks]({{ '/guides/inspect-excel-workbooks/' | relative_url }}).
 
 ### Conversation details
 

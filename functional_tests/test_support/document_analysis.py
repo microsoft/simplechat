@@ -1,7 +1,7 @@
 # document_analysis.py
 """Original-source fixtures and isolated SDK seams for the real Analyze producer.
 
-Version: 0.261.407
+Version: 0.261.408
 Implemented in: 0.261.109
 """
 
@@ -134,6 +134,7 @@ def document_analysis_runtime(documents):
         cosmos_group_documents_container=screening_container('group'),
         cosmos_public_documents_container=screening_container('public'),
         cosmos_content_screening_container=None,
+        storage_account_content_screening_container_name='fixture-screening',
     ):
         targets = ('functions_search', 'functions_search_service', 'functions_document_analysis', 'functions_debug')
         originals = {name: sys.modules.get(name) for name in (*stubs, *targets)}

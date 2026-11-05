@@ -213,14 +213,51 @@ def _compute_request(plan, user_question):
     if operation == "transform" and task_type not in {"structured_export", "combined"}:
         raise NativeTabularComputeError("native_compute_operation_unsupported")
     query = validate_tabular_csv_query_expression(hints.get("query_expression") or "index == index")
-    return {
+    selected_table = hints.get("selected_table") if hints.get("selected_table") is not None else hints.get("table_id")
+    cell_range = hints.get("cell_range") if hints.get("cell_range") is not None else hints.get("selected_range")
+    header_row = hints.get("header_row") if hints.get("header_row") is not None else hints.get("selected_header_row")
+    selected_sheet = hints.get("selected_sheet")
+    if (
+        (selected_sheet is not None and (not isinstance(selected_sheet, str) or len(selected_sheet) > 512))
+        or any(
+            value is not None and (not isinstance(value, str) or not value.strip() or len(value) > 512)
+            for value in (selected_table, cell_range)
+        )
+        or (
+            header_row is not None
+            and (isinstance(header_row, bool) or not str(header_row).isascii() or not str(header_row).isdigit())
+        )
+        or (selected_table is not None and cell_range is not None)
+        or (
+            hints.get("selected_table") is not None and hints.get("table_id") is not None
+            and hints["selected_table"] != hints["table_id"]
+        )
+        or (
+            hints.get("cell_range") is not None and hints.get("selected_range") is not None
+            and hints["cell_range"] != hints["selected_range"]
+        )
+        or (
+            hints.get("header_row") is not None and hints.get("selected_header_row") is not None
+            and str(hints["header_row"]) != str(hints["selected_header_row"])
+        )
+    ):
+        raise NativeTabularComputeError("native_compute_table_selection_invalid")
+    request = {
         "task_type": task_type, "operation": operation, "query_expression": query,
-        "selected_sheet": hints.get("selected_sheet"),
+        "selected_sheet": selected_sheet,
         "deliverable_contract": deepcopy(contract),
         "row_analysis_mode": plan.get("row_analysis_mode"),
         "row_analysis_questions": deepcopy(plan.get("row_analysis_questions") or []),
         "question_sha256": native_compute_digest(user_question),
     }
+    # Omitted selectors must not change fingerprints of existing CSV jobs.
+    request.update({
+        key: value for key, value in {
+            "selected_table": selected_table, "cell_range": cell_range,
+            "header_row": int(header_row) if header_row is not None else None,
+        }.items() if value is not None
+    })
+    return request
 
 
 def _prepare_native_source(engine, source, request, user_id):
@@ -235,7 +272,12 @@ def _prepare_native_source(engine, source, request, user_id):
     plugin = engine.TabularProcessingPlugin(authorized_user_id=user_id)
     container, blob_path = locator["container"], locator["blob_path"]
     query = request["query_expression"]
+    selectors = plugin._table_selector_kwargs(
+        request.get("selected_table"), request.get("cell_range"), request.get("header_row"),
+    )
     if source_format == "csv":
+        if selectors:
+            raise NativeTabularComputeError("native_compute_table_selection_invalid")
         result = plugin._query_csv_data_in_bounded_chunks(
             container, blob_path, filename, query, return_columns=None, start_row=0, max_rows=5,
         )
@@ -246,9 +288,10 @@ def _prepare_native_source(engine, source, request, user_id):
     else:
         selected_sheet = request["selected_sheet"]
         metadata = plugin._get_workbook_metadata(container, blob_path)
-        if selected_sheet:
+        if selected_sheet or selectors.get("table_id") not in (None, "all") or selectors.get("cell_range"):
             selected_sheet, _ = plugin._resolve_sheet_selection(
                 container, blob_path, sheet_name=selected_sheet, require_explicit_sheet=True,
+                **selectors,
             )
             sheets = [selected_sheet]
         else:
@@ -259,6 +302,7 @@ def _prepare_native_source(engine, source, request, user_id):
         descriptor = plugin._build_generated_export_query_descriptor_from_location(
             container_name=container, blob_path=blob_path, filename=filename,
             query_expression=query, blob_version=version, selected_sheet=selected_sheet, sheet_names=sheets,
+            **selectors,
         )
         count, samples = 0, []
         for _, row in engine._iter_versioned_tabular_source_rows(
@@ -279,6 +323,9 @@ def _prepare_native_source(engine, source, request, user_id):
     descriptor["document_id"] = source["document_id"]
     candidate = {
         "filename": filename, "selected_sheet": descriptor.get("selected_sheet"),
+        "selected_table": descriptor.get("selected_table"),
+        "cell_range": descriptor.get("cell_range"), "header_row": descriptor.get("header_row"),
+        "table_selections": deepcopy(descriptor.get("table_selections") or []),
         "rows": samples, "row_count": len(samples), "total_matches": count,
         "full_result_available": False, "source_authorization": descriptor,
     }

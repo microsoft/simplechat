@@ -1,8 +1,10 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.261.396
+Version: 0.261.408
 Updated in: 0.261.035 for shared model-budget resolution and scoped batching.
+Table-aware descriptors and real-package replay fixtures updated in: 0.261.408
+SDK-default conversation/message fixture contracts updated in: 0.261.408
 Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152; Search shared preflight adapter in 0.250.159; aggregate route-helper harness coverage in 0.250.166; Analyze artifact Phase 7A harness compatibility updated in 0.250.178; reviewed correctness planning and semantic validation updated in 0.250.179; artifact publication lifecycle updated in 0.250.180; safe failure helper compatibility updated in 0.250.199; exhaustive Markdown scale compatibility updated in 0.250.200
 
 This test ensures generated exports preserve source identity and row order while
@@ -12,6 +14,7 @@ enforcing one stable output schema across independently generated batches.
 import ast
 import asyncio
 import csv
+from copy import deepcopy
 import heapq
 import hashlib
 import io
@@ -21,6 +24,7 @@ import logging
 import math
 import os
 import pandas
+import pytest
 import re
 import sys
 import time
@@ -31,7 +35,9 @@ from types import ModuleType, SimpleNamespace
 from collections import Counter
 from typing import Any, Dict, Optional
 
+from azure.core import MatchConditions
 from azure.cosmos._cosmos_responses import CosmosDict
+from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -127,7 +133,10 @@ SOURCE_READER_FUNCTIONS = {
     'iter_tabular_csv_query_rows',
     'validate_tabular_csv_query_expression',
 }
-AUTHORIZATION_FUNCTIONS = {'_authorize_tabular_export_run_execution'}
+AUTHORIZATION_FUNCTIONS = {
+    '_authorize_tabular_export_run_conversation',
+    '_authorize_tabular_export_run_execution',
+}
 CANCELLATION_FUNCTIONS = {
     '_is_artifact_publication_recoverable',
     '_can_cancel_run',
@@ -640,55 +649,6 @@ def _load_tabular_request_intent_helpers():
     return namespace
 
 
-def _load_tabular_descriptor_builder():
-    """Load the plugin's version-pinned tabular descriptor builder in isolation."""
-    module_tree = ast.parse(
-        TABULAR_PLUGIN_MODULE.read_text(encoding='utf-8'),
-        filename=str(TABULAR_PLUGIN_MODULE),
-    )
-    plugin_class = next(
-        node
-        for node in module_tree.body
-        if isinstance(node, ast.ClassDef) and node.name == 'TabularProcessingPlugin'
-    )
-    function_node = next(
-        node
-        for node in plugin_class.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == '_build_generated_export_query_descriptor_from_location'
-    )
-    namespace = {
-        'List': list,
-        'Optional': Optional,
-        'validate_tabular_csv_query_expression': _load_source_reader_helpers()[
-            'validate_tabular_csv_query_expression'
-        ],
-    }
-    exec(
-        compile(ast.Module(body=[function_node], type_ignores=[]), str(TABULAR_PLUGIN_MODULE), 'exec'),
-        namespace,
-    )
-    return namespace['_build_generated_export_query_descriptor_from_location']
-
-
-def _load_tabular_source_replay_helper(fake_plugin, version_checks):
-    """Load durable tabular replay with a fake workbook parser and version check."""
-    function_node = _get_function_node('_iter_versioned_tabular_source_rows')
-    namespace = {
-        'MatchConditions': SimpleNamespace(IfNotModified='if-not-modified'),
-        'TABULAR_EXPORT_FINAL_SPOOL_MAX_MEMORY_BYTES': 1024 * 1024,
-        'TabularProcessingPlugin': lambda: fake_plugin,
-        '_get_versioned_source_blob_client': lambda descriptor: version_checks.append(descriptor) or object(),
-        'iter_tabular_csv_query_rows': lambda **kwargs: (),
-        'tempfile': __import__('tempfile'),
-    }
-    exec(
-        compile(ast.Module(body=[function_node], type_ignores=[]), str(EXPORT_MODULE), 'exec'),
-        namespace,
-    )
-    return namespace['_iter_versioned_tabular_source_rows']
-
-
 def _build_query_invocation(start_row, row_count, total_matches=300, source_etag='etag-source-7'):
     class InvocationPayload(dict):
         pass
@@ -953,13 +913,15 @@ def _load_checkpoint_resume_helper(blobs, uploads):
 
 
 def _load_authorization_helper(conversation_owner, visible_public_ids=None, group_authorizer=None):
-    class CosmosResourceNotFoundError(Exception):
-        pass
-
     class ConversationContainer:
         def read_item(self, item, partition_key):
-            assert item == partition_key
-            return CosmosDict({'id': item, 'user_id': conversation_owner}, response_headers={})
+            if item != partition_key:
+                raise CosmosResourceNotFoundError(status_code=404, message='Conversation partition not found.')
+            etag = f'"conversation-{item}-1"'
+            return CosmosDict(
+                {'id': item, 'user_id': conversation_owner, '_etag': etag},
+                response_headers={'etag': etag},
+            )
 
     module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
     selected_nodes = [
@@ -1376,12 +1338,15 @@ def _assert_concise_background_handoff_contract(text, expected_row_count, expect
 
 
 def _load_idempotent_artifact_helper():
-    class CosmosResourceNotFoundError(Exception):
-        pass
-
     class ConversationContainer:
         def read_item(self, item, partition_key):
-            return CosmosDict({'id': item, 'user_id': 'user-1'}, response_headers={})
+            if item != partition_key:
+                raise CosmosResourceNotFoundError(status_code=404, message='Conversation partition not found.')
+            etag = f'"conversation-{item}-1"'
+            return CosmosDict(
+                {'id': item, 'user_id': 'user-1', '_etag': etag},
+                response_headers={'etag': etag},
+            )
 
     class MessageContainer:
         def __init__(self):
@@ -1389,14 +1354,26 @@ def _load_idempotent_artifact_helper():
             self.upsert_count = 0
 
         def read_item(self, item, partition_key):
-            if item not in self.items:
-                raise CosmosResourceNotFoundError()
-            return CosmosDict(dict(self.items[item]), response_headers={})
+            key = (partition_key, item)
+            if key not in self.items:
+                raise CosmosResourceNotFoundError(status_code=404, message='Message partition not found.')
+            saved = deepcopy(self.items[key])
+            return CosmosDict(saved, response_headers={'etag': saved['_etag']})
 
-        def upsert_item(self, item):
-            self.items[item['id']] = dict(item)
+        def upsert_item(self, body, *, etag=None, match_condition=None):
+            if not isinstance(body, dict) or not body.get('id') or not body.get('conversation_id'):
+                raise ValueError('A message id and conversation partition are required.')
+            key = (body['conversation_id'], body['id'])
+            current = self.items.get(key)
+            if match_condition == MatchConditions.IfNotModified and (
+                current is None or current['_etag'] != etag
+            ):
+                raise CosmosHttpResponseError(status_code=412, message='Message ETag changed.')
+            saved = deepcopy(dict(body))
+            saved['_etag'] = f'"message-{self.upsert_count + 1}"'
+            self.items[key] = saved
             self.upsert_count += 1
-            return CosmosDict(dict(item), response_headers={})
+            return CosmosDict(deepcopy(saved), response_headers={'etag': saved['_etag']})
 
     class BlobClient:
         def __init__(self):
@@ -4849,102 +4826,79 @@ def test_downloadable_complete_csv_request_uses_shared_artifact_intent():
     assert helpers['question_requests_tabular_generated_output'](user_question) is True
 
 
-def test_durable_tabular_descriptor_supports_all_configured_formats():
-    """Version-pinned replay descriptors cover CSV and every supported workbook type."""
-    descriptor_builder = _load_tabular_descriptor_builder()
+def test_durable_tabular_descriptor_supports_all_configured_formats(monkeypatch):
+    """Build real version-pinned descriptors without replacing authorization or readers."""
+    # Import the runtime harness at execution time so its I/O seams cannot leak
+    # into the other AST-only tests in this module.
+    from test_native_tabular_compute_service import USER, native_runtime
+    from test_tabular_table_aware_analytics_replay import _legacy_workbook_bytes, _one_table, _set_source
 
-    class FakeDescriptorPlugin:
-        SUPPORTED_EXTENSIONS = ('.csv', '.xls', '.xlsm', '.xlsx')
-
-        @staticmethod
-        def _infer_source_from_container(container_name):
-            assert container_name == 'user-documents'
-            return 'workspace'
-
-        @staticmethod
-        def _get_tabular_blob_version(*args, **kwargs):
-            raise AssertionError('The supplied version pin must be used')
-
-    plugin = FakeDescriptorPlugin()
     for source_format in ('csv', 'xlsx', 'xls', 'xlsm'):
         is_workbook = source_format != 'csv'
-        descriptor = descriptor_builder(
-            plugin,
-            container_name='user-documents',
-            blob_path=f'user-1/source.{source_format}',
-            filename=f'source.{source_format}',
-            query_expression='index == index',
-            expected_row_count=12,
-            blob_version={'blob_etag': 'etag-12', 'blob_size': 2048},
-            sheet_names=['First', 'Second'] if is_workbook else None,
+        count = 1 if source_format == 'xls' else 12
+        with native_runtime(monkeypatch, row_count=12, filename=f'source.{source_format}') as runtime:
+            if is_workbook:
+                _set_source(runtime, _legacy_workbook_bytes() if source_format == 'xls' else _one_table(12))
+            plugin = runtime.engine.TabularProcessingPlugin(authorized_user_id=USER)
+            metadata = plugin._get_workbook_metadata('user-documents', f'{USER}/source.{source_format}')
+            version = plugin._get_tabular_blob_version('user-documents', f'{USER}/source.{source_format}', refresh=True)
+            descriptor = plugin._build_generated_export_query_descriptor_from_location(
+                container_name='user-documents', blob_path=f'{USER}/source.{source_format}',
+                filename=f'source.{source_format}', query_expression='index == index',
+                expected_row_count=count, blob_version=version,
+                sheet_names=metadata['sheet_names'] if is_workbook else None,
+            )
+            replayed = list(runtime.engine._iter_versioned_tabular_source_rows(
+                descriptor, source_format, 3, 0, user_id=USER,
+            ))
+            assert descriptor['source_format'] == source_format
+            assert descriptor['expected_row_count'] == len(replayed) == count
+            assert descriptor['blob_etag'] == 'source-blob-1'
+            if is_workbook:
+                assert descriptor['version'] == 2 and descriptor['source_row_count'] == count
+                assert len(descriptor['table_selections']) == 1
+                assert replayed[-1][1]['_excel_source']['row'] == (1 if source_format == 'xls' else 14)
+            else:
+                assert descriptor['version'] == 1 and 'sheet_names' not in descriptor
+
+
+def test_durable_workbook_replay_preserves_sheet_order_and_resume_position(monkeypatch):
+    """Replay real selected tables; keep physical rows separate from resume cursors."""
+    # Keep application imports and external-I/O seams scoped to this runtime.
+    from test_native_tabular_compute_service import USER, native_runtime
+    from test_tabular_table_aware_analytics_replay import _set_source, _workbook_bytes
+
+    with native_runtime(monkeypatch, filename='source.xlsx') as runtime:
+        _set_source(runtime, _workbook_bytes([
+            {
+                'name': 'First', 'rows': {
+                    2: {1: 'Item_ID', 2: 'Value'}, 3: {1: 'A-1', 2: 'one'}, 4: {1: 'A-2', 2: 'two'},
+                },
+            },
+            {
+                'name': 'Second', 'rows': {7: {1: 'Item_ID', 2: 'Value'}, 8: {1: 'B-1', 2: 'three'}},
+            },
+        ]))
+        plugin = runtime.engine.TabularProcessingPlugin(authorized_user_id=USER)
+        descriptor = plugin._build_generated_export_query_descriptor_from_location(
+            container_name='user-documents', blob_path=f'{USER}/source.xlsx', filename='source.xlsx',
+            query_expression='index == index', sheet_names=['First', 'Second'], expected_row_count=3,
         )
-
-        assert descriptor['source_format'] == source_format
-        assert descriptor['expected_row_count'] == 12
-        assert descriptor['blob_etag'] == 'etag-12'
-        if is_workbook:
-            assert descriptor['sheet_names'] == ['First', 'Second']
-        else:
-            assert 'sheet_names' not in descriptor
-
-
-def test_durable_workbook_replay_preserves_sheet_order_and_resume_position():
-    """Workbook rows replay in sheet order and resume after the last staged physical row."""
-    class FakeWorkbookPlugin:
-        def __init__(self):
-            self.frames = {
-                'First': pandas.DataFrame([
-                    {'Item_ID': 'A-1', 'Value': 'one'},
-                    {'Item_ID': 'A-2', 'Value': 'two'},
-                ]),
-                'Second': pandas.DataFrame([
-                    {'Item_ID': 'B-1', 'Value': 'three'},
-                ]),
-            }
-
-        @staticmethod
-        def _parse_optional_column_list_argument(value):
-            assert value is None
-            return None
-
-        def _read_tabular_blob_to_dataframe(self, container, blob_path, sheet_name, require_explicit_sheet):
-            assert container == 'user-documents'
-            assert blob_path == 'user-1/source.xlsx'
-            assert require_explicit_sheet is True
-            return self.frames[sheet_name].copy()
-
-        @staticmethod
-        def _try_numeric_conversion(dataframe):
-            return dataframe
-
-        @staticmethod
-        def _apply_query_expression_with_fallback(dataframe, query_expression, normalize_match):
-            assert query_expression == 'index == index'
-            assert normalize_match is False
-            return dataframe.query(query_expression), False
-
-        @staticmethod
-        def _build_row_output_records(dataframe, selected_columns):
-            return dataframe[selected_columns].to_dict(orient='records')
-
-    version_checks = []
-    replay_rows = _load_tabular_source_replay_helper(FakeWorkbookPlugin(), version_checks)
-    descriptor = {
-        'container': 'user-documents',
-        'blob_path': 'user-1/source.xlsx',
-        'blob_etag': 'etag-source',
-        'query_expression': 'index == index',
-        'return_columns': None,
-        'sheet_names': ['First', 'Second'],
-    }
-
-    all_rows = list(replay_rows(descriptor, 'xlsx', 1000, 0))
-    resumed_rows = list(replay_rows(descriptor, 'xlsx', 1000, 2))
-
-    assert [source_row_number for source_row_number, _ in all_rows] == [1, 2, 3]
-    assert [row['Item_ID'] for _, row in all_rows] == ['A-1', 'A-2', 'B-1']
-    assert resumed_rows == [(3, {'Item_ID': 'B-1', 'Value': 'three'})]
-    assert len(version_checks) == 4
+        all_rows = list(runtime.engine._iter_versioned_tabular_source_rows(
+            descriptor, 'xlsx', 1, 0, user_id=USER,
+        ))
+        resumed_rows = list(runtime.engine._iter_versioned_tabular_source_rows(
+            descriptor, 'xlsx', 1, 2, user_id=USER,
+        ))
+        assert [cursor for cursor, _ in all_rows] == [1, 2, 3]
+        assert [row['Item_ID'] for _, row in all_rows] == ['A-1', 'A-2', 'B-1']
+        assert [row['_excel_source']['row'] for _, row in all_rows] == [3, 4, 8]
+        assert resumed_rows == all_rows[-1:]
+        descriptor['version'] = 1
+        with pytest.raises(ValueError, match='legacy worksheet-header'):
+            list(runtime.engine._iter_versioned_tabular_source_rows(
+                descriptor, 'xlsx', 1, 0, user_id=USER,
+            ))
 
 
 def test_direct_source_backed_queue_supports_all_workbook_formats():
@@ -5875,6 +5829,32 @@ def test_worker_revalidates_conversation_and_workspace_authorization():
     authorize_public(public_run)
 
 
+def test_sdk_default_authorization_conversation_points_preserve_owner_etag_and_partition():
+    """Execute the actual fixture and its conversation-ownership consumer with SDK points."""
+    authorize = _load_authorization_helper('user-1')
+    container = authorize.__globals__['cosmos_conversations_container']
+    first = container.read_item(item='conversation-1', partition_key='conversation-1')
+    assert type(first) is CosmosDict
+    assert first['id'] == 'conversation-1' and first['user_id'] == 'user-1'
+    assert first['_etag']
+    first['user_id'] = 'client-mutation'
+    again = container.read_item(item='conversation-1', partition_key='conversation-1')
+    authorized = authorize({
+        'id': 'sdk-conversation-contract', 'user_id': 'user-1', 'conversation_id': 'conversation-1',
+    })
+    assert type(again) is type(authorized) is CosmosDict
+    assert again['user_id'] == authorized['user_id'] == 'user-1'
+    assert again['_etag'] == authorized['_etag'] == first['_etag']
+    with pytest.raises(CosmosResourceNotFoundError) as missing:
+        container.read_item(item='conversation-1', partition_key='another-conversation')
+    assert missing.value.status_code == 404
+    wrong_owner = _load_authorization_helper('another-owner')
+    with pytest.raises(PermissionError, match='ownership'):
+        wrong_owner({
+            'id': 'sdk-conversation-contract', 'user_id': 'user-1', 'conversation_id': 'conversation-1',
+        })
+
+
 def test_durable_cancellation_is_idempotent_and_terminal():
     """Cancel persists a terminal state that cannot be resumed or canceled again."""
     helpers, stored_run = _load_cancellation_helpers({
@@ -6250,6 +6230,72 @@ def test_final_artifact_publication_is_retry_idempotent():
     assert first_result['message']['id'] == second_result['message']['id']
     assert first_result['message']['blob_path'] == second_result['message']['blob_path']
     assert message_container.upsert_count == 1
+
+
+def test_sdk_default_artifact_conversation_points_preserve_owner_etag_and_partition():
+    """The publication fixture's point reads are real SDK mappings, not plain substitutes."""
+    upload, _ = _load_idempotent_artifact_helper()
+    container = upload.__globals__['cosmos_conversations_container']
+    first = container.read_item(item='conversation-1', partition_key='conversation-1')
+    assert type(first) is CosmosDict
+    assert first == {
+        'id': 'conversation-1', 'user_id': 'user-1', '_etag': first['_etag'],
+    }
+    first['user_id'] = 'client-mutation'
+    again = container.read_item(item='conversation-1', partition_key='conversation-1')
+    assert type(again) is CosmosDict
+    assert again['user_id'] == 'user-1' and again['_etag'] == first['_etag']
+    with pytest.raises(CosmosResourceNotFoundError) as missing:
+        container.read_item(item='conversation-1', partition_key='another-conversation')
+    assert missing.value.status_code == 404
+
+
+def test_sdk_default_artifact_message_points_preserve_versions_partitions_and_atomic_failures():
+    """Exercise SDK writes/reads, nested isolation, partitions, and conditional failure atomicity."""
+    _, container = _load_idempotent_artifact_helper()
+    body = {
+        'id': 'same-message', 'conversation_id': 'conversation-1', 'metadata': {'value': 'original'},
+    }
+    created = container.upsert_item(body=body)
+    other = container.upsert_item(body={
+        **body, 'conversation_id': 'conversation-2', 'metadata': {'value': 'other-partition'},
+    })
+    body['metadata']['value'] = 'mutated-input'
+    created['metadata']['value'] = 'mutated-response'
+    first_read = container.read_item(item='same-message', partition_key='conversation-1')
+    other_read = container.read_item(item='same-message', partition_key='conversation-2')
+    assert all(type(document) is CosmosDict for document in (created, other, first_read, other_read))
+    assert type(first_read['metadata']) is dict
+    assert first_read['metadata'] == {'value': 'original'}
+    assert other_read['metadata'] == {'value': 'other-partition'}
+    assert first_read['_etag'] == created['_etag'] != other_read['_etag'] == other['_etag']
+    with pytest.raises(CosmosResourceNotFoundError) as missing:
+        container.read_item(item='same-message', partition_key='unrelated-conversation')
+    assert missing.value.status_code == 404
+    updated = container.upsert_item(
+        body={**first_read, 'metadata': {'value': 'updated'}},
+        etag=first_read['_etag'], match_condition=MatchConditions.IfNotModified,
+    )
+    saved = container.read_item(item='same-message', partition_key='conversation-1')
+    assert type(updated) is type(saved) is CosmosDict
+    assert saved['metadata'] == {'value': 'updated'} and saved['_etag'] != first_read['_etag']
+    before = deepcopy(container.items)
+    writes_before = container.upsert_count
+    with pytest.raises(CosmosHttpResponseError) as stale:
+        container.upsert_item(
+            body={**first_read, 'metadata': {'value': 'stale-write'}},
+            etag=first_read['_etag'], match_condition=MatchConditions.IfNotModified,
+        )
+    assert stale.value.status_code == 412
+    with pytest.raises(CosmosHttpResponseError) as absent:
+        container.upsert_item(
+            body={'id': 'missing', 'conversation_id': 'conversation-1'},
+            etag='missing-etag', match_condition=MatchConditions.IfNotModified,
+        )
+    assert absent.value.status_code == 412
+    with pytest.raises(ValueError, match='partition'):
+        container.upsert_item(body={'id': 'without-partition'})
+    assert container.items == before and container.upsert_count == writes_before
 
 
 def test_scheduler_filters_before_limiting_candidates():

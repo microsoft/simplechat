@@ -1,11 +1,13 @@
 # document_search_plugin.py
 
+import logging
 from typing import Annotated, Any, Dict, List, Optional, Union
 
 from semantic_kernel.functions import kernel_function
 
 from content_screening.contracts import ScreeningError
 from functions_authentication import get_current_user_id
+from functions_appinsights import log_event
 from public_chat_scope_state import current_public_chat_scope
 from functions_agent_document_citations import annotate_document_search_payload
 from functions_search import (
@@ -155,6 +157,11 @@ class DocumentSearchPlugin(BasePlugin):
                         {'name': 'doc_scope', 'type': 'str', 'description': 'all, personal, group, or public.', 'required': False},
                         {'name': 'sections', 'type': 'str', 'description': 'Optional comma-separated sections: accessibility, style, issues.', 'required': False},
                         {'name': 'page_number', 'type': 'int', 'description': 'Optional page or slide number whose chunk text is also returned.', 'required': False},
+                        {'name': 'native_section', 'type': 'str', 'description': 'Excel inventory section: comments, tables, objects, image_analyses, property_records, custom_properties, extended_properties, defined_names, hyperlinks, validations.', 'required': False},
+                        {'name': 'native_cursor', 'type': 'str', 'description': 'Excel next_cursor returned by the previous inventory page.', 'required': False},
+                        {'name': 'native_page_size', 'type': 'int', 'description': 'Excel records per response, between 1 and 200.', 'required': False},
+                        {'name': 'sheet_name', 'type': 'str', 'description': 'Worksheet for an optional saved-cell range read.', 'required': False},
+                        {'name': 'cell_range', 'type': 'str', 'description': 'Optional Excel A1 range, at most 2000 cells, without executing formulas.', 'required': False},
                     ],
                     'returns': {'type': 'dict', 'description': 'Stored accessibility metadata, style inventory, and issues.'},
                 },
@@ -441,6 +448,10 @@ class DocumentSearchPlugin(BasePlugin):
             'Use it to build custom style-guide or accessibility checks. This is extracted metadata, not a '
             'WCAG or PDF/UA conformance result. Use sections to limit the output and page_number to also '
             'return that page\'s stored chunk text. '
+            'For Excel, inspect native_section and follow excel_inspection.page.next_cursor until has_more '
+            'is false when the question requires every record. Compatibility notes are not extra comments. '
+            'Use sheet_name and cell_range for actual saved values and formula caches; do not infer them '
+            'from a schema preview. Existing stored originals are inspected without requiring re-upload. '
             'The payload carries a "citation" value; copy it verbatim into your answer when you use it.'
         ),
     )
@@ -452,6 +463,11 @@ class DocumentSearchPlugin(BasePlugin):
         page_number: Annotated[int, 'Optional 1-based stored page/slide or Excel evidence segment number, not an Excel printed page.'] = 0,
         active_group_ids: Annotated[str, 'Optional comma-separated group ids when resolving group content.'] = '',
         active_public_workspace_id: Annotated[str, 'Optional public workspace id when resolving public content.'] = '',
+        native_section: Annotated[str, 'Excel section: comments, tables, objects, image_analyses, property_records, custom_properties, extended_properties, defined_names, hyperlinks, validations.'] = 'comments',
+        native_cursor: Annotated[str, 'Excel inventory next_cursor from the previous page, including continued long records.'] = '',
+        native_page_size: Annotated[int, 'Excel inventory page size from 1 through 200; responses also have a byte budget.'] = 100,
+        sheet_name: Annotated[str, 'Worksheet name for optional direct saved-cell inspection.'] = '',
+        cell_range: Annotated[str, 'Optional A1 range with at most 2000 cells; reads saved values/formulas, never recalculates.'] = '',
     ) -> Annotated[dict, 'Stored accessibility, style inventory, and issue metadata for one document.']:
         try:
             return annotate_document_search_payload(
@@ -464,6 +480,9 @@ class DocumentSearchPlugin(BasePlugin):
                     active_public_workspace_id=self._resolve_allowed_public_workspace_ids(active_public_workspace_id),
                     sections=sections,
                     page_number=page_number if int(page_number or 0) > 0 else None,
+                    native_section=native_section, native_cursor=native_cursor or None,
+                    native_page_size=native_page_size, sheet_name=sheet_name or None,
+                    cell_range=cell_range or None,
                 ),
                 'get_document_accessibility_report',
             )
@@ -471,8 +490,12 @@ class DocumentSearchPlugin(BasePlugin):
             return {"error": error.public_message, "error_code": error.code, "status_code": error.status_code}
         except DocumentSearchScopeError as error:
             return {'error': str(error)}
-        except Exception as e:
-            return {'error': str(e)}
+        except Exception as error:
+            log_event(
+                "[DOCUMENT_METADATA] Document inspection action failed.",
+                level=logging.WARNING, extra={"error_type": type(error).__name__},
+            )
+            return {'error': 'Unable to inspect the requested document or workbook range.'}
 
     # bac-check: ignore - summarize_document_content delegates to get_document_chunks_payload's current-user scope check.
     @plugin_function_logger('DocumentSearchPlugin')
