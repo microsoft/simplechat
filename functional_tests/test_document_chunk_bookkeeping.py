@@ -1,9 +1,10 @@
 # test_document_chunk_bookkeeping.py
 """
 Functional regressions for indexed chunk counts and obsolete metadata warnings.
-Version: 0.261.401
+Version: 0.261.402
 Implemented in: 0.261.400
 Acknowledged deletion entry-point coverage added in: 0.261.401
+SDK delete-response deserialization aligned in: 0.261.402
 
 Execute the real single/batch/video writers, upload/reprocess finalizers, detail
 projection and conditional metadata update with offline Search and Cosmos.
@@ -79,7 +80,11 @@ class Search:
             succeeded = key not in self.delete_fail_keys
             if succeeded:
                 self.chunks.pop(key, None)
-            results.append(IndexingResult(key=key, succeeded=succeeded, status_code=200 if succeeded else 503))
+            results.append(IndexingResult.deserialize({
+                "key": key,
+                "status": succeeded,
+                "statusCode": 200 if succeeded else 503,
+            }))
         return results + self.extra_delete_results
 
     def search(self, **kwargs):
@@ -97,6 +102,19 @@ class Search:
                 if (row.get(field) == value if operator == "eq" else row[field] > value)
             ]
         return [{"id": row["id"]} for row in sorted(rows, key=lambda row: row["id"])[:kwargs.get("top", len(rows))]]
+
+
+def test_delete_fixture_preserves_real_sdk_readonly_acknowledgement_fields():
+    search = Search()
+    search.chunks = {"saved": {"id": "saved"}, "retry": {"id": "retry"}}
+    search.delete_fail_keys.add("retry")
+    receipts = search.delete_documents([{"id": "saved"}, {"id": "retry"}])
+    assert all(type(receipt) is IndexingResult for receipt in receipts)
+    assert [
+        (receipt.key, receipt.succeeded, receipt.status_code) for receipt in receipts
+    ] == [("saved", True, 200), ("retry", False, 503)]
+    assert "saved" not in search.chunks
+    assert "retry" in search.chunks
 
 
 @pytest.fixture(params=["personal", "group", "public"])

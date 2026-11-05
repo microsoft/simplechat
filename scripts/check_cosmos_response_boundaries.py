@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -37,6 +38,7 @@ DOMAIN_DOUBLE_TARGETS = frozenset({
     "functional_tests/test_support/orchestration_results.py::ResultFixture",
 })
 CORE_CONTRACT_TESTS = frozenset({
+    "functional_tests/test_cosmos_contract_runner.py",
     "functional_tests/test_cosmos_document_boundaries.py",
     "functional_tests/test_orchestration_cosmos_response_contract.py",
     "functional_tests/test_orchestration_operation_runtime.py",
@@ -385,13 +387,16 @@ def main():
         for target in targets:
             filename, separator, scope = target.partition("::")
             selectors.append(str(ROOT / filename) + (separator + scope if scope else ""))
-        return subprocess.run(
-            [
-                sys.executable, "-m", "pytest", "-p", "test_support.cosmos_network_guard",
-                *selectors, "-q", "--disable-warnings", "--tb=short",
-            ],
-            cwd=ROOT, env=environment, check=False,
-        ).returncode
+        with tempfile.TemporaryDirectory(prefix="simplechat-cosmos-contracts-") as directory:
+            arguments = Path(directory) / "pytest-arguments.txt"
+            arguments.write_text("\n".join(selectors) + "\n", encoding="utf-8")
+            return subprocess.run(
+                [
+                    sys.executable, "-m", "pytest", "-p", "test_support.cosmos_network_guard",
+                    f"@{arguments}", "-q", "--disable-warnings", "--tb=short",
+                ],
+                cwd=ROOT, env=environment, check=False,
+            ).returncode
     return 0
 
 

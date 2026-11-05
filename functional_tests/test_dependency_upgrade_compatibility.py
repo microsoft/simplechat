@@ -1,7 +1,7 @@
 # test_dependency_upgrade_compatibility.py
 """
 Functional tests for consolidated Dependabot dependency compatibility.
-Version: 0.261.402
+Version: 0.261.403
 Implemented in: 0.261.402
 
 Exercise real upgraded packages without Azure or Snowflake credentials. Fresh

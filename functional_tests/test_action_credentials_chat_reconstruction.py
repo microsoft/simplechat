@@ -1,8 +1,9 @@
 # test_action_credentials_chat_reconstruction.py
 """Fresh-agent save/continue integration through real application owners.
 
-Version: 0.261.348
+Version: 0.261.402
 Implemented in: 0.261.345
+Runtime math-plugin instrumentation aligned in: 0.261.399
 
 Cold subprocesses keep bootstrap, loaders, authorization, identities, journals,
 routes and screened response persistence real. Only external I/O is doubled.
@@ -63,7 +64,7 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
     from action_credential_contracts import ActionCredentialsRequired
     from flask import g, session
     from semantic_kernel import Kernel
-    from semantic_kernel.core_plugins import MathPlugin
+    from semantic_kernel_plugins.math_plugin import MathPlugin
     from yamcs.protobuf.instances.instances_service_pb2 import ListInstancesResponse
 
     settings = {
@@ -175,8 +176,9 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
     add = MathPlugin.add
     @wraps(add)
     def counted_add(*args, **kwargs):
-        completed_calls.append(True)
-        return add(*args, **kwargs)
+        result = add(*args, **kwargs)
+        completed_calls.append(result)
+        return result
 
     log_event = credential_routes.log_event
     def capture_diagnostic(message, *args, **kwargs):
@@ -329,7 +331,9 @@ with globals().get("credential_ui_context", nullcontext)() as transport, offline
                   "The trusted original question was not retained.")
             if scenario.get("legacy_participant_state"):
                 config.cosmos_collaboration_user_state_container.items.pop("owner:visible-chat")
-        check(not provider_calls and len(completed_calls) == 1, "Initial tool boundaries were not retained.")
+        check(not provider_calls and completed_calls == ["5"],
+              f"Initial tool boundaries were not retained (provider calls: {len(provider_calls)}, "
+              f"completed tools: {len(completed_calls)}).")
         checkpoint = state.read("owner", execution.credential_checkpoint_id)
         check("root" in checkpoint["value"], "No retained root tool history.")
         client = web.app.test_client()

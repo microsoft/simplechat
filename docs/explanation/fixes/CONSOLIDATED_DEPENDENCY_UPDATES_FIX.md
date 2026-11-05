@@ -1,4 +1,4 @@
-# Consolidated dependency updates (v0.261.402)
+# Consolidated dependency updates (v0.261.403)
 
 ## Issue and root cause
 
@@ -15,6 +15,11 @@ pins would leave the combined application requirements uninstallable.
 
 `application/single_app/config.py` increments the application patch segment from
 `0.261.401` to `0.261.402`.
+
+The later integration with the PR-check remediation branch uses application
+version **0.261.403** because both branches independently selected `0.261.402`.
+The dependency changes were first implemented in `0.261.402`; their pins are
+preserved by that integration.
 
 ## Technical details
 

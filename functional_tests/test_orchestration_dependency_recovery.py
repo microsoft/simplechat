@@ -1,9 +1,10 @@
 # test_orchestration_dependency_recovery.py
 """Real leases, checkpoint restart, DAG reuse and current authorization for v2.
 
-Version: 0.261.139
+Version: 0.261.402
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
+SDK transport-to-domain fixture boundaries aligned in: 0.261.399
 Only Cosmos/Blob transport, model responses and current source access are isolated.
 """
 
@@ -13,6 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
+from azure.cosmos._cosmos_responses import CosmosDict
+from cosmos_document_utils import normalize_cosmos_document
 from test_orchestration_dependency_runtime import binding, compose, runtime, set_result_contract, source_input
 from test_support.app_stubs import stubbed_config
 from test_support.orchestration_revisions import AtomicMemoryContainer
@@ -37,16 +40,18 @@ def durable(runtime):
         with patch.object(run_store, 'cosmos_orchestration_runs_container', runs), patch.object(
             run_store, 'cosmos_orchestration_run_steps_container', steps,
         ):
-            record = runs.create_item(body={
+            record = normalize_cosmos_document(runs.create_item(body={
                 'id': 'run-1', 'run_id': 'run-1', 'record_type': 'run',
                 'conversation_id': 'conversation-1', 'user_id': 'owner', 'turn_id': 'turn-1',
                 'plan': deepcopy(case.plan), 'status': 'running', 'attempt_index': 1,
                 'user_message': case.context.user_message, 'original_user_message': case.context.user_message,
                 'recovery_version': 'initial-recovery-version', 'execution_lease': recovery.lease_fields(),
-            })
+            }))
 
             def read_run(run_id):
-                return runs.read_item(item=run_id, partition_key='conversation-1')
+                return normalize_cosmos_document(
+                    runs.read_item(item=run_id, partition_key='conversation-1'),
+                )
 
             def service():
                 results = case.fixture.restart()
@@ -111,6 +116,14 @@ def durable(runtime):
                     if not lease.stopped.is_set():
                         current = read_run(lease.run_id)
                         lease.close(release=(current.get('execution_lease') or {}).get('token') == lease.token)
+
+
+def test_recovery_fixture_preserves_sdk_transport_and_plain_domain_records(durable):
+    transport = durable.runs.read_item(item='run-1', partition_key='conversation-1')
+    record = durable.read_run('run-1')
+    assert type(transport) is CosmosDict
+    assert type(record) is dict
+    assert record == transport and record['_etag'] == transport['_etag']
 
 
 def fail_first(durable):

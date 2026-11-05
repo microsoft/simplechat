@@ -1,7 +1,7 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.389
+Version: 0.261.402
 Implemented in: 0.261.127
 Invocation, catalog, and citation regressions implemented in: 0.261.129
 Direct initial-binding scope coverage implemented in: 0.261.130
@@ -22,6 +22,7 @@ Selected-answer citations retain their exact lineage during initial publication
 and model-free delivery, without adopting ambient or stale citation metadata.
 Readable source titles, filenames and file types survive publication in: 0.261.327
 Cosmos numeric publication round trips covered in: 0.261.380
+Search evidence passage-citation expectations aligned in: 0.261.399
 CSV/JSON delivery reopens authorized committed bytes and checks complete records,
 including the final row, rather than relying only on file-card counts.
 The four private external bindings include the actual invocation preflight.
@@ -3565,16 +3566,13 @@ def test_selected_result_citations_reach_headless_message_cache_and_delivery(
         assert all(citation["title"] == "Source document title" for citation in citations)
         assert all(citation["file_name"] == "Original source.pdf" for citation in citations)
         assert all(citation["file_type"] == "pdf" for citation in citations)
-        if selected == "prepared":
-            assert [citation["citation_id"] for citation in citations] == [
-                "first-selected-chunk", "last-selected-chunk",
-            ]
-            assert [citation["page_number"] for citation in citations] == [2, 4]
-            assert used[0]["file_name"] == "Original source.pdf"
-            assert used[0]["citation_ids"] == ["first-selected-chunk", "last-selected-chunk"]
-        else:
-            assert len(citations) == 1
-            assert "citation_id" not in citations[0] and "page_number" not in citations[0]
+        assert [citation["citation_id"] for citation in citations] == [
+            "first-selected-chunk", "last-selected-chunk",
+        ]
+        assert [citation["page_number"] for citation in citations] == [2, 4]
+        assert used[0]["citation_ids"] == ["first-selected-chunk", "last-selected-chunk"]
+        if selected == "evidence":
+            assert [citation["evidence_id"] for citation in citations] == ["excerpt-0", "excerpt-1"]
     assert all(value["role"] != "tool" for value in messages)
     assert [query for query, _user, _kwargs in citation_execution.queries] == ["selected", "incidental"]
     assert len(harness.model_calls) == 1 and harness.blobs.file_uploads == 0
