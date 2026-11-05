@@ -1,8 +1,9 @@
 # test_excel_inventory_persistence.py
 """
 Functional tests for private, complete, revision-bound Excel inventories.
-Version: 0.261.408
+Version: 0.261.409
 Implemented in: 0.261.408
+UUID import binding regression implemented in: 0.261.409
 
 The real private artifact store runs against the existing Azure-like blob double.
 Tests prove paging, full-text continuations, source binding, publication failures,
@@ -12,6 +13,7 @@ fresh authorization, screening capture, and revision-confined cleanup.
 import json
 import ast
 import sys
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,7 +26,7 @@ APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP))
 
 import functions_excel_accessibility as excel  # noqa: E402
-from content_screening.contracts import Subject  # noqa: E402
+from content_screening.contracts import Subject, hash_payload  # noqa: E402
 from content_screening.extraction import ExtractionCapture  # noqa: E402
 from content_screening.storage import ScreeningStorage, revision_prefix  # noqa: E402
 from functions_excel_inventory import (  # noqa: E402
@@ -56,6 +58,36 @@ def isolate_inventory_cache():
 def inventory_store():
     service = FakeBlobService()
     return ScreeningStorage(service), service
+
+
+def test_inventory_generations_use_current_uuid_factory(review_workbook, inventory_store, monkeypatch):
+    store, _ = inventory_store
+    subject = Subject("personal", "owner", "workbook", "1")
+    original_factory = uuid.uuid4
+    references, expected_scan_keys = [], []
+    with monkeypatch.context() as scoped:
+        for generation in (uuid.UUID(int=1), uuid.UUID(int=2)):
+            scoped.setattr(uuid, "uuid4", lambda current=generation: current)
+            _, _, reference = persist_excel_inventory(review_workbook, ".xlsx", subject=subject, storage=store)
+            scan_id = (
+                f"excel-native:{excel.EXCEL_WORKBOOK_SCHEMA_VERSION}:"
+                f"{reference['source_sha256']}:{generation.hex}"
+            )
+            references.append(reference)
+            expected_scan_keys.append(hash_payload(scan_id))
+    actual_scan_keys = [reference["manifest"]["scan_key"] for reference in references]
+    assert uuid.uuid4 is original_factory
+    assert actual_scan_keys == expected_scan_keys
+    assert actual_scan_keys[0] != actual_scan_keys[1]
+    for reference in references:
+        clear_excel_inventory_cache()
+        reader = open_stored_excel_inventory(
+            {"id": "workbook", "user_id": "owner", "version": 1, EXCEL_INVENTORY_FIELD: reference},
+            storage=store, authorize=lambda: None,
+        )
+        records = reader.page("comments")["records"]
+        assert len(records) == 5
+        assert any(record["text"] == "Set cap to 19500." for record in records)
 
 
 def test_complete_inventory_survives_parent_record_limits_and_restart(review_workbook, inventory_store, monkeypatch):

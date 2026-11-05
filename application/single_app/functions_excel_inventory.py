@@ -10,7 +10,7 @@ import logging
 import os
 import tempfile
 from threading import RLock
-from uuid import uuid4
+import uuid
 
 from azure.core.exceptions import AzureError, ResourceNotFoundError
 
@@ -87,7 +87,7 @@ class ExcelInventoryWriter:
         self.subject = subject
         self.source_digest = source_digest
         self.capture = capture
-        self.scan_id = f"excel-native:{EXCEL_WORKBOOK_SCHEMA_VERSION}:{source_digest}:{uuid4().hex}"
+        self.scan_id = f"excel-native:{EXCEL_WORKBOOK_SCHEMA_VERSION}:{source_digest}:{uuid.uuid4().hex}"
         self.pages = []
         self.buffers = {}
         self.sizes = {}

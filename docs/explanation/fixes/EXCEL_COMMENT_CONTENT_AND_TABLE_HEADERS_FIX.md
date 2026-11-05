@@ -2,6 +2,7 @@
 
 Fixed in version: **0.261.408**.
 Application version is maintained in `application/single_app/config.py`.
+Import binding follow-up fixed in version: **0.261.409**.
 
 ## Issue and root cause
 
@@ -63,6 +64,28 @@ late rows, multiple tables, and unchanged original bytes. Private-store tests
 cover restart/paging, revocation, source-bound cursors, failures, and cleanup.
 UI tests exercise different and identical sheets, five tables, the 50,000th
 record, error recovery, keyboard navigation, and desktop/mobile layout.
+
+### Import binding follow-up
+
+PR #1891's CodeQL alerts 5132 and 5136 identified a captured UUID factory and
+mixed imports in the native-evidence test. `functions_excel_inventory.py` now
+resolves `uuid.uuid4()` when creating each generation, so a factory replacement
+after import is observed. The native-evidence test consistently uses its existing
+`excel` module import. Neither change moves deferred imports or alters bootstrap,
+authorization, source binding, storage format, or the inspection interface.
+
+`test_excel_inventory_persistence.py` replaces the UUID factory twice after the
+inventory module is loaded, verifies the expected immutable generation keys,
+reads both generations' complete comment records, and checks factory restoration.
+The regression fails with the former imported function binding. Both updated
+tests record version **0.261.409**, matching the single patch increment in
+`application/single_app/config.py`.
+
+Focused offline validation passes all **16** inventory/native-evidence tests
+under normal Python and all **16** under optimized Python. Documentation coverage
+passes **7/7** checks and site quality **6/6**. The Cosmos response-boundary
+inventory remains unchanged at **1,085 owners**, **425 doubles**, and **zero
+review gaps**, so no storage-boundary reclassification is needed.
 
 See [Scalable Excel Native Inspection](../features/EXCEL_NATIVE_INSPECTION.md)
 for the storage contract, test suites, and saved-state limitations.

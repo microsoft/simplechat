@@ -1,7 +1,7 @@
 # test_excel_native_inspection_chat_evidence.py
 """
 Functional tests for complete, source-backed Excel native evidence.
-Version: 0.261.408
+Version: 0.261.409
 Implemented in: 0.261.408
 
 Real packages distinguish threaded compatibility copies from genuine notes,
@@ -24,7 +24,6 @@ APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP))
 
 from functions_accessibility import format_accessibility_metadata_for_chat  # noqa: E402
-from functions_excel_accessibility import extract_excel_accessibility_metadata  # noqa: E402
 import functions_excel_accessibility as excel  # noqa: E402
 from functions_agent_document_citations import annotate_document_search_payload  # noqa: E402
 from test_excel_document_accessibility_extraction import _load_functions  # noqa: E402
@@ -91,7 +90,7 @@ def review_workbook(tmp_path):
 
 def test_threaded_compatibility_copies_do_not_become_legacy_notes(review_workbook):
     before = hashlib.sha256(review_workbook.read_bytes()).hexdigest()
-    metadata, evidence = extract_excel_accessibility_metadata(review_workbook, ".xlsx")
+    metadata, evidence = excel.extract_excel_accessibility_metadata(review_workbook, ".xlsx")
     summary = metadata["comment_summary"]
     assert summary == {
         "legacy_notes": 1, "thread_roots": 3, "replies": 1,
@@ -107,7 +106,7 @@ def test_threaded_compatibility_copies_do_not_become_legacy_notes(review_workboo
 
 
 def test_native_records_include_saved_cell_values_and_blank_cells(review_workbook):
-    metadata, _ = extract_excel_accessibility_metadata(review_workbook, ".xlsx")
+    metadata, _ = excel.extract_excel_accessibility_metadata(review_workbook, ".xlsx")
     comments = {item["id"]: item for item in metadata["comments"] if item.get("id")}
     budget = comments["{root-budget}"]
     delivery = comments["{root-delivery}"]
@@ -122,7 +121,7 @@ def test_native_records_include_saved_cell_values_and_blank_cells(review_workboo
 
 
 def test_chat_formatter_supplies_comment_text_not_just_counts(review_workbook):
-    metadata, _ = extract_excel_accessibility_metadata(review_workbook, ".xlsx")
+    metadata, _ = excel.extract_excel_accessibility_metadata(review_workbook, ".xlsx")
     rendered = format_accessibility_metadata_for_chat(metadata)
     assert "Set cap to 19500." in rendered
     assert "Hold approval." in rendered
@@ -141,7 +140,7 @@ def test_comment_inventory_sink_preserves_text_beyond_parent_preview(tmp_path):
     workbook.active["A2"].comment = Comment(text, "Reviewer")
     workbook.save(path)
     records = []
-    metadata, _ = extract_excel_accessibility_metadata(
+    metadata, _ = excel.extract_excel_accessibility_metadata(
         path, ".xlsx", record_sink=lambda kind, record: records.append((kind, record)),
     )
     note = next(record for kind, record in records if kind == "comments")
@@ -158,7 +157,7 @@ def test_formula_without_cache_is_not_blank_or_zero(tmp_path):
     workbook.active["A2"] = "=1+2"
     workbook.active["A2"].comment = Comment("Confirm calculated amount.", "Reviewer")
     workbook.save(path)
-    metadata, _ = extract_excel_accessibility_metadata(path, ".xlsx")
+    metadata, _ = excel.extract_excel_accessibility_metadata(path, ".xlsx")
     note = metadata["comments"][0]
     assert note["formula"] == "=1+2"
     assert note["cell_value"] is None
@@ -167,7 +166,7 @@ def test_formula_without_cache_is_not_blank_or_zero(tmp_path):
 
 
 def test_actual_chat_handoff_uses_known_records_when_relevance_has_no_matches(review_workbook):
-    metadata, _ = extract_excel_accessibility_metadata(review_workbook, ".xlsx")
+    metadata, _ = excel.extract_excel_accessibility_metadata(review_workbook, ".xlsx")
     metadata["properties"]["long_context"] = "irrelevant prefix " * 1200
     metadata["style_inventory"]["long_context"] = "layout prefix " * 1500
     report = {
@@ -211,7 +210,7 @@ def test_actual_chat_handoff_uses_known_records_when_relevance_has_no_matches(re
 
 
 def test_mixed_calculation_handoff_preserves_native_and_computed_evidence(review_workbook):
-    metadata, _ = extract_excel_accessibility_metadata(review_workbook, ".xlsx")
+    metadata, _ = excel.extract_excel_accessibility_metadata(review_workbook, ".xlsx")
     report = {"document": {"id": "doc", "file_name": "review.xlsx"}, "accessibility_metadata": metadata}
     native = {
         "evidence_envelopes": [{"document_id": "doc", "status": "completed", "summary": "native", "citations": []}],
