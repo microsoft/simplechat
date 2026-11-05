@@ -262,9 +262,11 @@ export function readSources(source: Json | ChatMessageLike | null | undefined): 
     const documents = Array.isArray(root.hybrid_citations)
         ? (root.hybrid_citations as HybridCitation[])
         : [];
-    const web = Array.isArray(root.web_search_citations)
-        ? (root.web_search_citations as WebCitation[])
-        : [];
+    const web = Array.isArray(root.cited_web_search_citations)
+        ? (root.cited_web_search_citations as WebCitation[])
+        : Array.isArray(root.web_search_citations)
+            ? (root.web_search_citations as WebCitation[]).filter((citation) => citation.provider !== 'web_iq')
+            : [];
     const tools = Array.isArray(root.agent_citations)
         ? (root.agent_citations as AgentCitation[])
         : [];
@@ -285,12 +287,15 @@ export function readSources(source: Json | ChatMessageLike | null | undefined): 
 
 /** Keep the same server-owned evidence on ordinary and orchestrated finished replies. */
 export function completionCitations(event: ChatStreamEvent): Pick<
-    ChatMessage, 'hybrid_citations' | 'web_search_citations' | 'agent_citations' | 'm365_citations'
+    ChatMessage, 'hybrid_citations' | 'web_search_citations' | 'cited_web_search_citations' | 'agent_citations' | 'm365_citations'
 > {
-    const sources = readSources(event.blocked || event.role === 'safety' ? null : event);
+    const visible = !event.blocked && event.role !== 'safety';
+    const sources = readSources(visible ? event : null);
     return {
         hybrid_citations: sources.documents,
-        web_search_citations: sources.web,
+        web_search_citations: visible && Array.isArray(event.web_search_citations) ? event.web_search_citations : [],
+        cited_web_search_citations: visible && Array.isArray(event.cited_web_search_citations)
+            ? event.cited_web_search_citations : undefined,
         agent_citations: sources.tools,
         m365_citations: sources.m365,
     };

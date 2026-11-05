@@ -27,6 +27,7 @@ from content_screening.contracts import (
     ScreeningValidationError,
 )
 from functions_appinsights import log_event
+from functions_web_iq import get_web_search_provider, get_web_iq_config, web_iq_policy
 from functions_ai_connections import (
     AIConnectionError,
     CAPABILITY_DEFINITIONS,
@@ -2128,6 +2129,17 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Web search (via Azure AI Foundry agent)
         'enable_web_search': False,
+        'web_search_provider': 'foundry',
+        'web_iq_consent_accepted': False,
+        'web_iq_news_enabled': False,
+        'web_iq_image_mode': 'off',
+        'web_iq_video_mode': 'off',
+        'web_iq': {
+            'endpoint': 'https://api.microsoft.ai/v3',
+            'authentication_type': 'key',
+            'key': '', 'tenant_id': '', 'client_id': '', 'client_secret': '', 'app_id': '',
+            'language': 'en', 'region': 'US', 'max_results': 10, 'max_length': 3000,
+        },
         'web_search_consent_accepted': False,
         'enable_web_search_user_notice': False,  # Show popup to users explaining their message will be sent to Bing
         'web_search_user_notice_text': WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
@@ -2555,6 +2567,18 @@ def update_settings(new_settings, *, expected_etag=None):
 
     def apply_updates(settings_item):
         validate_content_screening_settings(new_settings, settings_item)
+        if any(key == 'web_search_provider' or key.startswith('web_iq') for key in updates):
+            candidate = {**settings_item, **updates}
+            get_web_search_provider(candidate)
+            get_web_iq_config(candidate)
+            web_iq_policy(candidate)
+            if not isinstance(candidate.get('web_iq_consent_accepted', False), bool):
+                raise ValueError('Invalid Web IQ consent.')
+            if candidate.get('enable_web_search') and candidate.get('web_search_provider') == 'web_iq':
+                if str(AZURE_ENVIRONMENT).lower() not in ('public', 'azurecloud'):
+                    raise ValueError('Web IQ is unavailable in this cloud.')
+                if candidate.get('web_iq_consent_accepted') is not True:
+                    raise ValueError('Web IQ requires separate consent.')
         existing_multi_endpoint_enabled = settings_item.get('enable_multi_model_endpoints', False)
         settings_item.update(updates)
         normalize_group_workflow_assignment_settings(settings_item)
@@ -4327,6 +4351,7 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
             'client_key_path', 'bearer_token', 'token_url', 'embedding_vector_profile',
             # Organization review guidance for the Review center assistant; only the model reads it.
             'admin_review_ai_guidance',
+            'web_iq',
         }:
             continue
         if k == 'agents_page_promoted_popular_agents':

@@ -56,6 +56,8 @@ ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
 # by a dotted path.
 ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
+    "web_iq.key",
+    "web_iq.client_secret",
 )
 
 # Retain the native editor's API contract; these read-only storage credentials

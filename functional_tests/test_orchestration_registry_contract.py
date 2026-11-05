@@ -1,9 +1,10 @@
 # test_orchestration_registry_contract.py
 """
 Functional test for the chat orchestration capability registry.
-Version: 0.261.139
+Version: 0.261.405
 Implemented in: 0.261.085
 Single orchestration contract updated in: 0.261.139
+Provider-aware Gather discovery projected in: 0.261.405
 
 The registry is the only capability information the planner model sees, and it is also
 what the validator checks a plan against. Gather / Reason / Render has one registry, one
@@ -136,7 +137,13 @@ def test_planner_and_client_projections_hide_internals():
 
         client = registry.build_capability_client_projection(available)
         for entry in client:
-            assert set(entry) == {'id', 'label', 'role', 'summary', 'cost'}
+            expected = {'id', 'label', 'role', 'summary', 'cost'}
+            if entry['id'] == 'web_search':
+                expected.add('discovery')
+                assert set(entry['discovery']) == {'provider', 'result_types', 'media_policy'}
+                assert entry['discovery']['provider'] == 'foundry'
+                assert entry['discovery']['result_types'] == ['web']
+            assert set(entry) == expected
 
 
 def _run_script():

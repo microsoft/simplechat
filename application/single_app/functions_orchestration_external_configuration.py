@@ -34,6 +34,7 @@ from functions_orchestration_results import ResultUnavailableError
 from functions_source_review import (
     URL_ACCESS_CONTEXT_CHAT, get_source_review_config, get_url_access_max_urls,
 )
+from functions_web_iq import get_web_search_provider, web_iq_configuration_snapshot
 
 
 EXTERNAL_CONFIGURATION_VERSION = "orchestration-external-configuration-v1"
@@ -214,7 +215,7 @@ def _envelope(source):
     if (
         type(source) is not dict or source.get("version") != EXTERNAL_ACQUISITION_VERSION
         or source.get("phase") not in ("resolved", "definition", "run", "pinned", "current")
-        or source.get("kind") not in ("action", "agent", "foundry", "planner", "deep_research")
+        or source.get("kind") not in ("action", "agent", "foundry", "web_iq", "planner", "deep_research")
     ):
         _invalid_metadata()
     if "dependencies" in source and type(source["dependencies"]) is not list:
@@ -384,6 +385,8 @@ def _foundry_application_settings(settings, local):
 
 
 def _web_settings(settings):
+    if get_web_search_provider(settings) == "web_iq":
+        return web_iq_configuration_snapshot(settings)
     agent = settings.get("web_search_agent")
     if type(agent) is not dict or type(agent.get("other_settings")) is not dict:
         raise ResultUnavailableError("external_configuration_web_source_required")
@@ -391,6 +394,18 @@ def _web_settings(settings):
     if type(local) is not dict:
         raise ResultUnavailableError("external_configuration_web_source_required")
     return _foundry_application_settings(settings, local)
+
+
+def _web_iq_projection(source, settings, *, require_run=False):
+    source = _envelope(source)
+    if source["kind"] != "web_iq" or source["phase"] not in ("definition", "run", "current"):
+        raise ResultUnavailableError("external_configuration_invocation_proof_required")
+    if require_run and source["phase"] != "run":
+        raise ResultUnavailableError("external_configuration_invocation_proof_required")
+    expected = web_iq_configuration_snapshot(settings)
+    if get_web_search_provider(settings) != "web_iq" or source.get("configuration") != expected:
+        raise ResultUnavailableError("external_configuration_selection_mismatch")
+    return {"provider": "web_iq", "endpoint": expected["connection"]["endpoint"]}, expected
 
 
 def _foundry_projection(source, settings, *, require_run=False):
@@ -544,6 +559,10 @@ def _fetch_policy(settings, *, direct):
 def _components(source_type, *, settings, source, selector, private_digest, require_run=False):
     source = _envelope(source)
     if source_type == "web":
+        if get_web_search_provider(settings) == "web_iq":
+            identity, revision = _web_iq_projection(source, settings, require_run=require_run)
+            # Retain the component slot for compatibility with existing stored web proofs.
+            return {"foundry": _configuration("web", identity, revision, private_digest=private_digest, private=True)}
         expected = _web_settings(settings)
         identity, revision = _foundry_projection(source, settings, require_run=require_run)
         if revision["application_settings"] != expected:
@@ -785,6 +804,15 @@ class OrchestrationExternalConfigurationAttestor:
                 model, private_digest=self.private_digest, private=True,
             )
             return {"policy": policy, "planner": planner}, {"policy", "planner"}, required, set()
+        if source["kind"] == "web_iq" and source_type in ("web", "deep_research"):
+            verified = source["phase"] == "run"
+            identity, revision = _web_iq_projection(source, settings, require_run=verified)
+            if source_type == "deep_research" and not settings.get("enable_web_search", False):
+                raise ResultUnavailableError("external_configuration_selection_mismatch")
+            name = "web" if source_type == "deep_research" else "foundry"
+            value = _configuration("web", identity, revision, private_digest=self.private_digest, private=True)
+            required = {"foundry"} if source_type == "web" else required
+            return {name: value}, {name} if verified else set(), required, set() if verified else {name}
         if source["kind"] == "foundry" and source_type in ("web", "agent", "deep_research"):
             verified = source["phase"] in ("run", "pinned")
             if source["phase"] not in ("definition", "run", "pinned"):

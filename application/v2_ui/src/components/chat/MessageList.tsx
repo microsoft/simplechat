@@ -33,6 +33,7 @@ import { stripLegacyMapBlocks } from '../../lib/inlineMaps';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { M365CitationProvider } from './M365CitationContext';
+import { WebCitationCards, WebCitationLinks, WebCitationProvider } from './WebCitationCards';
 import {
     InlinePendingActions,
     PendingActionPlacementProvider,
@@ -1179,17 +1180,28 @@ function MessageBubbleInner({
                                 >
                                     {/* Microsoft 365 citation chips resolve against this message's own records. */}
                                     <M365CitationProvider citations={message.m365_citations}>
-                                        <AssistantMarkdown
-                                            content={masks.ranges.length === 0
-                                                ? stripLegacyMapBlocks(message.content)
-                                                : message.content}
-                                            masks={masks.ranges}
-                                            messageId={message.id}
-                                            documentCitations={message.hybrid_citations}
-                                        />
+                                        <WebCitationProvider citations={[
+                                            ...(message.web_search_citations ?? []),
+                                            ...(message.cited_web_search_citations ?? []),
+                                        ]}>
+                                            <AssistantMarkdown
+                                                content={masks.ranges.length === 0
+                                                    ? stripLegacyMapBlocks(message.content)
+                                                    : message.content}
+                                                masks={masks.ranges}
+                                                messageId={message.id}
+                                                documentCitations={message.hybrid_citations}
+                                            />
+                                        </WebCitationProvider>
                                     </M365CitationProvider>
                                 </ImageProposalScope>
                             </div>
+                        )}
+                        {masks.ranges.length === 0 && !artifactsReplaceText && (
+                            <>
+                                <WebCitationCards citations={message.cited_web_search_citations} />
+                                <WebCitationLinks citations={message.cited_web_search_citations} />
+                            </>
                         )}
                         {/* Maps an action returned live in the message's tool results, not its text. */}
                         {masks.ranges.length === 0 && (

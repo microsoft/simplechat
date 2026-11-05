@@ -19,6 +19,7 @@ Two blueprints are registered from here:
     strips the very fields an administrator needs to manage.
 """
 
+import copy
 import json
 import logging
 import time
@@ -51,6 +52,7 @@ from content_screening.contracts import ScreeningError
 from functions_mcp_server_config import is_mcp_ui_enabled
 from functions_mcp_destinations import describe_mcp_destination_environment_policy
 from config import (
+    AZURE_ENVIRONMENT,
     CLIENTS,
     ensure_custom_favicon_file_exists,
     ensure_custom_logo_file_exists,
@@ -173,6 +175,8 @@ from functions_keyvault import (
     keyvault_model_endpoint_cleanup_helper,
     keyvault_model_endpoint_delete_helper,
     keyvault_model_endpoint_save_helper,
+    secret_reference_matches_context,
+    validate_secret_name_dynamic,
 )
 from functions_keyvault_errors import KeyVaultSecretStorageError
 from functions_m365_connections import ensure_m365_workflow_encryption_key
@@ -553,6 +557,12 @@ def _build_feature_flags(public_settings, per_user_overrides):
         if key.startswith("enable_") and isinstance(value, bool)
     }
     features.update(per_user_overrides)
+    if public_settings.get("web_search_provider") == "web_iq":
+        features["enable_web_search"] = bool(
+            features.get("enable_web_search")
+            and public_settings.get("web_iq_consent_accepted") is True
+            and str(AZURE_ENVIRONMENT).lower() in ("public", "azurecloud")
+        )
     return features
 
 
@@ -662,7 +672,10 @@ def _build_notices(public_settings, user_settings_dict):
     # administrator's acknowledgement that messages leave the tenant, and the notice itself.
     web_search_notice_enabled = bool(
         public_settings.get("enable_web_search")
-        and public_settings.get("web_search_consent_accepted")
+        and public_settings.get(
+            "web_iq_consent_accepted" if public_settings.get("web_search_provider") == "web_iq"
+            else "web_search_consent_accepted"
+        )
         and public_settings.get("enable_web_search_user_notice")
     )
     web_search_notice_text = str(
@@ -1723,6 +1736,89 @@ def _persist_global_model_endpoints(endpoints, existing, *, updated_endpoint_id=
     return saved_endpoints
 
 
+def _persist_v2_admin_settings(updates, current_settings):
+    """Stage Web IQ credentials once, before the retried settings write."""
+    relevant = {
+        "web_iq", "web_search_provider", "enable_key_vault_secret_storage",
+        "key_vault_name", "key_vault_identity",
+    }
+    merged = {**current_settings, **updates}
+    if not relevant.intersection(updates) or merged.get("enable_key_vault_secret_storage") is not True:
+        return update_settings(updates)
+
+    connection = copy.deepcopy(merged.get("web_iq") or {})
+    previous = current_settings.get("web_iq") or {}
+    credentials = {"key": ("api_key", "api_key"), "client_secret": ("client_secret", "service_principal")}
+    previous_auth = {field: previous.get(name, "") for name, (field, _) in credentials.items()}
+    staged_auth = {}
+
+    def own_reference(value):
+        return validate_secret_name_dynamic(value) and secret_reference_matches_context(
+            value, scope_value="web-iq", scope="global", allowed_sources={"model-endpoint"},
+        )
+
+    def cleanup(previous_values, current_values):
+        retained = set(current_values.values())
+        obsolete = {
+            name: value for name, value in previous_values.items()
+            if value and value not in retained and own_reference(value)
+        }
+        if not obsolete:
+            return
+        try:
+            keyvault_model_endpoint_cleanup_helper(
+                {"auth": obsolete}, {"auth": current_values}, "web-iq", scope="global",
+            )
+        except Exception as error:
+            log_event(
+                "[V2_ADMIN_SETTINGS] Web IQ credential cleanup was not confirmed.",
+                extra={"error_type": type(error).__name__}, level=logging.WARNING,
+            )
+
+    try:
+        if any(connection.get(name) for name in credentials) and (
+            current_settings.get("enable_key_vault_secret_storage") is not True
+            or any(merged.get(name) != current_settings.get(name) for name in ("key_vault_name", "key_vault_identity"))
+        ):
+            raise ValueError("Save the Key Vault configuration before staging Web IQ credentials.")
+        # Validate both inactive and active references before staging any replacements.
+        for value in [*previous_auth.values(), *(connection.get(name, "") for name in credentials)]:
+            if value and validate_secret_name_dynamic(value) and not own_reference(value):
+                raise ValueError("Web IQ credential reference has an invalid scope.")
+        for name, (field, auth_type) in credentials.items():
+            value = connection.get(name, "")
+            if not value:
+                continue
+            saved = keyvault_model_endpoint_save_helper(
+                {"auth": {"type": auth_type, field: value}},
+                "web-iq", scope="global",
+                existing_endpoint={"auth": {"type": auth_type, field: previous.get(name, "")}},
+                stage_new_secrets=True,
+            )
+            reference = (saved.get("auth") or {}).get(field)
+            # The shared helper reads live vault configuration. A draft first-enable
+            # must fail closed if that configuration is not yet available to it.
+            if not reference or not own_reference(reference):
+                raise ValueError("Web IQ credential storage was not confirmed.")
+            connection[name] = reference
+            if reference not in previous_auth.values():
+                staged_auth[field] = reference
+    except Exception as error:
+        # No settings write was attempted, so these scoped staged names are not live.
+        cleanup(staged_auth, previous_auth)
+        raise KeyVaultSecretStorageError(error) from None
+
+    if connection or "web_iq" in updates:
+        updates["web_iq"] = connection
+    saved = update_settings(updates)
+    if saved:
+        current_auth = {field: connection.get(name, "") for name, (field, _) in credentials.items()}
+        cleanup(previous_auth, current_auth)
+    # False means the settings owner could not confirm the commit, not proof of
+    # failure. Retain staged names so an uncertain successful write stays usable.
+    return saved
+
+
 def _seed_connections_on_first_enable(updates, current_settings):
     """Carry the classic chat endpoint into the connection list when connections go on.
 
@@ -2089,6 +2185,7 @@ def register_route_backend_v2_admin(bp):
             "content_understanding_supported": (
                 is_content_understanding_supported_environment()
             ),
+            "web_iq_supported": str(AZURE_ENVIRONMENT).lower() in ("public", "azurecloud"),
             "appinsights_connection_configured": appinsights["connection_configured"],
             "appinsights_global_logging_active": appinsights["global_logging_active"],
             "swagger_routes_registered": are_swagger_routes_registered(current_app),
@@ -2235,12 +2332,19 @@ def register_route_backend_v2_admin(bp):
         """
         try:
             settings = get_settings()
+            field_schema = copy.deepcopy(get_admin_settings_fields())
+            if str(AZURE_ENVIRONMENT).lower() not in ("public", "azurecloud"):
+                for field in field_schema.get("web-search-section", []):
+                    if field.get("key") == "web_search_provider":
+                        for option in field.get("options", []):
+                            if option.get("value") == "web_iq":
+                                option["disabled"] = True
             return (
                 jsonify(
                     {
                         "settings": _redact_admin_settings_for_v2(settings),
                         "admin_nav": ADMIN_NAV,
-                        "field_schema": get_admin_settings_fields(),
+                        "field_schema": field_schema,
                         "section_status": get_admin_section_status(),
                         "section_guides": get_admin_section_guides(),
                         "app_role_requirements": get_app_role_requirements(),
@@ -2396,6 +2500,10 @@ def register_route_backend_v2_admin(bp):
             normalized, errors, warnings = normalize_admin_settings_updates(
                 updates, current_settings
             )
+            if normalized.get("web_search_provider", current_settings.get("web_search_provider")) == "web_iq":
+                if str(AZURE_ENVIRONMENT).lower() not in ("public", "azurecloud"):
+                    if {"web_search_provider", "enable_web_search", "web_iq"} & normalized.keys():
+                        errors["web_search_provider"] = "Web IQ is available on Azure Public only."
             for key in ('allow_private_custom_model_endpoints', 'allow_insecure_custom_model_endpoints'):
                 if key in updates and not isinstance(updates[key], bool):
                     errors[key] = "Custom network permissions must be true or false."
@@ -2450,7 +2558,7 @@ def register_route_backend_v2_admin(bp):
             _seed_connections_on_first_enable(normalized, current_settings)
 
             validate_content_screening_settings(normalized, current_settings)
-            if not update_settings(normalized):
+            if not _persist_v2_admin_settings(normalized, current_settings):
                 log_event(
                     "[V2_ADMIN_SETTINGS] Settings persistence did not succeed.",
                     extra={"updated_keys": sorted(normalized.keys())},
@@ -2506,6 +2614,17 @@ def register_route_backend_v2_admin(bp):
                 ),
                 200,
             )
+        except KeyVaultSecretStorageError as exc:
+            log_event(
+                "[V2_ADMIN_SETTINGS] Web IQ credential storage failed.",
+                extra={"error_code": exc.code}, level=logging.WARNING,
+            )
+            return jsonify({
+                "error": exc.public_message,
+                "error_code": exc.code,
+                "field_errors": {"web_iq_key": exc.public_message, "web_iq_client_secret": exc.public_message},
+                "success": False,
+            }), 503
         except ScreeningError as exc:
             log_event(
                 "[V2_ADMIN_SETTINGS] Content screening settings were rejected.",
@@ -2562,6 +2681,12 @@ def register_route_backend_v2_admin(bp):
             f"[V2_ADMIN_SETTINGS] Running '{test_type}' connection test",
             level=logging.INFO,
         )
+        if test_type == "web_search" and payload.get("web_search_provider") == "web_iq":
+            # Kept local so the legacy Foundry test path is unchanged.
+            from functions_web_search_test import run_web_iq_connection_test
+
+            result, status = run_web_iq_connection_test(payload, global_settings=get_settings())
+            return jsonify(result), status
         return run_admin_settings_connection_test(payload)
 
     def _prepare_v2_test_payload(payload, test_type):

@@ -139,6 +139,9 @@ def test_the_schema_invents_nothing():
             key = field.get("key")
             if not key:
                 continue
+            # Web IQ is deliberately V2-only; the core provider owns these settings.
+            if key == "web_search_provider" or key.startswith("web_iq_"):
+                continue
             legacy = fields_module.LEGACY_FIELD_NAMES.get(key, [key])
             if not any(name in v1_names for name in legacy):
                 invented.append(f"{section_id}.{key}")
@@ -271,9 +274,7 @@ def test_web_search_requires_consent_before_it_can_be_enabled():
     )
     assert not errors, errors
     assert accepted["enable_web_search"] is True, accepted
-    assert "web_search_consent_accepted" not in accepted, (
-        "The acknowledgement gates the save; it is not itself a stored setting."
-    )
+    assert accepted["web_search_consent_accepted"] is True
 
     # Turning it off again needs no consent.
     disabled, errors, _ = normalize({"enable_web_search": False}, {"enable_web_search": True})

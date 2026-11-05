@@ -1,12 +1,13 @@
 # test_orchestration_external_configuration_capture.py
 """
 Functional tests for private, invocation-time Gather configuration capture.
-Version: 0.261.270
+Version: 0.261.405
 Implemented in: 0.261.127
 Acquisition-boundary coverage updated in: 0.261.129
 Pre-acquisition provider failure classification updated in: 0.261.134
 Single orchestration contract updated in: 0.261.139
 Agent and action steps trust the signed-in session, without attestation, in: 0.261.270
+Web IQ invocation capture admitted in: 0.261.405
 
 Real adapters, web search and source review run with provider/page I/O doubled.
 No live provider, remote configuration or user artifact is accessed. Web search, URL
@@ -139,10 +140,15 @@ def capture_runtime(gather_modules, monkeypatch):
         state.captured.append(deepcopy(settings))
         assert selector is None
         if source_type == "web" and source is not None:
-            assert source["kind"] == "foundry"
             assert source["version"] == "orchestration-external-acquisition-v1"
-            assert source["binding"] == "observed-run-v1"
-            assert source["definition"]["id"] == "original-agent"
+            if settings.get("web_search_provider") == "web_iq":
+                assert source["kind"] == "web_iq"
+                assert source["configuration"]["provider"] == "web_iq"
+                assert source["configuration"]["policy"]["image"] == settings["web_iq_image_mode"]
+            else:
+                assert source["kind"] == "foundry"
+                assert source["binding"] == "observed-run-v1"
+                assert source["definition"]["id"] == "original-agent"
         else:
             assert source is None
         state.sources.append(deepcopy(source))

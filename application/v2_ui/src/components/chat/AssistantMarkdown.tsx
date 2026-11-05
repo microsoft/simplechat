@@ -48,6 +48,8 @@ import {
 } from '../../lib/richBlocks';
 import { MATH_PLACEHOLDER_PATTERN, parseMath, type MathSegment } from '../../lib/mathSegments';
 import type { HybridCitation } from '../../lib/types';
+import { useWebCitations } from './WebCitationCards';
+import { rehypeWebCitationMedia, WEB_SOURCE_LINK_PROPERTY } from '../../lib/webCitations';
 
 /** The `<code>` element a `<pre>` wraps, which is where the fence's language lives. */
 function fenceCodeElement(node: unknown): Element | undefined {
@@ -127,6 +129,7 @@ function Markdown({
     const groups = citations ?? NO_CITATIONS;
     const maskRanges = masks ?? NO_MASKS;
     const mathSegments = math ?? NO_MATH;
+    const webCitations = useWebCitations();
 
     /**
      * Substitute components for the placeholder tokens left in the text.
@@ -246,6 +249,9 @@ function Markdown({
             // every other link renders as before. `node` is the hast element, read for the
             // link's plain text and kept off the DOM element. A clip in a gallery is a tile.
             a: ({ href, children, node, ...props }) => {
+                if (node?.properties[WEB_SOURCE_LINK_PROPERTY]) {
+                    return <a href={safeMarkdownHref(href)} target="_blank" rel="noopener noreferrer">{children}</a>;
+                }
                 const tile = readMediaTileIndex(node);
                 if (tile !== null) {
                     return <MediaGalleryTile index={tile} />;
@@ -388,7 +394,10 @@ function Markdown({
         >
             <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkBreaks]}
-                rehypePlugins={[rehypeRichBlockIndex, rehypeMediaGallery, rehypeHighlightSubset]}
+                rehypePlugins={[
+                    rehypeRichBlockIndex, [rehypeWebCitationMedia, { citations: webCitations }],
+                    rehypeMediaGallery, rehypeHighlightSubset,
+                ]}
                 components={components}
             >
                 {content}

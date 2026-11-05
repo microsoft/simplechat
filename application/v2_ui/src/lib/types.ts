@@ -182,6 +182,8 @@ export interface ChatMessage {
     /** Retrieved document records used to resolve this message's inline citation labels. */
     hybrid_citations?: HybridCitation[];
     web_search_citations?: WebCitation[];
+    /** Canonical sources actually cited by the answer, distinct from retrieved results. */
+    cited_web_search_citations?: WebCitation[];
     agent_citations?: AgentCitation[];
     [key: string]: unknown;
 }
@@ -1361,6 +1363,7 @@ export interface ChatStreamEvent {
     augmented?: boolean;
     hybrid_citations?: HybridCitation[];
     web_search_citations?: WebCitation[];
+    cited_web_search_citations?: WebCitation[];
     agent_citations?: AgentCitation[];
     m365_citations?: M365Citation[];
     metadata?: Json;
@@ -1508,6 +1511,20 @@ export interface HybridCitation {
 
 /** A web result cited by an assistant message, under `web_search_citations`. */
 export interface WebCitation {
+    publisher?: string;
+    duration?: string;
+    moments?: { title?: string; url?: string; start_time?: string }[];
+    provider?: string;
+    source_kind?: 'web' | 'news' | 'image' | 'video';
+    delivery_mode?: 'text_only' | 'with_media';
+    citation_id?: string;
+    description?: string;
+    image_url?: string;
+    thumbnail_url?: string;
+    video_url?: string;
+    media_width?: number;
+    media_height?: number;
+    cited?: boolean;
     url?: string;
     title?: string;
     [key: string]: unknown;

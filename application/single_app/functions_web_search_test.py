@@ -2,6 +2,7 @@
 """Admin Web Search connection testing helpers."""
 
 import asyncio
+import copy
 import inspect
 import logging
 from typing import Any, Callable, Dict, List, Tuple
@@ -264,6 +265,62 @@ def _resolve_test_query(payload: Dict[str, Any]) -> str:
     return query[:500]
 
 
+def run_web_iq_connection_test(payload, *, global_settings, search=None):
+    """Test draft Web IQ settings without echoing credentials or provider payloads."""
+    # Local imports keep this provider optional until the selected test needs it.
+    from config import AZURE_ENVIRONMENT
+    from admin_settings_secret_utils import resolve_admin_settings_secret_value
+    from functions_web_iq import WebIQError, search_web_iq, validate_web_iq_ready
+
+    stored = global_settings or {}
+    settings = copy.deepcopy(stored)
+    draft = payload.get("web_iq", {})
+    if not isinstance(draft, dict):
+        return {"success": False, "status": "configuration_error",
+                "message": "Web IQ configuration must be an object."}, 400
+    settings["web_iq"] = {
+        **(stored.get("web_iq") if isinstance(stored.get("web_iq"), dict) else {}),
+        **draft,
+    }
+    for name in ("key", "client_secret"):
+        if name in draft:
+            settings["web_iq"][name] = resolve_admin_settings_secret_value(
+                f"web_iq.{name}", draft[name], stored
+            )
+    settings["web_search_provider"] = "web_iq"
+    settings["azure_environment"] = AZURE_ENVIRONMENT
+    settings["enable_web_search"] = _is_truthy(payload.get("enabled", False))
+    settings["web_iq_consent_accepted"] = payload.get("web_iq_consent_accepted") is True
+    try:
+        validate_web_iq_ready(settings)
+        result = (search or search_web_iq)(
+            settings, _resolve_test_query(payload), result_types=["web"],
+            invocation_source_type="admin_test",
+        )
+        citations = result.get("citations", [])
+        count = len(citations) if isinstance(citations, list) else 0
+        return {
+            "success": True, "status": "success" if count else "warning",
+            "provider": "web_iq",
+            "message": "Web IQ connection successful." if count else "Web IQ responded without web sources.",
+            "details": [f"Detected web sources: {count}."],
+        }, 200
+    except WebIQError as error:
+        log_event("[WEB_SEARCH_TEST] Web IQ test failed", level=logging.WARNING,
+                  extra={"error_code": error.code})
+        return {
+            "success": False, "status": "configuration_error" if error.code in (
+                "unsupported_cloud", "consent_required", "not_configured",
+                "invalid_configuration", "invalid_endpoint", "invalid_authentication",
+            ) else "provider_error",
+            "provider": "web_iq", "message": str(error),
+        }, 400
+    except Exception:
+        log_event("[WEB_SEARCH_TEST] Web IQ test failed unexpectedly", level=logging.ERROR)
+        return {"success": False, "status": "provider_error", "provider": "web_iq",
+                "message": "Web IQ connection test failed. Check the server logs."}, 502
+
+
 def run_web_search_connection_test(
     payload: Dict[str, Any],
     *,
@@ -271,6 +328,12 @@ def run_web_search_connection_test(
     execute_agent: Callable[..., Any] = execute_foundry_agent,
 ) -> Tuple[Dict[str, Any], int]:
     """Run a small Web Search Foundry agent smoke test and return a JSON-safe result."""
+    provider = payload.get("web_search_provider", "foundry")
+    if provider == "web_iq":
+        return run_web_iq_connection_test(payload, global_settings=global_settings)
+    if provider != "foundry":
+        return {"success": False, "status": "configuration_error",
+                "message": "Unknown web search provider."}, 400
 
     if "enabled" in payload and not _is_truthy(payload.get("enabled")):
         return {

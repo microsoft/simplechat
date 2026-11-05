@@ -28,6 +28,7 @@ import type { Element, ElementContent, Properties, Root, RootContent } from 'has
 import { toText } from 'hast-util-to-text';
 import { resolveImageSource } from './images';
 import { inlineMediaKind, inlineMediaTitle, safeMediaUrl } from './inlineMedia';
+import { WEB_SOURCE_LINK_PROPERTY } from './webCitations';
 
 /** Set on a gallery's wrapper. The value is the number of tiles. */
 export const MEDIA_GALLERY_PROPERTY = 'dataMediaGallery';
@@ -108,6 +109,7 @@ export function galleryMediaKind(node: Content | undefined): GalleryMediaKind | 
     if (node?.type !== 'element') {
         return null;
     }
+    if (node.properties[WEB_SOURCE_LINK_PROPERTY]) return null;
     if (node.tagName === 'img') {
         const src = node.properties?.src;
         // A data URI is emptied by react-markdown's URL transform after this plugin runs, and a
@@ -122,7 +124,7 @@ export function galleryMediaKind(node: Content | undefined): GalleryMediaKind | 
 
 /** Whether any image, or any link to audio or video, appears among the nodes. */
 function containsMedia(nodes: readonly Content[]): boolean {
-    return nodes.some((node) => node.type === 'element' && (
+    return nodes.some((node) => node.type === 'element' && !node.properties[WEB_SOURCE_LINK_PROPERTY] && (
         node.tagName === 'img'
         || (node.tagName === 'a' && inlineMediaKind(node.properties?.href) !== null)
         || containsMedia(node.children)
