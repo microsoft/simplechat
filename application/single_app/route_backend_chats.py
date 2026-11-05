@@ -336,6 +336,7 @@ def _resolve_chat_conversation_references(user_id, data, *, query='', destinatio
         g.conversation_reference_prompt = str(resolved.get('prompt') or '')
     return resolved
 from functions_assigned_knowledge import (
+    ASSIGNED_KNOWLEDGE_CATALOG_DOCUMENT_LIMIT,
     ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
     ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE,
     ASSIGNED_KNOWLEDGE_USER_ACTION_SEARCH,
@@ -2099,7 +2100,8 @@ def _build_assigned_knowledge_inventory_aug_message(user_id, assigned_knowledge_
     active_documents = filter_available_results(active_documents, user_id=user_id)
     web_sources = (assigned_knowledge_filters.get('web_sources') or []) if isinstance(assigned_knowledge_filters, dict) else []
     document_lines = []
-    for index, document in enumerate(active_documents, start=1):
+    shown_documents = active_documents[:ASSIGNED_KNOWLEDGE_CATALOG_DOCUMENT_LIMIT]
+    for index, document in enumerate(shown_documents, start=1):
         title = str(document.get('title') or document.get('file_name') or document.get('id') or 'Untitled document').strip()
         source_name = str(document.get('source_name') or document.get('scope') or 'source').strip()
         scope = str(document.get('scope') or '').strip()
@@ -2124,10 +2126,12 @@ def _build_assigned_knowledge_inventory_aug_message(user_id, assigned_knowledge_
     content = (
         "The user is asking what documents, files, sources, or assigned knowledge this agent can access. "
         "Answer deterministically from the inventory below. State the exact active indexed workspace document count. "
-        "If the user asks what documents are available, list every active indexed workspace document below; do not list only retrieved citations. "
+        "If the user asks what documents are available, list the inventory entries below; do not list only retrieved citations. "
+        "When fewer entries are shown than the active count, state the displayed and total counts; do not claim the list is exhaustive. "
         "Mention assigned web sources separately because they are reviewed live and are not indexed workspace documents.\n\n"
         f"User question: {user_message}\n\n"
         f"Active indexed workspace documents: {len(active_documents)}\n"
+        f"Inventory entries shown: {len(shown_documents)} of {len(active_documents)}\n"
         f"{document_inventory}\n\n"
         f"Assigned web sources: {len(web_source_lines)}\n"
         f"{web_source_inventory}"
@@ -2138,6 +2142,8 @@ def _build_assigned_knowledge_inventory_aug_message(user_id, assigned_knowledge_
         'documents': active_documents,
         'assigned_knowledge_inventory': {
             'active_document_count': len(active_documents),
+            'displayed_document_count': len(shown_documents),
+            'truncated': len(shown_documents) < len(active_documents),
             'web_source_count': len(web_source_lines),
         }
     }

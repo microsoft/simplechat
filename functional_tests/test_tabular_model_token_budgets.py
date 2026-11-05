@@ -1,9 +1,9 @@
 # test_tabular_model_token_budgets.py
 """
 Functional tests for scoped tabular model budgets and generation ceilings.
-Version: 0.261.407
+Version: 0.261.408
 Implemented in: 0.261.035
-Source checkpoint identity fixture updated in: 0.261.407
+Source checkpoint identity fixture updated in: 0.261.408
 
 The principal regressions use the shipped catalog and real shared resolver.
 Only endpoint retrieval and model I/O are replaced with in-memory boundaries;

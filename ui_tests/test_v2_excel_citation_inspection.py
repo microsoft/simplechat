@@ -1,8 +1,8 @@
 # test_v2_excel_citation_inspection.py
 """
 UI tests for table-aware Excel citation previews and stable source evidence.
-Version: 0.261.407
-Implemented in: 0.261.407
+Version: 0.261.408
+Implemented in: 0.261.408
 
 The real V2 viewer runs through real HTTP fetches against synthetic API transport.
 The shared Azure Playwright connection fixture uses Entra authentication when

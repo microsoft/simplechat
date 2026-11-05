@@ -2,7 +2,7 @@
 # test_mixed_source_chat_search_consistency.py
 """
 Functional test for mixed-source Chat and Search consistency.
-Version: 0.261.407
+Version: 0.261.408
 Implemented in: 0.250.064; additive tabular evidence gating updated in 0.260.025;
 derived from Enhanced Citations in 0.261.266
 

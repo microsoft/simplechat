@@ -1,8 +1,8 @@
 # test_excel_native_inspection_chat_evidence.py
 """
 Functional tests for complete, source-backed Excel native evidence.
-Version: 0.261.407
-Implemented in: 0.261.407
+Version: 0.261.408
+Implemented in: 0.261.408
 
 Real packages distinguish threaded compatibility copies from genuine notes,
 preserve saved cell values and unavailable caches, and retain comment content.

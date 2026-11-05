@@ -1,8 +1,8 @@
 # test_deployer_postconfig_sdk_contract.py
 """
 Functional test for the merged deployment entrypoint's Cosmos document contract.
-Version: 0.261.407
-Implemented in: 0.261.407
+Version: 0.261.408
+Implemented in: 0.261.408
 
 Execute the real postconfig module with installed-SDK point responses for an
 existing settings document and first-time creation. External services use the

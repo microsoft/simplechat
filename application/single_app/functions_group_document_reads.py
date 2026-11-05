@@ -1,10 +1,5 @@
 # functions_group_document_reads.py
-"""Source-authoritative, read-only group document browsing.
-
-The access index is not a completeness proof: a missing share or new revision
-cannot be recovered by hydrating its hits. Explicit reads therefore use the
-existing scoped source query, independently of index readiness and caches.
-"""
+"""Index-first group discovery with current, scoped source metadata and access."""
 
 from config import cosmos_group_documents_container
 from content_screening.access import (
@@ -12,7 +7,11 @@ from content_screening.access import (
     HELD_PUBLIC_FIELDS,
     public_document_payload,
 )
-from functions_document_access_index import document_matches_list_filters
+from functions_document_access_index import (
+    DOCUMENT_ACCESS_SOURCE_BATCH_SIZE,
+    document_matches_list_filters,
+    query_document_access_index_ids,
+)
 from functions_document_queries import (
     DOCUMENT_PLACE_FILTERS,
     build_document_facets,
@@ -95,6 +94,20 @@ def _query_group_document_records(group_id, *, document_ids=None, origin_filter=
         if _group_document_share_status(record, group_id) is not None
         and (document_ids is None or record["id"] in document_ids)
     ]
+
+
+def _load_group_document_catalog(group_id, *, origin_filter=None):
+    result = query_document_access_index_ids("group", group_ids=[group_id])
+    if not result.get("success"):
+        return _query_group_document_records(group_id, origin_filter=origin_filter)
+    identifiers = result["document_ids"]
+    records = []
+    for offset in range(0, len(identifiers), DOCUMENT_ACCESS_SOURCE_BATCH_SIZE):
+        records.extend(_query_group_document_records(
+            group_id, document_ids=identifiers[offset:offset + DOCUMENT_ACCESS_SOURCE_BATCH_SIZE],
+            origin_filter=origin_filter,
+        ))
+    return records
 
 
 def _project_group_document(
@@ -180,13 +193,13 @@ def count_current_group_documents(group_id):
     Superseded revisions are not counted, and neither are documents shared into the
     group, which belong to the group that shared them.
     """
-    records = [record for record in _query_group_document_records(group_id) if record["group_id"] == group_id]
+    records = [record for record in _load_group_document_catalog(group_id) if record["group_id"] == group_id]
     return len(current_group_document_records(records))
 
 
 def load_group_document_browser_documents(user_id, group_id, *, origin_filter=None):
     require_group_document_read_context(user_id, group_id)
-    records = _query_group_document_records(group_id, origin_filter=origin_filter)
+    records = _load_group_document_catalog(group_id, origin_filter=origin_filter)
     context = require_group_document_read_context(user_id, group_id)
     current = current_group_document_records(records)
     group_names = {}

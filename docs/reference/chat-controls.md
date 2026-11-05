@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.407"
+version: "0.261.408"
 ---
 
 ## How to use this reference
@@ -51,7 +51,7 @@ for source selection, handoff review, and the private-conversation boundary.
 
 ### Workbook citation preview
 
-Implemented in version: **0.261.407** (`application/single_app/config.py`).
+Implemented in version: **0.261.408** (`application/single_app/config.py`).
 Workbook citations show the selected worksheet and table/range independently
 from their originally cited passage.
 

@@ -1192,12 +1192,15 @@ def get_assigned_knowledge_catalog_route():
         if not is_admin:
             return jsonify({'error': 'Admin role required for global assigned knowledge.'}), 403
 
-    catalog = build_assigned_knowledge_catalog(
-        user_id=user_id,
-        agent_scope=agent_scope,
-        group_id=active_group_id,
-        is_admin=is_admin,
-    )
+    try:
+        catalog = build_assigned_knowledge_catalog(
+            user_id=user_id,
+            agent_scope=agent_scope,
+            group_id=active_group_id,
+            is_admin=is_admin,
+        )
+    except AssignedKnowledgeError:
+        return jsonify({'error': 'The document catalog is temporarily unavailable. Please retry.'}), 503
     return jsonify(catalog), 200
 
 def _find_personal_agent(user_id, agent_ref):

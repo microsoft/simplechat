@@ -1,7 +1,7 @@
 # agent_delegation.py
 """Isolated external-service seams for the real agent delegation contract.
 
-Version: 0.261.291
+Version: 0.261.407
 Implemented in: 0.261.093
 Point reads return the SDK's dictionary subclass in: 0.261.291 (#1699)
 
@@ -232,7 +232,9 @@ def execute_functions(filename, names, namespace, *, blueprint=None):
     selected = []
     found = set()
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names:
+        if isinstance(node, ast.ImportFrom) and node.module == "document_metadata_identity":
+            selected.append(node)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names:
             selected.append(node)
             found.add(node.name)
         elif blueprint and isinstance(node, ast.Assign):

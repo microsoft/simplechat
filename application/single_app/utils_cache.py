@@ -23,6 +23,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from content_screening.contracts import SCREENING_FIELD, hash_payload
+from document_metadata_identity import document_cache_identity
 from config import (
     cosmos_user_documents_container,
     cosmos_group_documents_container,
@@ -102,13 +103,10 @@ def _debug_print(message: str, context: str = "CACHE", **kwargs):
 
 
 def _document_cache_identity(document):
-    identity = f"{document['id']}:v{document.get('version') or 1}"
-    if SCREENING_FIELD in document:
-        identity = f"{identity}:screening:{hash_payload(document[SCREENING_FIELD])}"
-    return identity
+    return document_cache_identity(document)
 
 
-def get_personal_document_fingerprint(user_id: str) -> str:
+def get_personal_document_fingerprint(user_id: str) -> Optional[str]:
     """
     Generate a fingerprint of user's personal documents (including shared with them).
     
@@ -122,7 +120,7 @@ def get_personal_document_fingerprint(user_id: str) -> str:
     
     try:
         query = """
-            SELECT c.id, c.version, c.content_screening
+            SELECT c.id, c.version, c._etag, c.content_screening
             FROM c
             WHERE c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
                 OR ARRAY_CONTAINS(c.shared_user_ids, @approved_user_id)
@@ -160,11 +158,10 @@ def get_personal_document_fingerprint(user_id: str) -> str:
     except Exception as e:
         logger.error(f"Error generating personal document fingerprint for user {user_id}: {e}")
         _debug_print(f"ERROR generating fingerprint: {e}", "FINGERPRINT", user_id=user_id[:8])
-        # Return timestamp-based fingerprint to prevent caching on error
-        return hashlib.sha256(str(datetime.now().timestamp()).encode()).hexdigest()
+        return None
 
 
-def get_group_document_fingerprint(group_id: str) -> str:
+def get_group_document_fingerprint(group_id: str) -> Optional[str]:
     """
     Generate a fingerprint of group documents (including shared with group).
     
@@ -178,7 +175,7 @@ def get_group_document_fingerprint(group_id: str) -> str:
     
     try:
         query = """
-            SELECT c.id, c.version, c.content_screening
+            SELECT c.id, c.version, c._etag, c.content_screening
             FROM c
             WHERE c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id)
                 OR ARRAY_CONTAINS(c.shared_group_ids, @approved_group_id)
@@ -218,10 +215,10 @@ def get_group_document_fingerprint(group_id: str) -> str:
             f"{sanitize_log_message(e)}"
         )
         _debug_print(f"ERROR generating fingerprint: {e}", "FINGERPRINT", group_id=group_id[:8])
-        return hashlib.sha256(str(datetime.now().timestamp()).encode()).hexdigest()
+        return None
 
 
-def get_public_workspace_document_fingerprint(public_workspace_id: str) -> str:
+def get_public_workspace_document_fingerprint(public_workspace_id: str) -> Optional[str]:
     """
     Generate a fingerprint of public workspace documents.
     
@@ -235,7 +232,7 @@ def get_public_workspace_document_fingerprint(public_workspace_id: str) -> str:
     
     try:
         query = """
-            SELECT c.id, c.version, c.content_screening
+            SELECT c.id, c.version, c._etag, c.content_screening
             FROM c
             WHERE c.public_workspace_id = @public_workspace_id
             ORDER BY c.id
@@ -271,7 +268,7 @@ def get_public_workspace_document_fingerprint(public_workspace_id: str) -> str:
             f"{sanitize_log_message(public_workspace_id)}: {sanitize_log_message(e)}"
         )
         _debug_print(f"ERROR generating fingerprint: {e}", "FINGERPRINT", workspace_id=public_workspace_id[:8])
-        return hashlib.sha256(str(datetime.now().timestamp()).encode()).hexdigest()
+        return None
 
 
 def get_cache_partition_key(
@@ -348,7 +345,8 @@ def generate_search_cache_key(
     tags_filter: Optional[List[str]] = None,
     document_filter_mode: str = "intersection",
     embedding_profile_id: str = "",
-) -> str:
+    scope_fingerprints: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
     """
     Generate a cache key that includes document set fingerprints and tags filter.
     
@@ -394,19 +392,26 @@ def generate_search_cache_key(
 
     # Build fingerprint based on scope
     fingerprints = []
+    scope_fingerprints = scope_fingerprints or {}
 
     if doc_scope in ["personal", "all"]:
-        personal_fp = get_personal_document_fingerprint(user_id)
+        personal_fp = scope_fingerprints.get(f"personal:{user_id}") or get_personal_document_fingerprint(user_id)
+        if personal_fp is None:
+            return None
         fingerprints.append(f"personal:{personal_fp}")
 
     if doc_scope in ["group", "all"] and active_group_ids:
         for gid in sorted(active_group_ids):
-            group_fp = get_group_document_fingerprint(gid)
+            group_fp = scope_fingerprints.get(f"group:{gid}") or get_group_document_fingerprint(gid)
+            if group_fp is None:
+                return None
             fingerprints.append(f"group:{gid}:{group_fp}")
 
     if doc_scope in ["public", "all"] and public_workspace_ids:
         for workspace_id in sorted(public_workspace_ids):
-            public_fp = get_public_workspace_document_fingerprint(workspace_id)
+            public_fp = scope_fingerprints.get(f"public:{workspace_id}") or get_public_workspace_document_fingerprint(workspace_id)
+            if public_fp is None:
+                return None
             fingerprints.append(f"public:{workspace_id}:{public_fp}")
     
     # Build document IDs string for cache key
@@ -446,7 +451,7 @@ def generate_search_cache_key(
     
     if embedding_profile_id:
         cache_key_components.append(f"embedding:{embedding_profile_id}")
-    cache_key_string = '|'.join(cache_key_components)
+    cache_key_string = '|'.join(["document-cache-v2", *cache_key_components])
     cache_key = hashlib.sha256(cache_key_string.encode()).hexdigest()
     
     _debug_print(

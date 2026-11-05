@@ -154,9 +154,12 @@ def get_group_agent_knowledge(user_id, group_id):
     """
     require_group_agent_read_context(user_id, group_id)
     knowledge = import_module("functions_assigned_knowledge")
-    catalog = knowledge.build_assigned_knowledge_catalog(
-        user_id=user_id, agent_scope="group", group_id=group_id, is_admin=False,
-    )
+    try:
+        catalog = knowledge.build_assigned_knowledge_catalog(
+            user_id=user_id, agent_scope="group", group_id=group_id, is_admin=False,
+        )
+    except knowledge.AssignedKnowledgeError as error:
+        raise GroupAgentError("The document catalog is temporarily unavailable. Please retry.", 503) from error
     return catalog, 200
 
 

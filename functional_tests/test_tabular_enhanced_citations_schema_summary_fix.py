@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for enhanced-citation tabular schema summary fallback fix.
-Version: 0.261.407
+Version: 0.261.408
 Implemented in: 0.240.023
 
 This test ensures enhanced-citation tabular uploads stay in schema-summary mode,

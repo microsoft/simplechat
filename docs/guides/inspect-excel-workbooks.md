@@ -4,10 +4,10 @@ title: "Inspect Excel data, comments, and structure"
 description: "Read workbook feedback and metadata without confusing them with saved values or table calculations."
 section: "Guides"
 audience: user
-version: "0.261.407"
+version: "0.261.408"
 ---
 
-Implemented in version: **0.261.407**, tracked in
+Implemented in version: **0.261.408**, tracked in
 `application/single_app/config.py`.
 
 ## Ask about the file and its data separately

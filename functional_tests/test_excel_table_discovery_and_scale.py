@@ -1,8 +1,8 @@
 # test_excel_table_discovery_and_scale.py
 """
 Functional tests for streaming, table-aware saved Excel inspection.
-Version: 0.261.407
-Implemented in: 0.261.407
+Version: 0.261.408
+Implemented in: 0.261.408
 
 Named and ordinary regions retain their own headers and cell coordinates.
 Large fixtures are generated incrementally and neither metadata nor previews

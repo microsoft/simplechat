@@ -1,8 +1,8 @@
 # test_excel_document_delete_sdk_contract.py
 """
 Owner-runtime SDK contract for Excel document and private-inventory cleanup.
-Version: 0.261.407
-Implemented in: 0.261.407
+Version: 0.261.408
+Implemented in: 0.261.408
 
 The actual deletion function consumes installed-SDK CosmosDict point responses.
 External logging, Search, and blob side effects are isolated and scope checked.

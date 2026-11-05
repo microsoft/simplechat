@@ -66,6 +66,7 @@ from document_chunk_counts import (
     record_chunk_uploads,
     remember_verified_chunk_count,
 )
+from document_metadata_identity import document_family_identity
 from functions_document_provenance import (
     ORIGIN_FIELD_NAMES,
     ORIGIN_KIND_FIELD,
@@ -1895,22 +1896,7 @@ def _get_search_client(group_id=None, public_workspace_id=None):
 
 
 def _get_document_family_key(document_item):
-    revision_family_id = document_item.get("revision_family_id")
-    if revision_family_id:
-        return revision_family_id
-
-    scope_value = (
-        document_item.get("public_workspace_id")
-        or document_item.get("group_id")
-        or document_item.get("user_id")
-        or "unknown"
-    )
-    document_identity = (
-        document_item.get("xsd_revision_identity")
-        if document_item.get("document_kind") == "xml_schema"
-        else document_item.get("file_name", "")
-    )
-    return f"legacy::{scope_value}::{document_identity}"
+    return document_family_identity(document_item)
 
 
 def _document_revision_sort_key(document_item):

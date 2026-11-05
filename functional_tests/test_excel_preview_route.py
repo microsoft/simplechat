@@ -1,8 +1,8 @@
 # test_excel_preview_route.py
 """
 Functional tests for the real bounded Excel/CSV preview handler.
-Version: 0.261.407
-Implemented in: 0.261.407
+Version: 0.261.408
+Implemented in: 0.261.408
 
 The route body and shared reader execute against real workbook packages.
 Only authenticated-document lookup and external blob I/O are isolated.
