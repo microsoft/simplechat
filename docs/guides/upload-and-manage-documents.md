@@ -40,7 +40,7 @@ Retrieval quality starts with disciplined uploads. This tutorial explains where 
 	<article class="latest-release-card">
 		<div class="latest-release-card-icon"><i class="bi bi-diagram-2"></i></div>
 		<h2>Pick the right workspace</h2>
-		<p>Personal, group, and ephemeral content each serve a different purpose. Start by placing the file where the future conversation should happen.</p>
+		<p>Personal, group, public, and conversation-attached content each serve a different purpose. Start by choosing the intended audience and reuse.</p>
 	</article>
 	<article class="latest-release-card">
 		<div class="latest-release-card-icon"><i class="bi bi-filetype-doc"></i></div>
@@ -58,20 +58,43 @@ Retrieval quality starts with disciplined uploads. This tutorial explains where 
 
 Simple Chat organizes documents into different workspace types:
 
+{% include media.html id="slide-workspace-scopes" %}
+
+Choose the audience before uploading. A workspace's permissions determine who
+can use its knowledge; selecting a classification or a chat filter does not
+grant or remove that access.
+
 ### Your Workspace (Personal)
-- **Private to you**: Only you can see and use these documents
+- **Private by default**: Your document collection is separate from other users' collections; deliberate sharing is a separate action
 - **Perfect for**: Personal notes, drafts, confidential documents
-- **Access**: Always available to you in chat
+- **Access**: Available through permitted chat features while personal workspaces are enabled
+
+{% include media.html id="slide-personal-workspace" %}
+
+Personal workspace knowledge is separate from the answers or files you
+deliberately share in a conversation. Check the destination and participants
+before publishing an output.
 
 ### Group Workspaces (Shared)
 - **Shared with team members**: Multiple users can access
 - **Perfect for**: Team documentation, shared knowledge bases, collaborative projects
 - **Access**: Available to group members in chat
 
-### Ephemeral Documents (Session-only)
-- **Temporary**: Available only during current chat session
-- **Perfect for**: One-time analysis, temporary files, quick questions
-- **Access**: Disappears when session ends
+### Public Workspaces (Application-wide)
+- **Curated for a broader audience**: Signed-in SimpleChat users can read the published workspace content without joining its management team
+- **Perfect for**: Approved policies, common reference material, and organization-wide knowledge
+- **Access**: Requires public workspaces to be enabled; this is not anonymous internet access
+
+See [Use public workspaces]({{ '/guides/use-public-workspaces/' | relative_url }})
+for publishing and management permissions.
+
+### Chat attachments (Conversation context) {#ephemeral-documents-session-only}
+- **Attached to the conversation**: Bring a file into a question without first organizing it in a workspace
+- **Perfect for**: One-time analysis, supplied evidence, and quick questions
+- **Access**: Follows the conversation's access and lifecycle; closing the browser is not a deletion policy
+
+See [Upload documents in chat]({{ '/guides/upload-documents-in-chat/' | relative_url }})
+for attachment processing and retry controls.
 
 ## Step 1: Prepare Your Documents
 
@@ -106,8 +129,8 @@ for supported objects, saved-state limitations and evidence storage.
 - `.onepkg` - An exported notebook, stored as one workspace document with section and page context
 
 OneNote handwriting, image OCR, and embedded attachments are not extracted.
-See [Native OneNote Ingestion](../explanation/features/ONENOTE_INGESTION.md) for
-processing limits and local-extractor setup.
+See [Document extraction]({{ '/features/document-extraction/' | relative_url }})
+for the enabled extraction paths and their dependencies.
 
 **Images** (with OCR):
 - `.jpg, .jpeg` - JPEG images
@@ -169,6 +192,22 @@ When enabled and permitted for that document, **Retry metadata analysis** appear
 after a failed or empty analysis. It queues analysis, not another upload, and
 does not imply success. Details refresh while analysis is running. Screening,
 publication approval, and workspace permissions remain in force.
+
+## Interpreting document chunk counts
+
+From **0.261.400**, **Chunks** reports the number of indexed Search chunks for the
+document's source version, not its page count or the number of physical files
+used during processing. A recorded zero means no content was indexed.
+
+Older documents may have no trustworthy recorded count. Lists expose that count
+as unknown rather than showing a misleading zero; V2 details use an em dash for
+an unknown value. Opening or refreshing a completed document's details verifies
+its count from Search without re-uploading the file or running another model.
+Pending review and unavailable documents are not searched for this lookup.
+
+A successful metadata retry also removes the old metadata-extraction warning.
+Ingestion failures and review holds are separate states and are not cleared by
+metadata analysis.
 
 ## Step 3: Upload to Group Workspaces
 
@@ -262,6 +301,12 @@ version came from a workflow. The classic workspace doesn't show origins yet.
 
 ## Step 6: Using Documents in Chat
 
+{% include media.html id="slide-feed-anything-get-knowledge" %}
+
+The ingestion paths in this presentation illustration depend on the enabled
+extraction services. An uploaded file must finish the applicable processing
+and screening before it can supply usable evidence.
+
 ### Select Workspace in Chat
 1. **Go to Chat** interface
 2. **Choose workspace** from dropdown
@@ -323,9 +368,9 @@ Sign in again before choosing the file again.
 
 A generic **Failed to fetch** message is not proof that sign-in expired or that
 the server saved nothing. Check the destination before repeating an uncertain
-upload, to avoid duplicates. See the
-[upload authentication-response fix](../explanation/fixes/UPLOAD_AUTH_RESPONSE_NEGOTIATION_FIX.md)
-for the response contract and its limits.
+upload, to avoid duplicates. See
+[Upload documents in chat]({{ '/guides/upload-documents-in-chat/' | relative_url }})
+for the attachment and retry workflow.
 
 **Large file size**:
 - Check admin settings for file size limits

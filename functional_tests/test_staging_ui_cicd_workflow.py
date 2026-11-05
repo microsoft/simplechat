@@ -1,7 +1,7 @@
 # test_staging_ui_cicd_workflow.py
 """Functional tests for authenticated validation of an existing staging deployment.
 
-Version: 0.261.401
+Version: 0.261.402
 Implemented in: 0.241.014; validation-only workflow in 0.261.399; isolated validation in 0.261.400; pinned onboarding in 0.261.401
 
 The workflow must not provision or deploy resources. The standalone, explicitly

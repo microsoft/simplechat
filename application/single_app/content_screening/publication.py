@@ -266,6 +266,7 @@ def publish_document(document, units, scan, actor_id, *, storage):
     _remove_previous_raw_projection(document, scan, projection, storage)
     return {
         **metadata, **projection, "num_chunks": len(chunks), "number_of_pages": len(chunks),
+        "indexed_chunk_count_version": int(document.get("version") or 1),
         "embedding_tokens": total_tokens, "embedding_model_deployment_name": model_name,
         "current_file_chunk": None,
     }

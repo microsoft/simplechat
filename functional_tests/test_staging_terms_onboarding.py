@@ -1,7 +1,7 @@
 # test_staging_terms_onboarding.py
 """Verify pinned, CI-only staging onboarding without bypassing consent changes.
 
-Version: 0.261.401
+Version: 0.261.402
 Implemented in: 0.261.401
 """
 

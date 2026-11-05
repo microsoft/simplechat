@@ -1,7 +1,7 @@
 # document_search_sync.py
 """
 Test support for the durable document search metadata sync.
-Version: 0.261.268
+Version: 0.261.400
 Implemented in: 0.261.268
 
 Several suites execute the real update_document() from functions_documents.py in an isolated
@@ -238,6 +238,13 @@ def load_document_search_sync_definitions(namespace, *, settings_container=None,
     and logging stay in place. Names in keep are left as the harness defined them. Returns the
     settings container the definitions use.
     """
+    original_path = list(sys.path)
+    try:
+        sys.path.insert(0, str(APP_ROOT))
+        counts = importlib.import_module("document_chunk_counts")
+        statuses = importlib.import_module("functions_document_status")
+    finally:
+        sys.path[:] = original_path
     settings_container = settings_container or namespace.get("cosmos_settings_container") or FakeSettingsContainer()
     defaults = {
         "json": json,
@@ -249,6 +256,13 @@ def load_document_search_sync_definitions(namespace, *, settings_container=None,
         "timezone": timezone,
         "timedelta": timedelta,
         "nullcontext": contextlib.nullcontext,
+        "resolve_metadata_completion_status": statuses.resolve_metadata_completion_status,
+        "is_document_processing_complete": statuses.is_document_processing_complete,
+        "record_chunk_uploads": counts.record_chunk_uploads,
+        "record_chunk_deletions": counts.record_chunk_deletions,
+        "chunk_count_for_response": counts.chunk_count_for_response,
+        "remember_verified_chunk_count": counts.remember_verified_chunk_count,
+        "INDEXED_CHUNK_COUNT_VERSION_FIELD": counts.INDEXED_CHUNK_COUNT_VERSION_FIELD,
         "MatchConditions": MatchConditions,
         "CosmosResourceNotFoundError": CosmosResourceNotFoundError,
         "ThreadPoolExecutor": RecordingExecutor,

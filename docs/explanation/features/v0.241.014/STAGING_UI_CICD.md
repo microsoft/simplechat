@@ -1,6 +1,6 @@
 # Historical staging UI deployment pipeline (v0.241.014)
 
-Current documentation version: **0.261.401**.
+Current documentation version: **0.261.402**.
 
 The validation-only replacement was introduced in **0.261.399** and moved to
 `.github/workflows/staging-ui-smoke.yml` in **0.261.400**, using runner-local

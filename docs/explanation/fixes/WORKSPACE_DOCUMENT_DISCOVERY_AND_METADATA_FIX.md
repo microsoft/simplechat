@@ -74,6 +74,10 @@ analysis** in document details. Populated metadata is preserved; this is not an
 overwrite/regenerate-all operation. No public visibility preference is broadened.
 Previously saved records are not migrated or automatically retried.
 
+Version **0.261.400** additionally retires the exact legacy metadata warning after
+a successful retry and reconciles historical document-detail bookkeeping without
+re-running inference. See [Document chunk counts and obsolete metadata warnings](DOCUMENT_CHUNK_COUNTS_AND_METADATA_WARNINGS_FIX.md).
+
 ## Validation
 
 Runtime regressions in `functional_tests/test_workspace_metadata_outcomes.py`

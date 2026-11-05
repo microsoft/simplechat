@@ -10,6 +10,13 @@ audience: user
 
 File Sync creates a source that imports files from an approved external location into a personal, group, or public workspace. This guide chooses a source type, connection, filters, tags, delete policy, and optional schedule.
 
+{% include media.html id="slide-file-sync" %}
+
+Review the destination audience as carefully as the source credential.
+Imported documents follow the workspace's permissions; access to the
+remote repository is not copied into a per-reader permission check on every
+imported document. A later source deletion follows the configured delete policy.
+
 {% include media.html type="video"
                       title="Create a file sync walkthrough"
                       poster="video-posters/guide-create-a-file-sync.png"

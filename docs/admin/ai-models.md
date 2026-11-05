@@ -129,7 +129,7 @@ Individual connections can override the global choice, which is useful when only
 ### Image input versus image generation
 
 Each model within a connection also records whether it can accept image input. This is what
-[Multi-Modal Vision Analysis](knowledge.md#multimodal-vision-section) requires alongside text output, and
+[Multi-Modal Vision Analysis]({{ '/admin/knowledge/#multimodal-vision-section' | relative_url }}) requires alongside text output, and
 getting it wrong is only discovered when a document fails to process.
 
 The checkbox arrives pre-filled. The application ships capability data for known models and

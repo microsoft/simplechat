@@ -1,6 +1,6 @@
 # Existing staging UI validation
 
-Version: **0.261.401**, tracked in `application/single_app/config.py`.
+Version: **0.261.402**, tracked in `application/single_app/config.py`.
 
 Fixed/Implemented in version: **0.261.399**; isolated runner-local validation
 implemented in **0.261.400**; pinned per-session onboarding in **0.261.401**.

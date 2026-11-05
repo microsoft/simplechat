@@ -1,7 +1,7 @@
 # test_orchestration_dependency_recovery.py
 """Real leases, checkpoint restart, DAG reuse and current authorization for v2.
 
-Version: 0.261.401
+Version: 0.261.402
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
 SDK transport-to-domain fixture boundaries aligned in: 0.261.399

@@ -10,6 +10,12 @@ audience: user
 
 The Profile page combines account information, usage statistics, and personal preferences. This guide opens settings and saves changes that affect only your SimpleChat experience.
 
+{% include media.html id="slide-memory-and-preferences" %}
+
+Keep memories specific and editable, and do not store secrets in them.
+Personal instructions, voice choices, and interface preferences do not
+override organization policy, source permissions, or deployment capabilities.
+
 {% include media.html type="video"
                       title="Update profile preferences walkthrough"
                       poster="video-posters/guide-update-profile-preferences.png"

@@ -21,7 +21,13 @@ VAULT_NAME_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9-]{1,22}[A-Za-z0-9]")
 CLIENT_ID_PATTERN = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
-PROBE_ERRORS = (AzureError, OSError, ValueError)
+PROBE_ERRORS = (AzureError, OSError, ValueError, TypeError)
+PROBE_CHECK_LABELS = {
+    "list": "List secrets",
+    "write": "Write test secret",
+    "read": "Read-back test secret",
+    "cleanup": "Clean up test secret",
+}
 
 
 def _log_probe_failure(stage, error):
@@ -59,7 +65,7 @@ def run_key_vault_connection_test(payload, *, vault_domain, credential_factory):
 
     probe_name = f"simplechat-connection-test-{uuid.uuid4().hex}"
     probe_value = secrets.token_urlsafe(32)
-    checks = {stage: "not_run" for stage in ("list", "write", "read", "cleanup")}
+    checks = {stage: "not_run" for stage in PROBE_CHECK_LABELS}
     failure = None
     cleanup_failure = None
     stage = "authentication"
@@ -101,14 +107,15 @@ def run_key_vault_connection_test(payload, *, vault_domain, credential_factory):
                 finally:
                     if write_attempted:
                         try:
-                            deletion = client.begin_delete_secret(
-                                probe_name, polling_interval=1, **PROBE_OPTIONS,
-                            )
-                            deletion.wait(timeout=PROBE_CLEANUP_TIMEOUT)
-                            if not deletion.done():
-                                raise TimeoutError("Key Vault probe cleanup is not confirmed.")
-                            checks["cleanup"] = "passed"
-                        except ResourceNotFoundError:
+                            try:
+                                deletion = client.begin_delete_secret(probe_name, **PROBE_OPTIONS)
+                            except ResourceNotFoundError:
+                                # An uncertain write may not have created this probe's secret.
+                                pass
+                            else:
+                                deletion.wait(timeout=PROBE_CLEANUP_TIMEOUT)
+                                if not deletion.done():
+                                    raise TimeoutError("Key Vault probe cleanup is not confirmed.")
                             checks["cleanup"] = "passed"
                         except PROBE_ERRORS as error:
                             checks["cleanup"] = "failed"
@@ -119,6 +126,13 @@ def run_key_vault_connection_test(payload, *, vault_domain, credential_factory):
         if failure is None:
             failure = (stage, *key_vault_operation_error(stage, error))
 
+    report = {
+        "checks": checks,
+        "details": [
+            f"{PROBE_CHECK_LABELS[stage]}: {outcome.replace('_', ' ')}"
+            for stage, outcome in checks.items()
+        ],
+    }
     if failure or cleanup_failure:
         failed_stage, code, message = failure or ("cleanup", *cleanup_failure)
         result = {
@@ -126,7 +140,7 @@ def run_key_vault_connection_test(payload, *, vault_domain, credential_factory):
             "code": code,
             "failed_stage": failed_stage,
             "error": message,
-            "checks": checks,
+            **report,
         }
         if cleanup_failure:
             result["cleanup_secret_name"] = probe_name
@@ -140,5 +154,5 @@ def run_key_vault_connection_test(payload, *, vault_domain, credential_factory):
     return {
         "success": True,
         "message": "Key Vault list, write, read-back, and temporary-secret cleanup succeeded.",
-        "checks": checks,
+        **report,
     }, 200

@@ -254,7 +254,7 @@ export interface WorkspaceDocument {
     document_classification?: string;
     tags?: string[] | string;
     version?: number;
-    num_chunks?: number;
+    num_chunks?: number | null;
     number_of_pages?: number;
     file_size?: number;
     file_type?: string;

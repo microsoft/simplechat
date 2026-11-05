@@ -50,7 +50,21 @@ from content_screening.service import (
 )
 from config import *
 from functions_appinsights import log_event
-from functions_document_status import is_document_processing_complete, is_document_processing_failure
+from functions_document_status import (
+    is_document_processing_complete,
+    is_document_processing_failure,
+    resolve_metadata_completion_status,
+)
+from document_chunk_counts import (
+    INDEXED_CHUNK_COUNT_VERSION_FIELD,
+    begin_chunk_tracking,
+    chunk_count_for_response,
+    count_indexed_chunks,
+    end_chunk_tracking,
+    record_chunk_deletions,
+    record_chunk_uploads,
+    remember_verified_chunk_count,
+)
 from functions_document_provenance import (
     ORIGIN_FIELD_NAMES,
     ORIGIN_KIND_FIELD,
@@ -257,7 +271,13 @@ def _execute_document_search_write(
                     if current.get("is_current_version") is False and "group_id" in payload:
                         payload["group_id"] = _build_archived_scope_value(group_id)
                         payload["shared_group_ids"] = []
-            results = getattr(search_client, operation_name)(*args, **kwargs)
+            results = list(getattr(search_client, operation_name)(*args, **kwargs))
+            if vector_write:
+                record_chunk_uploads(search_client, documents, results)
+            if operation_name == "delete_documents":
+                record_chunk_deletions(
+                    search_client, (document["id"] for document in documents), results,
+                )
     if not _search_indexing_results_succeeded(results):
         raise RuntimeError(
             f"Azure AI Search did not acknowledge every {operation_name} document mutation."
@@ -3919,6 +3939,14 @@ def update_document(**kwargs):
         original_percentage = existing_document.get('percentage_complete', 0) # Store for comparison
         # update_document only replaces top-level fields, so a shallow copy keeps the stored state.
         original_document = dict(existing_document)
+        reconciles_metadata_warning = False
+        if "status" not in kwargs and document_is_available(existing_document):
+            resolved_status = resolve_metadata_completion_status(
+                existing_document.get("status"), kwargs.get("metadata_extraction_status"),
+            )
+            if resolved_status != existing_document.get("status"):
+                kwargs["status"] = resolved_status
+                reconciles_metadata_warning = True
 
         # 2. Apply updates from kwargs
         update_occurred = False
@@ -4049,6 +4077,7 @@ def update_document(**kwargs):
                 operation_guard()
             _upsert_document_and_sync_access_index(
                 cosmos_container, existing_document, operation='document_updated',
+                strict=reconciles_metadata_warning,
             )
 
         if search_sync['status'] == DOCUMENT_SEARCH_SYNC_STATUS_PENDING:
@@ -6049,6 +6078,57 @@ def get_documents(user_id, group_id=None, public_workspace_id=None):
     except Exception as e:
         return jsonify({'error': f'Error retrieving documents: {str(e)}'}), 500
 
+
+def _indexed_chunk_count_for_document(document):
+    scope_field = (
+        "public_workspace_id" if document.get("public_workspace_id") is not None
+        else "group_id" if document.get("group_id") is not None else "user_id"
+    )
+    scope_value = document.get(scope_field)
+    if document.get("is_current_version") is False or document.get("search_visibility_state") == "archived":
+        scope_value = _build_archived_scope_value(scope_value)
+    return count_indexed_chunks(
+        _get_search_client(
+            group_id=document.get("group_id"), public_workspace_id=document.get("public_workspace_id"),
+        ),
+        document["id"], document.get("version") or 1, scope_field, scope_value,
+    )
+
+
+def _document_with_current_bookkeeping(document):
+    """Read-only compatibility for completed records saved before chunk bookkeeping was fixed."""
+    if not document_is_available(document):
+        return document
+    result = dict(document)
+    result["status"] = resolve_metadata_completion_status(
+        document.get("status"), document.get("metadata_extraction_status"),
+    )
+    result["num_chunks"] = chunk_count_for_response(document)
+    if is_document_processing_complete(result["status"]) and result["num_chunks"] is None:
+        count = _indexed_chunk_count_for_document(document)
+        result["num_chunks"] = count
+        result[INDEXED_CHUNK_COUNT_VERSION_FIELD] = document.get("version") or 1
+        remember_verified_chunk_count(document, count)
+    return result
+
+
+def _update_failed_document_chunk_count(document_id, user_id, update_callback, group_id=None, public_workspace_id=None):
+    """Keep acknowledged partial indexing visible without hiding the processing failure."""
+    try:
+        document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
+        if document and document_is_available(document):
+            update_callback(
+                num_chunks=_indexed_chunk_count_for_document(document),
+                indexed_chunk_count_version=document.get("version") or 1,
+            )
+    except Exception as error:
+        log_event(
+            "[DOCUMENTS] Failed document chunk count could not be reconciled.",
+            extra={"document_id": document_id, "error_type": type(error).__name__},
+            level=logging.WARNING,
+        )
+
+
 def get_document(user_id, document_id, group_id=None, public_workspace_id=None, include_origin_summary=False):
     try:
         document_record = get_document_record(
@@ -6062,13 +6142,22 @@ def get_document(user_id, document_id, group_id=None, public_workspace_id=None, 
             return jsonify({'error': 'Document not found or access denied'}), 404
 
         payload = public_document_payload(document_record)
+        if is_document_processing_complete(payload.get("status")):
+            bookkeeping = _document_with_current_bookkeeping(document_record)
+            payload["num_chunks"] = bookkeeping.get("num_chunks")
+            payload["status"] = bookkeeping.get("status")
         # Held documents project no origin_kind, so they never resolve an origin summary.
         if include_origin_summary and payload.get(ORIGIN_KIND_FIELD):
             remember_document_origin_summary(user_id, document_record)
         return jsonify(payload), 200
 
     except Exception as e:
-        return jsonify({'error': f'Error retrieving document: {str(e)}'}), 500
+        log_event(
+            "[DOCUMENTS] Document details could not be retrieved.",
+            extra={"document_id": document_id, "error_type": type(e).__name__},
+            level=logging.WARNING,
+        )
+        return jsonify({'error': 'Unable to retrieve document details.'}), 500
 
 def get_latest_version(document_id, user_id, group_id=None, public_workspace_id=None):
     try:
@@ -6941,12 +7030,10 @@ def delete_document_chunks(document_id, group_id=None, public_workspace_id=None)
             return
 
         documents_to_delete = [{"id": doc_id} for doc_id in ids_to_delete]
-        batch = IndexDocumentsBatch()
-        batch.add_delete_actions(documents_to_delete)
-        result = _execute_document_search_write(
+        _execute_document_search_write(
             search_client,
-            "index_documents",
-            batch,
+            "delete_documents",
+            documents=documents_to_delete,
         )
     except Exception as e:
         raise
@@ -6961,7 +7048,7 @@ def delete_document_version_chunks(document_id, version, group_id=None, public_w
     _execute_document_search_write(
         search_client,
         "delete_documents",
-        actions=[
+        documents=[
             {"@search.action": "delete", "id": chunk['id']} for chunk in
             search_client.search(
                 search_text="*",
@@ -11843,6 +11930,7 @@ def _process_document_reprocess_extraction_background_impl(
         else:
             update_document(**args)
 
+    chunk_tracking_token = begin_chunk_tracking()
     try:
         document_item = get_document_metadata(
             document_id=document_id,
@@ -11872,6 +11960,7 @@ def _process_document_reprocess_extraction_background_impl(
             percentage_complete=0,
             current_file_chunk=0,
             num_chunks=0,
+            indexed_chunk_count_version=0,
             number_of_pages=0,
             document_intelligence_extraction_mode=target_mode,
             document_intelligence_extraction_mode_requested=target_mode,
@@ -11912,7 +12001,10 @@ def _process_document_reprocess_extraction_background_impl(
             total_embedding_tokens = 0
             embedding_model_name = None
 
+        total_chunks_saved = _indexed_chunk_count_for_document(document_item)
         final_update_args = {
+            "num_chunks": total_chunks_saved,
+            "indexed_chunk_count_version": document_item.get("version") or 1,
             "number_of_pages": total_chunks_saved,
             "status": _resolve_processing_complete_status(total_chunks_saved, source_file_ext, tuple('.' + ext for ext in IMAGE_EXTENSIONS), tuple('.' + ext for ext in TABULAR_EXTENSIONS), 'disabled'),
             "percentage_complete": 100,
@@ -11927,6 +12019,9 @@ def _process_document_reprocess_extraction_background_impl(
         print(f"Document {document_id} extracted again successfully with {target_engine_label} {target_mode}.")
     except Exception as e:
         print(f"Error extracting document {document_id} again: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
+        _update_failed_document_chunk_count(
+            document_id, user_id, update_doc_callback, group_id=group_id, public_workspace_id=public_workspace_id,
+        )
         try:
             update_doc_callback(
                 status=f"Error changing extraction: {str(e)}",
@@ -11937,6 +12032,7 @@ def _process_document_reprocess_extraction_background_impl(
         if safe_errors:
             raise
     finally:
+        end_chunk_tracking(chunk_tracking_token)
         if temp_file_path and os.path.exists(temp_file_path):
             try:
                 os.remove(temp_file_path)
@@ -12205,6 +12301,8 @@ def process_audio_document(
             )
         else:
             raise
+
+    update_callback(num_file_chunks=1 if use_source_audio_for_fast_api else len(chunk_paths))
 
     # 4) transcribe audio
     all_phrases: List[str] = []
@@ -13199,6 +13297,7 @@ def _process_document_upload_background_impl(
     embedding_model_name = None
     file_ext = '' # Initialize
 
+    chunk_tracking_token = begin_chunk_tracking()
     try:
         # --- 0. Initial Setup & Validation ---
         if not temp_file_path or not os.path.exists(temp_file_path):
@@ -13215,7 +13314,10 @@ def _process_document_upload_background_impl(
         if file_size > max_file_size_bytes:
             raise ValueError(f"File exceeds maximum allowed size ({max_file_size_bytes / (1024*1024):.1f} MB).")
 
-        update_doc_callback(status=f"Processing file {original_filename}, type: {file_ext}")
+        update_doc_callback(
+            status=f"Processing file {original_filename}, type: {file_ext}",
+            num_file_chunks=1, indexed_chunk_count_version=0,
+        )
 
         # --- 1. Dispatch to appropriate handler based on file type ---
         # Note: .doc uses the shared document pipeline with OLE extraction, while .docm stays on the direct Word-text path.
@@ -13372,6 +13474,11 @@ def _process_document_upload_background_impl(
             capture.completed = True
             return {"staged_units": capture.staged_count, "indexed_chunks": 0, "scan_id": capture.scan_id}
 
+        indexed_document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
+        if not indexed_document:
+            raise ValueError("The processed document is no longer available.")
+        total_chunks_saved = _indexed_chunk_count_for_document(indexed_document)
+
         # --- 2. Final Metadata Extraction and Status Update ---
         if file_ext == '.xsd':
             metadata_extraction_result = "disabled"
@@ -13403,6 +13510,8 @@ def _process_document_upload_background_impl(
         # but let's ensure the final update reflects the *saved* chunk count accurately.
         # Also update embedding token tracking data
         final_update_args = {
+             "num_chunks": total_chunks_saved,
+             "indexed_chunk_count_version": indexed_document.get("version") or 1,
              "number_of_pages": total_chunks_saved, # Final count of SAVED chunks
              "status": final_status,
              "percentage_complete": 100,
@@ -13619,6 +13728,9 @@ def _process_document_upload_background_impl(
             raise ScreeningError(code=capture.failure_code) from e
         error_msg = f"Processing failed: {str(e)}"
         print(f"Error processing {document_id} ({original_filename}): {error_msg}")
+        _update_failed_document_chunk_count(
+            document_id, user_id, update_doc_callback, group_id=group_id, public_workspace_id=public_workspace_id,
+        )
         # Attempt to update status to Error
         try:
             update_doc_callback(
@@ -13640,6 +13752,7 @@ def _process_document_upload_background_impl(
             raise
 
     finally:
+        end_chunk_tracking(chunk_tracking_token)
         # --- 3. Cleanup ---
         # Clean up the original temporary file path regardless of success or failure
         if temp_file_path and os.path.exists(temp_file_path):

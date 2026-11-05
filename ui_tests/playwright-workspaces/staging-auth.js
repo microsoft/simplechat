@@ -1,7 +1,7 @@
 // staging-auth.js
 /*
 Pinned, CI-identity-only onboarding for staging browser tests.
-Version: 0.261.401
+Version: 0.261.402
 Implemented in: 0.261.401
 */
 

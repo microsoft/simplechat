@@ -1,7 +1,7 @@
 # test_workspace_metadata_outcomes.py
 """
 Runtime regressions for shared automatic and manual workspace metadata analysis.
-Version: 0.261.354
+Version: 0.261.400
 Implemented in: 0.261.347
 
 Execute the real extraction, merge, worker, and final-upload functions with only
@@ -26,6 +26,7 @@ from test_cosmos_wave5a_document_access_read_switch import (
     FakeCosmosContainer, _load_document_access_index_module, _succeeded_backfill_state,
 )
 from functions_document_status import is_document_processing_failure
+from document_chunk_counts import begin_chunk_tracking, end_chunk_tracking
 
 
 class SdkProjectionContainer(FakeCosmosContainer):
@@ -97,6 +98,8 @@ def metadata_env(request):
         "SCREENING_FIELD": "content_screening", "CLIENTS": {},
         "document_is_available": lambda value: True,
         "TEMPLATE_EXTENSIONS": (),
+        "begin_chunk_tracking": begin_chunk_tracking, "end_chunk_tracking": end_chunk_tracking,
+        "_indexed_chunk_count_for_document": lambda document: len(env.search_results),
     }
     for name in ("user", "group", "public"):
         namespace[f"cosmos_{name}_documents_container"] = SimpleNamespace(query_items=query_items)
@@ -104,6 +107,7 @@ def metadata_env(request):
         "process_metadata_extraction_background", "extract_document_metadata",
         "_run_final_metadata_extraction", "_resolve_processing_complete_status",
         "_update_document_for_job", "_build_document_scope_args",
+        "_update_failed_document_chunk_count",
         "ensure_list", "is_effectively_empty", "clean_json_codeFence",
     }, namespace)
     env.functions = namespace
@@ -300,6 +304,7 @@ def test_metadata_outcome_round_trips_through_sdk_access_projection():
         "file_name": "guide.md", "title": "Guide", "version": 1, "_ts": 1,
         "status": "Processing complete", "percentage_complete": 100,
         "metadata_extraction_status": "failed",
+        "num_chunks": 3,
     }, response_headers={})
     with _load_document_access_index_module(index_container=index, settings_container=settings) as (module, _, _):
         result = module.sync_document_access_index_for_document(source, force=True)
@@ -312,6 +317,7 @@ def test_metadata_outcome_round_trips_through_sdk_access_projection():
     assert document["metadata_extraction_status"] == "failed"
     assert document["status"] == "Processing complete"
     assert document["public_workspace_id"] == "public-1"
+    assert document["num_chunks"] == 3
 
 
 def test_public_picker_route_uses_sdk_projection_and_filtered_paging(monkeypatch):

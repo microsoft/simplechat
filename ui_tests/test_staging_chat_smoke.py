@@ -1,7 +1,7 @@
 # test_staging_chat_smoke.py
 """
 UI smoke test for staging chat deployment.
-Version: 0.261.401
+Version: 0.261.402
 Implemented in: 0.241.014; 0.241.018
 
 This test ensures that a deployed staging SimpleChat environment can load the

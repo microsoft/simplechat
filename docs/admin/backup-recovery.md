@@ -20,6 +20,14 @@ Backup & Recovery contains backup readiness, scheduled backups, migration, resto
 
 These settings protect the data plane during maintenance and incidents. A backup configuration is useful only when storage, encryption, restore policy, and job visibility are tested before an emergency.
 
+{% include media.html id="slide-data-lifecycle" %}
+
+[Retention and archiving]({{ '/admin/data-lifecycle/' | relative_url }}) govern
+what the application keeps; backup, restore, and migration address recovery
+and movement of selected data. Archiving is not legal hold, and it does not
+replace a backup. Verify a completed backup and a reviewed restore before
+treating a recovery plan as tested.
+
 {% include media.html src="admin/backup-recovery-overview.png" alt="Screenshot placeholder for the Backup & Recovery group in Admin Settings." title="Backup & Recovery settings" capture="Capture the Backup & Recovery group in Admin Settings showing its tabs." %}
 
 {% include media.html type="video" title="Backup & Recovery settings walkthrough" poster="video-posters/admin-backup-recovery.png" capture="Recording planned. Walk through each tab in the Backup & Recovery group and explain when to change each setting." %}

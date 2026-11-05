@@ -1,6 +1,6 @@
 # Shared PR check remediation
 
-Version: **0.261.401**, tracked in `application/single_app/config.py`.
+Version: **0.261.402**, tracked in `application/single_app/config.py`.
 
 Fixed/Implemented in version: **0.261.399**; current-base integration and
 authorized staging CI setup in **0.261.400**; pinned per-session smoke onboarding
@@ -404,6 +404,35 @@ local results.
 
 Beta and production were not changed or deployed.
 
+### Final concurrent-base integration
+
+Four additional PRs landed on V2 while final validation was being prepared.
+The branch was merged with target
+`83acf5c8a2c59bcbc12247396464aa5ac93c213c` rather than rewriting history.
+Both lines had independently selected version 0.261.401, so this integration
+advances the current version to **0.261.402**.
+
+The only content conflict was the reviewed Cosmos inventory. Its semantic
+resolution takes only entries whose already-reviewed boundary exactly matches
+the merged implementation, retains the incoming document-count/status
+contracts, and unions the prior runtime evidence. It does not regenerate
+approval from a new fingerprint or expand/rewrite a closed exemption.
+The 45 overlapping document-owner records are resolved; all prior 187 runtime
+targets remain and the incoming evidence raises the selection to **194**.
+The guard reports **1,086 owners, 424 doubles and zero review gaps**.
+
+The incoming deletion fixture constructed `IndexingResult` with keyword values
+for fields that the pinned SDK marks read-only. Those values were ignored,
+causing 45 deletion/reprocess assertions to fail even though the production
+acknowledgment guard correctly rejected the empty receipts. The fixture now
+uses the SDK's wire-response deserializer (`key`, `status`, `statusCode`).
+A regression verifies real SDK success/failure receipts and the corresponding
+fake-store deletion effects. The production guard and expected counts are
+unchanged.
+
+Earlier 1,896-test results remain evidence for their recorded code SHAs, not a
+claim that the newly merged combination has finished its fresh validation.
+
 ## Future phase work
 
 ### A. Security-alert remediation
@@ -446,5 +475,5 @@ part of these focused CI repairs.
 
 No database migration, historical-run rewrite, new application capability switch,
 browser runtime dependency or deployer change is included. The application
-version is **0.261.401**; `deployers/version.txt` is unchanged because no file
+version is **0.261.402**; `deployers/version.txt` is unchanged because no file
 under `deployers/` was modified.

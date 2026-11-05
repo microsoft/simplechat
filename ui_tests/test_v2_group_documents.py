@@ -1,10 +1,11 @@
 # test_v2_group_documents.py
 """
 Production-SPA coverage for native read-only V2 group document browsing.
-Version: 0.261.174
+Version: 0.261.400
 Implemented in: 0.261.128
 A member's empty explorer and refused change say who manages documents, never classic: 0.261.167
 A tag's Chat hands the tag and the group to the composer: 0.261.174
+Unknown, zero and positive chunk-count rendering covered in: 0.261.400
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The API fixture never permits personal document requests or document writes, and
@@ -52,6 +53,20 @@ def open_documents(ui, **options):
     ui.open("/groups/group-a/documents", **options)
     expect(ui.page.get_by_role("button", name="Details for Research brief", exact=True)).to_be_visible()
     expect(explorer(ui)).to_have_attribute("aria-busy", "false")
+
+
+@pytest.mark.parametrize("count,expected", [(None, "\u2014"), (0, "0"), (3, "3")])
+@pytest.mark.parametrize("width", [1440, 390])
+def test_unknown_chunk_count_is_not_rendered_as_zero(group_documents_ui, count, expected, width):
+    ui = group_documents_ui
+    source = next(document for document in ui.documents["group-a"] if document["id"] == "same-document")
+    source["num_chunks"] = None
+    ui.detail_overrides[("group-a", "same-document")] = {**copy.deepcopy(source), "num_chunks": count}
+    open_documents(ui, width=width, height=900)
+    ui.page.get_by_role("button", name="Details for Research brief", exact=True).click()
+    value = ui.page.locator("dt").filter(has_text=re.compile(r"^Chunks$")).locator("..").locator("dd")
+    expect(value).to_have_text(expected)
+    ui.assert_no_overflow()
 
 
 def search(ui, text):

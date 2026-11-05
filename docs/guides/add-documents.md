@@ -81,7 +81,7 @@ before querying it. Handwriting, image OCR, and embedded attachments are exclude
 media-only notes will not provide searchable text. Respect your organization's
 OneNote export and sensitivity-label policies.
 
-See [Native OneNote Ingestion](../explanation/features/ONENOTE_INGESTION.md) for
+See [Native OneNote Ingestion](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/ONENOTE_INGESTION.md) for
 deployment requirements, processing limits, and failure guidance.
 
 ## Metadata choices that improve retrieval
@@ -103,4 +103,4 @@ deployment requirements, processing limits, and failure guidance.
 - [Uploading and Managing Documents]({{ '/guides/upload-and-manage-documents/' | relative_url }})
 - [Document Classification Tutorial]({{ '/guides/classify-documents/' | relative_url }})
 - [Application Workflows]({{ '/reference/application-workflows/' | relative_url }})
-- [Troubleshooting](../troubleshooting/troubleshooting.md)
+- [Troubleshooting]({{ '/troubleshooting/' | relative_url }})

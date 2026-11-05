@@ -14,6 +14,13 @@ SimpleChat lets you connect separate private conversations in two different ways
 - **Reference Conversation (`~`)** pulls relevant excerpts from another private conversation into the chat, orchestration plan, or personal workflow you are currently working on, without changing the source conversation.
 - **Send To Conversation** sends a focused instruction and bounded context to a destination private conversation and starts a new AI response there, queueing automatically if that conversation is already busy.
 
+{% include media.html id="slide-conversation-reuse" %}
+
+Referencing, handing off, forking, and exporting solve different reuse needs.
+A reference supplies bounded evidence rather than the whole transcript; a
+handoff starts work in its destination. Neither turns a private conversation
+into a shared one or expands the supported source and destination scopes.
+
 ## Why you would use this
 
 Long projects often work better as separate conversations: one thread for raw research, another for budget numbers, and another for drafting a proposal. Referencing lets the drafting conversation read conclusions from the research thread without pasting the whole transcript. Sending lets you hand off a focused follow-up task to a dedicated thread while staying in your current conversation.

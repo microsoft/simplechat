@@ -74,16 +74,19 @@ sets the default rather than forcing it.
 
 ### Workspace Scope Lock {#workspace-scope-lock-section}
 
+{% include media.html id="slide-workspace-scope-lock" %}
+
 Once a conversation has searched a workspace, that workspace is where its context
 comes from. Scope lock keeps it there: after the first search, the conversation
-stays bound to the workspaces that produced results, so a later question cannot
-quietly pull in a different data source and mix it with what has already been
-discussed.
+stays bound to the workspaces that produced results, so grounded retrieval does
+not quietly change workspace context.
 
-Leave this enforced where cross-contamination between data sources is a
-compliance concern. Turn it off to let users deliberately unlock a conversation
-and widen it mid-thread, which is convenient for exploratory work and removes the
-guarantee that a conversation drew on one set of sources.
+Keep this enforced when accidental workspace drift is a concern. Turning
+enforcement off lets users deliberately unlock and widen that context mid-thread.
+The lock does not freeze files, preserve revoked permissions, or isolate every
+external tool. Web research, Microsoft 365, and configured actions retain their
+own access and destination controls; it is not a compliance or immutable-storage
+guarantee. See [Lock workspace scope in chat]({{ '/guides/lock-workspace-scope/' | relative_url }}).
 
 ### Conversation History {#conversation-history-section}
 
@@ -160,7 +163,7 @@ data.
 | Enable Conversation Contents Drawer | Adds a drawer listing a conversation's prompts for navigation. | On | `enable_conversation_contents_drawer`; capability toggle |
 | Collaborative conversations | Enables shared conversation records and collaboration endpoints so permitted users can create and participate in collaborative conversations instead of only single-user conversation threads. | On | `enable_collaborative_conversations`; no visible field in `admin_settings.html` |
 | Enforce Workspace Scope Lock | Keeps a conversation bound to the workspaces that produced its first search results. | On | `enforce_workspace_scope_lock` |
-| Enable Fact Memory | Lets standard chat recall a user's saved instruction and fact memories, and lets the assistant save, change, or remove them when the user asks. Works without agents or actions. | Off | `enable_fact_memory_plugin`; capability toggle |
+| Enable Fact Memory | Lets standard chat recall a user's saved instruction and fact memories, and lets the assistant save, change, or remove them when the user asks. Works without agents or actions. | On | `enable_fact_memory_plugin`; capability toggle |
 
 In V2 orchestration, **Conversation History Limit** also bounds the recent messages
 used to interpret follow-ups before searching. Orchestration rounds the count up to an
@@ -210,6 +213,12 @@ voice settings under Knowledge.
 | Require FeedbackAdmin App Role | Requires the `FeedbackAdmin` app role before users can use this capability or view. | Off | `require_member_of_feedback_admin` |
 
 ## Citations {#citation}
+
+{% include media.html id="slide-citations" %}
+
+The illustration connects an answer to supporting material. Keep source
+inspection distinct from a promise of complete or correct answers: a citation
+can support a passage without showing that every relevant source was reviewed.
 
 ### Standard {#standard-citations-section}
 

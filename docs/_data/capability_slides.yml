@@ -1,0 +1,447 @@
+# capability_slides.yml
+# Approved full-slide screenshots and their published primary destinations.
+presentation:
+  filename: Simple Chat - Customer Facing - Expanded.pptx
+  sha256: fd00088b2d01fd9d62af138f8f0f48948128918e07039d5574ad957b05332f31
+  capability_snapshot: 0.261.398
+  slide_count: 70
+  render_width: 1600
+  render_height: 900
+  render_format: png
+slides:
+- number: 1
+  title: Accelerating AI Adoption with Simple Chat
+  disposition: omitted
+  reason: Presentation title and presenter information, not a capability explanation.
+- number: 2
+  title: Agenda
+  disposition: omitted
+  reason: Presentation agenda, not product documentation.
+- number: 3
+  title: Federal Customer
+  disposition: omitted
+  reason: Customer-request framing, not a capability or architecture explanation.
+- number: 4
+  title: "Customer Focused \xB7  Enterprise Ready \xB7  Azure Native"
+  disposition: included
+  media_id: slide-product-overview
+  file: slides/product-overview.png
+  sha256: 16422776376d58af684cfe5e228b7f4234973fc00bd3e0005ce999a253d96c77
+  primary_page: /start/about/
+- number: 5
+  title: Application Boundaries
+  disposition: included
+  media_id: slide-application-boundaries
+  file: slides/application-boundaries.png
+  sha256: 3b1b0adc8f7971fe978aaa16b0ce5e21466e077847c962b8ce699b96ea3f37b0
+  primary_page: /explanation/architecture/
+- number: 6
+  title: Features and Capabilities
+  disposition: omitted
+  reason: Presentation section divider.
+- number: 7
+  title: Feed Anything, Get Knowledge
+  disposition: included
+  media_id: slide-feed-anything-get-knowledge
+  file: slides/feed-anything-get-knowledge.png
+  sha256: d30bf40a74a5ebb09637bad6f343374135a66daa2dcc1fb97b5fb2909724ff46
+  primary_page: /features/document-extraction/
+- number: 8
+  title: The Right Knowledge, at the Right Scope
+  disposition: included
+  media_id: slide-workspace-scopes
+  file: slides/workspace-scopes.png
+  sha256: bbc737e95d72c232fa258ea84bed1364dcb60da5c5ffff2d7160e38066be074c
+  primary_page: /guides/upload-and-manage-documents/
+- number: 9
+  title: Citations
+  disposition: included
+  media_id: slide-citations
+  file: slides/citations.png
+  sha256: c3d0ee63b431d1cb0fc5bd85bcb72b617d1fb8003a900641c72d38ed57c545a3
+  primary_page: /features/enhanced-citations/
+- number: 10
+  title: Prompts
+  disposition: included
+  media_id: slide-saved-prompts
+  file: slides/saved-prompts.png
+  sha256: 2470d4a155a93d767a5e7a005d406f45641644cdced2e0583b3f232f128d1b75
+  primary_page: /features/saved-prompts/
+- number: 11
+  title: 'Agents: Focused AI for Your Work'
+  disposition: included
+  media_id: slide-agents
+  file: slides/agents.png
+  sha256: 2d6055b475abc8fae5a299de85cb98e84695d3a87820858bc408ae2fb147c1b3
+  primary_page: /features/agents/
+- number: 12
+  title: Connect Answers to Approved Tools
+  disposition: included
+  media_id: slide-approved-actions
+  file: slides/approved-actions.png
+  sha256: c51a197283afa1b7e4c35b9420e940083c8193510f7d3e5c97fa0e9997b9e591
+  primary_page: /features/core-actions/
+- number: 13
+  title: From a Goal to a Reviewed Plan
+  disposition: included
+  media_id: slide-orchestration
+  file: slides/orchestration.png
+  sha256: ad6cdfa1230c65184609f7b4fb7c926adfd7fce617842f6d1c1a94c928f2e9dd
+  primary_page: /features/chat-orchestration/
+- number: 14
+  title: 'Workflows: Make Good Work Repeatable'
+  disposition: included
+  media_id: slide-workflows
+  file: slides/workflows.png
+  sha256: 5dbee335138d2b302bdf3aeef54440f65f3b1d6d6963e9eec6b8120648c1e24c
+  primary_page: /features/workflows/
+- number: 15
+  title: Analyze and Compare Documents
+  disposition: included
+  media_id: slide-analyze-and-compare
+  file: slides/analyze-and-compare.png
+  sha256: cbf0ec95eaee27ed1c78fa666095b30baf80f0f4a7c494bd62275ee0cd1d6026
+  primary_page: /features/document-analysis/
+- number: 16
+  title: Ask Questions of Spreadsheet Data
+  disposition: included
+  media_id: slide-tabular-analysis
+  file: slides/tabular-analysis.png
+  sha256: de5a0222da4a247b011b22a0a495ce4c46da359276b2b6f38ba0bf91f684f572
+  primary_page: /features/tabular-analysis/
+- number: 17
+  title: Research Beyond the Workspace
+  disposition: included
+  media_id: slide-external-research
+  file: slides/external-research.png
+  sha256: a37dfdc5f5b41592ac59182c861016e54040b71ccefde16a1cee8ff2c2aa0bcb
+  primary_page: /features/deep-research/
+- number: 18
+  title: 'File Sync: Keep Knowledge Current'
+  disposition: included
+  media_id: slide-file-sync
+  file: slides/file-sync.png
+  sha256: fd3b44b7e90b66a6fb8f8795e02871dfbc2c4d468307b1d8560a7bba35ee5da2
+  primary_page: /features/file-sync/
+- number: 19
+  title: Collaborate in the Same Conversation
+  disposition: included
+  media_id: slide-collaborative-conversations
+  file: slides/collaborative-conversations.png
+  sha256: bf1186d7d17e210f812c40da93e4836a51963973cb3ff983e6211fe3fb9bf6d4
+  primary_page: /features/collaborative-conversations/
+- number: 20
+  title: From Answers to Useful Deliverables
+  disposition: included
+  media_id: slide-generated-deliverables
+  file: slides/generated-deliverables.png
+  sha256: 7a190d1180c18ce655b045dd6f5aac7efb3f7e4a9dae9c015429501b7c07e393
+  primary_page: /features/generated-deliverables/
+- number: 21
+  title: Workspace Scope Lock
+  disposition: included
+  media_id: slide-workspace-scope-lock
+  file: slides/workspace-scope-lock.png
+  sha256: 723c51359b6d954525f1d95371b69ae3e4a567b1968f5f119334a7389339acf0
+  primary_page: /features/workspace-scope-lock/
+- number: 22
+  title: Feedback That Closes the Loop
+  disposition: included
+  media_id: slide-feedback
+  file: slides/feedback.png
+  sha256: a175a100ca91f84548f9373f7639c0d5b84d03a88afcf2e982bc3a0e1c9e0837
+  primary_page: /features/feedback-and-archiving/
+- number: 23
+  title: Safety and Governance, by Design
+  disposition: included
+  media_id: slide-safety-and-screening
+  file: slides/safety-and-screening.png
+  sha256: 0fe3089bdb1a1a8059493cae1c2b218d35d8648aedca2f9829fc7735808c9bf4
+  primary_page: /features/content-safety/
+- number: 24
+  title: You Decide What AI Can Reach
+  disposition: included
+  media_id: slide-governance
+  file: slides/governance.png
+  sha256: 4df714a56116af9cae6ec31806b12e02c593e6a19267a17169d7a7ddbcc231e2
+  primary_page: /admin/governance/
+- number: 25
+  title: Security
+  disposition: omitted
+  reason: Presentation section divider.
+- number: 26
+  title: Identity and Access
+  disposition: included
+  media_id: slide-identity-and-access
+  file: slides/identity-and-access.png
+  sha256: abcf779ec41c61905e070bc9cb1b5c27d18a49df9ce38efcdca766edcea5e79b
+  primary_page: /admin/security/
+- number: 27
+  title: Operations and Data Sovereignty
+  disposition: omitted
+  reason: Presentation section divider.
+- number: 28
+  title: Scale the Whole Platform
+  disposition: included
+  media_id: slide-scale
+  file: slides/scale.png
+  sha256: 67b94acc7101982c999573662f1841825e86c6fe1b18cb0e6dcd73f222e560ed
+  primary_page: /features/scale-and-cache/
+- number: 29
+  title: Make the Data Paths Explicit
+  disposition: included
+  media_id: slide-data-paths
+  file: slides/data-paths.png
+  sha256: a7e7d87d1dc2627c704ef893dc252b1eee9b7cc00b2e1647ba8be7dedb986766
+  primary_page: /explanation/architecture/
+- number: 30
+  title: Demo
+  disposition: omitted
+  reason: Live-demo transition slide.
+- number: 31
+  title: Support Model
+  disposition: omitted
+  reason: Support model includes commercial-support wording that is not a general product entitlement.
+- number: 32
+  title: Under Consideration
+  disposition: omitted
+  reason: Proposed roadmap is not documentation of current implemented capabilities.
+- number: 33
+  title: 'https://aka.ms/simplechat '
+  disposition: omitted
+  reason: Presentation resource link rather than a capability explanation.
+- number: 34
+  title: Questions and Discussion
+  disposition: omitted
+  reason: Presentation closing and audience discussion.
+- number: 35
+  title: Optional Deep Dives
+  disposition: omitted
+  reason: Presentation appendix navigation.
+- number: 36
+  title: Build and Reuse Focused Agents
+  disposition: included
+  media_id: slide-agent-builder
+  file: slides/agent-builder.png
+  sha256: 379be4ed058d0b29f88572bef7113e6be806ae1ad6d03d0ca30c666332acc14a
+  primary_page: /features/agent-action-ai-assistant/
+- number: 37
+  title: Workflow Logic and Human Checkpoints
+  disposition: included
+  media_id: slide-workflow-logic
+  file: slides/workflow-logic.png
+  sha256: bf9e82376be08d6b0b816cbcaf72bc6b91a7743b75d3783fed864cddd61516cf
+  primary_page: /features/workflows/
+- number: 38
+  title: Durable Runs, Alerts, and Follow-Up
+  disposition: included
+  media_id: slide-durable-workflows
+  file: slides/durable-workflows.png
+  sha256: ff489da95c7b45a6d2193727489fd0e542d560f30db20ee4b46bd7464f846111
+  primary_page: /features/workflows/
+- number: 39
+  title: Microsoft 365 and Teams
+  disposition: included
+  media_id: slide-microsoft-365-and-teams
+  file: slides/microsoft-365-and-teams.png
+  sha256: df57d51502c2035abbdedd9bd4c7de1fc7612ddff201f495e1b9380687b541bb
+  primary_page: /guides/microsoft-365-conversation-data/
+- number: 40
+  title: Model Choice, with Governance
+  disposition: included
+  media_id: slide-model-routing
+  file: slides/model-routing.png
+  sha256: 19999a93359a9b53c9f6f99c76e6643b8b42b372b9367143ec6f09356bde5f75
+  primary_page: /features/model-routing/
+- number: 41
+  title: A More Personal Working Experience
+  disposition: included
+  media_id: slide-memory-and-preferences
+  file: slides/memory-and-preferences.png
+  sha256: 2f3a81e819fe191e4716ecd7dca8a30c40528a0fe0210ca5ed126dea58e4a48f
+  primary_page: /features/chat-memory/
+- number: 42
+  title: Reuse and Hand Off Conversation Work
+  disposition: included
+  media_id: slide-conversation-reuse
+  file: slides/conversation-reuse.png
+  sha256: 16104fc19fbab7780ed67f7bc5501155db7de24c74f77adac849f41caf6e03b3
+  primary_page: /guides/reference-and-send-conversations/
+- number: 43
+  title: Data Lifecycle and Recovery
+  disposition: included
+  media_id: slide-data-lifecycle
+  file: slides/data-lifecycle.png
+  sha256: 6743c98581fa8cd6c0c45f3f1b958ae347595a7f582b5c747fcc5f88bf1b3dd5
+  primary_page: /admin/backup-recovery/
+- number: 44
+  title: Personal Workspace
+  disposition: included
+  media_id: slide-personal-workspace
+  file: slides/personal-workspace.png
+  sha256: adf3585280f4720d7c3db3b36ad6c14394f02766dee7f2a87d6e83a59e9400de
+  primary_page: /features/personal-workspace/
+- number: 45
+  title: Group Workspaces
+  disposition: included
+  media_id: slide-group-workspaces
+  file: slides/group-workspaces.png
+  sha256: 8162c268629c3d32029568179bb9a67bf4efa7bfa89dbc0dc36ed2feebbd0e04
+  primary_page: /features/group-workspaces/
+- number: 46
+  title: Public Workspaces
+  disposition: included
+  media_id: slide-public-workspaces
+  file: slides/public-workspaces.png
+  sha256: da78b6e09326ba0a0111ea833e64e7745c81aff5a4a2189f7c5edf9baa177049
+  primary_page: /features/public-workspaces/
+- number: 47
+  title: File Sharing
+  disposition: included
+  media_id: slide-file-sharing
+  file: slides/file-sharing.png
+  sha256: 9cda1375f812344a33f442f4d8b1a5d48f08c27a0659a601939993a205199860
+  primary_page: /admin/workspaces/
+- number: 48
+  title: Conversation Details
+  disposition: included
+  media_id: slide-conversation-details
+  file: slides/conversation-details.png
+  sha256: caf74fc0896520453ebdc8fd206bea2917d2231f0d7ee63fb644acdc101e7a3e
+  primary_page: /features/conversation-details/
+- number: 49
+  title: Message Details and Sources
+  disposition: included
+  media_id: slide-message-details
+  file: slides/message-details.png
+  sha256: e5105c37a3f2517ad4dfbb8665108eaba575d86ba8019c40d8c10cce7cb0bea8
+  primary_page: /features/message-details/
+- number: 50
+  title: Document Classification and Metadata
+  disposition: included
+  media_id: slide-document-classification
+  file: slides/document-classification.png
+  sha256: 5e2bc7507d0a5e8d84708169b299c12007361c954bc4c4fe7c0aebef14e6d6a4
+  primary_page: /features/document-metadata-and-classification/
+- number: 51
+  title: Simple Chat
+  disposition: included
+  media_id: slide-azure-services
+  file: slides/azure-services.png
+  sha256: 556e78246f79df16d268b6ccb92a40e5fab1b00b5e0c15bfa1ebf6b79dc71ead
+  primary_page: /explanation/architecture/
+- number: 52
+  title: Complementary Strengths
+  disposition: omitted
+  reason: Complementarity/comparison material rather than current product documentation.
+- number: 53
+  title: Simple Chat
+  disposition: omitted
+  reason: Historical product comparison requires separate current validation.
+- number: 54
+  title: Simple Chat MVP to Production
+  disposition: omitted
+  reason: Historical or illustrative adoption/rollout figures are not product capacity guarantees.
+- number: 55
+  title: NASA
+  disposition: omitted
+  reason: Customer-logo material, not feature documentation or a new endorsement.
+- number: 56
+  title: Dept of  State
+  disposition: omitted
+  reason: Customer-logo material, not feature documentation or a new endorsement.
+- number: 57
+  title: Microsoft Azure Cloud Runs on Trust
+  disposition: omitted
+  reason: General cloud-assurance marketing is not an application-specific capability guarantee.
+- number: 58
+  title: Encryption
+  disposition: included
+  media_id: slide-encryption
+  file: slides/encryption.png
+  sha256: 889dbc41b9fa5e0d790948e0ed1bd9de7c081f15194fa1a1d57595d1280b3b74
+  primary_page: /explanation/architecture/
+- number: 59
+  title: Virtual Network
+  disposition: included
+  media_id: slide-networking
+  file: slides/networking.png
+  sha256: 9f0c88d500e276d780cd94c2bec9a10cffd9a1ae21022fae138ddf2c3cb01d04
+  primary_page: /guides/enterprise-networking/
+- number: 60
+  title: Defender for Cloud
+  disposition: included
+  media_id: slide-azure-platform-protection
+  file: slides/azure-platform-protection.png
+  sha256: 571032cf5cb48b1bca76bac21f0cc60f9b87af646ed65778230e7554a6b660bc
+  primary_page: /explanation/architecture/
+- number: 61
+  title: Logging
+  disposition: included
+  media_id: slide-logging
+  file: slides/logging.png
+  sha256: a2c8932aba93e09fec1ccc430977dc06125f40175353c6e75418451de85d057f
+  primary_page: /admin/operations/
+- number: 62
+  title: User interacts with Simple Chat.
+  disposition: included
+  media_id: slide-grounded-request-user
+  file: slides/grounded-request-user.png
+  sha256: 381d9a7e9806ff923a35edfe5cb09513a39528c1177d3cf805c9ec10aa69f182
+  primary_page: /reference/application-workflows/
+- number: 63
+  title: '2'
+  disposition: included
+  media_id: slide-grounded-request-search
+  file: slides/grounded-request-search.png
+  sha256: 0815a6522066b73418617e1d90fefadaf5744ea99a0cde618a23c30e028eebdb
+  primary_page: /reference/application-workflows/
+- number: 64
+  title: '3'
+  disposition: included
+  media_id: slide-grounded-request-context
+  file: slides/grounded-request-context.png
+  sha256: f14dd2d4b789b3b4b7616352629ccff448a1d72fc3fb6afcc9636680e636f31f
+  primary_page: /reference/application-workflows/
+- number: 65
+  title: Azure model services apply their configured content filtering. SimpleChat can add separate application-level Content Safety and Content Screening. Coverage depends on the selected services and configuration.
+  disposition: included
+  media_id: slide-grounded-request-content-checks
+  file: slides/grounded-request-content-checks.png
+  sha256: c32caee9b50924592b1b658088936c9b3e225070999a2b326b5fc098ae8726cf
+  primary_page: /reference/application-workflows/
+- number: 66
+  title: Abuse-monitoring and retention terms depend on the Azure service, model, deployment, and approved arrangements. Confirm current Microsoft terms for the customer's environment. Application conversation storage is a separate lifecycle.
+  disposition: included
+  media_id: slide-grounded-request-provider-monitoring
+  file: slides/grounded-request-provider-monitoring.png
+  sha256: 7f2a474788ab66397e42103f3f633c15bea1b9e12ee5bc0bc7bf0f175897c168
+  primary_page: /reference/application-workflows/
+- number: 67
+  title: "Prompt (aka User\u2019s message + AI Search Results + Conversation History) is analyzed by Azure OpenAI model to generate a response."
+  disposition: included
+  media_id: slide-grounded-request-model
+  file: slides/grounded-request-model.png
+  sha256: d4c307fbdebf7b6e2870881ef3e178ab260a5345bceeb71a40cfdad652049093
+  primary_page: /reference/application-workflows/
+- number: 68
+  title: Use current Azure service data-use terms for the selected model and deployment. Review which optional connections receive request content. Define application retention and access separately.
+  disposition: included
+  media_id: slide-grounded-request-data-use
+  file: slides/grounded-request-data-use.png
+  sha256: cc74f5ff7cca5641cfa6c5ac315f4486e4f76c4d0543c71183f2dfed80314d69
+  primary_page: /reference/application-workflows/
+- number: 69
+  title: 'Utilizing the relevant customer data, Azure OpenAI generates insightful responses tailored to the user''s specific interactions with Simple Chat, elevating the quality of user interactions. '
+  disposition: included
+  media_id: slide-grounded-request-response
+  file: slides/grounded-request-response.png
+  sha256: c3c908af20cdafd3d45497e59274aeed7b1b127917fd5fa5796e4dd35cd6d612
+  primary_page: /reference/application-workflows/
+- number: 70
+  title: "Simple Chat provides user with Azure OpenAI insightful information based on their requests to improve the efficiency of their work, speed up tasks, improve reliability, and gain more insights into your agency\u2019s data. "
+  disposition: included
+  media_id: slide-grounded-request-delivery
+  file: slides/grounded-request-delivery.png
+  sha256: d8ced8b7441f3c33a0cea631fcc4ecd6aefdeadea616ff253dab69ba354e1762
+  primary_page: /reference/application-workflows/

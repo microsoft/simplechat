@@ -30,3 +30,13 @@ def is_document_processing_failure(status):
 def is_document_processing_complete(status):
     """Recognize final completion, not completion of an intermediate stage."""
     return isinstance(status, str) and _COMPLETE.match(status.strip()) is not None
+
+
+def resolve_metadata_completion_status(status, metadata_extraction_status):
+    """Retire only the legacy metadata warning after a genuinely successful analysis."""
+    if (
+        metadata_extraction_status == "succeeded"
+        and status == "Processing complete (metadata extraction warning)"
+    ):
+        return "Processing complete - final metadata extracted"
+    return status

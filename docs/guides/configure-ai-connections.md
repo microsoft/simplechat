@@ -134,7 +134,7 @@ For APIM, publish the Responses operation on the gateway first; Custom OpenAI
 connections preserve exact API bases and configurable authentication headers.
 The switch does not rewrite YAMCS/database plugins, change existing connections
 automatically, or establish that a gateway supports Responses. See
-[V2 model tools and evidence status]({{ '/explanation/features/V2_MODEL_TOOLS_AND_EVIDENCE_STATUS/' | relative_url }})
+[V2 model tools and evidence status](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_MODEL_TOOLS_AND_EVIDENCE_STATUS.md)
 for stateless continuation, streaming behavior, and limitations.
 
 If you already use **Use AI Connections for chat**, choose an enabled, chat-compatible

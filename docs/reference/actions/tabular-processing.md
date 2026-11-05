@@ -14,6 +14,13 @@ audience: user
 
 Tabular Processing analyzes CSV, XLSX, XLS, and XLSM files stored in workspace or chat-upload blob containers. It can list files, describe schemas and previews, look up values, return distinct values, count rows, aggregate columns, filter/search rows, run pandas query expressions, relate values across sheets, and group by columns or datetime components.
 
+{% include media.html id="slide-tabular-analysis" %}
+
+The slide's rows and chart are illustrative. Inspect the intended sheet and
+columns, then compute over the authorized underlying records; a schema
+preview or planning sample is not a complete dataset. Check reported coverage
+and limits before treating a total or export as complete.
+
 ## Why and when to use it
 
 Use Tabular Processing when users ask exact questions about spreadsheets or CSV files: counts, filters, group-bys, lookups, joins between sheets, or chart-ready aggregates. Do not use it for relational databases; use SQL Query, Databricks, or Snowflake. Do not use normal document search for questions that require row-exact computation; search is better for narrative text.
@@ -52,4 +59,3 @@ Use Tabular Processing when users ask exact questions about spreadsheets or CSV 
 - [SQL Query](../sql-query/)
 - [Chart](../chart/)
 - [Citation settings]({{ '/admin/chat/' | relative_url }})
-

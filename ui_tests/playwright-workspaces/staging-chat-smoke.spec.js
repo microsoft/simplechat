@@ -1,7 +1,7 @@
 // staging-chat-smoke.spec.js
 /*
 UI smoke test for staging chat deployment.
-Version: 0.261.401
+Version: 0.261.402
 Implemented in: 0.241.017; 0.241.018
 
 This test validates the same authenticated chat path as the Python staging

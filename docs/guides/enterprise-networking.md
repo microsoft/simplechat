@@ -24,8 +24,8 @@ Enterprise networking changes the deployment story as much as the runtime story.
       </article>
       <article class="latest-release-card">
             <div class="latest-release-card-icon"><i class="bi bi-hdd-network"></i></div>
-            <h2>Private-endpoint every dependency</h2>
-            <p>Cosmos DB, Azure OpenAI, Search, Storage, and other services need a consistent private-connectivity plan rather than one-off exceptions.</p>
+            <h2 id="private-endpoint-every-dependency">Plan every dependency's path</h2>
+            <p>Use a consistent private-connectivity plan for supported Azure services, and verify optional external connections separately rather than assuming they are private.</p>
       </article>
       <article class="latest-release-card">
             <div class="latest-release-card-icon"><i class="bi bi-diagram-2"></i></div>
@@ -51,6 +51,14 @@ Enterprise networking for Simple Chat involves:
 - **Virtual Networks (VNets)**: Isolated network environments  
 - **Subnets**: Segmented network spaces for different components
 - **Private DNS Zones**: Internal name resolution
+
+{% include media.html id="slide-networking" %}
+
+This is a **configured reference pattern**, not the default topology or a
+promise that every optional service and external connection has a private
+path. Verify private-endpoint support, DNS, routing, and cloud availability
+for each enabled dependency. The Commercial and Government diagrams below
+retain the concrete deployment and segmentation details.
 
 ### Networking in Azure Commercial
 

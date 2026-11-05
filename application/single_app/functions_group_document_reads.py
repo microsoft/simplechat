@@ -20,12 +20,14 @@ from functions_document_queries import (
 )
 from functions_documents import (
     ALLOWED_DOCUMENT_SORT_FIELDS,
+    _document_with_current_bookkeeping,
     _document_revision_sort_key,
     build_workspace_tags_from_counts,
     sanitize_tags_for_filter,
     select_current_documents,
     sort_documents,
 )
+from functions_document_status import is_document_processing_complete
 from functions_group import (
     find_group_by_id,
 )
@@ -256,6 +258,10 @@ def get_group_document_read_metadata(user_id, group_id, document_id, *, include_
     if not records:
         raise GroupDocumentReadError("Document not found or access denied.", 404)
     payload = _project_group_document(records[0], group_id, {}, user_id=user_id)
+    if is_document_processing_complete(payload.get("status")):
+        bookkeeping = _document_with_current_bookkeeping(records[0])
+        payload["num_chunks"] = bookkeeping.get("num_chunks")
+        payload["status"] = bookkeeping.get("status")
     payload["is_current_version"] = is_current_group_document(records[0])
     # Held or pending documents project no origin_kind, so they never resolve a summary.
     if include_origin_summary and payload.get(ORIGIN_KIND_FIELD):

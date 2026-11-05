@@ -1,7 +1,7 @@
 # test_group_document_read_apis.py
 """
 Functional tests for explicitly scoped group document browsing.
-Version: 0.261.129
+Version: 0.261.400
 Implemented in: 0.261.128
 
 The real group read module, route registrar, group membership helpers, document
@@ -259,7 +259,12 @@ def environment(monkeypatch):
                 "is_pdf_file_name", "is_pdf_or_image_file_name",
                 "_get_document_scope_id", "_get_blob_container_name", "build_current_blob_path",
                 "get_document_blob_storage_info",
+                "_document_with_current_bookkeeping",
             }, document_namespace)
+            document_namespace.update({
+                "document_is_available": lambda document: "content_screening" not in document,
+                "_indexed_chunk_count_for_document": Mock(return_value=0),
+            })
             for name in (
                 "allowed_file", "create_document", "update_document", "delete_document_revision",
                 "build_document_download_response", "build_documents_zip_download_response",
@@ -539,6 +544,60 @@ def test_owned_approved_pending_and_held_relationships_match_across_reads(enviro
             assert row["owner_group_name"] == "Name of source-group"
     assert PRIVATE_TEXT not in listed.get_data(as_text=True)
     assert rows["pending"]["status"] == "Awaiting group share approval"
+
+
+def test_detail_repairs_legacy_bookkeeping_only_after_share_and_hold_projection(environment):
+    legacy = document(
+        "legacy", "source-group", shared_group_ids=["group-a,approved"],
+        status="Processing complete (metadata extraction warning)",
+        metadata_extraction_status="succeeded", num_chunks=0,
+    )
+    environment.source.records["legacy"] = legacy
+    count = environment.document_helpers["_indexed_chunk_count_for_document"]
+    count.return_value = 3
+    response = get(environment, "/api/group_documents/legacy")
+    assert response.status_code == 200
+    assert response.get_json()["num_chunks"] == 3
+    assert response.get_json()["status"] == "Processing complete - final metadata extracted"
+    assert count.call_args.args[0]["group_id"] == "source-group"
+    count.reset_mock()
+    legacy["shared_group_ids"] = ["group-a,not_approved"]
+    response = get(environment, "/api/group_documents/legacy")
+    assert response.get_json()["status"] == "Awaiting group share approval"
+    count.assert_not_called()
+    legacy["shared_group_ids"] = ["group-a,approved"]
+    legacy["content_screening"] = {"state": "pending_review", "scan_id": "hold", "source_revision": "1"}
+    response = get(environment, "/api/group_documents/legacy")
+    assert response.get_json()["content_screening"]["available"] is False
+    count.assert_not_called()
+
+
+def test_paged_lists_do_not_scan_search_to_repair_historical_zero_counts(environment):
+    environment.source.records["document-a"]["num_chunks"] = 0
+    count = environment.document_helpers["_indexed_chunk_count_for_document"]
+    count.return_value = 3
+    listed = get(environment, page_size=1)
+    assert listed.status_code == 200
+    assert listed.get_json()["documents"][0]["num_chunks"] is None
+    count.assert_not_called()
+    detail = get(environment, "/api/group_documents/document-a")
+    assert detail.get_json()["num_chunks"] == 3
+    assert count.call_count == 1
+    listed = get(environment, page_size=1)
+    assert listed.get_json()["documents"][0]["num_chunks"] is None
+    assert count.call_count == 1
+    assert environment.source.records["document-a"]["num_chunks"] == 0
+
+
+def test_known_current_zero_is_not_replaced_by_unknown_or_queried(environment):
+    source = environment.source.records["document-a"]
+    source.update(num_chunks=0, indexed_chunk_count_version=source["version"])
+    count = environment.document_helpers["_indexed_chunk_count_for_document"]
+    listed = get(environment, page_size=1)
+    detail = get(environment, "/api/group_documents/document-a")
+    assert listed.get_json()["documents"][0]["num_chunks"] == 0
+    assert detail.get_json()["num_chunks"] == 0
+    count.assert_not_called()
 
 
 def test_versions_authorize_target_and_each_revision_independently(environment):

@@ -10,6 +10,12 @@ audience: user
 
 Group workspaces are shared spaces for team documents and reusable AI assets. This guide helps you find or create a group, select it, and use the available workspace tabs.
 
+{% include media.html id="slide-group-workspaces" %}
+
+Choose membership and management roles before adding shared knowledge.
+Being able to use a group's documents is different from managing its
+members, files, agents, or workflows; the steps below retain those distinctions.
+
 {% include media.html type="video"
                       title="Manage group workspaces walkthrough"
                       poster="video-posters/guide-manage-group-workspaces.png"

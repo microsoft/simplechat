@@ -4,6 +4,7 @@ title: "Guides"
 description: "Task-oriented guides for getting work done in SimpleChat."
 section: "Guides"
 audience: user
+version: "0.261.398"
 ---
 
 ## Start with a task
@@ -11,6 +12,11 @@ audience: user
 These guides focus on what you are trying to accomplish, why the task is useful, and what to verify when you are done. They now include the former tutorial and how-to content so every task guide lives under one URL space.
 
 Use this section when you want momentum first: each page is a practical path through one capability, with enough context to be useful and not so much detail that onboarding stalls. If you need conceptual background, switch to the explanation pages. If you need exact settings or route details, switch to the reference pages.
+
+Saved **workflows** are repeatable automations that you create and run. The
+application's internal upload, content-check, and grounded-request pipelines are
+different: see [Application pipelines and concepts](#application-pipelines-and-concepts)
+for those explanations.
 
 ## Getting started
 
@@ -42,14 +48,20 @@ Use this section when you want momentum first: each page is a practical path thr
 | [Add documents]({{ '/guides/add-documents/' | relative_url }}) | Add documents to SimpleChat workspaces and validate that they are available for grounded answers. | Users |
 | [Use tags in chat]({{ '/guides/use-tags-in-chat/' | relative_url }}) | Filter workspace documents by tag before asking grounded questions. | Users |
 | [Use tags on conversations]({{ '/guides/use-tags-on-conversations/' | relative_url }}) | Organize conversation work by tagging the documents and document sets that drive the chat. | Users |
+| [Use prompts in chat]({{ '/guides/use-prompts-in-chat/' | relative_url }}) | Reuse saved instructions while keeping the message, selected context, and model choice visible. | Users |
+| [Read and discuss saved Analyze results]({{ '/guides/analyze-results/' | relative_url }}) | Review findings, evidence, coverage, and limitations, then discuss the saved result without claiming a fresh source pass. | Users |
 | [Export a conversation]({{ '/guides/export-a-conversation/' | relative_url }}) | Download one or more conversations as JSON, Markdown, or PDF. | Users |
 | [Fork a conversation]({{ '/guides/fork-a-conversation/' | relative_url }}) | Branch an existing chat so you can explore a different direction without changing the original thread. | Users |
+| [Reference and send between conversations]({{ '/guides/reference-and-send-conversations/' | relative_url }}) | Reuse accessible conversation context or hand work to another conversation with the intended destination visible. | Users |
 | [Collaborate in a conversation]({{ '/guides/collaborate-in-a-conversation/' | relative_url }}) | Invite others into a shared chat, use mentions, and approve participant-generated files. | Users |
 | [Lock workspace scope in chat]({{ '/guides/lock-workspace-scope/' | relative_url }}) | Keep a conversation tied to the same selected workspaces after grounded answers. | Users |
 | [Use deep research]({{ '/guides/use-deep-research/' | relative_url }}) | Ask chat to perform deeper evidence review for URLs and sources in a message. | Users |
 | [Use web search]({{ '/guides/use-web-search/' | relative_url }}) | Ground an answer in current public web results, and see exactly what leaves SimpleChat when you do. | Users |
 | [Review pasted URLs]({{ '/guides/review-pasted-urls/' | relative_url }}) | Use URL Access to review links included in the current chat message. | Users |
 | [Generate images]({{ '/guides/generate-images/' | relative_url }}) | Use the chat Image control to request AI-generated images. | Users |
+| [Review and edit orchestration plans]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}) | Inspect proposed source and tool operations before approving a plan. | Users |
+| [Create files with orchestration]({{ '/guides/create-files-with-orchestration/' | relative_url }}) | Ask for a deliverable, review the plan, and inspect the generated file rather than treating generation as verification. | Users |
+| [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}) | Understand which identity accesses Microsoft 365 and when an operation needs approval. | Users |
 | [Merge files in chat]({{ '/guides/merge-files/' | relative_url }}) | Combine several CSV or Excel files into one CSV or Excel file, even when their columns differ. | Users |
 
 ## Documents and workspaces
@@ -60,7 +72,7 @@ Use this section when you want momentum first: each page is a practical path thr
 | [Create a file sync]({{ '/guides/create-a-file-sync/' | relative_url }}) | Connect an external file source so SimpleChat can import workspace documents. | Workspace users |
 | [Connect personal models in V2]({{ '/guides/personal-model-endpoints/' | relative_url }}) | Configure your own model resources and verify saved chat models without opening classic pages. | Workspace users |
 | [Manage group workspaces]({{ '/guides/manage-group-workspaces/' | relative_url }}) | Use group workspaces for shared documents, prompts, agents, actions, and workflows. | Workspace users |
-| [Use public workspaces]({{ '/guides/use-public-workspaces/' | relative_url }}) | Browse and manage shared public workspace content when your tenant enables it. | Workspace users |
+| [Use public workspaces]({{ '/guides/use-public-workspaces/' | relative_url }}) | Browse curated content shared with signed-in application users, with management rights kept separate. | Workspace users |
 | [Review approval requests]({{ '/guides/review-approval-requests/' | relative_url }}) | Find, approve, or deny requests that need reviewer action. | Workspace users |
 | [Classify documents]({{ '/guides/classify-documents/' | relative_url }}) | Set up document classification and use it to organize uploads, filter content, and improve team workflows. | Workspace users |
 
@@ -87,12 +99,26 @@ Use this section when you want momentum first: each page is a practical path thr
 
 ## Automation
 
+Use these guides for saved, repeatable workflow definitions and their runs.
+Reading a stored result explains a past run; it does not rerun its sources.
+
 | Guide | What you will do | Audience |
 | --- | --- | --- |
 | [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}) | Save a repeatable multi-step task that can run manually or on a schedule. | Workflow owners |
 | [Trigger a workflow]({{ '/guides/trigger-a-workflow/' | relative_url }}) | Run a workflow now, schedule future runs, and inspect run activity. | Workflow owners |
 | [Ask about workflow results]({{ '/guides/ask-about-workflow-results/' | relative_url }}) | Ask chat about a finished workflow run's stored result without running it again. | Workflow owners |
-| [Application workflows]({{ '/reference/application-workflows/' | relative_url }}) | Review the workflow model, concepts, and reference details. | Workflow owners |
+
+## Application pipelines and concepts
+
+These pages explain how the application works rather than how to author an
+automation. Use them when diagnosing ingestion, understanding a grounded answer,
+or deciding which services and controls a capability requires.
+
+| Explanation | What it covers | Audience |
+| --- | --- | --- |
+| [Application workflows]({{ '/reference/application-workflows/' | relative_url }}) | Internal ingestion, configurable content checks, and the eight-stage grounded request with its separate data-use qualification. | Users, admins, and developers |
+| [Architecture]({{ '/explanation/architecture/' | relative_url }}) | Application, identity, data, AI-service, and optional outbound-connection boundaries. | Admins and developers |
+| [Feature guidance]({{ '/explanation/feature_guidance/' | relative_url }}) | Capability dependencies, rollout readiness, and operating responsibilities. | Admins |
 
 ## Deployment operations
 

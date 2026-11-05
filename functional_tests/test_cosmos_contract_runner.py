@@ -1,7 +1,7 @@
 # test_cosmos_contract_runner.py
 """Functional tests for portable, isolated Cosmos contract subprocess execution.
 
-Version: 0.261.401
+Version: 0.261.402
 Implemented in: 0.261.399
 
 The full selection must survive Windows command limits without changing node
