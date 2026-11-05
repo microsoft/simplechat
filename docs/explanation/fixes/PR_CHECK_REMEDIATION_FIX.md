@@ -1,10 +1,10 @@
 # Shared PR check remediation
 
-Version: **0.261.402**, tracked in `application/single_app/config.py`.
+Version: **0.261.403**, tracked in `application/single_app/config.py`.
 
 Fixed/Implemented in version: **0.261.399**; current-base integration and
 authorized staging CI setup in **0.261.400**; pinned per-session smoke onboarding
-in **0.261.401**.
+in **0.261.401**; dependency-base synchronization in **0.261.403**.
 
 ## Issue and root causes
 
@@ -30,6 +30,43 @@ failures rather than identifying a separate defect in every PR.
 The retired Azure tenant was a separate live-environment problem. It does not
 explain these network-blocked fixture failures or the GitHub CodeQL
 configuration conflict.
+
+## Dependency-base synchronization (0.261.403)
+
+The refreshed V2 base `05bc8791980c5036be9e7e35feb443f7db367bf7` includes
+the consolidated dependency updates from #1885. Merging that base into the
+remediation branch preserves its upgraded application/development pins and
+immutable workflow action references. Both branches independently used
+`0.261.402`, so the combined application version advances to `0.261.403`.
+
+The automatic merge carries the setup-python, setup-node and upload-artifact
+updates into `staging-ui-smoke.yml`; the removed deployment-capable
+`staging-azd-ui-tests.yml` is not restored. The validation-only authentication,
+onboarding, cleanup and PNG-only artifact policies remain unchanged. CodeQL
+retains the full branch/schedule coverage while adopting the base's pinned
+checkout and analysis actions. This merge changes no Azure configuration or
+repository scanning mode and does not deploy an application.
+
+The pre-synchronization head `343dabfb84e07c453f72d8a013eeb0376a3bcd18`
+passed all 13 GitHub checks and the complete 1,926-test/431-subtest selection on
+Windows and Ubuntu. Those results are historical, not proof of the upgraded
+dependency combination. Validation of the merged tree includes the real
+dependency compatibility probes, workflow contracts and complete guarded
+Cosmos selection; exact results are recorded in [#1877](https://github.com/microsoft/simplechat/pull/1877).
+
+Local merged-tree validation used an isolated Python 3.12 environment without
+inherited system packages: 84 focused dependency/CI tests, three optimized
+runner tests, 15 Node onboarding guards, five Snowflake checks and 28 route
+policy checks passed. The inventory still has 1,086 owners, 424 doubles and
+zero review gaps. Actionlint passes all eight merged workflows; documentation
+coverage and quality pass 13 checks.
+
+The initial dependency download encountered an empty cached artifact. Fresh
+downloads retained normal TLS and hash verification. Restoring the declared
+`PyMeta3` transitive dependency, as in the upstream validation, allowed the
+unchanged merged manifests and `pip check` to pass. No dependency pin was
+changed to accommodate the local environment. The full contract result for the
+new head must come from its fresh PR run, not the older green checkpoint.
 
 ## Technical changes
 
