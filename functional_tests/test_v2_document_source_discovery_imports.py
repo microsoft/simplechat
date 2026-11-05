@@ -1,7 +1,7 @@
 # test_v2_document_source_discovery_imports.py
 """Cold document-source discovery and route failures against real configuration.
 
-Version: 0.261.404
+Version: 0.261.407
 Implemented in: 0.261.400
 DAI-first discovery and source fallback implemented in: 0.261.404
 

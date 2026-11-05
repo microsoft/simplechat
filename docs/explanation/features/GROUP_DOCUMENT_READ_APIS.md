@@ -1,4 +1,4 @@
-# Group Document Read APIs (v0.261.129)
+# Group Document Read APIs (v0.261.407)
 
 ## Overview
 
@@ -107,18 +107,23 @@ Responses are private and non-cacheable. Provider failures are logged using
 ## Read architecture and limitations
 
 `functions_group_document_reads.py` implements the strict read boundary.
-Explicit reads deliberately use the existing source-container ownership/share
-query, regardless of access-index readiness. A complete-looking index can still
-omit a newly shared document or its current revision, so hydrating index hits
-cannot establish complete counts or facets. Legacy list and tag reads retain
-their existing index/source switch.
+Index-first discovery was implemented in version **0.261.407**, tracked in
+`application/single_app/config.py`. Explicit lists, facets, tags, and current
+document counts use the maintained document access index when its schema,
+backfill, and repair checks permit reads. They load current source metadata
+only for those candidate IDs, in bounded batches, before screening projection
+and filtering. Incoming shares remain subject to the source relationship.
 
-The source query materializes the full scoped set before applying explorer
-queries. Final revalidation uses one scoped ID-batch query per requested group,
-not one source point read per result. Cleared screening records still require
-their independent release-proof reads. This favors correct authorization and
-complete results over access-index latency; no large-workspace performance
-benchmark or live Azure deployment is claimed.
+An unready, incompatible, or failed index uses the existing scoped
+ownership/share query. A healthy empty index is an empty result; reads do not
+enumerate all source documents to check the index independently. Existing
+background backfill/repair and cache invalidation maintain the projection.
+Redis being unavailable still permits uncached index reads.
+
+Final response revalidation and independent screening release-proof reads
+remain. Known-ID details and version history retain their current source reads.
+This avoids full-container discovery on the indexed path, not all source I/O;
+no live Azure RU or latency benchmark is claimed.
 
 ### Document identity invariant
 
