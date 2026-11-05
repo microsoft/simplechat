@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.407)**
+### **(v0.261.410)**
 
 #### New Features
 
@@ -12,6 +12,38 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Preserved Custom/APIM base paths, authentication headers, and request aliases. MAI keeps its native Chat Completions contract even when the shared connection prefers Responses for compatible OpenAI-style models.
     *   Added the verified MAI profile, generation limits, token audience, and setup guidance without changing existing chat, planner, image, or embedding defaults.
     *   (Ref: `model_endpoint_clients.py`, `functions_model_endpoint_runtime.py`, `functions_model_capabilities.py`, `ModelConnectionsManager.tsx`, `model_capabilities.json`, [AI connection configuration]({{ '/guides/configure-ai-connections/' | relative_url }}#microsoft-mai-text-models), [Microsoft MAI Connection Compatibility Fix](fixes/MICROSOFT_MAI_MODEL_CONNECTIONS_FIX.md))
+
+### **(v0.261.408)**
+
+#### Bug Fixes
+
+*   **Excel Comment Contents And Correct Thread Counts**
+    *   Supplies actual native comment records and saved cell context to chat instead of only counts and shortened relevance excerpts. Reviewer requests remain separate from worksheet values.
+    *   Distinguishes genuine legacy notes, threaded roots/replies, and identifiable compatibility copies so mirrored comments do not inflate counts.
+    *   Existing retained originals can be inspected without re-uploading; missing formula caches remain unavailable rather than becoming zero.
+    *   (Ref: `functions_excel_accessibility.py`, `functions_excel_inventory.py`, `functions_search_service.py`, `route_backend_chats.py`, `docs/explanation/fixes/EXCEL_COMMENT_CONTENT_AND_TABLE_HEADERS_FIX.md`)
+
+#### New Features
+
+*   **Scalable, Table-Aware Saved Excel Inspection**
+    *   Discovers independent named tables and ordinary cell blocks with their own ranges, title/header rows, and source coordinates across worksheets.
+    *   Keeps compact document metadata while full native inventories use private, revision-bound pages. Analytical selection and durable replay retain table/range/header context.
+    *   Adds saved properties, links/validation, readable chart/object content, and configured Office-image analysis with available Excel anchors. Formulas, macros, and external links are never executed/refreshed.
+    *   (Ref: `excel_workbook_reader.py`, `tabular_processing_plugin.py`, `functions_tabular_generated_exports.py`, `docs/explanation/features/EXCEL_NATIVE_INSPECTION.md`)
+
+#### User Interface Enhancements
+
+*   **Workbook Citation Tables And Bounded Record Navigation**
+    *   Identifies the selected worksheet/table and actual header/row locations, with table selection, record paging, record jumps, keyboard navigation, and retryable selection errors.
+    *   Uses workbook/CSV evidence labels instead of image wording and keeps the originally cited passage independent of preview navigation.
+    *   (Ref: `EnhancedCitationViewer.tsx`, `route_enhanced_citations.py`, `docs/guides/inspect-excel-workbooks.md`)
+
+#### Breaking Changes
+
+*   **Legacy Queued Workbook Replay Requires Restart**
+    *   Pending workbook computations using v1 worksheet-header descriptors no longer resume under changed table/header semantics.
+    *   **Migration**: Start a new computation to pin the intended worksheet/table/range and header. Existing completed exports are unchanged; CSV replay compatibility is retained.
+    *   (Ref: `functions_tabular_generated_exports.py`, versioned workbook source descriptors)
 
 ### **(v0.261.392)**
 

@@ -4,7 +4,7 @@ title: "Configure AI connections"
 description: "Configure shared AI resources once and choose independent chat, image, and embedding defaults."
 section: "Guides"
 audience: admin
-version: "0.261.407"
+version: "0.261.410"
 ---
 
 ## What this does
@@ -100,7 +100,7 @@ mislabeling them as direct OpenAI.
 
 ### Microsoft MAI text models
 
-Implemented in version: **0.261.407**, with the version update in
+Implemented in version: **0.261.410**, with the version update in
 `application/single_app/config.py`.
 
 Microsoft is the model publisher, not a new connection provider. Create one

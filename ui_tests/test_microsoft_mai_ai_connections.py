@@ -1,8 +1,8 @@
 # test_microsoft_mai_ai_connections.py
 """
 UI regression coverage for native Microsoft MAI connection configuration.
-Version: 0.261.407
-Implemented in: 0.261.407
+Version: 0.261.410
+Implemented in: 0.261.410
 
 The existing Azure Playwright-ready fixture serves the built V2 application and
 intercepts every API. These workflows never contact the beta app, acquire model

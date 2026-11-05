@@ -1,6 +1,6 @@
 # Microsoft MAI Model Connection Compatibility Fix
 
-Fixed/Implemented in version: **0.261.407**.
+Fixed/Implemented in version: **0.261.410**.
 The application version update is in `application/single_app/config.py`.
 
 ## Issue and root cause

@@ -5,7 +5,7 @@ description: "Describe model strengths, manage shared profiles, and influence pe
 section: "Administration"
 audience: admin
 admin_tab: model-catalog
-version: "0.261.407"
+version: "0.261.410"
 ---
 
 # Model Catalog
@@ -87,7 +87,7 @@ workflow. One profile can describe several deployments. Its immutable identity
 does not replace the model's deployment name or request identifier.
 
 Explicit model capability overrides take precedence over endpoint overrides and
-profile declarations. Since **0.261.407**, explicitly choosing a built-in model in
+profile declarations. Since **0.261.410**, explicitly choosing a built-in model in
 the V2 connection editor also fills **Catalog model ID** from that verified model
 and the underlying model name on native Azure connections.
 The deployment/request name, Custom gateway route, authentication, publication,

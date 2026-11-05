@@ -1,7 +1,7 @@
 # test_group_document_read_apis.py
 """
 Functional tests for explicitly scoped group document browsing.
-Version: 0.261.400
+Version: 0.261.407
 Implemented in: 0.261.128
 
 The real group read module, route registrar, group membership helpers, document
@@ -164,7 +164,9 @@ def environment(monkeypatch):
             network = Mock(side_effect=AssertionError("No network access in read API tests."))
             scoped.setattr(socket, "create_connection", network)
             scoped.setattr(socket.socket, "connect", network)
-            index_settings.upsert_item(_succeeded_backfill_state())
+            fallback_state = _succeeded_backfill_state()
+            fallback_state["status"] = "running"
+            index_settings.upsert_item(fallback_state)
             groups = {
                 group_id: {
                     "id": group_id, "name": f"Name of {group_id}", "status": "active",
@@ -679,7 +681,7 @@ def test_equal_family_ids_in_different_origin_groups_do_not_collapse(environment
 
 
 @pytest.mark.parametrize("index_ready", [False, True])
-def test_strict_reads_are_complete_when_index_is_stale_or_missing(environment, index_ready):
+def test_reads_trust_healthy_index_and_fall_back_when_unready(environment, index_ready):
     seed_index(environment)
     set_index_ready(environment, index_ready)
     old = environment.source.records["document-a"]
@@ -695,6 +697,15 @@ def test_strict_reads_are_complete_when_index_is_stale_or_missing(environment, i
     facets = get(environment, READ_PATHS[1])
     tags = get(environment, READ_PATHS[2])
     assert listed.status_code == 200
+    if index_ready:
+        assert listed.get_json()["documents"] == []
+        assert facets.get_json()["total"] == 0
+        assert facets.get_json()["by_tag"] == {}
+        assert environment.index_container.queries
+        assert all(
+            "@document_ids" in query for query, _parameters, _kwargs in environment.source.queries
+        )
+        return
     assert [row["id"] for row in listed.get_json()["documents"]] == ["new-current", "new-share"]
     assert listed.get_json()["total_count"] == 2
     assert facets.get_json()["total"] == 2

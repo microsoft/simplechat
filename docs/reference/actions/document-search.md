@@ -52,10 +52,29 @@ From **0.261.399**, workspace Excel files also expose native workbook properties
 
 - Choose which parts to return with `sections` (`accessibility`, `style`, `issues`); all are returned by default.
 - Pass `page_number` to also get that page, slide or Excel indexed evidence segment's stored text. Excel segment numbers are not physical print-page numbers.
-- Chat uploads are not supported; add the file to a workspace. Documents uploaded before this data was extracted need to be re-uploaded.
+- The stored workspace report does not grant access to chat uploads. For an existing workspace Excel file, retained active source bytes can be inspected on demand without re-uploading; unavailable originals need the normal re-upload/reprocessing workflow.
 - The issues list is heuristic. It is not a formal WCAG, Section 508, or PDF/UA conformance check. To apply your own rules, write them into the agent's instructions and have it compare them with the returned values.
 
 See [Document accessibility, structure, and comment extraction](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION.md) for what is extracted for each file type.
+
+### Paged Excel inspection
+
+Implemented in version: **0.261.408** (`application/single_app/config.py`).
+Use `native_section` to request `comments`, `tables`, `objects`,
+`property_records`, `custom_properties`, `extended_properties`, `defined_names`,
+`hyperlinks`, `validations`, or available `image_analyses`. The default is
+`comments`. `native_page_size` accepts 1–200 records, with a separate response
+byte bound. Follow `excel_inspection.page.next_cursor` using `native_cursor`
+while `has_more` is true. Explicit long JSON record fragments require their
+continuation before the record is complete.
+
+`sheet_name` and `cell_range` read an A1 range of at most 2,000 saved cells,
+including formula text/cache availability, without executing formulas.
+Compatibility copies of threaded comments are not extra genuine notes.
+Native evidence segment citations are not Excel print-page numbers.
+
+See [Inspect Excel workbooks]({{ '/guides/inspect-excel-workbooks/' | relative_url }})
+for table headers, saved values, and large-file workflows.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 

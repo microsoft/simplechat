@@ -5,7 +5,7 @@ description: "Configure shared chat, image, and embedding connections, independe
 section: "Administration"
 audience: admin
 admin_tab: ai-models
-version: "0.261.407"
+version: "0.261.410"
 ---
 
 
@@ -75,7 +75,7 @@ selected. A Foundry project URL is for project discovery, not this inference
 operation. Anthropic, Gemini and Custom dated Azure API contracts do not acquire
 Responses support from the switch.
 
-Since **0.261.407**, one native **Azure AI Foundry** resource/project connection
+Since **0.261.410**, one native **Azure AI Foundry** resource/project connection
 can serve OpenAI, Grok, and Microsoft **MAI-Thinking-1** models. Inference routes
 and default audiences are selected per model; the saved project endpoint stays
 available for discovery. MAI uses its native Chat Completions API even when the

@@ -1,7 +1,7 @@
 # test_v2_conversation_references.py
 """
 Browser regressions for V2 private conversation references (`~`), rail actions, and citations.
-Version: 0.261.381
+Version: 0.261.406
 Implemented in: 0.261.381
 
 Covers:
@@ -12,7 +12,7 @@ Covers:
 - Sending chat and orchestration plan requests with `conversation_references` without implicitly
   enabling `hybrid_search` or adding conversation IDs to `selected_document_ids`.
 - Rendering referenced conversation pills on sent user messages and in reply `Show sources`.
-- Rail row menu `Reference Conversation` (`Use in current conversation` and `Copy reference`) on
+- Flat rail row actions (`Use in this chat` and `Copy reference`) on
   eligible private conversations only.
 
 Run: python .\\ui_tests\\test_v2_conversation_references.py
@@ -362,14 +362,15 @@ def test_rail_reference_action_and_portable_paste_resolve_before_attaching(ref_p
     page, api = ref_page
     mount_chat(page, orchestration=True)
 
-    # Shared conversations do not offer Reference Conversation.
+    # Shared conversations do not offer private reference actions.
     page.get_by_role("button", name="Actions for Shared Team Sync", exact=True).click()
-    expect(page.get_by_role("button", name="Reference Conversation")).to_have_count(0)
+    expect(page.get_by_role("button", name="Use in this chat", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Copy reference", exact=True)).to_have_count(0)
     page.get_by_role("button", name="Actions for Shared Team Sync", exact=True).click()
 
-    # Active conversation disables "Use in current conversation".
+    # Active conversation disables "Use in this chat".
     page.get_by_role("button", name="Actions for Active Drafting Thread", exact=True).click()
-    expect(page.get_by_role("button", name="Use in current conversation", exact=True)).to_be_disabled()
+    expect(page.get_by_role("button", name="Use in this chat", exact=True)).to_be_disabled()
     page.get_by_role("button", name="Actions for Active Drafting Thread", exact=True).click()
 
     # Paste a portable conversation reference into the composer and verify resolution.

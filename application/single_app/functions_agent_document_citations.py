@@ -270,6 +270,7 @@ def _build_citation_from_document_payload(
         document_id=document_id,
         citation_id=citation_id,
         page_number=_resolve_location_number(citation_chunk.get('page_number'), chunk_sequence),
+        chunk_text=citation_chunk.get('chunk_text'),
         chunk_id=citation_chunk.get('chunk_id'),
         chunk_sequence=chunk_sequence,
         group_id=document_item.get('group_id'),

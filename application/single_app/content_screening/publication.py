@@ -2,6 +2,7 @@
 """Application-side projection of inspected canonical content."""
 
 import hashlib
+import io
 import json
 import mimetypes
 from urllib.parse import quote
@@ -171,6 +172,34 @@ def _remove_previous_raw_projection(document, scan, projection, storage):
     )
 
 
+def _tabular_publication_chunks(units, file_name, max_characters, *, include_native, schema_text=None):
+    chunks = publication_chunks([
+        ContentUnit("table-schema", table_schema_text(units) if schema_text is None else schema_text, {"kind": "schema"}),
+    ], max_characters)
+    if not include_native or not any(unit.locator.get("kind") == "excel_native" for unit in units):
+        return chunks
+    prefix = f"### Excel native inspection\nWorkbook: {file_name}\nSearch preview; complete records are in the native inventory.\n"
+    if len(prefix) >= max_characters:
+        prefix = "### Excel native inspection\n"
+    if len(prefix) >= max_characters:
+        raise ScreeningValidationError("The publication chunk size cannot fit the Excel native evidence marker.")
+    remaining = 1000000
+    for unit in units:
+        if unit.locator.get("kind") != "excel_native" or remaining <= len(prefix):
+            continue
+        preview = ContentUnit(unit.unit_id, unit.text[:remaining], unit.locator)
+        for chunk in publication_chunks([preview], max_characters - len(prefix)):
+            if remaining <= len(prefix):
+                break
+            text = prefix + chunk["chunk_text"][:remaining - len(prefix)]
+            chunks.append({
+                **chunk, "chunk_text": text, "chunk_sequence": len(chunks) + 1,
+                "end": chunk["start"] + len(text) - len(prefix),
+            })
+            remaining -= len(text)
+    return chunks
+
+
 def publish_document(document, units, scan, actor_id, *, storage):
     helpers = _document_helpers()
     subject = subject_from_document(document)
@@ -195,9 +224,14 @@ def publish_document(document, units, scan, actor_id, *, storage):
         max(1, helpers.get_embedding_usable_tokens(settings) // 4),
     )
     if structured_sheets(units):
-        chunks = publication_chunks([
-            ContentUnit("table-schema", table_schema_text(units), {"kind": "schema"}),
-        ], max_characters)
+        extension = "." + file_name.rsplit(".", 1)[-1].lower()
+        schema_text = None
+        if extension in {".xlsx", ".xlsm", ".xls"}:
+            schema_text = helpers._build_tabular_schema_summary(io.BytesIO(content), file_name, extension)
+        chunks = _tabular_publication_chunks(
+            units, file_name, max_characters, include_native=not scan.get("sanitized"),
+            schema_text=schema_text,
+        )
     else:
         chunks = publication_chunks(units, max_characters)
     if not chunks:

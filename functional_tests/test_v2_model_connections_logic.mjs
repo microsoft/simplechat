@@ -1,9 +1,9 @@
 // test_v2_model_connections_logic.mjs
 //
 // Runtime test for the V2 global model connection form logic.
-// Version: 0.261.407
+// Version: 0.261.410
 // Implemented in: 0.261.059; embeddings added in 0.261.106
-// Automatic Foundry routing and model presets: 0.261.407
+// Automatic Foundry routing and model presets: 0.261.410
 //
 // The classic connection editor decided which fields a provider and auth type needed by
 // toggling `d-none` across two dozen elements from three separate listeners, and reported

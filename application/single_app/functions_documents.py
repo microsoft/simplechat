@@ -39,6 +39,7 @@ from content_screening.extraction import (
     current_extraction,
     is_publication,
 )
+from content_screening.storage import ScreeningStorage
 from content_screening.service import (
     document_requires_screening,
     initial_document_marker,
@@ -65,6 +66,7 @@ from document_chunk_counts import (
     record_chunk_uploads,
     remember_verified_chunk_count,
 )
+from document_metadata_identity import document_family_identity
 from functions_document_provenance import (
     ORIGIN_FIELD_NAMES,
     ORIGIN_KIND_FIELD,
@@ -121,6 +123,12 @@ from functions_accessibility import (
     format_pptx_comment_block,
 )
 from functions_excel_accessibility import build_excel_evidence_chunks
+from excel_workbook_reader import ExcelWorkbookReader
+from functions_excel_inventory import (
+    EXCEL_INVENTORY_FIELD,
+    clear_excel_inventory_cache,
+    persist_excel_inventory,
+)
 from functions_document_transform_sources import (
     OFFICE_REFERENCE_MIME_TYPES,
     TEMPLATE_EXTENSIONS,
@@ -682,6 +690,7 @@ def _build_office_embedded_image_chunks(
     file_path,
     settings,
     update_callback,
+    native_media_metadata=None,
 ):
     """Analyze images embedded in an Office file and return placeable content blocks.
 
@@ -716,11 +725,13 @@ def _build_office_embedded_image_chunks(
 
     try:
         temp_image_dir = tempfile.mkdtemp(prefix='office_images_')
+        extra_arguments = {"native_media_metadata": native_media_metadata} if native_media_metadata is not None else {}
         embedded_images, image_diagnostics = extract_office_embedded_images_with_diagnostics(
             file_path,
             temp_image_dir,
             min_pixels=min_pixels,
             max_images=max_images,
+            **extra_arguments,
         )
 
         candidate_count = image_diagnostics.get('candidates', 0)
@@ -818,6 +829,10 @@ def _build_office_embedded_image_chunks(
             slide_number = embedded_image.get('slide_number')
             if slide_number:
                 location_label = f" on slide {slide_number}"
+            elif embedded_image.get('sheet_name'):
+                location_label = f" on worksheet {embedded_image['sheet_name']}"
+                if embedded_image.get('cell'):
+                    location_label += f" at {embedded_image['cell']}"
 
             heading = (
                 f"### Embedded image {image_index} of {total_images}: "
@@ -829,6 +844,11 @@ def _build_office_embedded_image_chunks(
                 'word_offset': embedded_image.get('word_offset'),
                 'position_known': bool(embedded_image.get('position_known')),
                 'name': embedded_image.get('name'),
+                **({
+                    'sheet_name': embedded_image.get('sheet_name'), 'cell': embedded_image.get('cell'),
+                    'object_id': embedded_image.get('object_id'), 'media_part': embedded_image.get('media_part'),
+                    'placements': embedded_image.get('placements') or [],
+                } if native_media_metadata is not None else {}),
             })
             analyzed_count += 1
 
@@ -1876,22 +1896,7 @@ def _get_search_client(group_id=None, public_workspace_id=None):
 
 
 def _get_document_family_key(document_item):
-    revision_family_id = document_item.get("revision_family_id")
-    if revision_family_id:
-        return revision_family_id
-
-    scope_value = (
-        document_item.get("public_workspace_id")
-        or document_item.get("group_id")
-        or document_item.get("user_id")
-        or "unknown"
-    )
-    document_identity = (
-        document_item.get("xsd_revision_identity")
-        if document_item.get("document_kind") == "xml_schema"
-        else document_item.get("file_name", "")
-    )
-    return f"legacy::{scope_value}::{document_identity}"
+    return document_family_identity(document_item)
 
 
 def _document_revision_sort_key(document_item):
@@ -5954,7 +5959,7 @@ def get_document_record(user_id, document_id, group_id=None, public_workspace_id
     return _normalize_document_enhanced_citations(document_item)
 
 
-def get_ordered_document_chunks(document_id, user_id, group_id=None, public_workspace_id=None, max_chunks=None):
+def get_ordered_document_chunks(document_id, user_id, group_id=None, public_workspace_id=None, max_chunks=None, *, native_only=False):
     """Return ordered chunk records for a document after access has been verified."""
     document_item = get_document_record(
         user_id=user_id,
@@ -5991,18 +5996,24 @@ def get_ordered_document_chunks(document_id, user_id, group_id=None, public_work
         'title',
         'chunk_summary',
     ]
+    escaped_document_id = str(document_id).replace("'", "''")
     search_kwargs = {
         'search_text': '*',
-        'filter': f"document_id eq '{document_id}'",
+        'filter': f"document_id eq '{escaped_document_id}'",
         'select': ','.join(select_fields),
     }
     if max_chunks is not None:
         search_kwargs['top'] = max(1, int(max_chunks))
+    if native_only:
+        search_kwargs.update(search_text='"Excel native inspection"', search_fields=['chunk_text'])
 
     try:
         results = list(search_client.search(**search_kwargs))
-    except Exception as e:
-        print(f"Error retrieving chunks for document {document_id}: {e}")
+    except Exception as error:
+        log_event(
+            "[DOCUMENT_METADATA] Document evidence retrieval failed.",
+            level=logging.WARNING, extra={"document_id": document_id, "error_type": type(error).__name__},
+        )
         raise
 
     ordered_chunks = []
@@ -6037,7 +6048,7 @@ def get_ordered_document_chunks(document_id, user_id, group_id=None, public_work
     )
     return assert_document_chunks_available(
         ordered_chunks, document_item, user_id, group_id, public_workspace_id,
-        expected_chunk_count=document_item.get("num_chunks") if max_chunks is None else None,
+        expected_chunk_count=document_item.get("num_chunks") if max_chunks is None and not native_only else None,
     )
 
 def get_documents(user_id, group_id=None, public_workspace_id=None):
@@ -6373,8 +6384,12 @@ def delete_document(
             raise PermissionError("Document access denied.")
         if strict and (not expected_etag or document_item.get("_etag") != expected_etag):
             raise ScreeningConflictError()
-        if SCREENING_FIELD in document_item:
+        if (
+            SCREENING_FIELD in document_item or EXCEL_INVENTORY_FIELD in document_item
+            or str(document_item.get("file_name") or "").lower().endswith((".xlsx", ".xlsm", ".xls"))
+        ):
             prepare_document_deletion(document_item, user_id)
+            clear_excel_inventory_cache(subject_from_document(document_item))
             document_item = cosmos_container.read_item(item=document_id, partition_key=document_id)
 
         # Log document deletion transaction before deletion
@@ -10523,40 +10538,39 @@ def _build_tabular_schema_summary(temp_file_path, original_filename, file_ext):
         )
 
     if file_ext in ('.xlsx', '.xls', '.xlsm'):
-        engine = 'openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
-        excel_file = pandas.ExcelFile(temp_file_path, engine=engine)
-        visible_sheet_names = excel_file.sheet_names[:TABULAR_SCHEMA_SUMMARY_MAX_SHEETS]
-        omitted_sheet_count = max(len(excel_file.sheet_names) - TABULAR_SCHEMA_SUMMARY_MAX_SHEETS, 0)
-        workbook_sections = []
-
-        for sheet_name in visible_sheet_names:
-            df_preview = excel_file.parse(
-                sheet_name,
-                keep_default_na=False,
-                dtype=str,
-                nrows=TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS,
+        with ExcelWorkbookReader(temp_file_path, extension=file_ext) as reader:
+            manifest = reader.build_manifest()
+            sheets = manifest["sheets"][:TABULAR_SCHEMA_SUMMARY_MAX_SHEETS]
+            tables = [table for sheet in sheets for table in sheet["tables"]][:20]
+            previews = reader.read_table_previews(tables, TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS)
+            workbook_sections = []
+            for table in tables:
+                columns = [column["name"] for column in table["columns"]]
+                df_preview = pandas.DataFrame(
+                    [record["values"] for record in previews[table["id"]]], columns=columns,
+                )
+                compact_columns = _compact_tabular_columns(columns)
+                preview_rows = _build_compact_tabular_preview(df_preview)
+                workbook_sections.append(
+                    f"Sheet: {_compact_tabular_schema_value(table['sheet'], max_chars=80)}\n"
+                    f"Table: {_compact_tabular_schema_value(table['name'], max_chars=100)}; "
+                    f"table_id={table['id']}; range={table['range']}; "
+                    f"header_row={table['header_row']}; header_status={table['header_status']}\n"
+                    f"Columns ({len(columns)}): {', '.join(compact_columns) if compact_columns else 'None'}\n"
+                    f"Preview (first {len(df_preview)} data rows; not the complete dataset):\n{preview_rows}"
+                )
+            sheet_summary = ", ".join(
+                _compact_tabular_schema_value(sheet["name"], max_chars=80) for sheet in sheets
             )
-            compact_columns = _compact_tabular_columns(df_preview.columns.tolist())
-            preview_rows = _build_compact_tabular_preview(df_preview)
-            workbook_sections.append(
-                f"Sheet: {_compact_tabular_schema_value(sheet_name, max_chars=80)}\n"
-                f"Columns ({len(df_preview.columns)}): {', '.join(compact_columns) if compact_columns else 'None'}\n"
-                f"Preview (first {min(len(df_preview), TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS)} rows):\n{preview_rows}"
+            omitted = manifest["table_count"] - len(tables)
+            return (
+                f"Tabular workbook: {original_filename}\n"
+                f"Sheets ({manifest['sheet_count']}): {sheet_summary or 'None'}\n"
+                f"Tables ({manifest['table_count']}): independent table/range headers; never assume one header per sheet.\n\n"
+                + "\n\n".join(workbook_sections)
+                + (f"\n\nAdditional tables not shown in this bounded schema preview: {omitted}." if omitted else "")
+                + f"\n\n{plugin_note}"
             )
-
-        sheet_summary = ", ".join(
-            _compact_tabular_schema_value(sheet_name, max_chars=80)
-            for sheet_name in visible_sheet_names
-        )
-        if omitted_sheet_count:
-            sheet_summary += f", ... +{omitted_sheet_count} more sheets"
-
-        return (
-            f"Tabular workbook: {original_filename}\n"
-            f"Sheets ({len(excel_file.sheet_names)}): {sheet_summary if sheet_summary else 'None'}\n\n"
-            + "\n\n".join(workbook_sections)
-            + f"\n\n{plugin_note}"
-        )
 
     raise ValueError(f"Unsupported tabular file type: {file_ext}")
 
@@ -10643,6 +10657,75 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
+def _enrich_excel_image_inventory(file_path, settings, update_callback, metadata, evidence, record_sink):
+    if not settings.get("enable_office_embedded_image_analysis", True):
+        metadata["image_analysis_summary"] = {"status": "disabled", "analyzed": 0}
+        return
+    blocks, count, engine, _ = _build_office_embedded_image_chunks(
+        file_path, settings, update_callback, native_media_metadata=metadata.get("image_locations") or {},
+    )
+    metadata["image_analysis_summary"] = {
+        "status": "generated" if count else "none_analyzed", "analyzed": count, "engine": engine,
+        "limitation": "Missing analysis is not proof of absent images; configured size/format/count limits still apply.",
+    }
+    remaining = max(0, 1000000 - sum(len(item["content"]) for item in evidence))
+    for block in blocks:
+        record = {
+            "type": "image_analysis", "sheet": block.get("sheet_name") or "(workbook)",
+            "cell": block.get("cell"), "object_id": block.get("object_id"),
+            "media_part": block.get("media_part"), "placements": block.get("placements") or [],
+            "text": block["content"], "analysis_engine": engine,
+            "source_kind": "configured_image_analysis_not_saved_alt_text",
+        }
+        record_sink("image_analyses", record)
+        content = f"### Excel native inspection\n{block['content']}"
+        if len(content) <= remaining:
+            evidence.append({
+                "content": content, "sheet_name": record["sheet"], "kind": "image_analyses",
+                "location": record.get("cell") or record.get("object_id") or "",
+            })
+            remaining -= len(content)
+        else:
+            metadata["coverage_notes"].append("Image-analysis search previews reached their budget; complete generated records remain in the native inventory.")
+
+
+def _extract_excel_native_inventory(document_id, user_id, temp_file_path, file_ext, group_id=None, public_workspace_id=None, update_callback=None):
+    """Keep full native records in revision-private storage, not the parent preview."""
+    capture = current_extraction(document_id)
+    settings = get_settings()
+
+    def enrich(metadata, evidence, sink):
+        _enrich_excel_image_inventory(temp_file_path, settings, update_callback, metadata, evidence, sink)
+
+    if capture is not None:
+        if capture.artifact_storage is None:
+            raise ScreeningError(code="screening_configuration_required")
+        return persist_excel_inventory(
+            temp_file_path, file_ext, subject=capture.subject,
+            storage=capture.artifact_storage, capture=capture,
+            enrich=enrich,
+        )
+    document = get_document_record(
+        user_id, document_id, group_id=group_id, public_workspace_id=public_workspace_id,
+    )
+    if document is None:
+        raise LookupError("Document not found or access denied.")
+    client = CLIENTS.get("storage_account_office_docs_client")
+    if client is None:
+        metadata, evidence = extract_office_accessibility_metadata(temp_file_path, file_ext)
+        metadata["inventory_storage"] = {"status": "unavailable", "reason": "native_storage_not_configured"}
+        log_event(
+            "[DOCUMENT_METADATA] Full Excel inventory storage is not configured.",
+            level=logging.WARNING, extra={"document_id": document_id},
+        )
+        return metadata, evidence, None
+    return persist_excel_inventory(
+        temp_file_path, file_ext, subject=subject_from_document(document),
+        storage=ScreeningStorage(client=client, container_name=storage_account_content_screening_container_name),
+        enrich=enrich,
+    )
+
+
 def process_tabular(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
     """Processes CSV, XLSX, or XLS files using pandas."""
     is_group = group_id is not None
@@ -10655,8 +10738,14 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
 
     native_chunks = []
     if file_ext in ('.xlsx', '.xlsm', '.xls'):
-        native_metadata, native_evidence = extract_office_accessibility_metadata(temp_file_path, file_ext)
+        native_metadata, native_evidence, inventory_reference = _extract_excel_native_inventory(
+            document_id, user_id, temp_file_path, file_ext,
+            group_id=group_id, public_workspace_id=public_workspace_id,
+            update_callback=update_callback,
+        )
         native_fields = {'accessibility_metadata': native_metadata}
+        if inventory_reference is not None:
+            native_fields[EXCEL_INVENTORY_FIELD] = inventory_reference
         for field in ('title', 'authors', 'keywords', 'language'):
             if native_metadata.get(field):
                 native_fields[field] = native_metadata[field]

@@ -1,8 +1,8 @@
 # test_microsoft_mai_model_connections.py
 """
 Functional tests for Microsoft MAI chat connections and gateway compatibility.
-Version: 0.261.407
-Implemented in: 0.261.407
+Version: 0.261.410
+Implemented in: 0.261.410
 
 Real sync/async SDKs and Semantic Kernel run against in-memory HTTP responses.
 Fresh normal and optimized interpreters block external network access. No Azure
@@ -78,7 +78,7 @@ def test_native_mai_contract_cannot_be_changed_to_responses(provider, api_type):
 
 
 def test_mai_catalog_has_verified_text_reasoning_tools_and_generation_capacity():
-    assert_app_version_at_least("0.261.407")
+    assert_app_version_at_least("0.261.410")
     model = {"modelName": "gateway-alias", "catalogModelId": "mai-thinking-1"}
     budget = resolve_model_token_budget(model, provider="new_foundry")
     capabilities = get_model_catalog_capabilities("MAI-Thinking-1")

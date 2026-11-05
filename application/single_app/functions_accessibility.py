@@ -30,7 +30,11 @@ from defusedxml.ElementTree import fromstring as defused_fromstring
 from pypdf import PdfReader
 
 from functions_appinsights import log_event
-from functions_excel_accessibility import extract_excel_accessibility_metadata
+from functions_excel_accessibility import (
+    extract_excel_accessibility_metadata,
+    format_excel_comment_for_chat,
+    normalize_excel_comments,
+)
 from functions_document_style import (
     build_legacy_doc_style_inventory,
     build_pptx_style_inventory,
@@ -2191,11 +2195,11 @@ def _extract_legacy_doc_accessibility(file_path):
     return cosmos_meta, formatting_events
 
 
-def extract_office_accessibility_metadata(file_path, file_ext=None):
+def extract_office_accessibility_metadata(file_path, file_ext=None, *, record_sink=None):
     """Dispatch native accessibility extraction for supported Word, PowerPoint and Excel files."""
     ext = (file_ext or os.path.splitext(str(file_path or ''))[1]).lower().strip()
     if ext in ('.xlsx', '.xlsm', '.xls'):
-        return extract_excel_accessibility_metadata(file_path, ext)
+        return extract_excel_accessibility_metadata(file_path, ext, record_sink=record_sink)
     try:
         if ext in ('.docx', '.docm', '.dotx'):
             return _extract_word_ooxml_accessibility(file_path, ext)
@@ -2266,10 +2270,26 @@ def format_accessibility_metadata_for_chat(accessibility_metadata):
 
     if fmt in ('XLSX', 'XLSM', 'XLS'):
         lines.append(f"- Saved workbook properties: {accessibility_metadata.get('properties') or {}}")
+        comments, normalized_counts = normalize_excel_comments(accessibility_metadata.get('comments') or [])
+        counts = accessibility_metadata.get('comment_summary') or normalized_counts
         lines.append(
             f"- Sheets: {accessibility_metadata.get('sheet_count', 'unknown')}; "
             f"observed native records: {accessibility_metadata.get('observed_counts') or {}}"
         )
+        lines.append(f"- Canonical comment counts (compatibility copies are not extra notes): {counts}")
+        if comments:
+            lines.append("- Reviewer feedback is distinct from the workbook's saved data and must not overwrite it.")
+            lines.extend(format_excel_comment_for_chat(record) for record in comments)
+        inventory = accessibility_metadata.get('inventory_coverage') or {}
+        if inventory.get('comments', {}).get('complete') is False:
+            lines.append("- The parent comment inventory is a preview; retrieve the paged native inventory for all records/full text.")
+        for table in accessibility_metadata.get('tables') or []:
+            lines.append(
+                f"- Table {table.get('name')} on {table.get('sheet')}: "
+                f"range={table.get('range')}; header_row={table.get('header_row')}; "
+                f"header_status={table.get('header_status')}; data_rows={table.get('row_count')}; "
+                f"table_id={table.get('id')}"
+            )
         for sheet in (accessibility_metadata.get('sheets') or [])[:10]:
             lines.append(
                 f"- Sheet {sheet.get('name')}: state={sheet.get('state')}; "
@@ -2278,7 +2298,7 @@ def format_accessibility_metadata_for_chat(accessibility_metadata):
         lines.append(f"- Inspection coverage: {accessibility_metadata.get('coverage', 'unknown')}")
         lines.extend(f"  * {note}" for note in accessibility_metadata.get('coverage_notes', []))
         lines.extend(format_style_inventory_for_chat(accessibility_metadata.get('style_inventory')))
-        lines.append("- Location-specific comments, objects and formatting are indexed as Excel native inspection evidence.")
+        lines.append("- Further location-specific comments, objects and formatting are available as Excel native inspection evidence.")
         lines.append("- Native inspection is not an accessibility conformance result; unavailable evidence is not proof of absence.")
         return '\n'.join(lines)
 

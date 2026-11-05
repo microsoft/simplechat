@@ -1,9 +1,9 @@
 // test_v2_model_catalog_logic.ts
 //
 // Runtime test for the V2 Model Catalog's behaviour-deciding helpers.
-// Version: 0.261.407
+// Version: 0.261.410
 // Implemented in: 0.261.258
-// Automatic model-name matching and browser origin fixture: 0.261.407
+// Automatic model-name matching and browser origin fixture: 0.261.410
 //
 // The V2 catalog is native React now, so the rules that used to live only in the classic
 // module -- which profiles a filter keeps, the order they list in, what a saved profile
