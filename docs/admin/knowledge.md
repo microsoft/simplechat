@@ -37,13 +37,15 @@ These settings decide what evidence enters the system and how it becomes searcha
 
 ### Web Search {#web-search-section}
 
-Web Search lets chat ground a single message in current public web results. SimpleChat does not call a search API directly. It calls an Azure AI Foundry agent that you create and configure, and that agent uses the Grounding with Bing Search tool to run the query and return results with citations.
+Web Search lets chat ground a single message in current public results. Existing installations use **Foundry Grounding with Bing Search** through a configured Foundry agent. Starting in **0.261.405**, V2 can instead use **Microsoft Web IQ**, a retrieval API whose passages and citations are supplied to the selected chat model. The search provider does not replace that model.
 
-Two things gate the capability, and both are required. `enable_web_search` turns it on, and `web_search_consent_accepted` records that an administrator acknowledged that Grounding with Bing Search moves data outside the Azure compliance boundary and operates under separate terms. Enabling the toggle without accepting the consent leaves the feature off.
+`enable_web_search` and the selected provider's separate consent are required. Foundry uses `web_search_consent_accepted`; Web IQ uses `web_iq_consent_accepted`. Accepting Foundry terms does not authorize Web IQ. Switching providers retains inactive connection values, but never falls back to the other provider on failure. Web IQ is V2-only; Government and custom-cloud deployments cannot use either public web-search provider.
 
 Only the user's current chat message is sent to the agent. Conversation history, workspace documents, attached file contents, and system prompts are never included in the outbound query. Decide your rollout policy on that basis, and use the notice settings below if you want users reminded of it in the composer.
 
-An agent ID is not optional. If it is missing, chat tells the user web search is unavailable rather than silently answering from training data, so a half-finished configuration fails loudly instead of quietly degrading.
+For Foundry, an agent ID is required. For Web IQ, configure an API key or an app-only Entra service principal bound to the Web IQ portal AppID. The AppID is distinct from the Entra client ID and is used only with Entra authentication. The service endpoint is fixed at `https://api.microsoft.ai/v3`. Billing-resource deployment alone does not finish portal onboarding.
+
+Web IQ can additionally discover News, Images, and Videos. These types default off and are not called for every search. News supplies textual passages. Images and Videos can supply descriptions and source-page citations in **Text-only** mode, or selected answer previews in **With media** mode. These controls do not affect uploaded or generated images. Captions and video summaries are provider metadata, not proof that SimpleChat viewed or transcribed the media; discovery also grants no reuse rights.
 
 ### URL Access {#url-access-section}
 
@@ -57,7 +59,23 @@ The Deep Research section belongs to the Web & Research tab. Use it with the adj
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Web Search via Foundry Agent | Adds web search through the configured Azure AI Foundry agent for approved chat flows. Requires accepted consent to take effect. | Off | `enable_web_search`; capability toggle |
+| Enable Web Search | Adds current public evidence through the selected provider, subject to its separate consent. | Off | `enable_web_search`; capability toggle |
+| Web Search Provider | Chooses Foundry Grounding with Bing Search or Microsoft Web IQ; Web IQ requires V2. | foundry | `web_search_provider` |
+| Web IQ consent | Records the administrator's separate authorization for the Microsoft-hosted Web IQ destination and terms. | Off | `web_iq_consent_accepted` |
+| Web IQ News | Makes news passages available to relevant current-announcement searches and Gather plans. | Off | `web_iq_news_enabled` |
+| Web IQ Images | Allows visual discovery as descriptions/source links, or selected answer media. Off prevents image searches. | off | `web_iq_image_mode`; off, text_only, with_media |
+| Web IQ Videos | Allows tutorial/video discovery as descriptions/source links, or selected preview/link cards. Off prevents video searches. | off | `web_iq_video_mode`; off, text_only, with_media |
+| Web IQ Endpoint | Identifies the fixed Microsoft-hosted API; custom destinations and credential-bearing redirects are not accepted. | https://api.microsoft.ai/v3 | `web_iq_endpoint` maps to `web_iq.endpoint` |
+| Web IQ Authentication | Uses an API key or an app-only Entra service principal; managed identity is not advertised as equivalent. | key | `web_iq_authentication_type` |
+| Web IQ API Key | Authenticates key-mode requests. This value is private and is never part of public bootstrap settings. | Empty | `web_iq_key` |
+| Web IQ Tenant ID | Selects the directory for app-only Entra authentication. | Empty | `web_iq_tenant_id` |
+| Web IQ Client ID | Identifies the Entra application bound in the Web IQ portal. | Empty | `web_iq_client_id` |
+| Web IQ Client Secret | Supplies the Entra application's credential; preserve the masked value to retain its existing secret. | Empty | `web_iq_client_secret` |
+| Web IQ AppID | Selects the portal application bound to the Entra client. Omitted from API-key requests. | Empty | `web_iq_app_id` |
+| Web IQ Language | Selects the two-letter retrieval language code. | en | `web_iq_language` |
+| Web IQ Region | Selects the two-letter retrieval region code. | US | `web_iq_region` |
+| Web IQ Result Limit | Bounds results across selected discovery types; must allow at least one result per selected type. | 10 | `web_iq_max_results`; 1-50, with smaller endpoint-specific limits |
+| Web IQ Passage Limit | Bounds each returned Web/News passage rather than requesting full-document access. | 3000 | `web_iq_max_length`; 1-3000 characters |
 | Show data notice to users when web search is used | Shows a dismissible banner above the chat composer while web search is active, so users know the message will leave the tenant. | Off | `enable_web_search_user_notice`; capability toggle |
 | Notice Text | The banner wording. Shown once per browser session, from the first time the user activates web search until they dismiss it. | N/A (runtime control) | `web_search_user_notice_text` |
 | Foundry Project Endpoint | Project endpoint format: https://<foundry-resource>.services.ai.azure.com/api/projects/<project-name> (not the inference endpoint). | N/A (runtime control) | `web_search_foundry_endpoint` |

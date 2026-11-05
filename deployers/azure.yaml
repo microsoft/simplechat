@@ -52,6 +52,7 @@ hooks:
         echo "========================================"
         echo "PRE-PROVISION: Validating prerequisites"
         echo "========================================"
+        python3 ./bicep/optional_services.py
         python3 ./bicep/validate_azd_prerequisites.py
     windows:
       shell: pwsh
@@ -59,6 +60,8 @@ hooks:
         Write-Host "========================================"
         Write-Host "PRE-PROVISION: Validating prerequisites"
         Write-Host "========================================"
+        python .\bicep\optional_services.py
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         python .\bicep\validate_azd_prerequisites.py
 
   postprovision:

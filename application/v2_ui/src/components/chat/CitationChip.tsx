@@ -16,6 +16,8 @@ import {
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { EnhancedCitationViewer } from './EnhancedCitationViewer';
 import { M365CitationChips } from './M365CitationChip';
+import { useWebCitation, WebProviderBadge } from './WebCitationCards';
+import { safeWebSourceUrl } from '../../lib/webCitations';
 import { GlassPanel } from '../ui/primitives';
 import type { CitationGroup, ParsedCitation } from '../../lib/citations';
 import type { Citation } from '../../lib/types';
@@ -160,6 +162,7 @@ function CitationDetail({
 
 export function CitationChip({ group }: { group: CitationGroup }) {
     const [active, setActive] = useState<ParsedCitation | null>(null);
+    const webCitation = useWebCitation(group.fileName);
 
     // A Microsoft 365 email, event or file resolves against the message's own records and
     // opens where it lives; it has no workspace passage to look up.
@@ -170,16 +173,19 @@ export function CitationChip({ group }: { group: CitationGroup }) {
     // Web citations point at a real URL, so they open directly rather than resolving a
     // stored passage that does not exist for them.
     if (group.kind === 'web') {
+        const url = safeWebSourceUrl(group.fileName);
+        if (!url) return <span className="text-xs text-text-3">Source unavailable</span>;
         return (
             <a
-                href={group.fileName}
+                href={url}
                 target="_blank"
                 rel="noopener noreferrer"
                 title={group.fileName}
                 className="mx-0.5 inline-flex max-w-[16rem] items-center gap-1 rounded-full border border-edge bg-surface-2 px-1.5 py-0.5 align-baseline text-[11px] text-accent hover:bg-surface-3"
             >
                 <ExternalLink size={10} className="shrink-0" />
-                <span className="truncate">{group.fileName.replace(/^https?:\/\//, '')}</span>
+                <span className="truncate">{webCitation?.title || group.fileName.replace(/^https?:\/\//, '')}</span>
+                {webCitation && <WebProviderBadge citation={webCitation} />}
             </a>
         );
     }

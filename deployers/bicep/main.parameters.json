@@ -2,6 +2,18 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
+    "webSearchProvider": { "value": "${WEB_SEARCH_PROVIDER=preserve}" },
+    "webIqResourceMode": { "value": "${WEB_IQ_RESOURCE_MODE=create}" },
+    "existingWebIqName": { "value": "${EXISTING_WEB_IQ_NAME=}" },
+    "existingWebIqResourceGroup": { "value": "${EXISTING_WEB_IQ_RESOURCE_GROUP=}" },
+    "existingWebIqSubscriptionId": { "value": "${EXISTING_WEB_IQ_SUBSCRIPTION_ID=}" },
+    "contentUnderstandingMode": { "value": "${CONTENT_UNDERSTANDING_MODE=preserve}" },
+    "contentUnderstandingLocation": { "value": "${CONTENT_UNDERSTANDING_LOCATION=}" },
+    "existingContentUnderstandingName": { "value": "${EXISTING_CONTENT_UNDERSTANDING_NAME=}" },
+    "existingContentUnderstandingResourceGroup": { "value": "${EXISTING_CONTENT_UNDERSTANDING_RESOURCE_GROUP=}" },
+    "existingContentUnderstandingSubscriptionId": { "value": "${EXISTING_CONTENT_UNDERSTANDING_SUBSCRIPTION_ID=}" },
+    "contentUnderstandingModels": { "value": "${CONTENT_UNDERSTANDING_MODELS=[]}" },
+    "optionalServicesDeploymentPrincipalId": { "value": "${OPTIONAL_SERVICES_DEPLOYMENT_PRINCIPAL_ID=}" },
 
     "location": {
       "value": "${AZURE_LOCATION}"
