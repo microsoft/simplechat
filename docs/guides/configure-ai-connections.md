@@ -4,7 +4,7 @@ title: "Configure AI connections"
 description: "Configure shared AI resources once and choose independent chat, image, and embedding defaults."
 section: "Guides"
 audience: admin
-version: "0.261.389"
+version: "0.261.410"
 ---
 
 ## What this does
@@ -98,6 +98,83 @@ its configured path and provide compatible metadata where its backend cannot be
 identified. Use the Azure OpenAI API contract for Azure endpoints rather than
 mislabeling them as direct OpenAI.
 
+### Microsoft MAI text models
+
+Implemented in version: **0.261.410**, with the version update in
+`application/single_app/config.py`.
+
+Microsoft is the model publisher, not a new connection provider. Create one
+**Azure AI Foundry** connection using the resource or project endpoint, then add
+its OpenAI, Grok, and Microsoft MAI deployments:
+
+```text
+https://<resource>.services.ai.azure.com
+https://<resource>.services.ai.azure.com/api/projects/<project>
+```
+
+For a native public Foundry endpoint, SimpleChat resolves the inference API for
+each selected model. OpenAI and Grok retain the OpenAI-compatible v1 surface,
+including the documented project prefix when a project endpoint is configured.
+**MAI-Thinking-1** uses the resource's `/mai/v1/chat/completions` operation.
+Anthropic models retain their messages API. You do not need separate connections
+or vendor-specific URL suffixes for models sharing that resource.
+
+The saved endpoint remains unchanged for deployment discovery. Native inference
+does not send a dated `api-version` query. **Use Responses API** is a preference
+for compatible OpenAI-style models; native MAI and Anthropic use their own supported
+APIs automatically. A shared Responses preference does not force MAI onto Responses.
+
+Discovery supplies underlying model names when available. If a deployment is missing
+from discovery, add its exact deployment name manually. Automatic matching recognizes
+known model names. For an opaque deployment alias, choose the actual built-in model
+in **Catalog profile**: that explicit selection fills **Catalog model ID** and
+the native underlying model name without changing the deployment name.
+Custom profiles remain descriptive and do not
+establish a native API contract. Existing capability and capacity overrides remain
+authoritative.
+
+Use managed identity when the resource disables API keys. With **Foundry scope**
+blank, the inference audience follows the selected native model, including Cognitive
+Services for MAI. An explicit audience override is still authoritative. Automatic
+routing does not grant permissions or change resource authentication policy.
+
+Publish **chat**, save the connection, and select the model for the intended
+conversation. Manually configured native models do not require project discovery
+coordinates. Saving does not replace chat, image, embedding, or planner defaults.
+
+The verified profile is preview, text-only, and supports streaming, reasoning, and
+function calling. Its shared context is **256,000 tokens**, and its generation
+ceiling is **64,000 tokens**, including reasoning. **Response length** is a request
+allowance within that ceiling, not a separate visible-answer allowance. No
+independent input maximum is invented by subtracting output from context.
+SimpleChat uses the model's default reasoning; it does not invent effort levels
+or request the optional encrypted reasoning envelope. JSON-schema output, images,
+and embeddings are not enabled for this text model.
+
+For an approved APIM or other gateway, choose **Custom → OpenAI API**, not the
+separate **OpenAI-compatible (embeddings only)** provider. Keep the gateway's
+published base and use **Exact** URL handling when no version prefix should be
+added. Enter the model identifier the gateway expects. Selecting the built-in
+MAI model supplies canonical model metadata for compatible request parameters,
+but never rewrites the Custom URL or request alias. Manually supplied or imported
+descriptive profile links alone do not establish numeric identity or a wire contract.
+
+Retain the gateway's own API key/header, bearer token, or OAuth2 configuration.
+For example, an APIM subscription policy may require
+`Ocp-Apim-Subscription-Key` with an empty prefix; a direct MAI resource using an
+enabled resource key requires `api-key`. Custom connections do not acquire the
+application's managed-identity token automatically. Backend identity forwarding,
+gateway operations, TLS, and network policy remain the administrator's
+responsibility.
+
+See Microsoft's [MAI-Thinking-1 API documentation](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-mai-thinking)
+and [model specifications](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#microsoft-models-sold-by-azure).
+Automatic native routing is limited to trusted public Foundry
+`*.services.ai.azure.com` authorities. Other endpoint hosts, including gateways,
+keep their explicit routing. Discovery, catalog support, and successful local
+compatibility tests do not prove live access, quota, regional availability, or
+gateway readiness.
+
 ### Endpoint cloud and availability
 
 The endpoint's provider/cloud determines capability information, not where SimpleChat
@@ -132,8 +209,8 @@ Personal and group Endpoints use the same editor when their governance policies
 allow changes. Configure reasoning effort on the agent itself when using one.
 For APIM, publish the Responses operation on the gateway first; Custom OpenAI
 connections preserve exact API bases and configurable authentication headers.
-The switch does not rewrite YAMCS/database plugins, change existing connections
-automatically, or establish that a gateway supports Responses. See
+The switch does not rewrite YAMCS/database plugins, migrate stored connections,
+or establish that a gateway supports Responses. See
 [V2 model tools and evidence status](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_MODEL_TOOLS_AND_EVIDENCE_STATUS.md)
 for stateless continuation, streaming behavior, and limitations.
 

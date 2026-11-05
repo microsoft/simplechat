@@ -32,7 +32,7 @@ MODEL_IDENTIFIER_FIELDS = (
     "deployment",
     "name",
 )
-REASONING_IDENTIFIER_FIELDS = ("modelName", "behavior_name", "deploymentName", "deployment")
+REASONING_IDENTIFIER_FIELDS = ("catalogModelId", "modelName", "behavior_name", "deploymentName", "deployment")
 REASONING_EFFORTS = frozenset(("none", "minimal", "low", "medium", "high", "xhigh"))
 
 CATALOG_RELATIVE_PATH = ("static", "json", "model_capabilities.json")
@@ -81,6 +81,29 @@ def _normalize_model_identifier(value):
         "-",
         str(value or "").strip().lower(),
     )
+
+
+def get_model_foundry_chat_api(model):
+    """Resolve a known native contract without guessing an opaque deployment alias."""
+    record = _numeric_catalog_record(model)
+    if record is not None:
+        if "foundryChatApi" in record:
+            api = record["foundryChatApi"]
+            if not isinstance(api, str) or api not in {"openai", "anthropic", "mai"}:
+                raise ModelTokenBudgetError("model_context_invalid", "The model's native Foundry API metadata is invalid.")
+            return api
+        return "anthropic" if record.get("provider") == "anthropic" else "openai"
+    identity = _normalize_model_identifier(_numeric_model_identifier(model))
+    if "claude" in identity:
+        return "anthropic"
+    if identity.startswith(("gpt-", "grok-", "o1", "o3", "o4")):
+        return "openai"
+    return None
+
+
+def model_uses_mai_chat_api(model):
+    """Use only the catalog's reviewed MAI contract, not a publisher/family guess."""
+    return get_model_foundry_chat_api(model) == "mai"
 
 
 def get_model_capability_catalog_path():

@@ -1,10 +1,11 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.261.408
+Version: 0.261.410
 Updated in: 0.261.035 for shared model-budget resolution and scoped batching.
 Table-aware descriptors and real-package replay fixtures updated in: 0.261.408
 SDK-default conversation/message fixture contracts updated in: 0.261.408
+Native Foundry model routing: 0.261.410.
 Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152; Search shared preflight adapter in 0.250.159; aggregate route-helper harness coverage in 0.250.166; Analyze artifact Phase 7A harness compatibility updated in 0.250.178; reviewed correctness planning and semantic validation updated in 0.250.179; artifact publication lifecycle updated in 0.250.180; safe failure helper compatibility updated in 0.250.199; exhaustive Markdown scale compatibility updated in 0.250.200
 
 This test ensures generated exports preserve source identity and row order while
@@ -93,6 +94,7 @@ from functions_model_endpoint_validation import model_endpoint_inference_api  # 
 from model_endpoint_clients import (  # noqa: E402
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     infer_model_endpoint_protocol,
+    resolve_model_inference_endpoint,
 )
 CONTRACT_FUNCTIONS = {
     '_safe_int',
@@ -1534,6 +1536,7 @@ def _load_performance_helpers(progress_updates=None):
         'resolve_model_endpoint_request_model': resolve_model_endpoint_request_model,
         'infer_model_endpoint_protocol': infer_model_endpoint_protocol,
         'model_endpoint_inference_api': model_endpoint_inference_api,
+        'resolve_model_inference_endpoint': resolve_model_inference_endpoint,
         'MODEL_ENDPOINT_PROTOCOL_ANTHROPIC': MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])

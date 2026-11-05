@@ -6,6 +6,26 @@ interface InferenceConnection {
     use_responses_api?: boolean;
 }
 
+export function isNativeFoundryEndpoint(provider: unknown, endpoint: unknown): boolean {
+    if (provider !== 'aifoundry' && provider !== 'new_foundry') return false;
+    try {
+        const parsed = new URL(typeof endpoint === 'string' ? endpoint : '');
+        return parsed.protocol === 'https:' && parsed.hostname.toLowerCase().endsWith('.services.ai.azure.com')
+            && (!parsed.port || parsed.port === '443') && !parsed.username && !parsed.password
+            && !parsed.search && !parsed.hash;
+    } catch {
+        return false;
+    }
+}
+
+export function usesMaiChatCompletions(endpoint: unknown): boolean {
+    try {
+        return /\/mai\/v1(?:\/|$)/i.test(new URL(typeof endpoint === 'string' ? endpoint : '').pathname);
+    } catch {
+        return false;
+    }
+}
+
 export function usesResponsesApi(connection: InferenceConnection | undefined): boolean {
     if (connection?.use_responses_api === true) return true;
     try {

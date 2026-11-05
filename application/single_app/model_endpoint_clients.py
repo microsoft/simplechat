@@ -16,7 +16,7 @@ import httpcore
 import httpx
 import requests
 from openai import (
-    APIError, BadRequestError, DEFAULT_CONNECTION_LIMITS,
+    APIError, AsyncStream, BadRequestError, DEFAULT_CONNECTION_LIMITS,
     DefaultAsyncHttpxClient, DefaultHttpxClient, OpenAI,
 )
 from openai.types.chat import ChatCompletionChunk
@@ -38,7 +38,7 @@ from semantic_kernel.exceptions.service_exceptions import ServiceInvalidExecutio
 from functions_debug import debug_print
 from functions_model_endpoint_types import MODEL_ENDPOINT_API_TYPE_ANTHROPIC
 from functions_appinsights import log_event
-from functions_model_capabilities import resolve_model_reasoning_effort
+from functions_model_capabilities import model_uses_mai_chat_api, resolve_model_reasoning_effort
 from functions_model_endpoint_diagnostics import (
     SanitizedModelEndpointError,
     build_sanitized_model_endpoint_error,
@@ -55,6 +55,7 @@ from functions_model_endpoint_providers import (
 )
 from functions_model_endpoint_validation import (
     ModelEndpointValidationError,
+    endpoint_uses_mai_chat_completions,
     endpoint_uses_openai_style_protocol,
     model_endpoint_inference_api,
     resolve_custom_model_endpoint_addresses,
@@ -235,7 +236,7 @@ def bind_callable_with_timeout(
     """Return a chat.completions.create callable bounded by a short timeout and retry cap."""
     timeout_obj = build_openai_client_timeout(read_timeout_seconds=timeout_seconds)
     with_options = getattr(client, "with_options", None) if client is not None else None
-    if callable(with_options):
+    if callable(with_options) and not isinstance(client, OpenAIStyleChatCompletionClient):
         try:
             scoped_client = with_options(timeout=timeout_obj, max_retries=max_retries)
             scoped_create = getattr(getattr(scoped_client, "chat", None), "completions", None)
@@ -256,6 +257,7 @@ def bind_callable_with_timeout(
                 protocol=client._protocol,
                 request_url=client._request_url,
                 inference_api=client._inference_api,
+                model_name=client._model_name,
             ).chat.completions.create
         except Exception:
             pass
@@ -325,7 +327,54 @@ class ModelEndpointBehavior:
 
     @property
     def response_length_parameter(self) -> str:
-        return "max_completion_tokens" if self.is_openai_reasoning_model else "max_tokens"
+        return (
+            "max_completion_tokens"
+            if self.is_openai_reasoning_model or model_uses_mai_chat_api(self.deployment_name)
+            else "max_tokens"
+        )
+
+
+def prepare_mai_chat_request(parameters, *, model_name="", endpoint=""):
+    """Apply the documented MAI chat contract without changing the request model."""
+    prepared = dict(parameters)
+    if not (
+        endpoint_uses_mai_chat_completions(endpoint)
+        or model_uses_mai_chat_api(model_name or prepared.get("model"))
+    ):
+        return prepared
+    sources = [prepared]
+    if isinstance(prepared.get("extra_body"), Mapping):
+        prepared["extra_body"] = dict(prepared["extra_body"])
+        sources.append(prepared["extra_body"])
+    for source in sources:
+        legacy_limit = source.pop("max_tokens", None)
+        if legacy_limit is not None and source.get("max_completion_tokens") is None:
+            source["max_completion_tokens"] = legacy_limit
+        # MAI documents a generation budget, not sampling/effort controls or stream_options.
+        for field in (
+            "temperature", "top_p", "frequency_penalty", "presence_penalty",
+            "seed", "reasoning_effort", "stream_options",
+        ):
+            source.pop(field, None)
+        if source.get("tool_choice") == "auto":
+            source.pop("tool_choice")
+    return prepared
+
+
+def configure_mai_async_openai_client(client, *, model_name=""):
+    """Share MAI request shaping with SK while retaining its real SDK stream."""
+    endpoint = str(client.base_url)
+    if not (endpoint_uses_mai_chat_completions(endpoint) or model_uses_mai_chat_api(model_name)):
+        return client
+    original_create = client.chat.completions.create
+
+    async def create(**kwargs):
+        return await original_create(**prepare_mai_chat_request(
+            kwargs, model_name=model_name, endpoint=endpoint,
+        ))
+
+    client.chat.completions.create = create
+    return client
 
 
 def is_reasoning_parameter_rejection(error: Exception) -> bool:
@@ -482,9 +531,9 @@ def normalize_openai_style_base_url(raw_endpoint: Any) -> str:
         endpoint = endpoint[:-len("/models")]
         lowered_endpoint = endpoint.lower()
 
-    openai_v1_index = lowered_endpoint.find("/openai/v1")
-    if openai_v1_index >= 0:
-        return endpoint[: openai_v1_index + len("/openai/v1")].rstrip("/") + "/"
+    v1_base = re.search(r"/(?:openai|mai)/v1(?=/|$)", lowered_endpoint)
+    if v1_base:
+        return endpoint[:v1_base.end()].rstrip("/") + "/"
 
     openai_index = lowered_endpoint.find("/openai")
     if openai_index >= 0:
@@ -848,7 +897,7 @@ class _SanitizedSyncIterator:
         return getattr(self._source, name)
 
 
-class _SanitizedAsyncIterator:
+class _SanitizedAsyncIterator(AsyncStream):
     def __init__(self, source, *, api_type="", protocol="", request_url=""):
         self._source = source
         self._iterator = source.__aiter__()
@@ -920,6 +969,7 @@ def build_openai_style_chat_client(
     ca_bundle_path: Any = "",
     client_cert: Any = None,
     settings: Any = None,
+    model_name: Any = "",
 ):
     """Build an OpenAI-compatible chat client for Foundry data-plane endpoints."""
     request_api_version = resolve_openai_style_request_api_version(api_version)
@@ -945,23 +995,27 @@ def build_openai_style_chat_client(
         OpenAI(**client_kwargs), sanitize_errors=direct_custom,
         api_type=api_type, request_url=client_kwargs["base_url"],
         inference_api=model_endpoint_inference_api(base_url),
+        model_name=model_name,
     )
 
 
 class OpenAIStyleChatCompletionClient:
     """Small wrapper that makes OpenAI-compatible Foundry calls tolerant of Azure-only options."""
 
-    def __init__(self, client: OpenAI, *, sanitize_errors=False, api_type="", protocol="", request_url="", inference_api="chat_completions"):
+    def __init__(self, client: OpenAI, *, sanitize_errors=False, api_type="", protocol="", request_url="", inference_api="chat_completions", model_name=""):
         self._client = client
         self._sanitize_errors = sanitize_errors
         self._api_type = api_type
         self._protocol = protocol
         self._request_url = request_url
         self._inference_api = inference_api
+        self._model_name = model_name
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs: Any):
-        request_kwargs = dict(kwargs)
+        request_kwargs = prepare_mai_chat_request(
+            kwargs, model_name=self._model_name, endpoint=self._request_url,
+        )
         descriptor = get_model_endpoint_provider(self._api_type) if self._sanitize_errors else None
         if not descriptor or not descriptor.supports_stream_options:
             request_kwargs.pop("stream_options", None)

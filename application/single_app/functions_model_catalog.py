@@ -165,7 +165,7 @@ def built_in_profiles():
             "technical": {key: deepcopy(record[key]) for key in (
                 "contextWindow", "inputTokenLimit", "outputTokenLimit", "tokenLimitEvidence",
                 "tokenLimitProfiles", "reasoningPolicy", "embeddingPolicy", "imageProfiles",
-                "lifecycle",
+                "lifecycle", "foundryChatApi",
             ) if key in record},
         }
         profile["revision"] = _revision(profile)

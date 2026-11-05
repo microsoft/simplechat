@@ -15,7 +15,7 @@ from functions_model_budget_runtime import prepare_model_execution_settings
 from functions_model_capabilities import ModelTokenBudget, ModelTokenBudgetError, resolve_model_token_budget
 from functions_model_endpoint_diagnostics import build_sanitized_model_endpoint_error
 from model_responses_chat import ResponsesChatCompletion, ResponsesInputItems, responses_completion, responses_request
-from model_endpoint_clients import iter_synthetic_chat_message_chunks
+from model_endpoint_clients import configure_mai_async_openai_client, iter_synthetic_chat_message_chunks
 
 
 _RESPONSE_OWNER = ContextVar("simplechat_responses_owner", default=None)
@@ -35,6 +35,10 @@ class _ModelToolPolicy:
         self.inference_api = inference_api
         if tool_provider is not None:
             self.tool_provider = tool_provider
+        configure_mai_async_openai_client(
+            self.client,
+            model_name=model_token_budget.model_id if model_token_budget else self.ai_model_id,
+        )
 
     def _prepare_chat_history_for_request(self, chat_history, **kwargs):
         if self.inference_api != "responses":

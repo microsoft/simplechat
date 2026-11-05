@@ -35,7 +35,11 @@ from semantic_kernel_plugins.chart_plugin import ChartPlugin
 from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled, resolve_model_endpoint_foundry_scope
 from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_for_model
-from functions_model_endpoint_validation import validate_model_endpoint_api_version, model_endpoint_inference_api
+from functions_model_endpoint_validation import (
+    endpoint_uses_mai_chat_completions,
+    validate_model_endpoint_api_version,
+    model_endpoint_inference_api,
+)
 from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
@@ -240,6 +244,7 @@ def build_agent_model_budget(agent_config, settings=None):
     runtime_protocol = resolve_agent_endpoint_protocol(agent_config)
     protocol = "messages" if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else model_endpoint_inference_api(
         agent_config.get("endpoint"), agent_config.get("use_responses_api"),
+        provider=agent_config.get("model_provider") or agent_config.get("provider"), model=model,
     )
     provider = endpoint.get("provider")
     if agent_config.get("api_type") == "azure_openai":
@@ -261,17 +266,23 @@ def build_agent_budget_arguments(chat_service, agent_config, budget):
 
 def resolve_agent_endpoint_protocol(agent_config):
     """Infer the protocol needed for an endpoint-bound Semantic Kernel agent."""
+    provider = agent_config.get("model_provider") or agent_config.get("provider") or "aoai"
+    model = agent_config.get("model_budget_model") or agent_config.get("deployment")
     validate_model_endpoint_api_version(
-        agent_config.get("model_provider") or agent_config.get("provider"),
+        provider,
         agent_config.get("endpoint"), agent_config.get("api_version"), agent_config.get("api_type"),
-        use_responses_api=agent_config.get("use_responses_api"),
+        use_responses_api=agent_config.get("use_responses_api"), model=model,
+    )
+    endpoint = resolve_model_inference_endpoint(
+        agent_config.get("endpoint"), provider=provider, api_type=agent_config.get("api_type"),
+        use_responses_api=agent_config.get("use_responses_api"), model=model,
+        url_mode=((agent_config.get("model_endpoint_config") or {}).get("connection") or {}).get("url_mode"),
     )
     return infer_model_endpoint_protocol(
-        agent_config.get("model_provider") or agent_config.get("provider") or "aoai",
-        agent_config.get("endpoint"),
+        provider,
+        endpoint,
         agent_config.get("deployment"),
         agent_config.get("api_type"),
-        use_responses_api=agent_config.get("use_responses_api"),
     )
 
 
@@ -322,6 +333,7 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
             agent_config.get("endpoint"), use_responses_api=agent_config.get("use_responses_api"),
             provider=agent_config.get("model_provider") or "aoai", api_type=agent_config.get("api_type"),
             url_mode=((agent_config.get("model_endpoint_config") or {}).get("connection") or {}).get("url_mode"),
+            model=agent_config.get("model_budget_model") or agent_config.get("deployment"),
         ),
     }
     runtime_protocol = resolve_agent_endpoint_protocol(agent_config)
@@ -354,7 +366,10 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
             "base_url": normalize_openai_style_base_url(agent_config["endpoint"]),
             **globals().get("build_openai_client_timeout_options", lambda *_a, **_k: {})(),
         }
-        if agent_config.get("key") and not agent_config.get("token_provider") and agent_config.get("model_provider") in (None, "", "aoai"):
+        if agent_config.get("key") and not agent_config.get("token_provider") and (
+            agent_config.get("model_provider") in (None, "", "aoai")
+            or endpoint_uses_mai_chat_completions(agent_config["endpoint"])
+        ):
             client_kwargs["api_key"] = "custom-header-auth"
             client_kwargs["default_headers"] = {"api-key": token_or_key, "Authorization": ""}
         if request_api_version:
@@ -738,6 +753,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
         endpoint = resolve_model_inference_endpoint(
             connection.get("endpoint"), use_responses_api=connection.get("use_responses_api"),
             provider=provider, api_type=get_model_endpoint_api_type(endpoint_cfg), url_mode=connection.get("url_mode"),
+            model=model_cfg,
         )
         return {
             "provider": provider,

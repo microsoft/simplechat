@@ -1,5 +1,5 @@
 // modelConnections.ts
-import { normalizeInferenceConnection, usesResponsesApi } from './modelInference';
+import { isNativeFoundryEndpoint, normalizeInferenceConnection, usesMaiChatCompletions, usesResponsesApi } from './modelInference';
 // Types, API wrappers and pure form logic for global model connections.
 //
 // A "connection" is an Azure OpenAI/Foundry resource or a Custom API: where
@@ -27,6 +27,7 @@ import { requireWorkspaceId } from './workspaceContext';
 import type { RebaseField } from './rebaseDraft';
 import { capacityErrors, capacityPayload, tokenCapacity, validModelIcon, type ConnectionCapacity } from './connectionMetadata';
 import type { ResourceIcon } from './resourceIcons';
+import type { CatalogProfile } from './modelCatalog';
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                       */
@@ -130,6 +131,26 @@ export interface ConnectionModel extends ConnectionCapacity {
     [key: string]: unknown;
 }
 
+export function selectModelCatalogProfile(
+    model: ConnectionModel,
+    catalogProfileId: string,
+    profile: Pick<CatalogProfile, 'id' | 'origin'> | null,
+    provider?: string,
+): ConnectionModel {
+    const next = { ...model, catalogProfileId };
+    if (profile?.origin === 'built_in' && profile.id === catalogProfileId) {
+        next.catalogModelId = profile.id;
+        if (provider === 'aoai' || provider === 'aifoundry' || provider === 'new_foundry') {
+            next.modelName = profile.id;
+        }
+    } else if (!catalogProfileId && model.catalogProfileId && !model.catalogProfileId.startsWith('custom:')
+        && model.catalogModelId === model.catalogProfileId) {
+        delete next.catalogModelId;
+    }
+    delete next.capability_status;
+    return next;
+}
+
 export interface ConnectionAuth {
     type?: ConnectionAuthType;
     managed_identity_type?: ManagedIdentityType;
@@ -231,7 +252,7 @@ export const PROVIDER_OPTIONS: Array<{ value: ConnectionProvider; label: string;
     {
         value: 'new_foundry',
         label: 'Azure AI Foundry',
-        hint: 'A Foundry project endpoint. Model discovery reads the project’s deployments.',
+        hint: 'One Foundry resource or project for your models. Native inference routing is selected automatically from each model.',
     },
     {
         value: 'aifoundry',
@@ -321,7 +342,7 @@ export function endpointIncludesProject(endpoint: unknown): boolean {
 export function usesV1InferenceEndpoint(endpoint: unknown): boolean {
     try {
         const parsed = new URL(text(endpoint));
-        return /\/openai\/v1(?:\/|$)|\/api\/projects\//i.test(parsed.pathname) ||
+        return /\/(?:openai|mai)\/v1(?:\/|$)|\/api\/projects\//i.test(parsed.pathname) ||
             parsed.hostname.toLowerCase().endsWith('.services.ai.azure.com');
     } catch {
         return false;
@@ -546,7 +567,7 @@ export function visibleFields(connection: ModelConnection): {
         userAssignedClientId:
             !external && authType === 'managed_identity' &&
             text(connection.auth?.managed_identity_type) === 'user_assigned',
-        openAiVersion: !external,
+        openAiVersion: !external && !isNativeFoundryEndpoint(provider, connection.connection?.endpoint),
         discovery: !external && authType !== 'api_key',
     };
 }
@@ -576,21 +597,36 @@ export function validateConnection(
     }
 
     const endpoint = text(connection.connection?.endpoint);
-    if (usesResponsesApi(connection.connection) && endpointIncludesProject(endpoint)) {
+    const nativeFoundry = isNativeFoundryEndpoint(provider, endpoint);
+    const mai = usesMaiChatCompletions(endpoint);
+    if (usesResponsesApi(connection.connection) && endpointIncludesProject(endpoint) && !nativeFoundry) {
         errors.use_responses_api = 'Responses needs an inference API base, not a Foundry project URL.';
+    }
+    if (usesResponsesApi(connection.connection) && mai && !nativeFoundry) {
+        errors.use_responses_api = 'Microsoft MAI uses Chat Completions. Turn off Use Responses API.';
     }
     if (!endpoint) {
         errors.endpoint = 'An endpoint URL is required.';
     } else if (!/^https?:\/\//i.test(endpoint)) {
         errors.endpoint = 'Enter the full URL, including https://.';
     }
+    if (foundry && endpoint) {
+        try {
+            const parsed = new URL(endpoint);
+            if (parsed.hostname.toLowerCase().endsWith('.services.ai.azure.com') && !nativeFoundry) {
+                errors.endpoint = 'Use a native Foundry HTTPS endpoint without credentials, query parameters, or a fragment.';
+            }
+        } catch {
+            errors.endpoint = 'Enter a valid Foundry endpoint URL.';
+        }
+    }
 
-    if (!custom && !usesResponsesApi(connection.connection) && !text(connection.connection?.openai_api_version)) {
+    if (!custom && !mai && !nativeFoundry && !usesResponsesApi(connection.connection) && !text(connection.connection?.openai_api_version)) {
         errors.openai_api_version = 'An OpenAI API version is required.';
     }
     if (!custom && !usesResponsesApi(connection.connection) && /^(v1|preview|latest)$/i.test(text(connection.connection?.openai_api_version)) &&
         !usesV1InferenceEndpoint(endpoint)) {
-        errors.openai_api_version = 'Use a dated Azure API version for a resource endpoint, or configure an /openai/v1/ inference endpoint for v1.';
+        errors.openai_api_version = 'Use a dated Azure API version for a resource endpoint, or an explicit /openai/v1/ or /mai/v1/ inference endpoint for v1.';
     }
     if (custom && authType !== 'api_key') {
         errors.auth_type = 'OpenAI-compatible connections support API key authentication only.';
@@ -599,7 +635,7 @@ export function validateConnection(
         errors.discovery = 'Custom embedding connections use manually entered models, not Azure discovery.';
     }
 
-    if (foundry) {
+    if (foundry && (!nativeFoundry || requireDiscovery)) {
         if (!text(connection.connection?.project_api_version)) {
             errors.project_api_version =
                 'A project API version is required for Foundry model discovery.';

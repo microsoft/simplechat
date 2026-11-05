@@ -1,8 +1,9 @@
 // test_v2_model_connections_logic.mjs
 //
 // Runtime test for the V2 global model connection form logic.
-// Version: 0.261.122
+// Version: 0.261.410
 // Implemented in: 0.261.059; embeddings added in 0.261.106
+// Automatic Foundry routing and model presets: 0.261.410
 //
 // The classic connection editor decided which fields a provider and auth type needed by
 // toggling `d-none` across two dozen elements from three separate listeners, and reported
@@ -36,7 +37,10 @@ const {
     validateConnection,
     visibleFields,
     setEmbeddingOperation,
+    selectModelCatalogProfile,
 } = await import('../application/v2_ui/src/lib/modelConnections.ts');
+const { isNativeFoundryEndpoint, usesMaiChatCompletions } = await import('../application/v2_ui/src/lib/modelInference.ts');
+const { findAutomaticCatalogProfile } = await import('../application/v2_ui/src/lib/modelCatalog.ts');
 
 const checks = [];
 function check(name, fn) {
@@ -279,9 +283,8 @@ check('service principal requires tenant, client and a secret unless one is stor
     assert.deepEqual(validateConnection(withStored), {});
 });
 
-check('a foundry endpoint without a project needs the project named', () => {
-    const errors = validateConnection(
-        validAoai({
+check('native Foundry inference needs project coordinates only when discovering models', () => {
+    const connection = validAoai({
             provider: 'new_foundry',
             connection: {
                 endpoint: 'https://x.services.ai.azure.com',
@@ -289,8 +292,9 @@ check('a foundry endpoint without a project needs the project named', () => {
                 project_api_version: 'v1',
                 project_name: '',
             },
-        }),
-    );
+        });
+    assert.deepEqual(validateConnection(connection), {});
+    const errors = validateConnection(connection, { requireDiscovery: true });
     assert.ok(errors.project_name);
 
     const named = validateConnection(
@@ -304,6 +308,141 @@ check('a foundry endpoint without a project needs the project named', () => {
         }),
     );
     assert.equal(named.project_name, undefined);
+});
+
+check('one native Foundry project saves mixed models with either OpenAI API preference', () => {
+    for (const useResponses of [false, true]) {
+        const connection = validAoai({
+            provider: 'new_foundry',
+            connection: {
+                endpoint: 'https://resource.services.ai.azure.com/api/projects/team',
+                use_responses_api: useResponses, openai_api_version: '',
+            },
+            models: [
+                { id: 'gpt', deploymentName: 'gpt-prod', modelName: 'gpt-4o', enabled: true },
+                { id: 'grok', deploymentName: 'grok-4.7', modelName: 'grok-4.7', enabled: true },
+                { id: 'mai', deploymentName: 'mai-prod', modelName: 'MAI-Thinking-1', enabled: true },
+            ],
+        });
+        assert.deepEqual(validateConnection(connection), {});
+        assert.equal(visibleFields(connection).openAiVersion, false);
+        const payload = buildConnectionPayload(connection);
+        assert.equal(payload.connection.endpoint, connection.connection.endpoint);
+        assert.equal(payload.connection.use_responses_api, useResponses);
+        assert.equal(payload.models.length, 3);
+    }
+});
+
+check('built-in model selection fills canonical identity without changing aliases or overrides', () => {
+    const original = {
+        id: 'mai', deploymentName: 'deployment-alias', modelName: 'gateway-alias',
+        responseLength: 512, contextWindow: 128000, capabilities: { processesImages: false },
+        supportsChat: false, enabled_capabilities: [], capability_status: { chat: { supported: false } },
+    };
+    const before = structuredClone(original);
+    const selected = selectModelCatalogProfile(original, 'mai-thinking-1', { id: 'mai-thinking-1', origin: 'built_in' });
+    assert.equal(selected.catalogModelId, 'mai-thinking-1');
+    assert.equal(selected.catalogProfileId, 'mai-thinking-1');
+    for (const field of ['deploymentName', 'modelName', 'responseLength', 'contextWindow', 'capabilities', 'supportsChat', 'enabled_capabilities']) {
+        assert.deepEqual(selected[field], original[field], field);
+    }
+    assert.equal(selected.capability_status, undefined);
+    assert.deepEqual(original, before);
+    const native = selectModelCatalogProfile(original, 'mai-thinking-1', { id: 'mai-thinking-1', origin: 'built_in' }, 'new_foundry');
+    assert.equal(native.modelName, 'mai-thinking-1');
+    assert.equal(native.deploymentName, original.deploymentName);
+    const gateway = selectModelCatalogProfile(original, 'mai-thinking-1', { id: 'mai-thinking-1', origin: 'built_in' }, 'custom');
+    assert.equal(gateway.modelName, original.modelName);
+    const custom = validAoai({
+        provider: 'custom', api_type: 'openai', models: [selected],
+        connection: { endpoint: 'https://gateway.test/team/proxy', url_mode: 'exact' },
+        auth: { type: 'api_key', api_key: 'offline-key', api_key_header: 'Ocp-Apim-Subscription-Key', api_key_prefix: '' },
+    });
+    const payload = buildConnectionPayload(custom);
+    assert.equal(payload.connection.endpoint, custom.connection.endpoint);
+    assert.equal(payload.models[0].modelName, 'gateway-alias');
+    assert.equal(payload.models[0].catalogModelId, 'mai-thinking-1');
+    assert.equal(payload.auth.api_key_header, 'Ocp-Apim-Subscription-Key');
+});
+
+check('automatic matching and descriptive custom profiles do not invent model identities', () => {
+    const profiles = [
+        { id: 'mai-thinking-1', displayName: 'MAI-Thinking-1', origin: 'built_in', aliases: [], archived: false },
+        { id: 'custom:test', origin: 'custom', aliases: ['unknown-name'], archived: false },
+    ];
+    assert.equal(findAutomaticCatalogProfile(' MAI-Thinking-1 ', profiles)?.id, 'mai-thinking-1');
+    assert.equal(findAutomaticCatalogProfile('unknown-name', profiles), undefined);
+    const linked = { modelName: 'gateway-alias', catalogProfileId: 'mai-thinking-1', catalogModelId: 'mai-thinking-1' };
+    const custom = selectModelCatalogProfile(linked, 'custom:test', { id: 'custom:test', origin: 'custom' });
+    assert.equal(custom.catalogModelId, 'mai-thinking-1');
+    const automatic = selectModelCatalogProfile(linked, '', null);
+    assert.equal(automatic.catalogModelId, undefined);
+    const override = selectModelCatalogProfile({ ...linked, catalogModelId: 'independent-id' }, '', null);
+    assert.equal(override.catalogModelId, 'independent-id');
+});
+
+check('automatic native routing is never inferred from a gateway or misleading hostname', () => {
+    assert.equal(isNativeFoundryEndpoint('new_foundry', 'https://resource.services.ai.azure.com/api/projects/team'), true);
+    for (const [provider, endpoint] of [
+        ['custom', 'https://resource.services.ai.azure.com'],
+        ['new_foundry', 'https://gateway.test/api/projects/team'],
+        ['new_foundry', 'https://resource.services.ai.azure.com.attacker.test'],
+    ]) {
+        assert.equal(isNativeFoundryEndpoint(provider, endpoint), false);
+    }
+    for (const endpoint of ['http://resource.services.ai.azure.com', 'https://user:password@resource.services.ai.azure.com', 'https://resource.services.ai.azure.com?query=1']) {
+        assert.ok(validateConnection(validAoai({ provider: 'new_foundry', connection: { endpoint } })).endpoint);
+    }
+});
+
+check('native MAI inference saves without project discovery coordinates or a dated API version', () => {
+    for (const provider of ['aoai', 'aifoundry', 'new_foundry']) {
+        const connection = validAoai({
+            provider,
+            connection: {
+                endpoint: 'https://resource.services.ai.azure.com/mai/v1',
+                openai_api_version: '', project_api_version: '', project_name: '',
+            },
+            models: [{ id: 'mai', deploymentName: 'production-mai', modelName: 'MAI-Thinking-1', enabled: true }],
+        });
+        assert.deepEqual(validateConnection(connection), {});
+        const payload = buildConnectionPayload(connection);
+        assert.equal(payload.connection.endpoint, connection.connection.endpoint);
+        assert.equal(payload.models[0].deploymentName, 'production-mai');
+        if (provider !== 'aoai') {
+            const discovery = validateConnection(connection, { requireDiscovery: true });
+            assert.ok(discovery.project_name);
+            assert.ok(discovery.project_api_version);
+        }
+    }
+});
+
+check('MAI operation URLs save their native base and keep Responses off', () => {
+    const connection = toEditableConnection(validAoai({
+        connection: { endpoint: 'https://resource.services.ai.azure.com/mai/v1/chat/completions' },
+    }));
+    const payload = buildConnectionPayload(connection);
+    assert.equal(payload.connection.endpoint, 'https://resource.services.ai.azure.com/mai/v1');
+    assert.equal(payload.connection.use_responses_api, false);
+    for (const provider of ['aoai', 'new_foundry', 'custom']) {
+        const invalid = validAoai({
+            provider, api_type: 'openai',
+            connection: { endpoint: 'https://gateway.test/team/mai/v1', use_responses_api: true },
+            auth: { type: 'api_key', api_key: 'offline-key' },
+            models: [{ modelName: 'gateway-mai', enabled: true }],
+        });
+        assert.match(validateConnection(invalid).use_responses_api, /Chat Completions/);
+    }
+});
+
+check('MAI contract detection reads only a complete native path segment', () => {
+    assert.equal(usesMaiChatCompletions('https://gateway.test/team/mai/v1/chat/completions'), true);
+    for (const endpoint of [
+        'https://gateway.test/mai/v10', 'https://gateway.test/openai/v1?next=/mai/v1',
+        'https://mai.example/openai/v1', '',
+    ]) {
+        assert.equal(usesMaiChatCompletions(endpoint), false, endpoint);
+    }
 });
 
 /* ------------------------------- payload building ---------------------------- */
