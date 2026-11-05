@@ -1,11 +1,11 @@
 # test_v2_conversation_handoffs.py
 """
 Browser regressions for V2 queued AI conversation handoffs (`Send To Conversation`).
-Version: 0.261.381
+Version: 0.261.406
 Implemented in: 0.261.381
 
 Covers:
-- Opening `Send To Conversation` from a private conversation's rail menu.
+- Opening `Send to conversation` from a private conversation's rail menu.
 - Selecting a private destination conversation, reviewing the destination model and bounded
   source preview, and submitting to `POST /api/conversation-handoffs`.
 - Rendering outgoing/incoming handoff status cards (`Queued`, `Running`, `Completed`, `Cancelled`)
@@ -276,7 +276,7 @@ def test_send_to_conversation_reviews_preview_queues_card_and_cancels(handoff_pa
     draft.fill("Keep this unsent draft intact.")
 
     page.get_by_role("button", name="Actions for Q4 Research Thread", exact=True).click()
-    page.get_by_role("button", name="Send To Conversation", exact=True).click()
+    page.get_by_role("button", name="Send to conversation", exact=True).click()
 
     dialog = page.get_by_role("dialog", name="Send To Conversation")
     expect(dialog).to_be_visible()

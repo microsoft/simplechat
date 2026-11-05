@@ -1,8 +1,9 @@
 # test_v2_composer_picker_placement.py
 """
 Functional test for viewport-bounded floating composer pickers.
-Version: 0.261.327
+Version: 0.261.406
 Implemented in: 0.261.327
+Measured conversation menu sizing implemented in: 0.261.406
 
 Executes the production TypeScript placement helper through the installed esbuild.
 Node's explicit checks run identically under normal and optimized Python.
@@ -36,25 +37,34 @@ const bottom = place({left: 280, right: 360, top: 700, bottom: 744},
 assert.equal(bottom.up, true);
 assert.equal(bottom.top, 692);
 assert.equal(bottom.maxHeight, 320);
-for (const width of [16, 24, 96, 320, 360, 393, 430, 1280]) {
-    for (const height of [16, 24, 96, 140, 320, 393, 740, 852]) {
-        for (const left of [0, 29]) {
-            for (const top of [0, 83]) {
-                const viewport = {left, top, width, height};
-                for (const fraction of [0, .1, .5, .9, 1]) {
-                    const trigger = {left: left + width * fraction, right: left + width * fraction + 90,
-                        top: top + height * fraction, bottom: top + height * fraction + 44};
-                    for (const align of ['left', 'right']) {
-                        const p = place(trigger, viewport, align);
-                        const margin = Math.min(12, width / 2, height / 2);
-                        assert.ok(p.width >= 0 && p.width <= 288);
-                        assert.ok(p.left >= left + margin);
-                        assert.ok(p.left + p.width <= left + width - margin + .001);
-                        assert.ok(p.maxHeight >= 0 && p.maxHeight <= 320);
-                        const ceiling = p.up ? p.top - p.maxHeight : p.top;
-                        const floor = p.up ? p.top : p.top + p.maxHeight;
-                        assert.ok(ceiling >= top + margin - .001, JSON.stringify({p, viewport, trigger}));
-                        assert.ok(floor <= top + height - margin + .001, JSON.stringify({p, viewport, trigger}));
+const shortMenu = place({left: 20, right: 100, top: 320, bottom: 364},
+    {left: 0, top: 0, width: 1280, height: 600}, 'right', {width: 224, height: 128});
+assert.equal(shortMenu.up, false, 'A menu that fits below should not flip unnecessarily');
+assert.equal(shortMenu.maxHeight, 128);
+const touchMenu = place({left: 20, right: 100, top: 20, bottom: 64},
+    {left: 0, top: 0, width: 393, height: 852}, 'right', {width: 224, height: 432});
+assert.equal(touchMenu.maxHeight, 432, 'Touch menus must not inherit the 320px composer ceiling');
+for (const menuSize of [undefined, {width: 224, height: 328}, {width: 448, height: 656}]) {
+    for (const width of [16, 24, 96, 320, 360, 393, 430, 1280]) {
+        for (const height of [16, 24, 96, 140, 320, 393, 740, 852]) {
+            for (const left of [0, 29]) {
+                for (const top of [0, 83]) {
+                    const viewport = {left, top, width, height};
+                    for (const fraction of [0, .1, .5, .9, 1]) {
+                        const trigger = {left: left + width * fraction, right: left + width * fraction + 90,
+                            top: top + height * fraction, bottom: top + height * fraction + 44};
+                        for (const align of ['left', 'right']) {
+                            const p = place(trigger, viewport, align, menuSize);
+                            const margin = Math.min(12, width / 2, height / 2);
+                            assert.ok(p.width >= 0 && p.width <= (menuSize?.width ?? 288));
+                            assert.ok(p.left >= left + margin);
+                            assert.ok(p.left + p.width <= left + width - margin + .001);
+                            assert.ok(p.maxHeight >= 0 && p.maxHeight <= (menuSize?.height ?? 320));
+                            const ceiling = p.up ? p.top - p.maxHeight : p.top;
+                            const floor = p.up ? p.top : p.top + p.maxHeight;
+                            assert.ok(ceiling >= top + margin - .001, JSON.stringify({p, viewport, trigger}));
+                            assert.ok(floor <= top + height - margin + .001, JSON.stringify({p, viewport, trigger}));
+                        }
                     }
                 }
             }

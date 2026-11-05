@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.398"
+version: "0.261.406"
 ---
 
 ## How to use this reference
@@ -31,11 +31,17 @@ evidence with `~` or delegated a follow-up AI turn with **Send To Conversation**
 Shared and group conversations are excluded so private thread content is not
 implicitly widened across audiences.
 
+The row menu layout was updated in **0.261.406**: management actions come first,
+reuse actions follow **Export**, and **Delete** or **Leave** has its own separation.
+All rows use the same text size and weight. Menus open above low rows when needed
+and float outside the scrolling sidebar.
+
 | V2 control | Purpose | Availability |
 | --- | --- | --- |
 | `~` conversation shortcut | Opens the private conversation picker in the V2 composer, plan editor Ask AI, and workflow Ask AI, inserting a `~[Title]` token backed by a conversation ID. | V2 chat composer and Ask AI editors |
-| Reference Conversation (`Use in current conversation` / `Copy reference`) | Attaches the selected private conversation to the active composer or copies a portable reference token for pasting into another composer. | Private conversation row menu in V2 |
-| Send To Conversation | Opens a review dialog that sends an instruction and bounded source reference to another private conversation and starts AI work there, queueing in FIFO order when the destination is busy. | Private conversation row menu in V2 |
+| Use in this chat | Attaches the selected private conversation to the active composer as a reference. Disabled for the currently open source or a collaborative destination. | Eligible private conversation row menu in V2, below Export |
+| Copy reference | Copies a portable reference token for pasting into another composer without changing the open draft. Clipboard failures display an error. | Eligible private conversation row menu in V2, below Export |
+| Send to conversation | Opens a review dialog that sends an instruction and bounded source reference to another private conversation and starts AI work there, queueing in FIFO order when the destination is busy. | Private conversation row menu in V2, below Export |
 | Cancel handoff | Stops a queued or in-flight handoff from its outgoing status card without removing existing destination history. | Outgoing handoff status card |
 
 See [Reference and send between conversations]({{ '/guides/reference-and-send-conversations/' | relative_url }})
