@@ -408,6 +408,7 @@ def _current_model(read, producer, settings, *, planner):
         address, provider=provider, api_type=api_type,
         use_responses_api=(connection.get("use_responses_api") if endpoint_id else settings.get("azure_openai_gpt_use_responses_api")),
         url_mode=connection.get("url_mode") if endpoint_id else "",
+        model=model or deployment,
     )
     protocol = infer_model_endpoint_protocol(provider, address, deployment, api_type)
     if protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:

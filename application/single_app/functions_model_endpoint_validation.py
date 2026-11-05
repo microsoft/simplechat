@@ -7,6 +7,7 @@ import socket
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
+from functions_model_capabilities import get_model_foundry_chat_api
 from functions_model_endpoint_providers import (
     AUTH_TYPE_API_KEY,
     AUTH_TYPE_BEARER,
@@ -55,6 +56,50 @@ class ModelEndpointUnresolvableError(ModelEndpointValidationError):
     """DNS is unavailable; saving is allowed, but a request must fail closed."""
 
 
+def is_native_foundry_endpoint(provider, endpoint):
+    """Automatic model routing is limited to the public Foundry resource authority."""
+    if str(provider or "").strip().lower() not in {"aifoundry", "new_foundry"}:
+        return False
+    try:
+        parsed = urlparse(str(endpoint or "").strip())
+        hostname = (parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError as exc:
+        raise ModelEndpointValidationError("The model inference endpoint URL is invalid.") from exc
+    if not hostname.endswith(".services.ai.azure.com"):
+        return False
+    if (
+        parsed.scheme != "https" or port not in (None, 443) or parsed.username is not None or parsed.password is not None
+        or parsed.query or parsed.fragment or parsed.params
+    ):
+        raise ModelEndpointValidationError(
+            "Use a native Foundry HTTPS resource or project endpoint without credentials, query parameters, or a fragment."
+        )
+    return True
+
+
+def resolve_native_foundry_chat_api(provider, endpoint, model=None):
+    """Prefer selected model identity, retaining explicit native paths for unknown aliases."""
+    if model is None or not is_native_foundry_endpoint(provider, endpoint):
+        return None
+    api = get_model_foundry_chat_api(model)
+    if api is not None:
+        return api
+    path = urlparse(str(endpoint or "")).path.lower()
+    if re.search(r"/mai/v1(?:/|$)", path):
+        return "mai"
+    return "anthropic" if "/anthropic/" in path else "openai"
+
+
+def endpoint_uses_mai_chat_completions(endpoint: Any) -> bool:
+    """Recognize the explicit MAI v1 contract, including an APIM route prefix."""
+    try:
+        path = urlparse(str(endpoint or "").strip()).path.lower()
+    except ValueError as exc:
+        raise ModelEndpointValidationError("The model inference endpoint URL is invalid.") from exc
+    return re.search(r"/mai/v1(?:/|$)", path) is not None
+
+
 def endpoint_uses_openai_style_protocol(endpoint: Any) -> bool:
     try:
         parsed = urlparse(str(endpoint or "").strip())
@@ -63,17 +108,20 @@ def endpoint_uses_openai_style_protocol(endpoint: Any) -> bool:
     path = parsed.path.lower()
     hostname = (parsed.hostname or "").lower()
     return (
-        re.search(r"/openai/v1(?:/|$)", path) is not None
+        re.search(r"/(?:openai|mai)/v1(?:/|$)", path) is not None
         or "/api/projects/" in path
         or hostname.endswith(".services.ai.azure.com")
     )
 
 
-def model_endpoint_inference_api(endpoint, use_responses_api=None):
+def model_endpoint_inference_api(endpoint, use_responses_api=None, *, provider="", model=None):
     """Prefer the saved API choice, retaining operation URLs for older records."""
     if use_responses_api is not None:
         if not isinstance(use_responses_api, bool):
             raise ModelEndpointValidationError("Use Responses API must be true or false.")
+    if resolve_native_foundry_chat_api(provider, endpoint, model) in {"mai", "anthropic"}:
+        return "chat_completions"
+    if use_responses_api is not None:
         if use_responses_api:
             return "responses"
     try:
@@ -105,18 +153,23 @@ def normalize_model_inference_connection(connection):
     return result
 
 
-def validate_model_endpoint_api_version(provider, endpoint, api_version, api_type="", *, use_responses_api=None):
+def validate_model_endpoint_api_version(provider, endpoint, api_version, api_type="", *, use_responses_api=None, model=None):
     """Do not send a protocol name as a dated Azure API-version query."""
     provider = str(provider or "aoai").strip().lower()
     legacy_custom = provider == "custom" and api_type == "azure_openai"
-    inference_api = model_endpoint_inference_api(endpoint, use_responses_api)
+    native_foundry = is_native_foundry_endpoint(provider, endpoint)
+    inference_api = model_endpoint_inference_api(endpoint, use_responses_api, provider=provider, model=model)
+    if inference_api == "responses" and endpoint_uses_mai_chat_completions(endpoint) and not native_foundry:
+        raise ModelEndpointValidationError(
+            "The Microsoft MAI v1 endpoint supports Chat Completions, not Responses. Turn off Use Responses API."
+        )
     legacy_azure = provider in {"aoai", "aifoundry", "new_foundry"} and (
         inference_api != "responses" and not endpoint_uses_openai_style_protocol(endpoint)
     )
     if inference_api == "responses" and (
         provider not in {"aoai", "aifoundry", "new_foundry", "custom"}
         or provider == "custom" and api_type != "openai"
-        or "/api/projects/" in str(endpoint or "").lower()
+        or "/api/projects/" in str(endpoint or "").lower() and not native_foundry
     ):
         raise ModelEndpointValidationError("Responses tool execution requires an OpenAI-compatible v1 inference connection.")
     if (legacy_custom or legacy_azure) and str(api_version or "").strip().lower() in {"v1", "preview", "latest"}:

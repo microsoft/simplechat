@@ -1,7 +1,7 @@
 {
   "$schema": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "schemaVersion": 4,
-  "lastUpdated": "2026-10-20",
+  "lastUpdated": "2026-11-05",
   "description": "SimpleChat model capability, reasoning-policy, embedding-policy, and token-capacity catalog. Published chat/generation limits retain independently verified evidence and hosting profiles. Embedding input, dimension, and batch policies are separate operation contracts and never supply a chat-token budget.",
   "capabilityFields": {
     "processesText": "Accepts text input.",
@@ -53,7 +53,8 @@
     "Government image-model availability is not established by the reviewed Government model table. Unknown is not unavailable, and a Government-hosted app may use an explicitly configured commercial endpoint without relabeling that endpoint as Government.",
     "Image operation profiles describe the implemented single-image workflow. MAI and FLUX support source-image edits where stated, but their reviewed APIs do not document uploaded masks. Masking is not inferred from vision, tool calling, or inpainting prose.",
     "GPT-6 Astra token capacities and reasoning efforts were reviewed on 2026-10-01, separately from the 2026-09-19 audit of the original 75 records. Azure Chat Completions rejected function tools for gpt-6-astra (2026-09-03) with the default and low efforts and rejected none. toolReasoningEfforts can't express a model with no tool-capable effort, so that observation is recorded in notes only.",
-    "GPT-6 Sol was reviewed on 2026-10-02. OpenAI documents that its Chat Completions function calling requires reasoning_effort none, and Azure behaved the same on 2026-10-01, so both providers carry a Chat Completions toolReasoningEfforts of none."
+    "GPT-6 Sol was reviewed on 2026-10-02. OpenAI documents that its Chat Completions function calling requires reasoning_effort none, and Azure behaved the same on 2026-10-01, so both providers carry a Chat Completions toolReasoningEfforts of none.",
+    "MAI-Thinking-1 was independently reviewed on 2026-11-05 against Microsoft Learn. Its native Foundry /mai/v1 Chat Completions contract, 256,000-token shared context, 64,000-token total generation cap, text-only output, streaming and function tools do not establish Responses, image, embedding, structured-output or configurable reasoning-effort support. Custom gateways retain their own paths, authentication and any verified deployment limits."
   ],
   "sources": [
     {
@@ -200,6 +201,20 @@
       "url": "https://huggingface.co/microsoft/MAI-DS-R1/blob/a96d011a7111dcde61096468ebeeda8068735809/README.md",
       "verifiedAt": "2026-09-19",
       "revision": "a96d011a7111dcde61096468ebeeda8068735809"
+    },
+    {
+      "id": "microsoft-mai-thinking-1",
+      "provider": "microsoft",
+      "title": "Deploy and use MAI-Thinking-1 in Microsoft Foundry (preview)",
+      "url": "https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-mai-thinking",
+      "verifiedAt": "2026-11-05"
+    },
+    {
+      "id": "azure-mai-thinking-1",
+      "provider": "azure",
+      "title": "Microsoft models sold by Azure: MAI-Thinking-1",
+      "url": "https://learn.microsoft.com/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#microsoft-models-sold-by-azure",
+      "verifiedAt": "2026-11-05"
     },
     {
       "id": "openai-reasoning",
@@ -8776,6 +8791,115 @@
           "verifiedAt": "2026-09-19",
           "note": "Generation and reasoning accounting depend on the selected hosting protocol and its verified request contract, not the open-weight checkpoint alone."
         }
+      }
+    },
+    {
+      "id": "mai-thinking-1",
+      "provider": "microsoft",
+      "displayName": "MAI-Thinking-1",
+      "aliases": [],
+      "family": "mai-thinking",
+      "foundryChatApi": "mai",
+      "lifecycle": "preview",
+      "releaseDate": null,
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": false,
+        "generatesImages": false,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": false,
+        "optimizedForCoding": true,
+        "toolCalling": true,
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": true
+      },
+      "notes": [
+        "Preview Microsoft text reasoning model with streaming and function calling through /mai/v1/chat/completions.",
+        "Use the existing deployment name as model. The native API uses max_completion_tokens, including reasoning tokens, rather than max_tokens.",
+        "Microsoft documents text output, not JSON-schema output, vision, image generation, embeddings or a Responses API.",
+        "No configurable reasoning-effort levels are documented. SimpleChat uses the model's default reasoning and does not request or persist the optional encrypted reasoning envelope."
+      ],
+      "sourceIds": [
+        "microsoft-mai-thinking-1",
+        "azure-mai-thinking-1"
+      ],
+      "contextWindow": 256000,
+      "inputTokenLimit": null,
+      "outputTokenLimit": 64000,
+      "verifiedAliases": [],
+      "tokenLimitsApplicability": "text",
+      "outputTokenAccounting": "total_generation",
+      "tokenLimitEvidence": {
+        "contextWindow": {
+          "status": "verified",
+          "sourceIds": [
+            "azure-mai-thinking-1"
+          ],
+          "verifiedAt": "2026-11-05",
+          "note": "The Azure model table explicitly specifies a 256,000-token shared context for MAI-Thinking-1. Input and generated tokens must fit within that context."
+        },
+        "inputTokenLimit": {
+          "status": "unknown",
+          "sourceIds": [
+            "microsoft-mai-thinking-1",
+            "azure-mai-thinking-1"
+          ],
+          "verifiedAt": "2026-11-05",
+          "note": "The reviewed sources do not publish an independent input ceiling. Do not invent one by subtracting the maximum output from shared context."
+        },
+        "outputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "azure-mai-thinking-1"
+          ],
+          "verifiedAt": "2026-11-05",
+          "note": "The Azure model table explicitly caps output at 64,000 tokens. The request must also fit within remaining shared context."
+        },
+        "outputTokenAccounting": {
+          "status": "verified",
+          "sourceIds": [
+            "microsoft-mai-thinking-1"
+          ],
+          "verifiedAt": "2026-11-05",
+          "note": "The documented max_completion_tokens parameter includes reasoning tokens and visible output, so its ceiling bounds total generation."
+        }
+      },
+      "reasoningPolicy": {
+        "status": "unknown",
+        "efforts": [],
+        "default_effort": null,
+        "sourceIds": [
+          "microsoft-mai-thinking-1"
+        ]
+      },
+      "selectionProfile": {
+        "summary": "Microsoft's preview text model for multi-step reasoning, coding and function-tool workflows.",
+        "strengths": [
+          "Documented support for reasoning-heavy tasks, coding workflows and function calling.",
+          "A 256,000-token shared context supports long text prompts and conversation history."
+        ],
+        "limitations": [
+          "Preview availability and deployment access must be verified independently.",
+          "The native API supports Chat Completions and text output, not Responses or JSON-schema output.",
+          "No documented reasoning-effort selector; optional encrypted reasoning continuation is not requested by SimpleChat."
+        ],
+        "tasks": {
+          "general": "suitable",
+          "coding": "suitable",
+          "reasoning": "suitable",
+          "tool_use": "suitable"
+        },
+        "chatCompletions": true,
+        "verifiedAt": "2026-11-05",
+        "sources": [
+          "https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-mai-thinking",
+          "https://learn.microsoft.com/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#microsoft-models-sold-by-azure"
+        ]
       }
     },
     {

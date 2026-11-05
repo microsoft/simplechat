@@ -28,6 +28,7 @@ from functions_model_endpoint_validation import (
     CUSTOM_ENDPOINT_VERSION_PATTERN,
     ModelEndpointValidationError,
     custom_endpoint_setting_enabled,
+    endpoint_uses_mai_chat_completions,
     validate_custom_model_endpoint_url,
     validate_model_endpoint_api_version,
     model_endpoint_inference_api,
@@ -341,16 +342,19 @@ def build_model_endpoint_sync_chat_client(
     )
     normalized_provider = str(provider or 'aoai').strip().lower()
     api_type = get_model_endpoint_api_type(endpoint_config) or api_type
-    model_name = model.get('modelName') or model.get('behavior_name') or deployment_name
+    model_name = model.get('catalogModelId') or model.get('modelName') or model.get('behavior_name') or deployment_name
+    request_policy_model = model.get('catalogModelId') or model_name
     connection = (endpoint_config or {}).get('connection') or {}
     if use_responses_api is None:
         use_responses_api = connection.get('use_responses_api')
     validate_model_endpoint_api_version(
         normalized_provider, endpoint, api_version, api_type, use_responses_api=use_responses_api,
+        model=model or deployment_name,
     )
     endpoint = resolve_model_inference_endpoint(
         endpoint, use_responses_api=use_responses_api, provider=normalized_provider, api_type=api_type,
         url_mode=connection.get('url_mode'),
+        model=model or deployment_name,
     )
     runtime_protocol = infer_model_endpoint_protocol(normalized_provider, endpoint, model_name, api_type)
     if normalized_provider == 'custom':
@@ -379,6 +383,7 @@ def build_model_endpoint_sync_chat_client(
         return OpenAIStyleChatCompletionClient(
             OpenAI(**kwargs), sanitize_errors=True, api_type=api_type, request_url=kwargs['base_url'],
             inference_api=model_endpoint_inference_api(endpoint),
+            model_name=request_policy_model,
         ), runtime_protocol
     auth_type = str(auth_settings.get('type') or 'managed_identity').strip().lower()
     timeout_options = globals().get('build_openai_client_timeout_options', lambda *_a, **_k: {})(settings)
@@ -394,7 +399,7 @@ def build_model_endpoint_sync_chat_client(
                 extra_headers=extra_headers,
             ), runtime_protocol
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
-            if auth_settings.get('api_key_header'):
+            if auth_settings.get('api_key_header') or endpoint_uses_mai_chat_completions(endpoint):
                 api_key, auth_headers = resolve_custom_endpoint_credentials(
                     auth_settings, default_api_key_header='api-key', default_api_key_prefix='',
                 )
@@ -404,6 +409,7 @@ def build_model_endpoint_sync_chat_client(
                 endpoint,
                 api_version,
                 default_headers=extra_headers,
+                model_name=request_policy_model,
             ), runtime_protocol
         return AzureOpenAI(
             api_version=api_version,
@@ -434,6 +440,7 @@ def build_model_endpoint_sync_chat_client(
             endpoint,
             api_version,
             default_headers=extra_headers,
+            model_name=request_policy_model,
         ), runtime_protocol
 
     token_provider = get_bearer_token_provider(credential, scope)
@@ -729,6 +736,7 @@ def build_semantic_kernel_chat_service_for_model(
     endpoint = resolve_model_inference_endpoint(
         endpoint, use_responses_api=use_responses_api, provider=provider or 'aoai', api_type=api_type,
         url_mode=((resolved_model_endpoint or {}).get('connection') or {}).get('url_mode'),
+        model=matched_model or deployment_name,
     )
     validate_model_endpoint_api_version(provider or 'aoai', endpoint, api_version, api_type)
     model_token_budget = resolve_model_token_budget(
@@ -787,7 +795,7 @@ def build_semantic_kernel_chat_service_for_model(
                 ), runtime_protocol
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
                 request_api_version = resolve_openai_style_request_api_version(api_version)
-                if auth_settings.get('api_key_header'):
+                if auth_settings.get('api_key_header') or endpoint_uses_mai_chat_completions(endpoint):
                     api_key, auth_headers = resolve_custom_endpoint_credentials(
                         auth_settings, default_api_key_header='api-key', default_api_key_prefix='',
                     )

@@ -2,7 +2,7 @@
 // Custom transport metadata is supplied by the server registry, not inferred from model names.
 
 import type { ConnectionModel, ModelConnection } from './modelConnections';
-import { normalizeInferenceConnection, usesResponsesApi } from './modelInference';
+import { normalizeInferenceConnection, usesMaiChatCompletions, usesResponsesApi } from './modelInference';
 
 export type CustomApiType = 'openai' | 'azure_openai' | 'anthropic' | 'gemini';
 
@@ -70,6 +70,9 @@ export function validateCustomConnection(connection: ModelConnection): Record<st
     }
     if (usesResponsesApi(connection.connection) && connection.api_type !== 'openai') {
         errors.use_responses_api = 'Responses requires the OpenAI API contract.';
+    }
+    if (usesResponsesApi(connection.connection) && usesMaiChatCompletions(connection.connection?.endpoint)) {
+        errors.use_responses_api = 'Microsoft MAI uses Chat Completions. Turn off Use Responses API.';
     }
     if (connection.api_type === 'azure_openai' && !text(connection.connection?.api_version)) {
         errors.api_version = 'Custom Azure OpenAI requires an explicit API version.';

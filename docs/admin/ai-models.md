@@ -5,7 +5,7 @@ description: "Configure shared chat, image, and embedding connections, independe
 section: "Administration"
 audience: admin
 admin_tab: ai-models
-version: "0.261.389"
+version: "0.261.407"
 ---
 
 
@@ -59,8 +59,9 @@ Implemented in version: **0.261.389**, recorded in
 
 The React V2 connection editor's **Use Responses API** switch selects Responses
 for supported Azure OpenAI and Custom **OpenAI API** text connections. Models
-selected from that connection inherit the API in chat, local agents, orchestration,
-and workflow model/agent runners; no second switch is needed on each consumer.
+selected from that connection use that preference in chat, local agents,
+orchestration, and workflow runners when their native contract supports it.
+No second switch is needed on each consumer.
 
 Enter the resource or gateway API base, then select the switch. Pasting a full
 `/responses` URL selects it automatically and removes the operation from the saved
@@ -73,6 +74,21 @@ is retained for switching back; the editor hides that field while Responses is
 selected. A Foundry project URL is for project discovery, not this inference
 operation. Anthropic, Gemini and Custom dated Azure API contracts do not acquire
 Responses support from the switch.
+
+Since **0.261.407**, one native **Azure AI Foundry** resource/project connection
+can serve OpenAI, Grok, and Microsoft **MAI-Thinking-1** models. Inference routes
+and default audiences are selected per model; the saved project endpoint stays
+available for discovery. MAI uses its native Chat Completions API even when the
+connection prefers Responses for OpenAI-style models.
+
+Automatic model-name matching remains available. Selecting a built-in model in
+**Catalog profile** also fills its canonical **Catalog model ID**, which supports
+opaque deployment or gateway aliases without renaming them. Custom descriptive
+profiles do not declare a native contract. For gateways, **Custom → OpenAI API**
+retains the configured URL and authentication. See
+[Microsoft MAI configuration]({{ '/guides/configure-ai-connections/' | relative_url }}#microsoft-mai-text-models)
+for mixed-model connections, manual deployment binding, and gateway aliases.
+The application version is tracked in `application/single_app/config.py`.
 
 For APIM or another OpenAI-compatible gateway, expose the Responses operation on
 the gateway and retain its published prefix. With a Custom connection, **Exact**

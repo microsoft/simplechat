@@ -102,6 +102,7 @@ from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     infer_model_endpoint_protocol,
+    resolve_model_inference_endpoint,
 )
 from public_source_access import get_public_source_workspace_ids
 from functions_settings import get_settings
@@ -4260,19 +4261,21 @@ def _resolve_tabular_model_token_limits(gpt_model, settings, model_context=None,
     provider = selected_endpoint.get('provider') or chunk_model_context.get('provider') or 'aoai'
     connection = selected_endpoint.get('connection') or {}
     api_type = selected_endpoint.get('api_type') or chunk_model_context.get('api_type')
+    inference_endpoint = resolve_model_inference_endpoint(
+        connection.get('endpoint') or chunk_model_context.get('endpoint'),
+        provider=provider, api_type=api_type, model=model,
+        use_responses_api=connection.get('use_responses_api', chunk_model_context.get('use_responses_api')),
+        url_mode=connection.get('url_mode'),
+    )
     runtime_protocol = infer_model_endpoint_protocol(
         provider,
-        connection.get('endpoint') or chunk_model_context.get('endpoint'),
+        inference_endpoint,
         chunk_model_context.get('request_model') or chunk_gpt_model,
         api_type,
-        use_responses_api=connection.get('use_responses_api', chunk_model_context.get('use_responses_api')),
     )
     budget_protocol = (
         'messages' if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else
-        model_endpoint_inference_api(
-            connection.get('endpoint') or chunk_model_context.get('endpoint'),
-            connection.get('use_responses_api', chunk_model_context.get('use_responses_api')),
-        )
+        model_endpoint_inference_api(inference_endpoint)
     )
     budget = resolve_model_token_budget(
         model,

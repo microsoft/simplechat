@@ -1,5 +1,5 @@
 # functions_model_endpoint_urls.py
-"""Pure Custom API URL contracts shared by profiles and runtime clients."""
+"""Pure native Foundry and Custom inference URL contracts."""
 
 import re
 from typing import Any
@@ -11,7 +11,11 @@ from functions_model_endpoint_providers import (
     get_model_endpoint_provider,
     normalize_custom_endpoint_url_mode,
 )
-from functions_model_endpoint_validation import ModelEndpointValidationError, model_endpoint_inference_api
+from functions_model_endpoint_validation import (
+    ModelEndpointValidationError,
+    model_endpoint_inference_api,
+    resolve_native_foundry_chat_api,
+)
 
 
 CUSTOM_OPENAI_OPERATION_SUFFIXES = (
@@ -26,11 +30,25 @@ def normalize_endpoint_text(endpoint: Any) -> str:
 
 
 def resolve_model_inference_endpoint(
-    endpoint, *, use_responses_api=None, provider="aoai", api_type="", url_mode="",
+    endpoint, *, use_responses_api=None, provider="aoai", api_type="", url_mode="", model=None,
 ):
-    """Materialize the chosen operation without storing it in the connection's base URL."""
+    """Resolve the selected model's native operation without changing the saved connection."""
     endpoint = normalize_endpoint_text(endpoint)
-    if model_endpoint_inference_api(endpoint, use_responses_api) != "responses":
+    selected_api = model_endpoint_inference_api(
+        endpoint, use_responses_api, provider=provider, model=model,
+    )
+    native_api = resolve_native_foundry_chat_api(provider, endpoint, model)
+    if native_api is not None:
+        parsed = urlparse(endpoint)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        if native_api == "mai":
+            return f"{origin}/mai/v1"
+        if native_api == "anthropic":
+            return f"{origin}/anthropic/v1/messages"
+        project = re.match(r"^(/api/projects/[^/]+)(?:/|$)", parsed.path, re.IGNORECASE)
+        project_path = project.group(1) if project else ""
+        endpoint = f"{origin}{project_path}/openai/v1"
+    if selected_api != "responses":
         return endpoint
     if not endpoint:
         raise ModelEndpointValidationError("A model inference endpoint URL is required.")

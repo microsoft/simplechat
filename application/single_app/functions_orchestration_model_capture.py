@@ -70,11 +70,13 @@ def azure_chat_construction_metadata(
             or not configured_endpoint or not service.ai_model_id
         ):
             return None
-        selected_api = model_endpoint_inference_api(configured_endpoint, use_responses_api)
+        model = getattr(getattr(service, "model_token_budget", None), "model_id", None) or service.ai_model_id
         effective_endpoint = resolve_model_inference_endpoint(
             configured_endpoint, use_responses_api=use_responses_api, provider=provider,
             api_type="openai" if provider == "custom" else "", url_mode=url_mode,
+            model=model,
         )
+        selected_api = model_endpoint_inference_api(effective_endpoint)
         expected = (
             resolve_custom_openai_base_url(configured_endpoint, "openai", url_mode)
             if provider == "custom" and selected_api != "responses"

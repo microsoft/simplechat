@@ -58,6 +58,13 @@ export interface CatalogResponse {
     etag?: string;
 }
 
+export function findAutomaticCatalogProfile(identifier: string, profiles: CatalogProfile[]): CatalogProfile | undefined {
+    const identity = identifier.trim().toLowerCase();
+    if (!identity) return undefined;
+    return profiles.find((profile) => profile.origin === 'built_in' && !profile.archived
+        && [profile.id, ...(profile.aliases ?? [])].some((alias) => alias.toLowerCase() === identity));
+}
+
 /** Where "Open in AI Connections" should land. */
 export interface CatalogConnectionTarget {
     connectionId: string;

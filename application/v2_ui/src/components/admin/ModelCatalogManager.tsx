@@ -22,6 +22,7 @@ import {
     duplicateProfileForm,
     emptyProfileForm,
     filterCatalogProfiles,
+    findAutomaticCatalogProfile,
     formToPayload,
     linkedModelCount,
     loadAdminCatalog,
@@ -691,10 +692,12 @@ export function ModelCatalogManager({
  */
 export function CatalogProfilePicker({
     value,
+    modelName = '',
     onChange,
 }: {
     value?: string;
-    onChange: (value: string) => void;
+    modelName?: string;
+    onChange: (value: string, profile: CatalogProfile | null) => void;
 }) {
     const id = useId();
     const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
@@ -738,14 +741,15 @@ export function CatalogProfilePicker({
     }
 
     const current = value ?? '';
+    const automatic = findAutomaticCatalogProfile(modelName, catalog.profiles);
     const choices: [string, string][] = [
-        ['', 'Automatic exact match (built-in only)'],
+        ['', automatic ? `Automatic exact match: ${automatic.displayName}` : 'Automatic exact match (built-in only)'],
         ...catalog.profiles.map((profile): [string, string] => [profile.id, profile.displayName]),
     ];
     if (current && !choices.some(([key]) => key === current)) {
         choices.push([current, `${current} (unavailable or archived)`]);
     }
-    const profile = catalog.profiles.find((item) => item.id === current);
+    const profile = catalog.profiles.find((item) => item.id === current) ?? (!current ? automatic : undefined);
 
     return (
         <div className="mt-2">
@@ -756,7 +760,10 @@ export function CatalogProfilePicker({
                 id={id}
                 className={inputClass}
                 value={current}
-                onChange={(event) => onChange(event.target.value)}
+                onChange={(event) => onChange(
+                    event.target.value,
+                    catalog.profiles.find((item) => item.id === event.target.value) ?? null,
+                )}
             >
                 {choices.map(([key, text]) => (
                     <option key={key} value={key}>
@@ -768,6 +775,11 @@ export function CatalogProfilePicker({
                 {profile
                     ? `${profile.summary} Connection overrides still apply.`
                     : 'Profile association does not change the deployment name or credentials.'}
+            </p>
+            <p className="mt-1 text-xs text-text-3">
+                Choosing a built-in model fills its canonical model ID for known settings and native routing.
+                Deployment names, gateway URLs, credentials and explicit overrides stay unchanged.
+                Custom profiles are descriptive only.
             </p>
         </div>
     );

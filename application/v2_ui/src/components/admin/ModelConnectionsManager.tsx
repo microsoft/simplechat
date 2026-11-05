@@ -62,6 +62,7 @@ import {
     providerLabel,
     personalTestBlockedReason,
     setModelCapabilityEnabled,
+    selectModelCatalogProfile,
     setEmbeddingOperation,
     toEditableConnection,
     validateConnection,
@@ -84,7 +85,7 @@ import { CustomAuthenticationFields, CustomConnectionFields } from './CustomConn
 import { CustomNetworkPolicyEditor } from './CustomNetworkPolicyEditor';
 import { GlassButton } from '../ui/primitives';
 import { EditorSwitch } from '../workspace/EditorLayout';
-import { normalizeInferenceConnection, usesResponsesApi } from '../../lib/modelInference';
+import { isNativeFoundryEndpoint, normalizeInferenceConnection, usesMaiChatCompletions, usesResponsesApi } from '../../lib/modelInference';
 import { ConnectionCapacityFields, ConnectionModelMetadata } from '../workspace/ConnectionMetadataFields';
 import { useModelConnectionsStore, modelConnectionsChanged } from '../../stores/modelConnectionsStore';
 import { toast } from '../../stores/toastStore';
@@ -402,6 +403,8 @@ function ConnectionEditor({
 
     const isNew = !initial.id;
     const foundry = isFoundryProvider(draft.provider);
+    const nativeFoundry = isNativeFoundryEndpoint(draft.provider, draft.connection?.endpoint);
+    const mai = usesMaiChatCompletions(draft.connection?.endpoint);
     const embeddingOnly = draft.provider === 'openai_compatible';
     const embeddingOperation = draft.connection?.operation_settings?.embeddings;
     const embeddingApi = embeddingOperation?.api || defaultEmbeddingApi(draft);
@@ -759,7 +762,7 @@ function ConnectionEditor({
             <SectionHeading>Connection</SectionHeading>
 
             <Field
-                label={embeddingOnly ? 'Embedding API base URL' : foundry ? 'Project endpoint' : 'Endpoint URL'}
+                label={embeddingOnly ? 'Embedding API base URL' : foundry ? 'Foundry endpoint' : 'Endpoint URL'}
                 error={errors.endpoint}
                 htmlFor="connection-endpoint"
                 help={
@@ -767,8 +770,12 @@ function ConnectionEditor({
                         ? 'Use the explicit OpenAI-compatible API base, for example https://gateway.example/api/v1. Its path is preserved; no Azure route is added.'
                         : custom
                         ? 'The Custom API URL. HTTPS is required unless both private-host and plaintext HTTP permissions are explicitly enabled.'
+                        : nativeFoundry
+                        ? 'Native model routing is automatic. OpenAI and Grok use compatible inference; Microsoft MAI uses its native API. This endpoint is retained for discovery.'
+                        : mai
+                        ? 'Keep the resource or gateway API base ending /mai/v1/. Add the existing MAI deployment manually if discovery does not list it.'
                         : foundry
-                        ? 'A Foundry project URL. Including /api/projects/<name> names the project for you.'
+                        ? 'Enter a native Foundry resource or project URL for automatic model routing. For an explicit gateway API base, choose Custom.'
                         : 'Enter the resource or gateway API base. Pasting a full Responses URL selects Responses and saves only the base URL.'
                 }
             >
@@ -787,9 +794,13 @@ function ConnectionEditor({
             {!embeddingOnly && (draft.provider === 'aoai' || foundry || custom && draft.api_type === 'openai') && (
                 <EditorSwitch
                     label="Use Responses API"
-                    description="Use Responses for supported text models, including reasoning with actions. Chat, agents and workflows using this connection inherit the choice. Gateways must expose the Responses operation."
+                    description={nativeFoundry
+                        ? 'Prefer Responses for compatible OpenAI-style models. Native MAI and Anthropic models keep their own supported APIs automatically.'
+                        : mai
+                        ? 'This MAI API uses Chat Completions, including function tools. Responses is not available on /mai/v1/.'
+                        : 'Use Responses for supported text models, including reasoning with actions. Chat, agents and workflows using this connection inherit the choice. Gateways must expose the Responses operation.'}
                     checked={usesResponsesApi(draft.connection)}
-                    disabled={busy || !canSave || (foundry && !usesResponsesApi(draft.connection) && String(draft.connection?.endpoint ?? '').includes('/api/projects/'))}
+                    disabled={busy || !canSave || (!usesResponsesApi(draft.connection) && !nativeFoundry && (mai || foundry && String(draft.connection?.endpoint ?? '').includes('/api/projects/')))}
                     error={errors.use_responses_api}
                     onChange={(checked) => setField('connection.use_responses_api', checked)}
                 />
@@ -799,7 +810,9 @@ function ConnectionEditor({
                 label="OpenAI API version"
                 error={errors.openai_api_version}
                 htmlFor="connection-openai-version"
-                help={foundry
+                help={mai
+                    ? 'MAI v1 does not send an api-version query. The project API version controls discovery only.'
+                    : foundry
                     ? 'v1 inference does not send a dated api-version query. Project API version below controls discovery, not model reasoning or tool support.'
                     : 'Resource-root Azure endpoints need a dated API version. For v1, use /openai/v1/; use the full /openai/v1/responses endpoint to opt into reasoning with tools on supported models. Entering v1 here alone does not change the protocol.'}
             >
@@ -841,6 +854,8 @@ function ConnectionEditor({
                         help={
                             projectHint
                                 ? `Taken from the endpoint URL: ${projectHint}`
+                                : nativeFoundry
+                                ? 'Optional for manually configured models; needed to discover project deployments.'
                                 : 'Only needed when the endpoint URL does not include /api/projects/.'
                         }
                     >
@@ -1026,7 +1041,11 @@ function ConnectionEditor({
                     label="Foundry scope"
                     error={errors.foundry_scope}
                     htmlFor="connection-foundry-scope"
-                    help="The token audience used when calling the project. Required only for a custom cloud."
+                    help={nativeFoundry
+                        ? 'Leave blank for the native audience selected per model. An explicit scope overrides automatic audience selection.'
+                        : mai
+                        ? 'Native MAI inference uses the Cognitive Services audience. An explicit scope overrides that default.'
+                        : 'The token audience used when calling the project. Required only for a custom cloud.'}
                 >
                     <input
                         id="connection-foundry-scope"
@@ -1350,12 +1369,9 @@ function ConnectionEditor({
                                 </label> : null}
                                 <CatalogProfilePicker
                                     value={model.catalogProfileId}
-                                    onChange={(catalogProfileId) => setModels(models.map((item, at) => {
-                                        if (at !== index) return item;
-                                        const next = { ...item, catalogProfileId };
-                                        delete next.capability_status;
-                                        return next;
-                                    }))}
+                                    modelName={model.catalogModelId || model.modelName || model.deploymentName || ''}
+                                    onChange={(catalogProfileId, profile) => setModels(models.map((item, at) => at === index
+                                        ? selectModelCatalogProfile(item, catalogProfileId, profile, draft.provider) : item))}
                                 />
                                 <ModelCapabilities
                                     model={model}

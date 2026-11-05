@@ -1,8 +1,9 @@
 // test_v2_model_catalog_logic.ts
 //
 // Runtime test for the V2 Model Catalog's behaviour-deciding helpers.
-// Version: 0.261.258
+// Version: 0.261.407
 // Implemented in: 0.261.258
+// Automatic model-name matching and browser origin fixture: 0.261.407
 //
 // The V2 catalog is native React now, so the rules that used to live only in the classic
 // module -- which profiles a filter keeps, the order they list in, what a saved profile
@@ -20,6 +21,7 @@ import {
     duplicateProfileForm,
     evidenceLabel,
     filterCatalogProfiles,
+    findAutomaticCatalogProfile,
     formToPayload,
     formatTokenLimit,
     isLifecycleWarning,
@@ -174,12 +176,27 @@ check('technical facts read plainly', () => {
     assert.equal(new Set(CATALOG_CAPABILITIES.map((item) => item.key)).size, 14);
 });
 
+check('automatic matching uses exact built-in identities and aliases without taking custom descriptions as models', () => {
+    const builtin = profile('mai-thinking-1', { origin: 'built_in', aliases: ['MAI-Thinking-1-snapshot'] });
+    const custom = profile('custom:alias', { origin: 'custom', aliases: ['production-alias'] });
+    const archived = profile('old-model', { origin: 'built_in', archived: true });
+    const choices = [builtin, custom, archived];
+    assert.equal(findAutomaticCatalogProfile(' MAI-Thinking-1 ', choices), builtin);
+    assert.equal(findAutomaticCatalogProfile('MAI-Thinking-1-snapshot', choices), builtin);
+    assert.equal(findAutomaticCatalogProfile('production-alias', choices), undefined);
+    assert.equal(findAutomaticCatalogProfile('old-model', choices), undefined);
+    assert.equal(findAutomaticCatalogProfile('mai-thinking-10', choices), undefined);
+});
+
 check('pickers share one profile request until the catalog changes', async () => {
     let requests = 0;
     const events: string[] = [];
     const globals = globalThis as Record<string, unknown>;
     const original = { fetch: globals.fetch, window: globals.window };
-    globals.window = { dispatchEvent: (event: Event) => events.push(event.type) };
+    globals.window = {
+        location: { origin: 'http://simplechat.test' },
+        dispatchEvent: (event: Event) => events.push(event.type),
+    };
     globals.fetch = async () => {
         requests += 1;
         return new Response(JSON.stringify({ profiles: [profile('Shared')], tasks: {} }), {

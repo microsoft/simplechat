@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.407)**
+
+#### New Features
+
+*   **Microsoft MAI-Thinking-1 In AI Connections**
+    *   A single native Foundry resource/project connection can now route OpenAI, Grok, and Microsoft MAI models to their appropriate inference APIs automatically, including managed identity, streaming, and function tools.
+    *   Built-in model selections preconfigure canonical model identity while retaining automatic exact name matching, deployment names, explicit overrides, and publication choices.
+    *   Preserved Custom/APIM base paths, authentication headers, and request aliases. MAI keeps its native Chat Completions contract even when the shared connection prefers Responses for compatible OpenAI-style models.
+    *   Added the verified MAI profile, generation limits, token audience, and setup guidance without changing existing chat, planner, image, or embedding defaults.
+    *   (Ref: `model_endpoint_clients.py`, `functions_model_endpoint_runtime.py`, `functions_model_capabilities.py`, `ModelConnectionsManager.tsx`, `model_capabilities.json`, [AI connection configuration]({{ '/guides/configure-ai-connections/' | relative_url }}#microsoft-mai-text-models), [Microsoft MAI Connection Compatibility Fix](fixes/MICROSOFT_MAI_MODEL_CONNECTIONS_FIX.md))
+
 ### **(v0.261.392)**
 
 #### Bug Fixes

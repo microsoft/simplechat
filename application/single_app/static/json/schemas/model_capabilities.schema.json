@@ -426,6 +426,10 @@
         "reasoningPolicy": {
           "$ref": "#/$defs/reasoningPolicy"
         },
+        "foundryChatApi": {
+          "enum": ["openai", "anthropic", "mai"],
+          "description": "Reviewed native Foundry chat contract for this exact model. It does not override Custom gateway routing or authentication."
+        },
         "imageProfiles": {
           "$ref": "#/$defs/imageProfiles"
         },
@@ -518,6 +522,7 @@
         "sourceIds": {"$ref": "#/$defs/sourceIdList"},
         "notes": {"$ref": "#/$defs/stringList"},
         "reasoningPolicy": {"$ref": "#/$defs/reasoningPolicy"},
+        "foundryChatApi": {"$ref": "#/$defs/tokenModelRecord/properties/foundryChatApi"},
         "imageProfiles": {"$ref": "#/$defs/imageProfiles"},
         "imageLifecycle": {"$ref": "#/$defs/imageLifecycle"},
         "inputFidelity": {"type": "boolean"}

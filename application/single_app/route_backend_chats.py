@@ -956,6 +956,9 @@ def _should_inject_fact_memory_context_for_model(provider, model_name):
 def _build_model_endpoint_behavior_name(model_cfg, deployment):
     if not isinstance(model_cfg, dict):
         return deployment
+    canonical = str(model_cfg.get('catalogModelId') or '').strip()
+    if canonical:
+        return canonical
     model_names = [
         deployment,
         model_cfg.get('modelName'),
@@ -15277,6 +15280,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         connection.get('endpoint'), use_responses_api=connection.get('use_responses_api'),
         provider=provider, api_type=get_model_endpoint_api_type(resolved_endpoint_cfg),
         url_mode=connection.get('url_mode'),
+        model=model_cfg,
     )
     api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
     api_type = get_model_endpoint_api_type(resolved_endpoint_cfg)

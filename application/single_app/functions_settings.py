@@ -6,6 +6,7 @@ from functools import wraps
 import logging
 import re
 import threading
+from urllib.parse import urlparse
 
 import requests
 from flask import g, has_request_context, jsonify, request, session
@@ -80,7 +81,10 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     normalize_model_endpoint_api_type,
 )
-from functions_model_endpoint_validation import normalize_model_inference_connection
+from functions_model_endpoint_validation import (
+    endpoint_uses_mai_chat_completions,
+    normalize_model_inference_connection,
+)
 from functions_rate_limit import (
     RATE_LIMIT_MESSAGE_DEFAULT,
     build_rate_limit_error_payload,
@@ -3158,6 +3162,11 @@ def resolve_model_endpoint_foundry_scope(auth_settings, endpoint=None):
     custom_scope = str(auth_settings.get("foundry_scope") or "").strip()
     if custom_scope:
         return custom_scope
+
+    if endpoint_uses_mai_chat_completions(endpoint):
+        hostname = (urlparse(str(endpoint or "")).hostname or "").lower()
+        if hostname.endswith(".services.ai.azure.com"):
+            return "https://cognitiveservices.azure.com/.default"
 
     management_cloud = normalize_model_endpoint_management_cloud(auth_settings.get("management_cloud"))
     if management_cloud == "government":

@@ -7,6 +7,7 @@ from semantic_kernel.functions import KernelArguments
 
 from functions_model_capabilities import (
     ModelTokenBudgetError,
+    model_uses_mai_chat_api,
     is_reasoning_model,
     normalize_token_limit,
 )
@@ -51,6 +52,7 @@ def set_generation_limit(settings, budget, value):
     elif budget.protocol == "chat_completions" and (
         budget.provider in ("openai", "azure") and is_reasoning_model(budget.model_id)
         or budget.provider == "xai"
+        or model_uses_mai_chat_api(budget.model_id)
     ):
         field = "max_completion_tokens"
     if field in type(settings).model_fields:

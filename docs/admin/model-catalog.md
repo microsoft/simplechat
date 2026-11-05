@@ -5,7 +5,7 @@ description: "Describe model strengths, manage shared profiles, and influence pe
 section: "Administration"
 audience: admin
 admin_tab: model-catalog
-version: "0.261.258"
+version: "0.261.407"
 ---
 
 # Model Catalog
@@ -87,9 +87,18 @@ workflow. One profile can describe several deployments. Its immutable identity
 does not replace the model's deployment name or request identifier.
 
 Explicit model capability overrides take precedence over endpoint overrides and
-profile declarations. The separate **Catalog model ID** capacity setting still
-controls audited numeric identity: a descriptive profile association does not
-invent context limits, reasoning policies, or provider-specific operation support.
+profile declarations. Since **0.261.407**, explicitly choosing a built-in model in
+the V2 connection editor also fills **Catalog model ID** from that verified model
+and the underlying model name on native Azure connections.
+The deployment/request name, Custom gateway route, authentication, publication,
+and existing overrides remain unchanged. Choosing **Automatic exact match** restores
+name matching when the canonical ID came from the previous built-in selection.
+
+Custom profiles, imported descriptive associations, and profile preferences do
+not invent numeric identity or provider-specific operation support. **Catalog
+model ID** remains the technical identity used to look up audited capacities,
+model policies, and native Foundry contracts. The implementation version is tracked
+in `application/single_app/config.py`.
 
 ## Evidence, bounds, and lifecycle
 
