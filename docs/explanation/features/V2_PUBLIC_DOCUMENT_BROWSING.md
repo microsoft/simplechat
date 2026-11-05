@@ -5,6 +5,12 @@
 Implemented in version: **0.261.132**, tracked in
 `application/single_app/config.py`.
 
+Index-first discovery implemented in version: **0.261.405**, tracked in the
+same configuration file. Lists, facets, tags, and counts use the maintained
+access index when ready, with scoped source fallback. Current source metadata
+and permissions are still checked; this does not add a separate index
+completeness check or change the reader/manager publication policy.
+
 Public workspace documents can now be browsed in the same native explorer used
 for My Workspace and for group workspaces, rather than only on the classic
 page. This is the read-only slice; management and approval follow in M3B and

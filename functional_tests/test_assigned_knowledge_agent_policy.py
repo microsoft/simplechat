@@ -1,7 +1,7 @@
 # test_assigned_knowledge_agent_policy.py
 """
 Functional test for Assigned Knowledge agent policy.
-Version: 0.241.119
+Version: 0.261.405
 Implemented in: 0.241.068
 
 This test ensures that Assigned Knowledge is normalized, constrained by
@@ -152,7 +152,8 @@ def test_assigned_knowledge_active_document_inventory_resolves_full_source_pool(
         _public_workspace_source_map=lambda: {
             "public-1": {"scope": "public", "id": "public-1", "label": "Public One"},
         },
-        _get_public_catalog_documents=lambda workspace_ids: [
+        filter_available_results=lambda documents, **kwargs: documents,
+        _get_public_catalog_documents=lambda workspace_ids, **kwargs: [
             {"id": "doc-1", "file_name": "Guide.md", "title": "Guide", "public_workspace_id": "public-1", "tags": []},
             {"id": "doc-2", "file_name": "Runbook.md", "title": "Runbook", "public_workspace_id": "public-1", "tags": []},
         ],
@@ -184,7 +185,8 @@ def test_assigned_knowledge_active_document_inventory_matches_tag_and_explicit_s
         _public_workspace_source_map=lambda: {
             "public-1": {"scope": "public", "id": "public-1", "label": "Public One"},
         },
-        _get_public_catalog_documents=lambda workspace_ids: [
+        filter_available_results=lambda documents, **kwargs: documents,
+        _get_public_catalog_documents=lambda workspace_ids, **kwargs: [
             {"id": "doc-tagged", "file_name": "Plan.md", "title": "Plan", "public_workspace_id": "public-1", "tags": ["finance", "planning"]},
             {"id": "doc-finance", "file_name": "Finance.md", "title": "Finance", "public_workspace_id": "public-1", "tags": ["finance"]},
             {"id": "doc-explicit", "file_name": "Extra.md", "title": "Extra", "public_workspace_id": "public-1", "tags": []},
@@ -286,7 +288,7 @@ def test_assigned_knowledge_search_can_bypass_directory_visible_public_workspace
     """Validate assigned public workspace IDs are not limited by the user's directory visibility preference."""
     with patch.object(
         functions_search,
-        "get_user_visible_public_workspace_ids_from_settings",
+        "get_public_source_workspace_ids",
         lambda user_id: ["public-1"],
     ):
         default_workspace_ids = functions_search._resolve_public_workspace_ids_for_search(
@@ -525,17 +527,19 @@ def test_public_workspace_search_filter_respects_user_visibility():
     """Validate list-valued public workspace filters stay user-visible."""
     with patch.object(
         functions_search,
-        "get_user_visible_public_workspace_ids_from_settings",
+        "get_public_source_workspace_ids",
         return_value=["public-1", "public-3"],
     ):
-        assert functions_search._resolve_public_workspace_ids_for_search(
+        selected = functions_search._resolve_public_workspace_ids_for_search(
             TEST_USER_ID,
             ["public-2", "public-1", "public-1"],
-        ) == ["public-1"]
-        assert functions_search._resolve_public_workspace_ids_for_search(
+        )
+        all_visible = functions_search._resolve_public_workspace_ids_for_search(
             TEST_USER_ID,
             None,
-        ) == ["public-1", "public-3"]
+        )
+        assert selected == ["public-1"]
+        assert all_visible == ["public-1", "public-3"]
 
 
 def run_all_tests():

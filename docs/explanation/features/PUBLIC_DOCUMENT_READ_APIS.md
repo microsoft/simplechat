@@ -1,4 +1,4 @@
-# Public Document Read APIs (v0.261.132)
+# Public Document Read APIs (v0.261.405)
 
 ## Overview
 
@@ -45,6 +45,22 @@ predates the immutable-target decision taken in M2B. Public reads are a fresh
 surface, so they follow the current rule rather than the earlier precedent.
 
 ## Queries
+
+### Indexed workspace discovery
+
+Implemented in version: **0.261.405**, tracked in
+`application/single_app/config.py`. The named workspace list, facets, tags, and
+current-document counts discover candidates through the maintained document
+access index. Current source metadata is loaded in bounded ID batches before
+role-specific pending-publication and screening projection, filtering, and
+pagination. This preserves the reader/manager distinction.
+
+The existing scoped source query is the fallback when schema/backfill/repair
+state or an index query prevents an indexed read. A healthy empty index is not
+checked by scanning the source container. Existing background maintenance
+refreshes the projection; Redis failure only bypasses the index cache.
+Details, accessible versions, final response authorization, and release-proof
+reads remain source-based. No new setting or container is required.
 
 ### Aggregate chat picker reads
 

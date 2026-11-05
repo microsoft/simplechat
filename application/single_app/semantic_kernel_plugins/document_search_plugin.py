@@ -21,6 +21,7 @@ from functions_search_service import (
     SUMMARY_DEFAULT_WINDOW_UNIT,
     get_document_accessibility_payload,
     get_document_chunks_payload,
+    search_documents as run_document_search,
     summarize_document_content,
 )
 from semantic_kernel_plugins.base_plugin import BasePlugin

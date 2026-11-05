@@ -4,7 +4,7 @@ Choosing which documents a message is grounded in, and seeing that choice before
 you send it.
 
 **Implemented in version:** 0.261.089
-**Updated in version:** 0.261.395 (`application/single_app/config.py`)
+**Updated in version:** 0.261.404 (`application/single_app/config.py`)
 **Workspace sidebar implemented in version: 0.261.395.**
 **Inline answers implemented in version:** 0.261.096
 **Interface:** V2 only. The classic interface is unchanged.
@@ -106,6 +106,15 @@ On phones, the directory collapses above the results. Workspace and document
 pages load independently, so the complete directory is not limited by the
 smaller `#` suggestion menu. Loading failures show a retry action rather than
 pretending there are no matches. Held documents remain unavailable for selection.
+
+From **0.261.404**, source discovery reuses the existing Document Access Index
+and its invalidation-aware cache rather than running grouped queries over the
+source collections. If backfill or repair readiness cannot be established, or
+an index query fails, only the affected personal, group, or public source
+collection is read directly. A successful empty indexed result does not trigger
+fallback. Both paths preserve the same matching and paging behavior; returned
+documents are revalidated against live metadata before they can be selected.
+See [Document sources DAI fallback fix](../fixes/V2_DOCUMENT_SOURCES_DAI_FALLBACK_FIX.md).
 
 Old public-only conversations and **Chat with all public** launches become
 **Choose sources** with the currently eligible public workspaces selected.
@@ -242,6 +251,7 @@ Covered by `functional_tests/test_v2_elicitation_answers.py` and
 | `functional_tests/test_v2_chat_context_picker.py` | Hand-off destination, composer wiring, chat metadata parity; bundles and runs the TypeScript checks |
 | `ui_tests/test_v2_chat_context_selection.py` | Real workspace, picker, inline mention, removal, and send workflows |
 | `functional_tests/test_v2_document_source_selection.py` | Scoped unions, sharing, admission, locks, paging and metadata failure |
+| `functional_tests/test_v2_document_source_discovery_imports.py` | Real DAI-first discovery, readiness/source fallback, Redis cache behavior, live screening and SQL compatibility in both import orders and Python modes |
 | `functional_tests/test_v2_document_source_runtime.py` | Real retrieval filters/cache identities, SDK-shaped direct reads and replay |
 | `ui_tests/test_v2_public_chat_scope.py` | Public migration, synchronized filtering, disabled state and responsive themed layouts |
 

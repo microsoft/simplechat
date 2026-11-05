@@ -10,6 +10,9 @@ workspace selected in another tab.
 Implemented in version: **0.261.128**, recorded in
 `application/single_app/config.py`.
 
+Index-first discovery implemented in version: **0.261.405**, recorded in the
+same configuration file.
+
 This page records the M2A read foundation.
 [Native group document management](V2_GROUP_DOCUMENT_MANAGEMENT.md) expanded it
 in **0.261.129** with separately authorized operations. Group sharing/approval,
@@ -58,10 +61,12 @@ The adapter validates list/detail/version scope and response shapes. Controls
 follow advertised query capabilities; unsupported sorts, places, or facets are
 not presented as functioning features.
 
-Filtering, sorting, total counts, and facets come from the complete authorized
-current-revision set on the server. The browser does not filter a page and
-pretend it has searched the entire workspace. See the backend API document for
-the source-authoritative query strategy and performance limitations.
+Filtering, sorting, counts, and facets use the server's current-revision
+candidate set, discovered through the maintained access index when usable and
+the scoped source query otherwise. Current source metadata is projected safely
+before filtering; the browser never treats filtering one page as a whole
+workspace search. See the backend API document for index health, fallback,
+source revalidation, and performance limitations.
 
 ### Ownership, sharing, and screening
 

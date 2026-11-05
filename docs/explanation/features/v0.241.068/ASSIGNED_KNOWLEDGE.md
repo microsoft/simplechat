@@ -14,6 +14,9 @@ Updated in version: **0.241.118**
 
 Updated in version: **0.241.119**
 
+Index-first discovery and runtime inventory fix implemented in version:
+**0.261.405**, tracked in `application/single_app/config.py`.
+
 ## Overview
 
 Assigned Knowledge lets an agent creator bind an agent to a governed set of workspace and web knowledge. When the agent is selected in chat, document search and assigned URL review are forced on from the configured knowledge sources. Agent creators can optionally allow users to add their own workspace documents as task-specific context alongside the assigned baseline.
@@ -108,7 +111,22 @@ No new app-level setting is required. Each agent stores:
 
 The Knowledge step includes an Active Documents preview that shows the final indexed documents the agent will use from the selected source workspaces. With only source workspaces selected, every document in those sources is active. Tag limits narrow the pool to documents that match the selected tag set, and specific documents are included explicitly alongside tag matches. The source workspace picker lists all public workspaces, including public workspaces hidden from the user's normal directory view, so agent creators can find them through search without changing their personal public workspace selector. Web Sources are listed separately because they are live reviewed evidence, not indexed workspace documents.
 
-When users ask an Assigned Knowledge agent what documents, files, sources, or assigned knowledge it can access, chat injects the complete active document inventory so the answer can include the exact active document count and list rather than only the top retrieved citations. Personal agents remain personal conversations even when their Assigned Knowledge comes from public workspaces; the assigned public workspace is tracked as additional locked context so the personal agent remains selectable on later turns.
+When users ask what an Assigned Knowledge agent can access, runtime resolution
+uses the full matching candidate set rather than the editor's 1,000-document
+display window. A configured document outside that window can still be active.
+The inventory carries the exact active count; if its rendered entries are
+bounded, the answer states how many are shown rather than claiming an exhaustive
+list. Personal agents remain personal conversations even when their Assigned
+Knowledge comes from public workspaces; the assigned public workspace is tracked
+as additional locked context so the agent remains selectable on later turns.
+
+Catalog discovery uses the maintained document access index when its existing
+schema/backfill/repair checks allow reads, followed by scoped current source
+metadata and screening projection. The original scoped queries remain the
+fallback for an unusable index. A healthy empty result does not trigger a
+full-source comparison, and source failures are unavailable responses rather
+than successful empty catalogs. Existing personal/group/global policies and
+all-public-source visibility semantics remain unchanged.
 
 When Assigned Knowledge is enabled for the selected agent, the chat workspace picker no longer displays the assigned sources as a read-only selection. If User Workspace Context is disabled, the Workspaces button acts as an Assigned Knowledge indicator and user document selections are ignored by the backend. If User Workspace Context is enabled, the Workspaces panel remains available for task-specific user selections while Assigned Knowledge still runs as the agent baseline.
 

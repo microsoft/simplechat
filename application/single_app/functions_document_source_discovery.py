@@ -107,19 +107,89 @@ def prepare_document_source_selection(data, user_id, settings, conversation_id=N
     return sources
 
 
-def _query_metadata(container, where, parameters, *, fields, offset=None, limit=None):
-    query = f"SELECT {fields} FROM c WHERE {where}"
-    if offset is not None:
-        query += " ORDER BY c.id OFFSET @offset LIMIT @limit"
-        parameters = parameters + [{"name": "@offset", "value": offset}, {"name": "@limit", "value": limit}]
+def _query_metadata(container, kind, owners, user_id, settings):
+    owner_field = {"personal": "user_id", "group": "group_id", "public": "public_workspace_id"}[kind]
+    access = f"ARRAY_CONTAINS(@owners, c.{owner_field})"
+    parameters = [{"name": "@owners", "value": owners}]
+    if kind == "personal" and settings.get("enable_file_sharing", False):
+        access = f"({access} OR ARRAY_CONTAINS(c.shared_user_ids, @user) OR ARRAY_CONTAINS(c.shared_user_ids, @approved_user))"
+        parameters.extend([{"name": "@user", "value": user_id}, {"name": "@approved_user", "value": f"{user_id},approved"}])
+    elif kind == "group":
+        access = (
+            f"({access} OR EXISTS(SELECT VALUE s FROM s IN c.shared_group_ids "
+            "WHERE ARRAY_CONTAINS(@owners, s) OR ARRAY_CONTAINS(@approved_owners, s)))"
+        )
+        parameters.append({"name": "@approved_owners", "value": [f"{owner},approved" for owner in owners]})
+    query = (
+        "SELECT c.id, c.user_id, c.group_id, c.public_workspace_id, c.shared_user_ids, c.shared_group_ids, "
+        "c.file_name, c.title, c.tags, c.version, c.revision_family_id, c.is_current_version, "
+        "c.is_deleted, c.upload_date, c._ts, c.generated_artifact_promotion_status, c.status "
+        f"FROM c WHERE {access} "
+        "AND (NOT IS_DEFINED(c.is_deleted) OR c.is_deleted != true) "
+        "AND (NOT IS_DEFINED(c.is_current_version) OR c.is_current_version != false) "
+        "AND (NOT IS_DEFINED(c.generated_artifact_promotion_status) OR c.generated_artifact_promotion_status != 'pending_approval') "
+        "AND (NOT IS_DEFINED(c.status) OR LOWER(c.status) != 'pending approval')"
+    )
     return list(container.query_items(query=query, parameters=parameters, enable_cross_partition_query=True))
+
+
+def _eligible_source_document(document):
+    return (
+        document.get("is_deleted") is not True
+        and document.get("is_current_version") is not False
+        and document.get("generated_artifact_promotion_status") != "pending_approval"
+        and str(document.get("status") or "").casefold() != "pending approval"
+    )
+
+
+def _matches_source_workspace(document, scope, user_id, settings):
+    if not document_matches_source(document, {"kind": "workspace", "scope": scope}):
+        return False
+    return scope["kind"] != "personal" or document.get("user_id") == user_id or (
+        settings.get("enable_file_sharing", False)
+        and any(entry in (user_id, f"{user_id},approved") for entry in document.get("shared_user_ids") or [])
+    )
+
+
+def _matches_source_query(document, query):
+    return not query or any(
+        isinstance(value, str) and query in value.casefold()
+        for value in (document.get("file_name"), document.get("title"), *(document.get("tags") or []))
+    )
+
+
+def _load_source_documents(container, kind, scopes, user_id, settings):
+    # These owners initialize application clients; discovery imports them only after bootstrap.
+    from functions_document_access_index import query_document_access_index_documents
+    from functions_documents import select_current_documents
+
+    owners = [user_id] if kind == "personal" else [scope["id"] for scope in scopes]
+    arguments = {"source_scope": kind, "settings": settings}
+    arguments[{"personal": "user_id", "group": "group_ids", "public": "public_workspace_ids"}[kind]] = (
+        user_id if kind == "personal" else owners
+    )
+    result = query_document_access_index_documents(**arguments)
+    rows = result["documents"] if result.get("success") else _query_metadata(
+        container, kind, owners, user_id, settings,
+    )
+    owner_field = {"personal": "user_id", "group": "group_id", "public": "public_workspace_id"}[kind]
+    by_owner = {}
+    for row in rows:
+        if _eligible_source_document(row) and any(
+            _matches_source_workspace(row, scope, user_id, settings) for scope in scopes
+        ):
+            by_owner.setdefault(row.get(owner_field), []).append(row)
+    return [
+        document for owner_documents in by_owner.values()
+        for document in select_current_documents(owner_documents)
+    ]
 
 
 def discover_document_sources(user_id, settings, *, query="", workspace=None, workspace_offset=0,
                               source_offset=0, page_size=40, conversation_id=None):
     # Discovery runs after app initialization; no content/extraction owner is imported at bootstrap.
     from config import cosmos_user_documents_container, cosmos_group_documents_container, cosmos_public_documents_container
-    from content_screening.access import public_document_payload
+    from content_screening.access import _read_authorized_document, public_document_payload
 
     catalog = source_catalog(user_id, settings, conversation_id)
     containers = {
@@ -129,72 +199,25 @@ def discover_document_sources(user_id, settings, *, query="", workspace=None, wo
     }
     query = query.strip().casefold()
     summaries = []
-    predicates = {}
+    matching_documents = {}
     for kind, container in containers.items():
         scopes = [s for s in catalog if s["kind"] == kind]
         if not scopes:
             continue
-        owner_field = {"personal": "user_id", "group": "group_id", "public": "public_workspace_id"}[kind]
-        ids = [user_id] if kind == "personal" else [s["id"] for s in scopes]
-        named_ids = [user_id if kind == "personal" else s["id"] for s in scopes if query and query in s["name"].casefold()]
-        # Source metadata only. Generated outputs awaiting publication are not workspace sources.
-        eligibility = (
-            "(NOT IS_DEFINED(c.is_deleted) OR c.is_deleted != true) "
-            "AND (NOT IS_DEFINED(c.is_current_version) OR c.is_current_version != false) "
-            "AND (NOT IS_DEFINED(c.generated_artifact_promotion_status) OR c.generated_artifact_promotion_status != 'pending_approval') "
-            "AND (NOT IS_DEFINED(c.status) OR LOWER(c.status) != 'pending approval')"
-        )
-        access = f"ARRAY_CONTAINS(@owners, c.{owner_field})"
-        parameters = [{"name": "@owners", "value": ids}]
-        if kind == "personal" and settings.get("enable_file_sharing", False):
-            access = f"({access} OR ARRAY_CONTAINS(c.shared_user_ids, @user) OR ARRAY_CONTAINS(c.shared_user_ids, @approved_user))"
-            parameters.extend([{"name": "@user", "value": user_id}, {"name": "@approved_user", "value": f"{user_id},approved"}])
-        where = f"{access} AND {eligibility}"
-        metadata_match = (
-            "CONTAINS(c.title, @query, true) OR CONTAINS(c.file_name, @query, true) "
-            "OR EXISTS(SELECT VALUE t FROM t IN c.tags WHERE CONTAINS(t, @query, true))"
-        )
-        if query:
-            name_match = "ARRAY_LENGTH(@named) > 0" if kind == "personal" else f"ARRAY_CONTAINS(@named, c.{owner_field})"
-            where += f" AND ({name_match} OR {metadata_match})"
-            parameters.extend([{"name": "@named", "value": named_ids}, {"name": "@query", "value": query}])
-        counts = list(container.query_items(
-            query=f"SELECT c.{owner_field} AS owner, COUNT(1) AS count FROM c WHERE {where} GROUP BY c.{owner_field}",
-            parameters=parameters, enable_cross_partition_query=True,
-        ))
-        by_owner = {row["owner"]: row["count"] for row in counts}
-        if kind == "personal":
-            by_owner = {user_id: sum(row["count"] for row in counts)}
-        if kind == "group":
-            shared_owner = "REPLACE(s, ',approved', '')"
-            shared_where = (
-                f"ARRAY_CONTAINS(@owners, {shared_owner}) AND c.group_id != {shared_owner} AND {eligibility}"
-            )
-            if query:
-                shared_where += f" AND (ARRAY_CONTAINS(@named, {shared_owner}) OR {metadata_match})"
-            shared_counts = list(container.query_items(
-                query=f"SELECT {shared_owner} AS owner, COUNT(1) AS count FROM c JOIN s IN c.shared_group_ids WHERE {shared_where} GROUP BY {shared_owner}",
-                parameters=parameters, enable_cross_partition_query=True,
-            ))
-            for row in shared_counts:
-                by_owner[row["owner"]] = by_owner.get(row["owner"], 0) + row["count"]
+        rows = _load_source_documents(container, kind, scopes, user_id, settings)
         for scope in scopes:
-            owner = user_id if kind == "personal" else scope["id"]
-            count = by_owner.get(owner, 0)
             name_match = bool(query and query in scope["name"].casefold())
+            scoped_documents = sorted(
+                (row for row in rows if _matches_source_workspace(row, scope, user_id, settings)
+                 and (name_match or _matches_source_query(row, query))),
+                key=lambda row: row["id"],
+            )
+            count = len(scoped_documents)
             if not query or count or name_match:
                 key = f"{kind}:{scope['id'] or ''}"
                 summaries.append({**scope, "key": key, "document_count": count,
                                   "match_reason": "workspace name" if name_match else "documents or tags" if query else None})
-                scope_access = access if kind == "personal" else f"c.{owner_field} = @owner"
-                scope_parameters = parameters + [{"name": "@owner", "value": owner}]
-                if kind == "group":
-                    scope_access = "(c.group_id = @owner OR ARRAY_CONTAINS(c.shared_group_ids, @owner) OR ARRAY_CONTAINS(c.shared_group_ids, @approved_owner))"
-                    scope_parameters.append({"name": "@approved_owner", "value": f"{owner},approved"})
-                scoped_where = f"{scope_access} AND {eligibility}"
-                if query and not name_match:
-                    scoped_where += f" AND ({metadata_match})"
-                predicates[key] = (container, scoped_where, scope_parameters)
+                matching_documents[key] = scoped_documents
     summaries.sort(key=lambda s: ({"personal": 0, "group": 1, "public": 2}[s["kind"]], s["name"].casefold(), s["key"]))
     if workspace and workspace not in {s["key"] for s in summaries}:
         raise DocumentSourceSelectionError("That workspace is not available in these results.")
@@ -202,6 +225,7 @@ def discover_document_sources(user_id, settings, *, query="", workspace=None, wo
     source_total = sum(s["document_count"] for s in browsed)
     remaining_offset = source_offset
     documents = []
+    consumed = source_offset
     for scope in browsed:
         count = scope["document_count"]
         if remaining_offset >= count:
@@ -209,28 +233,41 @@ def discover_document_sources(user_id, settings, *, query="", workspace=None, wo
             continue
         if len(documents) == page_size:
             break
-        container, where, parameters = predicates[scope["key"]]
-        rows = _query_metadata(
-            container, where, parameters,
-            fields="c.id, c.file_name, c.title, c.tags, c.version, c.content_screening, c.document_classification",
-            offset=remaining_offset, limit=page_size - len(documents),
-        )
-        documents.extend({"scope": scope, "document": public_document_payload(row)} for row in rows)
+        for row in matching_documents[scope["key"]][remaining_offset:]:
+            if len(documents) == page_size:
+                break
+            consumed += 1
+            try:
+                fresh = _read_authorized_document(
+                    row["id"], user_id, metadata_only=True, scope_type=scope["kind"],
+                    group_id=scope["id"] if scope["kind"] == "group" else None,
+                    public_workspace_id=scope["id"] if scope["kind"] == "public" else None,
+                )
+            except (LookupError, PermissionError):
+                continue
+            if (_eligible_source_document(fresh)
+                    and _matches_source_workspace(fresh, scope, user_id, settings)
+                    and (scope["match_reason"] == "workspace name" or _matches_source_query(fresh, query))):
+                payload = public_document_payload(fresh)
+                documents.append({"scope": scope, "document": {
+                    field: payload[field] for field in (
+                        "id", "file_name", "title", "tags", "version", "content_screening",
+                        "document_classification", "num_chunks", "status", "enhanced_citations",
+                    ) if field in payload
+                }})
         remaining_offset = 0
     tags = []
     if workspace:
-        container, where, parameters = predicates[workspace]
-        tag_rows = list(container.query_items(
-            query=f"SELECT DISTINCT VALUE t FROM c JOIN t IN c.tags WHERE {where}",
-            parameters=parameters, enable_cross_partition_query=True,
-        ))
-        tags = sorted(t for t in tag_rows if isinstance(t, str) and (not query or query in t.casefold()))
+        tags = sorted({
+            tag for row in matching_documents[workspace] for tag in row.get("tags") or []
+            if isinstance(tag, str) and (not query or query in tag.casefold())
+        })
     return {
         "workspaces": summaries[workspace_offset:workspace_offset + page_size],
         "eligible_workspace_count": len(catalog), "matching_workspace_count": len(summaries),
         "workspace_next": workspace_offset + page_size if workspace_offset + page_size < len(summaries) else None,
         "documents": documents, "tags": tags, "source_total": source_total,
-        "source_next": source_offset + len(documents) if source_offset + len(documents) < source_total else None,
+        "source_next": consumed if consumed < source_total else None,
         "complete": True,
         "browsed_workspace": browsed[0] if workspace and browsed else None,
     }

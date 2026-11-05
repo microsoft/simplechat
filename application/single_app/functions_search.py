@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+from functions_appinsights import log_event
 from document_source_selection import selection_scope_fields, source_union_filter
 from functions_document_source_discovery import admit_document_source_selection
 from public_chat_scope_state import aggregate_public_workspace_ids, current_public_chat_scope
@@ -33,6 +34,7 @@ from public_source_access import get_public_source_workspace_ids
 from utils_cache import (
     generate_search_cache_key,
     get_cached_search_results,
+    get_cache_settings,
     cache_search_results,
     DEBUG_ENABLED
 )
@@ -435,31 +437,27 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         selected_document = assert_document_available(selected_document_id, user_id=user_id, purpose="selection")
         selected_sources.append({PROVENANCE_FIELD: document_provenance(selected_document)})
 
-    normalization_changed = False
-    try:
-        from functions_documents import normalize_document_revision_families
-
-        if doc_scope in ("all", "personal"):
-            normalization_changed = normalize_document_revision_families(user_id=user_id) or normalization_changed
-
-        if doc_scope in ("all", "group") and active_group_ids:
-            for current_group_id in active_group_ids:
-                normalization_changed = normalize_document_revision_families(
-                    user_id=user_id,
-                    group_id=current_group_id,
-                ) or normalization_changed
-
-        if doc_scope in ("all", "public"):
-            for workspace_id in active_public_workspace_ids:
-                normalization_changed = normalize_document_revision_families(
-                    user_id=user_id,
-                    public_workspace_id=workspace_id,
-                ) or normalization_changed
-    except Exception as normalization_error:
-        debug_print(
-            f"Revision normalization failed before search: {normalization_error}",
-            "SEARCH",
+    scope_requests = []
+    if doc_scope in ("all", "personal"):
+        scope_requests.append(("personal", user_id, {"user_id": user_id}, {}))
+    if doc_scope in ("all", "group"):
+        scope_requests.extend(
+            ("group", group_id, {"group_ids": [group_id]}, {"group_id": group_id})
+            for group_id in active_group_ids or []
         )
+    if doc_scope in ("all", "public"):
+        scope_requests.extend(
+            ("public", workspace_id, {"public_workspace_ids": [workspace_id]}, {"public_workspace_id": workspace_id})
+            for workspace_id in active_public_workspace_ids
+        )
+
+    # DAI and document owners require initialized clients, so bind them at search execution.
+    from functions_document_access_index import (
+        document_access_normalization_is_cached,
+        get_document_access_normalization_context,
+        query_document_access_index_fingerprint,
+        remember_document_access_normalization,
+    )
 
     # Build document ID filter clause
     doc_id_filter = None
@@ -473,21 +471,30 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     embedding_settings = read_embedding_settings()
     embedding_profile = active_embedding_profile(embedding_settings)
     # Profile identity prevents old-model retrieval results from surviving a model change.
-    cache_key = generate_search_cache_key(
-        query=query,
-        user_id=user_id,
-        document_id=document_id,
-        document_ids=document_ids,
-        doc_scope=doc_scope,
-        active_group_ids=active_group_ids,
-        active_public_workspace_id=active_public_workspace_ids,
-        top_n=top_n,
-        enable_file_sharing=enable_file_sharing,
-        tags_filter=tags_filter,
-        document_filter_mode=document_filter_mode,
-        embedding_profile_id=embedding_profile.profile_id,
-    )
-    if admitted_sources is not None:
+    cache_enabled, _cache_ttl = get_cache_settings()
+    cache_key = None
+    if cache_enabled:
+        scope_fingerprints = {}
+        for source_scope, scope_id, scope_arguments, _normalization_arguments in scope_requests:
+            fingerprint_result = query_document_access_index_fingerprint(source_scope, **scope_arguments)
+            if fingerprint_result.get("success"):
+                scope_fingerprints[f"{source_scope}:{scope_id}"] = fingerprint_result["fingerprint"]
+        cache_key = generate_search_cache_key(
+            query=query,
+            user_id=user_id,
+            document_id=document_id,
+            document_ids=document_ids,
+            doc_scope=doc_scope,
+            active_group_ids=active_group_ids,
+            active_public_workspace_id=active_public_workspace_ids,
+            top_n=top_n,
+            enable_file_sharing=enable_file_sharing,
+            tags_filter=tags_filter,
+            document_filter_mode=document_filter_mode,
+            embedding_profile_id=embedding_profile.profile_id,
+            scope_fingerprints=scope_fingerprints,
+        )
+    if cache_key is not None and admitted_sources is not None:
         identity = json.dumps(sorted(
             (json.dumps(source, sort_keys=True) for source in admitted_sources),
         ), sort_keys=True)
@@ -495,7 +502,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
 
     # Check cache first (pass scope parameters for correct partition key)
     cached_results = None
-    if not normalization_changed:
+    if cache_key is not None:
         with embedding_query_slot(embedding_profile.profile_id):
             cached_results = get_cached_search_results(
                 cache_key,
@@ -519,6 +526,29 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         assert_evidence_available(selected_sources, user_id=user_id)
         if len(available_cached_results) == len(cached_results):
             return available_cached_results
+
+    from functions_documents import normalize_document_revision_families
+
+    for source_scope, _scope_id, scope_arguments, normalization_arguments in scope_requests:
+        try:
+            normalization_context = get_document_access_normalization_context(source_scope, **scope_arguments)
+            if document_access_normalization_is_cached(normalization_context):
+                continue
+            changed = normalize_document_revision_families(user_id=user_id, **normalization_arguments)
+            if changed:
+                # Repair can change visibility and invalidate the key sampled before it.
+                cache_key = None
+            else:
+                remembered = remember_document_access_normalization(normalization_context)
+                if normalization_context is not None and not remembered:
+                    cache_key = None
+        except Exception as normalization_error:
+            cache_key = None
+            log_event(
+                '[DOCUMENT_ACCESS_INDEX] Search revision normalization failed; result caching bypassed.',
+                extra={'source_scope': source_scope, 'exception_type': type(normalization_error).__name__},
+                level=logging.WARNING, exceptionTraceback=True,
+            )
 
     # Cache miss - proceed with search
     query_length, query_hash = _query_log_context(query)
@@ -774,14 +804,15 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 )
 
     # Cache the results before returning (pass scope parameters for correct partition key)
-    cache_search_results(
-        cache_key,
-        results,
-        user_id,
-        doc_scope,
-        active_group_ids=active_group_ids,
-        active_public_workspace_id=active_public_workspace_ids
-    )
+    if cache_key is not None:
+        cache_search_results(
+            cache_key,
+            results,
+            user_id,
+            doc_scope,
+            active_group_ids=active_group_ids,
+            active_public_workspace_id=active_public_workspace_ids
+        )
 
     debug_print(
         "Search complete - returning results",

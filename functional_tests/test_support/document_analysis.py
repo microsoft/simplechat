@@ -1,7 +1,7 @@
 # document_analysis.py
 """Original-source fixtures and isolated SDK seams for the real Analyze producer.
 
-Version: 0.261.122
+Version: 0.261.405
 Implemented in: 0.261.109
 """
 
@@ -112,6 +112,7 @@ def document_analysis_runtime(documents):
         ),
         'utils_cache': _module(
             'utils_cache', generate_search_cache_key=lambda *args, **kwargs: '',
+            get_cache_settings=lambda: (False, 300),
             get_cached_search_results=lambda *args, **kwargs: None,
             cache_search_results=lambda *args, **kwargs: None, DEBUG_ENABLED=False,
         ),

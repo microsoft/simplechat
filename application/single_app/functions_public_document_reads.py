@@ -1,5 +1,5 @@
 # functions_public_document_reads.py
-"""Source-authoritative, read-only public workspace document browsing.
+"""Index-first, read-only public workspace document browsing.
 
 Every read embeds the workspace in the caller's explicit target and revalidates
 membership and status independently, so a stale active-workspace preference can
@@ -17,7 +17,11 @@ from content_screening.access import (
     HELD_PUBLIC_FIELDS,
     public_document_payload,
 )
-from functions_document_access_index import document_matches_list_filters
+from functions_document_access_index import (
+    DOCUMENT_ACCESS_SOURCE_BATCH_SIZE,
+    document_matches_list_filters,
+    query_document_access_index_ids,
+)
 from functions_document_queries import (
     build_document_facets,
     filter_documents_by_place,
@@ -107,6 +111,20 @@ def _query_public_document_records(workspace_id, *, document_ids=None, origin_fi
     return [record for record in records if str(record["public_workspace_id"]) == str(workspace_id)]
 
 
+def _load_public_document_catalog(workspace_id, *, origin_filter=None):
+    result = query_document_access_index_ids("public", public_workspace_ids=[workspace_id])
+    if not result.get("success"):
+        return _query_public_document_records(workspace_id, origin_filter=origin_filter)
+    identifiers = result["document_ids"]
+    records = []
+    for offset in range(0, len(identifiers), DOCUMENT_ACCESS_SOURCE_BATCH_SIZE):
+        records.extend(_query_public_document_records(
+            workspace_id, document_ids=identifiers[offset:offset + DOCUMENT_ACCESS_SOURCE_BATCH_SIZE],
+            origin_filter=origin_filter,
+        ))
+    return records
+
+
 def _project_public_document(
     document, workspace_id, *, role, query_timestamp=False, include_actions=False,
     user_id=None, context=None, settings=None, collaboration_supported=None,
@@ -179,7 +197,7 @@ def count_current_public_documents(workspace_id):
 
     Superseded revisions are not counted.
     """
-    return len(current_public_document_records(_query_public_document_records(workspace_id)))
+    return len(current_public_document_records(_load_public_document_catalog(workspace_id)))
 
 
 def load_public_document_browser_documents(user_id, workspace_id, *, origin_filter=None):
@@ -187,7 +205,7 @@ def load_public_document_browser_documents(user_id, workspace_id, *, origin_filt
     the facets and the tag counts are all computed from this one set, so an
     artifact the caller's role may not see is absent from every one of them."""
     require_public_document_read_context(user_id, workspace_id)
-    records = _query_public_document_records(workspace_id, origin_filter=origin_filter)
+    records = _load_public_document_catalog(workspace_id, origin_filter=origin_filter)
     _workspace, role = require_public_document_read_context(user_id, workspace_id)
     current = [
         document

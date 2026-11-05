@@ -1,7 +1,7 @@
 # test_public_document_read_apis.py
 """
 Functional tests for immutable-target, read-only public workspace document APIs.
-Version: 0.261.186
+Version: 0.261.405
 Implemented in: 0.261.132
 Reader downloads: the list flag and per-document actions surface download for a reader
 when downloads are enabled for the workspace: 0.261.186
@@ -160,7 +160,7 @@ def seed_corpus(source):
         document("doc-a-r2", file_name="doc-a.pdf", revision_family_id="fam-a",
                  version=2, is_current_version=True, title="Doc A v2"),
         document("doc-processing", percentage_complete=40, status="Processing"),
-        document("doc-error", status="Extraction failed", tags=[]),
+        document("doc-error", status="Processing failed", tags=[]),
         document("doc-other", workspace_id="public-b"),
     ):
         source.records[record["id"]] = record
@@ -272,6 +272,10 @@ def environment(monkeypatch):
         scoped.setitem(sys.modules, "functions_document_access_index", module_stub(
             "functions_document_access_index",
             document_matches_list_filters=index_namespace["document_matches_list_filters"],
+            DOCUMENT_ACCESS_SOURCE_BATCH_SIZE=200,
+            query_document_access_index_ids=lambda *args, **kwargs: {
+                "success": False, "status": "backfill_not_ready",
+            },
         ))
 
         load_real_module(scoped, "functions_document_queries")
