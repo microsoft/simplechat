@@ -25,7 +25,7 @@ import { useMemo } from 'react';
 import { clsx } from 'clsx';
 import { Archive, FileText, RotateCcw, X } from 'lucide-react';
 import { Toggle } from '../ui/primitives';
-import { CheckStageList, TaskCompletenessDetails } from '../ui/TaskCompletenessDetails';
+import { CheckStageList, TaskCompletenessDetails, ValidationStatement } from '../ui/TaskCompletenessDetails';
 import { completenessReport, plannedCheckStages } from '../../lib/taskCompleteness';
 import { setPlanSemanticReview } from '../../lib/orchestrationController';
 import {
@@ -172,6 +172,7 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
         'left_document_id',
         'reference_document_ids',
         'reference_message_ids',
+        'content_intent',
     ]);
     const entries: Array<[string, string]> = [];
     const args = step.arguments as Json;
@@ -481,6 +482,7 @@ export function OrchestrationRunView({
                         {summary ? (
                             <p className="mt-1 text-xs text-text-2">{summary}</p>
                         ) : null}
+                        <ValidationStatement value={stepRuntime[step.step_id]?.task_completeness} />
                         <CheckStageList value={stepRuntime[step.step_id]?.task_completeness} />
                         <TaskCompletenessDetails value={stepRuntime[step.step_id]?.task_completeness} />
                         {!stepRuntime[step.step_id]?.task_completeness && plannedCheckStages(step).length > 0 ? (
@@ -516,7 +518,9 @@ export function OrchestrationRunView({
                                 </label>
                                 <p>{(edits.semantic_review?.[step.step_id] ?? step.arguments.semantic_review) === 'off'
                                     ? 'Optional semantic review is off. Required format, access and safety checks still apply.'
-                                    : 'Reviews prepared content against your request when supported and enabled by your administrator. Required checks always apply.'}</p>
+                                    : reviewValue === 'on'
+                                        ? 'Requires completed semantic review when enabled by your administrator. Required format, access and safety checks still apply.'
+                                        : 'Attempts review against your message and available evidence. Simple text-only work can recover from a checker error without blocking the answer; required checks still apply.'}</p>
                                 {typeof reviewEnabled === 'boolean' ? (
                                     <p>{reviewEnabled ? 'Semantic review enabled for this run.'
                                         : 'Semantic review was not enabled for this run. Required checks remain separate.'}</p>

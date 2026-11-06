@@ -1,8 +1,8 @@
 # test_task_completeness_engine.py
 """Grounded, bounded task checking and recovery.
 
-Version: 0.261.416
-Implemented in: 0.261.382; 0.261.384; 0.261.416
+Version: 0.261.417
+Implemented in: 0.261.382; 0.261.384; 0.261.416; 0.261.417
 """
 
 import json
@@ -11,12 +11,14 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 # The pure module can be exercised without initializing application/cloud clients.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "single_app"))
 from functions_task_completeness import (
-    CompletenessError, check_and_correct, completeness_policy, normalize_assessment,
-    public_completeness_report,
+    CompletenessError, NARRATIVE_OBLIGATIONS, assessment_response_format,
+    check_and_correct, completeness_policy, context_only_review_step_ids,
+    normalize_assessment, public_completeness_report,
 )
 
 
@@ -33,7 +35,7 @@ def run(replies, **options):
     calls, saved = [], []
     iterator = iter(replies)
 
-    def invoke(messages, stage):
+    def invoke(messages, stage, *, response_format=None):
         calls.append(stage)
         value = next(iterator)
         if isinstance(value, Exception):
@@ -216,7 +218,7 @@ def test_correction_receives_the_actual_findings_and_original_scope():
     messages = []
     responses = iter([assessment("missing"), "Evaluation with dates", assessment()])
 
-    def invoke(prompt, stage):
+    def invoke(prompt, stage, *, response_format=None):
         messages.append((stage, json.loads(prompt[-1]["content"])))
         return next(responses)
 
@@ -405,3 +407,222 @@ def test_nested_evidence_identifiers_and_citations_resolve_to_top_level_evidence
     requirements = normalize_assessment(payload, candidate=candidate, evidence=evidence)
     assert requirements[0]["evidence_refs"] == ["policy_findings", "grant_record"]
     assert requirements[0]["answer_quote"] in candidate
+
+
+SUPPLIED_NOTE = (
+    "Our project demonstration went well. Alex asked whether the service is already deployed. "
+    "It is deployed, and the team was pleased with the reception."
+)
+TEXT_CONTRACT = {
+    "response_policy": "available_information",
+    "outputs": [{"name": "answer", "kind": "markdown-v1"}],
+    "knowledge_basis": "sources_only",
+}
+
+
+def text_assessment(candidate=SUPPLIED_NOTE, *, status="satisfied"):
+    return json.dumps({"requirements": {
+        identifier: {
+            "status": status if identifier == "supported_claims" else "satisfied",
+            "reason": "An added fact lacks support." if status != "satisfied" else "",
+            "evidence_refs": ["user_provided_content"],
+            "answer_quote": candidate if status == "satisfied" or identifier != "supported_claims" else "",
+        }
+        for identifier, _ in NARRATIVE_OBLIGATIONS
+    }})
+
+
+def check_supplied_text(replies, *, policy=None, evidence=None, saved_state=None, legacy_evidence=None,
+                        instruction=None, validate=None):
+    calls, checkpoints = [], []
+    responses = iter(replies)
+
+    def invoke(messages, stage, *, response_format=None):
+        calls.append({"stage": stage, "messages": deepcopy(messages), "response_format": response_format})
+        reply = next(responses)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    value, state = check_and_correct(
+        SUPPLIED_NOTE,
+        instruction=instruction if instruction is not None else {
+            "instruction": "Rewrite the supplied account without adding facts.",
+            "approved_request": SUPPLIED_NOTE,
+        },
+        contract=TEXT_CONTRACT,
+        evidence=evidence if evidence is not None else {"user_provided_content": SUPPLIED_NOTE},
+        policy=policy if policy is not None else completeness_policy(
+            {}, "chat_orchestration", allow_semantic_error_skip=True,
+        ),
+        invoke=invoke, validate=validate if validate is not None else lambda value: [],
+        checkpoint=lambda checkpoint: checkpoints.append(deepcopy(checkpoint)),
+        saved_state=saved_state, legacy_evidence=legacy_evidence, evidence_basis="user_message",
+    )
+    return value, state, calls, checkpoints
+
+
+def test_review_transport_closes_canonical_ids_and_preserves_all_source_text():
+    value, state, calls, _ = check_supplied_text([text_assessment()])
+    assert value == SUPPLIED_NOTE and state["status"] == "complete"
+    schema = calls[0]["response_format"]["json_schema"]["schema"]
+    requirements_schema = schema["properties"]["requirements"]
+    expected_ids = [identifier for identifier, _ in NARRATIVE_OBLIGATIONS]
+    assert requirements_schema["type"] == "object"
+    assert requirements_schema["required"] == expected_ids
+    assert requirements_schema["additionalProperties"] is False
+    payload = json.loads(calls[0]["messages"][-1]["content"])
+    assert payload["evidence"]["user_provided_content"] == SUPPLIED_NOTE
+    assert payload["instruction"]["approved_request"] == SUPPLIED_NOTE
+    assert payload["assessment_schema"] == schema
+    valid = json.loads(text_assessment())
+    errors = list(Draft202012Validator(schema).iter_errors(valid))
+    assert errors == []
+    valid["requirements"]["unapproved"] = valid["requirements"][expected_ids[0]]
+    errors = list(Draft202012Validator(schema).iter_errors(valid))
+    assert errors
+    assert [item["id"] for item in state["requirements"]] == expected_ids
+    assert [item["requirement"] for item in state["requirements"]] == [
+        requirement for _, requirement in NARRATIVE_OBLIGATIONS
+    ]
+
+
+def test_fixed_report_mismatch_provides_concrete_protocol_repair_feedback():
+    malformed = json.loads(text_assessment())
+    malformed["requirements"]["personalized_check"] = malformed["requirements"].pop("requested_content")
+    strict = completeness_policy({}, "chat_orchestration", semantic_review="on")
+    _, state, calls, _ = check_supplied_text([json.dumps(malformed), text_assessment()], policy=strict)
+    assert state["status"] == "complete" and state["corrections"] == 0
+    problem = json.loads(calls[1]["messages"][-1]["content"])["assessment_problem"]
+    assert problem["code"] == "completeness_requirements_changed"
+    assert problem["missing_ids"] == ["requested_content"]
+    assert problem["unexpected_ids"] == ["personalized_check"]
+    assert problem["expected_ids"] == [identifier for identifier, _ in NARRATIVE_OBLIGATIONS]
+
+
+def test_legacy_report_description_cannot_relax_application_owned_quote_requirements():
+    payload = json.dumps({"requirements": [{
+        "id": "deadline", "requirement": "Keep the answer concise.",
+        "status": "satisfied", "reason": "", "evidence_refs": [], "answer_quote": "",
+    }]})
+    with pytest.raises(CompletenessError, match="completeness_candidate_reference_invalid"):
+        normalize_assessment(
+            payload, candidate="No date was supplied.", evidence={},
+            previous=[{"id": "deadline", "requirement": "State the proposal deadline."}],
+        )
+
+
+@pytest.mark.parametrize("failure", [
+    "Not JSON", '{"requirements":{}}',
+    CompletenessError("completeness_checker_unavailable"),
+])
+def test_context_only_auto_recovers_from_checker_error_without_rewriting(failure):
+    value, state, calls, checkpoints = check_supplied_text([failure])
+    report = public_completeness_report(state)
+    assert value == SUPPLIED_NOTE and state["original"] == SUPPLIED_NOTE
+    assert state["status"] == "complete" and state["semantic_status"] == "skipped"
+    assert state["deterministic_status"] == "passed" and state["corrections"] == 0
+    assert len(calls) == 1 and calls[0]["stage"] == "completeness_check"
+    assert report["semantic_enabled"] is True
+    assert report["stages"][-1]["status"] == "skipped"
+    assert report["requirements"] == []
+    assert report["semantic_skip_reason"].startswith("completeness_")
+    assert checkpoints[-1]["candidate"] == SUPPLIED_NOTE
+
+
+def test_context_only_checking_retry_skips_known_checker_error_after_required_validation():
+    _, _, _, checkpoints = check_supplied_text(["Not JSON"])
+    retained = next(item for item in checkpoints if item.get("semantic_status") == "running")
+    retained.update(
+        status="checking", deterministic_status="pending", semantic_status="pending",
+        retry_semantic_error="completeness_requirements_changed",
+    )
+    validated = []
+    value, state, calls, _ = check_supplied_text(
+        [], saved_state=retained, validate=lambda candidate: validated.append(candidate) or [],
+    )
+    assert value == SUPPLIED_NOTE and validated == [SUPPLIED_NOTE] and calls == []
+    assert state["semantic_status"] == "skipped" and state["corrections"] == retained["corrections"]
+    assert state["checks"] == retained["checks"] + 1
+
+
+@pytest.mark.parametrize("failure", [
+    PermissionError("PRIVATE_PERMISSION"), RuntimeError("PRIVATE_REFUSAL"),
+    CompletenessError("completeness_context_limit"), CompletenessError("completeness_correction_interrupted"),
+])
+def test_auto_does_not_skip_nonoptional_failures(failure):
+    _, state, calls, _ = check_supplied_text([failure])
+    assert state["status"] == "verification_unavailable" and len(calls) == 1
+    assert "semantic_skip_reason" not in state
+    assert "PRIVATE_" not in json.dumps(public_completeness_report(state))
+
+
+def test_auto_checker_outage_does_not_erase_real_content_findings():
+    _, state, calls, _ = check_supplied_text([
+        text_assessment(status="unsupported"), "A revised account.",
+        "Not JSON", "Not JSON",
+    ])
+    assert state["status"] == "verification_unavailable" and state["corrections"] == 1
+    assert "semantic_skip_reason" not in state and len(calls) == 4
+
+
+@pytest.mark.parametrize("scope", ["on", "workflow"])
+def test_explicit_on_and_workflow_never_inherit_context_only_fallback(scope):
+    policy = completeness_policy(
+        {}, "workflow" if scope == "workflow" else "chat_orchestration",
+        semantic_review="on", allow_semantic_error_skip=scope != "workflow",
+    )
+    _, state, calls, _ = check_supplied_text(["Not JSON", "Not JSON"], policy=policy)
+    assert state["status"] == "verification_unavailable" and len(calls) == 2
+    assert "semantic_error_policy" not in policy
+
+
+def test_legacy_user_source_representation_upgrade_preserves_identity_and_allowance():
+    policy = completeness_policy({}, "chat_orchestration", semantic_review="on")
+    legacy_report = json.dumps({"requirements": [
+        {"id": identifier, "requirement": requirement, "status": "satisfied",
+         "reason": "", "evidence_refs": [], "answer_quote": SUPPLIED_NOTE}
+        for identifier, requirement in NARRATIVE_OBLIGATIONS
+    ]})
+    _, retained, _, _ = check_supplied_text([legacy_report], policy=policy, evidence={})
+    retained.update(status="checking", deterministic_status="pending", semantic_status="pending")
+    _, state, calls, _ = check_supplied_text(
+        [text_assessment()], policy=policy, saved_state=retained, legacy_evidence={},
+    )
+    assert state["identity"] != retained["identity"]
+    assert state["original"] == retained["original"] and state["corrections"] == retained["corrections"]
+    assert state["checks"] == retained["checks"] + 1 and len(calls) == 1
+    changed_request = {"approved_request": "A different message.", "instruction": "Rewrite it."}
+    with pytest.raises(CompletenessError, match="completeness_checkpoint_mismatch"):
+        check_supplied_text(
+            [], policy=policy, saved_state=retained, legacy_evidence={}, instruction=changed_request,
+            evidence={"user_provided_content": "A different message."},
+        )
+
+
+def test_context_only_eligibility_requires_declared_intent_and_actual_plain_text_plan():
+    step = {
+        "step_id": "draft", "enabled": True, "capability_id": "compose", "inputs": {},
+        "arguments": {"content_intent": "transform_supplied_text", "response_policy": "available_information"},
+        "outputs": [{"name": "answer", "kind": "markdown-v1"}],
+    }
+    eligible = context_only_review_step_ids([step])
+    assert eligible == frozenset(("draft",))
+    for change in (
+        {"capability_id": "document_analyze"},
+        {"inputs": {"facts": {"binding": "gathered"}}},
+        {"arguments": {"response_policy": "available_information"}},
+        {"arguments": {"content_intent": "substantive", "response_policy": "available_information"}},
+        {"arguments": {"content_intent": "transform_supplied_text", "response_policy": "complete_inputs"}},
+        {"arguments": {
+            "content_intent": "transform_supplied_text", "response_policy": "available_information",
+            "visuals": ["diagram"],
+        }},
+        {"outputs": [{"name": "answer", "kind": "structured-v1"}]},
+    ):
+        eligible = context_only_review_step_ids([{**step, **change}])
+        assert eligible == frozenset()
+    eligible = context_only_review_step_ids([step, {
+        "step_id": "search", "enabled": True, "capability_id": "web_search",
+    }])
+    assert eligible == frozenset()

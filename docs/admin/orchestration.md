@@ -5,7 +5,7 @@ description: "Orchestration lets a user describe what they want and have SimpleC
 section: "Administration"
 audience: admin
 admin_tab: orchestration
-version: "0.261.416"
+version: "0.261.417"
 ---
 
 
@@ -84,11 +84,32 @@ actual validation findings, and an unchanged replacement stops rather than
 blindly consuming the remaining allowance.
 
 In V2 plan details, **Semantic review: Auto / On / Off** controls optional review
-for content preparation. Auto preserves default-on review; On cannot override this
-admin setting. Off does not disable required output/schema validation, access,
-provenance, or safety checks. Preparation and checking have separate recorded
-stages, so a checker outage is not presented as failed source gathering.
-Disabling restores the previous single format/visual correction.
+for content preparation. Auto attempts review; On requires a completed review
+when this admin setting permits it. Off does not disable required output/schema
+validation, access, provenance, or safety checks.
+
+Fixed/Implemented in version: **0.261.417**
+(`application/single_app/config.py`).
+For an explicitly classified, single-step prose transformation or draft based
+only on supplied in-chat text, Auto can recover from a broken checker by retaining
+the prepared answer after required checks pass. This does not bypass a completed
+review's actual content findings. Gathered inputs, analysis, calculations,
+effectful tools, structured datasets, unproven task intent, and explicit On keep
+strict review. Source changes or masking, lost access, cancellation, refusals and
+content filtering never become optional checker outages.
+
+The complete original message is labeled as supplied source content for review
+and correction; asking for an unknown fact does not establish that fact. Known
+review obligations use an application-owned keyed schema instead of asking the
+model to reproduce their identifiers in prose. Providers that reject strict
+schemas use bounded JSON-mode/prompt compatibility, with the same local guards.
+
+Plan details identify the actual completed checks and their source basis, or
+record that optional review was skipped after an error. Eligible recovery adds
+no skipped-review warning to the chat and does not claim the content was reviewed.
+Preparation and checking remain separate from delivery and source coverage.
+Disabling the administrative completeness setting restores the previous single
+format/visual correction.
 This adds model calls but never authorizes connector replay. See
 [model-assisted completeness](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/MODEL_ASSISTED_COMPLETENESS.md).
 

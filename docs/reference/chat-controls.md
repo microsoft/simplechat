@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.416"
+version: "0.261.417"
 ---
 
 ## How to use this reference
@@ -967,10 +967,18 @@ plan rather than editing the main chat message. See
 | Run after editing | Executes the saved current revision only after explicit approval. Closing the editor does not approve it. | Start the work once its steps and sources match your intent. | Same as Edit; no revision or clarification may be pending |
 | Run task switch (Gather / Reason / Render plans) | Skips or restores an eligible task without deleting its declared inputs or outputs. Required producers identify their consumers and cannot be silently disabled. | Remove independent work, or learn which consumers must change through Ask planner first. | A Gather / Reason / Render plan that has not started; the final-response step cannot be disabled |
 | Prepared output schema | Expands the server-declared schema for a named structured result. | Check the intended shape before approving composition; this is a retained result, not a download. | A Gather / Reason / Render task with an output schema |
-| Semantic review: Auto / On / Off | Selects optional review of prepared content against the request and supplied evidence. Auto normally reviews substantive content; administration remains the outer bound. Required output validation and access/safety checks cannot be disabled here. | Choose review intentionally without confusing a skipped semantic check with verified content. | Editable V2 content-preparation step, since **0.261.416** |
+| Semantic review: Auto / On / Off | Auto attempts review against the request and supplied content. Since **0.261.417**, eligible context-only prose can recover from a checker error after required checks pass; genuine content findings are not bypassed. On remains strict when administration permits review. Off skips optional review, not output validation or access/safety checks. | Keep useful checking without making a broken optional checker block a simple draft, or require completed review with On. | Editable V2 content-preparation step, since **0.261.416** |
 | Server file format reference | Shows only a supplied shared export catalog, including source kinds and profiles. Its option-rule and default-limit disclosures are read-only. | Check the server's format descriptions before requesting a validated planner revision. | A Gather / Reason / Render view with a server-provided catalog; absent otherwise |
 | Load server file format reference | Retrieves the shared catalog using the selected plan's authorized run context. A failed read leaves formats unadvertised. | Inspect available format descriptions when they were not included with the current view. | A Gather / Reason / Render plan view without a loaded catalog |
 | Reference image chips (Generate image tasks) | Since **0.261.192**, lists the pictures a planned image will be based on, each with a thumbnail and name. In Review, removes a reference from the task or restores it; with every reference removed, the image is generated from its prompt alone. | Check that the plan uses the right pictures, such as the photo of your house, before it runs. | `enable_chat_orchestration` and `enable_image_generation`, with an image model that can use references and **Image** on when you attached the pictures |
+
+Fixed/Implemented in version: **0.261.417**
+(`application/single_app/config.py`).
+Completed plan checks name their basis: your supplied text, gathered information,
+both, or the request itself. **Required output format validated** does not imply
+completed semantic review. Optional checker-error recovery is recorded in plan
+details without adding a skipped-review notice to the chat. Older reports do not
+gain invented source attribution or checking history.
 
 Version-aware inspection was implemented in **0.261.127** (Refs:
 microsoft/simplechat#1509; `application/single_app/config.py`). Gather / Reason /

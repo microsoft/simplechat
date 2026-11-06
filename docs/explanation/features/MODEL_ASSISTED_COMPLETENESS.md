@@ -1,7 +1,7 @@
-# Model-assisted answer completeness
+# Model-assisted answer completeness (v0.261.417)
 
 Implemented in version: **0.261.382** (`application/single_app/config.py`).
-Updated in version: **0.261.399** (`application/single_app/config.py`).
+Fixed/Implemented in version: **0.261.417** (`application/single_app/config.py`).
 
 ## Purpose
 
@@ -33,10 +33,11 @@ allowance. Orchestration format, required-visual and completeness repairs share
 one allowance rather than running separate repair loops.
 
 Unsupported facts, instruction/schema conflicts and uncertain judgments cannot
-certify completion. They do not authorize fabricated data. Invalid checker output,
-provider failure and unavailable context produce **Verification unavailable**, not
-a successful result. An explicit unknown is acceptable only where the task and
-partial-result contract permit it.
+certify a reviewed answer. They do not authorize fabricated data. Invalid checker
+output, provider failure and unavailable context normally produce **Verification
+unavailable**. The narrow Auto recovery below can deliver an eligible context-only
+draft after a checker error without claiming semantic success. An explicit unknown
+is acceptable only where the task and partial-result contract permit it.
 
 ### Available-information narrative responses
 
@@ -61,7 +62,57 @@ content and requested scope must be preserved. One malformed assessment can
 receive a separate bounded protocol repair without rewriting the candidate;
 reservation is persisted before the call, so interruption does not start an
 uncounted duplicate repair. Persistent assessment failure remains verification
-unavailable, never approval by default.
+unavailable for strict tasks; it is never reclassified as a passed review.
+
+### Stable assessments and user-supplied source text
+
+Implemented in version: **0.261.417**, recorded in
+`application/single_app/config.py`.
+
+When obligations are known, the assessment is keyed by the exact application-owned
+identifiers. The application supplies their descriptions rather than asking the
+reviewer to restate or rename them. Specific requested facts are assessed within
+those obligations. The model endpoint receives a closed structured-output schema
+where supported; explicit format-option rejections allow bounded JSON-mode and
+prompt-only compatibility. The same strict normalization applies in every mode.
+Legacy list-shaped reports still require the exact known identities, and their
+paraphrased descriptions cannot change the application's quote-validation rules.
+Protocol repair identifies missing and unexpected identities rather than supplying
+only a generic failure code.
+
+Orchestration review and correction also receive the full authorized original
+message as `user_provided_content`. A faithful rewrite may preserve the user's
+account without claiming it was independently verified. Questions and instructions
+asking for facts are not proof of those facts. The candidate itself, planner
+summaries, and earlier AI answers do not become independent factual evidence.
+
+### Context-only Auto recovery
+
+Auto still attempts review. A server-validated plan containing one prose-only
+composition can recover from a checker protocol/availability error when its
+declared `content_intent` is `transform_supplied_text` or `draft_supplied_text`,
+its response policy is `available_information`, and it has no named inputs,
+gathering, analysis, calculations, visuals, structured output requirements or
+effectful work. This classification is separate from model routing. Unknown
+intent and older plans without that declaration keep strict review.
+
+Recovery retains the prepared candidate, requires applicable validation to have
+passed for it, and does not regenerate the draft or repeat a failed reviewer.
+Its existing conversation-context validator rechecks the original message
+fingerprint, masks, ownership, memory audience and capability access before a
+skipped-review result can be committed. Equivalent legacy evidence bindings can
+be upgraded without resetting correction allowances; changed content cannot.
+
+Only checker errors are optional here. Actual content findings, refusals/content
+filtering, access loss, source changes, cancellation, context-budget failures and
+interrupted corrections remain blocking. A checker outage cannot erase earlier
+unresolved content findings. Explicit On, gathered/substantive work and workflow
+execution retain their strict checking gates and bounded protocol repair.
+
+The persisted semantic stage is **Skipped**, with a safe diagnosis, not **Passed**
+or a silent change to Off. Required-check completion makes the eligible draft
+deliverable; it does not attest semantic correctness. The chat contains the draft
+without a skipped-review warning. Plan inspection retains the distinction.
 
 Evidence aliases resolve real paths and exact identifier values, not substrings
 of serialized source prose. Accepted source findings remain distinct from
@@ -130,6 +181,12 @@ and **Verification unavailable** from format validation. Expand **Answer
 completeness** for requirement explanations and the number of corrections used.
 Older runs without an assessment remain unchecked history.
 
+Since **0.261.417**, plan completion statements identify the source basis of an
+actual completed review: supplied text, gathered information, both, or the request
+itself. **Required output format validated** names only a completed format check.
+Neither a skipped review nor a review of an earlier candidate revision earns a
+current reviewed-content statement.
+
 Public reports expose explanation metadata, not prompts, private candidate
 history or evidence payloads. Explanations are untrusted text, not executable HTML.
 Telemetry records safe outcome categories, counts and existing correlation fields.
@@ -147,6 +204,11 @@ answers, bounded checker repair, strict-data negative controls, actual narrative
 files, immutable native reports, and safe saved-run continuation. The live,
 reloaded, desktop, and mobile recovery states are covered by
 `ui_tests/test_v2_orchestration_recovery.py`.
+The closed protocol, user-message evidence, checker-error recovery, required
+negative controls, provider-format compatibility and legacy identity upgrade are
+covered by the engine/runtime suites. `ui_tests/test_v2_orchestration_quiet_activity.py`
+covers plan-only skipped-review diagnostics, source-specific completion statements,
+stale candidates, light/dark layouts and measured text contrast.
 
 The checker adds model calls, latency and token use. It is model-assisted, not a
 proof of factual correctness: false positive and false negative assessments remain

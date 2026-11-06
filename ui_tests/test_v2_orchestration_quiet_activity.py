@@ -1,17 +1,20 @@
 # test_v2_orchestration_quiet_activity.py
 """
 Real shipped component/controller tests for quiet activity, checking and answer acceptance.
-Version: 0.261.416
-Implemented in: 0.261.416
+Version: 0.261.417
+Implemented in: 0.261.416; 0.261.417
 
 Uses production CSS and the existing Python/Azure Playwright connection fixtures.
 Only HTTP responses are scripted; the controller, SSE reader, stores and React views
 are the shipped modules. No production requests or saved external actions are replayed.
 """
 
+import io
+import re
 from pathlib import Path
 
 import pytest
+from PIL import Image
 from playwright.sync_api import expect
 
 from test_v2_orchestration_plan_editor import (
@@ -26,6 +29,12 @@ from test_v2_orchestration_recovery import mount_recovery, recovery_ui
 
 
 pytestmark = pytest.mark.ui
+
+
+def luminance(color):
+    channels = [value / 255 for value in color[:3]]
+    linear = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4 for value in channels]
+    return sum(value * weight for value, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
 
 
 def mount(page, api, component, *, running=False):
@@ -347,3 +356,108 @@ def test_check_recovery_deduplicates_failure_and_never_invents_retry_scope(recov
     notice.locator("summary", has_text="Run details").click()
     expect(notice.get_by_text("Reuse saved results:", exact=False)).to_be_visible()
     assert not api.calls("/retry") and not api.calls("/run")
+
+
+@pytest.mark.parametrize("basis,text", [
+    ("user_message", "Reviewed against your supplied text"),
+    ("gathered_information", "Reviewed against gathered information"),
+    ("mixed", "Reviewed against your message and gathered information"),
+    ("request", "Reviewed against your request"),
+])
+@pytest.mark.parametrize("width,dark", [(1440, False), (390, True)])
+def test_plan_validation_statement_names_only_the_completed_review_basis(editor_ui, basis, text, width, dark):
+    page, api = editor_ui
+    page.set_viewport_size({"width": width, "height": 900})
+    plan = mount(page, api, "OrchestrationRunView", running=True)
+    checked = report("complete")
+    checked["evidence_basis"] = basis
+    page.evaluate(
+        """({plan, report, dark}) => {
+            document.documentElement.classList.toggle('dark', dark);
+            window.OrchHarness.stores.orchestration.useOrchestrationStore.getState()
+                .updateStepStatus(plan.conversation_id, plan.turn_id, 'answer',
+                    {status:'completed',task_completeness:report});
+        }""", {"plan": plan, "report": checked, "dark": dark}
+    )
+    statement = page.get_by_test_id("answer-validation-summary")
+    expect(statement).to_have_text(text)
+    assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+    if basis == "user_message":
+        artifacts = Path(__file__).resolve().parent / "artifacts" / "quiet-activity"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        bounds = statement.bounding_box()
+        foreground = [int(value) for value in re.findall(r"\d+", statement.evaluate(
+            "(element) => getComputedStyle(element).color",
+        ))[:3]]
+        screenshot = page.screenshot(path=str(artifacts / f"validated-{width}-{'dark' if dark else 'light'}.png"))
+        with Image.open(io.BytesIO(screenshot)) as image:
+            background = image.convert("RGB").getpixel((int(bounds["x"] + 1), int(bounds["y"] + 1)))
+        levels = [luminance(foreground), luminance(background)]
+        contrast = (max(levels) + 0.05) / (min(levels) + 0.05)
+        assert contrast >= 4.5, f"Validation statement contrast is {contrast:.2f}:1"
+    old = report("checking")
+    for stage in old["stages"]:
+        stage["candidate_revision"] = 0
+    for stage in checked["stages"]:
+        stage["candidate_revision"] = 1
+    page.evaluate(
+        """({plan, current, old}) => {
+            const S = window.OrchHarness.stores.orchestration.useOrchestrationStore.getState();
+            S.updateStepStatus(plan.conversation_id, plan.turn_id, 'answer',{task_completeness:current});
+            S.updateStepStatus(plan.conversation_id, plan.turn_id, 'answer',{task_completeness:old});
+        }""", {"plan": plan, "current": checked, "old": old}
+    )
+    expect(statement).to_have_text(text)
+
+
+def test_optional_checker_error_is_plan_only_and_never_a_reviewed_claim(editor_ui):
+    page, api = editor_ui
+    plan = mount(page, api, "OrchestrationPlanCard", running=True)
+    skipped = report("complete")
+    skipped["stages"][-1]["status"] = "skipped"
+    skipped["semantic_skip_reason"] = "completeness_requirements_changed"
+    skipped["evidence_basis"] = "user_message"
+    skipped["requirements"] = []
+    page.evaluate(
+        """({plan, report}) => window.OrchHarness.stores.orchestration.useOrchestrationStore
+            .getState().updateStepStatus(plan.conversation_id, plan.turn_id, 'answer',
+                {status:'running',task_completeness:report})""",
+        {"plan": plan, "report": skipped},
+    )
+    activity = page.get_by_test_id("quiet-activity")
+    expect(activity.get_by_role("status")).to_have_text("Required checks complete")
+    activity.locator("summary").click()
+    expect(activity.locator('[data-check-stage="semantic"]')).to_have_count(0)
+    expect(activity.get_by_text("completeness_requirements_changed")).to_have_count(0)
+    expect(page.get_by_test_id("answer-validation-summary")).to_have_count(0)
+    page.evaluate(
+        """(plan) => {
+            const H = window.OrchHarness;
+            H.mount('mount-a','OrchestrationRunView',{
+                conversationId:plan.conversation_id,turnId:plan.turn_id});
+        }""", plan
+    )
+    expect(page.get_by_test_id("answer-validation-summary")).to_have_text("Required output format validated")
+    expect(page.get_by_text("Answer checking: Required checks complete")).to_be_visible()
+    expect(page.locator('[data-check-stage="semantic"]').first).to_contain_text("Skipped")
+    expect(page.get_by_text("Reviewed against your supplied text")).to_have_count(0)
+    page.get_by_test_id("task-completeness").locator("summary").click()
+    expect(page.get_by_text("Optional review was skipped after a checker error. Required checks completed.")).to_be_visible()
+    expect(page.get_by_text("completeness_requirements_changed", exact=True)).to_be_visible()
+
+
+def test_completed_review_of_older_candidate_does_not_certify_current_answer(editor_ui):
+    page, api = editor_ui
+    plan = mount(page, api, "OrchestrationRunView", running=True)
+    checked = report("complete")
+    checked["evidence_basis"] = "user_message"
+    for stage in checked["stages"]:
+        stage["candidate_revision"] = 2 if stage["id"] != "semantic" else 1
+    page.evaluate(
+        """({plan, report}) => window.OrchHarness.stores.orchestration.useOrchestrationStore
+            .getState().updateStepStatus(plan.conversation_id, plan.turn_id, 'answer',
+                {status:'running',task_completeness:report})""", {"plan": plan, "report": checked}
+    )
+    expect(page.get_by_test_id("answer-validation-summary")).to_have_text("Required output format validated")
+    expect(page.get_by_text("Answer checking: Required checks complete")).to_be_visible()
+    expect(page.get_by_text("Reviewed against your supplied text")).to_have_count(0)

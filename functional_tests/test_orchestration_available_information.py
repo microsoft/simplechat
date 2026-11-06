@@ -1,8 +1,8 @@
 # test_orchestration_available_information.py
 """Normal answers and narrative files from accepted findings with honest information gaps.
 
-Version: 0.261.399
-Implemented in: 0.261.399
+Version: 0.261.417
+Implemented in: 0.261.399; 0.261.417
 
 Real contracts, preparation, lineage, execution and file publication run offline.
 Scripted model assessments exercise control flow, not factual-accuracy calibration.
@@ -74,7 +74,7 @@ def check_narrative(replies, *, candidate=ANSWER, saved_state=None, checkpoints=
     calls = []
     iterator = iter(replies)
 
-    def invoke(messages, stage):
+    def invoke(messages, stage, *, response_format=None):
         calls.append((stage, deepcopy(messages)))
         return next(iterator)
 

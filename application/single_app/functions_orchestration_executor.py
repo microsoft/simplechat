@@ -82,6 +82,7 @@ from functions_orchestration_result_runtime import (
 from functions_orchestration_results import ResultUnavailableError
 from functions_workflow_collections import CollectionSizeError
 from functions_workflow_result_store import WorkflowResultIntegrityError, WorkflowResultStorageUnavailableError
+from functions_task_completeness import context_only_review_step_ids
 from functions_orchestration_schema import (
     PLAN_STATUS_CANCELLED,
     PLAN_STATUS_COMPLETED,
@@ -1463,6 +1464,7 @@ def _execute_dependency_plan(
     context.completeness_binding = getattr(checkpoints, 'binding', None)
     context.completeness_final_step = (plan.get('final_response') or {}).get('step_id')
     context.completeness_final_output = (plan.get('final_response') or {}).get('output_name')
+    context.completeness_context_only_step_ids = context_only_review_step_ids(steps)
     context.completeness_plan_scope = [
         {'enabled': step['enabled'], 'instruction': step.get('arguments', {}).get('instruction', step.get('title', ''))}
         for step in steps

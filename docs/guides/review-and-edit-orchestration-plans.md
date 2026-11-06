@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.416"
+version: "0.261.417"
 ---
 
 ## Decide what should run
@@ -193,9 +193,30 @@ and safety checks still apply. A skipped review is not a passed factual check.
 When checking finds an actionable omission or format problem, SimpleChat uses
 the actual findings to adjust the answer and check the changed version again.
 This uses the administrator's bounded correction allowance, normally two; an
-explicit zero allows checking without automatic correction. If checking cannot
-finish, the prepared work stays saved rather than becoming an unchecked answer.
-An eligible retry rechecks retained content without regenerating the composition.
+explicit zero allows checking without automatic correction. If required checking cannot finish, the prepared work stays saved. An eligible
+retry reuses retained content without regenerating the composition.
+
+Fixed/Implemented in version: **0.261.417**
+(`application/single_app/config.py`).
+When you ask for a simple rewrite or prose draft using text you already supplied,
+the original message is source material for checking the draft's meaning and
+facts. It does not need outside verification merely to express your account.
+The reviewer may still identify invented additions, omissions, or changed meaning.
+
+For eligible single-step, text-only work, Auto can recover from a checker error
+without blocking delivery. Required format, access and safety checks still run;
+a completed review's content findings are not ignored. On continues to require
+review, and plans using gathered information or substantive analysis keep their
+stricter checking. Older or ambiguous plans without proven intent remain strict.
+
+Open the plan to see what actually finished: **Reviewed against your supplied
+text**, **Reviewed against gathered information**, or **Reviewed against your
+message and gathered information** identifies a completed review and its basis.
+General answers can instead show **Reviewed against your request**. **Required
+output format validated** describes format validation only. A skipped optional
+review stays in plan diagnostics, not as a warning appended to the chat answer.
+These statements are not a guarantee of factual accuracy or independent
+verification of your account.
 
 Since **0.261.321**, integration steps show whether they **Gather information** or perform
 a **Requested operation**. For example, an email request can research missing event facts,

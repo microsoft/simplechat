@@ -1608,7 +1608,12 @@ CAPABILITY_REGISTRY = (
             'narrative documents use response_policy: available_information: answer supported '
             'questions and explain unavailable or conflicting information normally. A data gap '
             'is not an execution failure. Use complete_inputs for exact datasets or an explicitly '
-            'complete-only transformation; never invent missing values.'
+            'complete-only transformation; never invent missing values. Set content_intent to '
+            'transform_supplied_text for rewriting, shortening, summarizing, translating or '
+            'reformatting supplied in-chat text, or draft_supplied_text for a simple prose draft '
+            'using only the user-provided account. Neither permits added knowledge, calculations, '
+            'recommendations or analysis. Other work is substantive. This classification describes '
+            'the actual task, independently of the selected model and model-routing category.'
         ),
         'settings_gates': (),
         'settings_gates_any': (),
@@ -1626,6 +1631,15 @@ CAPABILITY_REGISTRY = (
                 'semantic_review': {
                     'type': 'string', 'enum': ['auto', 'on', 'off'],
                     'description': 'Optional semantic review; required output validation always runs.',
+                },
+                'content_intent': {
+                    'type': 'string',
+                    'enum': ['transform_supplied_text', 'draft_supplied_text', 'substantive'],
+                    'description': (
+                        'Classify the actual content task. Only simple prose based on supplied '
+                        'in-chat text may recover from an optional Auto checker error; '
+                        'research, analysis, calculations and recommendations are substantive.'
+                    ),
                 },
                 'visuals': {
                     'type': 'array', 'items': {'type': 'string', 'enum': list(VISUAL_KINDS)},
