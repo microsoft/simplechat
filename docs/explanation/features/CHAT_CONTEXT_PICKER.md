@@ -4,7 +4,7 @@ Choosing which documents a message is grounded in, and seeing that choice before
 you send it.
 
 **Implemented in version:** 0.261.089
-**Updated in version:** 0.261.404 (`application/single_app/config.py`)
+**Updated in version:** 0.261.411 (`application/single_app/config.py`)
 **Workspace sidebar implemented in version: 0.261.395.**
 **Inline answers implemented in version:** 0.261.096
 **Interface:** V2 only. The classic interface is unchanged.
@@ -54,6 +54,28 @@ Selection and inline mentions have separate lifetimes:
 These rules apply to documents, tags, and whole-workspace references. Context
 selections clear with the draft when you send; they are carried in that turn's
 request rather than left attached to the next message.
+
+### Conversation-owned selections
+
+Fixed/Implemented in version: **0.261.411**
+(`application/single_app/config.py`).
+
+Unsent source selections and uploads belong to the conversation where they were
+chosen. Opening another chat displays its own selection or no selection, not the
+sources from the previous chat. Returning in the same browser tab restores the
+original pending selection, including its **Search all documents** choice.
+
+Removing a source or sending the turn keeps that local selection empty on return;
+old message metadata does not silently reattach it. These pending selections live
+only in tab memory. They do not move stored files or add browser-refresh draft
+persistence.
+
+Restored sources use recorded filenames/titles. Missing details are resolved only
+for the selected documents, through their authorized workspace scope. An unavailable
+name is shown explicitly rather than presented as a GUID filename. A delayed response
+cannot undo a removal or add a source to the chat opened afterward.
+
+See [Conversation attachment isolation fix](../fixes/V2_CONVERSATION_ATTACHMENT_ISOLATION_FIX.md).
 
 ### Condensing
 
@@ -232,6 +254,7 @@ Covered by `functional_tests/test_v2_elicitation_answers.py` and
 | `lib/chatContextTokens.ts` | The `#[…]` grammar and reconciliation of inline mentions without losing independent selections |
 | `lib/contextMentions.ts` | Cross-scope search for documents, tags and workspaces |
 | `lib/chatContextHandoff.ts` | Reading and building the workspace hand-off |
+| `lib/composerAttachmentDrafts.ts` | Per-conversation pending attachment/source ownership, retention, and recovery |
 | `lib/documentTitles.ts` | Cached id-to-title resolution for plan steps |
 | `components/chat/ContextChips.tsx` | The chip row and its condensing |
 | `components/chat/ComposerHighlight.tsx` | Inline rendering of `#[…]` in the message box |

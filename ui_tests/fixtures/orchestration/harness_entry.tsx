@@ -29,6 +29,7 @@ import * as orchestration from '../../../application/v2_ui/src/lib/orchestration
 import * as resume from '../../../application/v2_ui/src/lib/orchestrationResume';
 import * as sharing from '../../../application/v2_ui/src/lib/sharing';
 import { conversationModes } from '../../../application/v2_ui/src/lib/conversationMode';
+import { composerAttachmentDrafts } from '../../../application/v2_ui/src/lib/composerAttachmentDrafts';
 
 import { OrchestrationPlanCard } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanCard';
 import { ElicitationCard } from '../../../application/v2_ui/src/components/chat/ElicitationCard';
@@ -345,6 +346,7 @@ function reset(): void {
         }
     }
     roots.clear();
+    composerAttachmentDrafts.reset();
     orchestrationStore.useOrchestrationStore.setState({
         plans: {},
         runRecovery: {},
