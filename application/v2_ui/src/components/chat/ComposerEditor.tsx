@@ -101,6 +101,7 @@ export interface ComposerEditorProps {
     draft: ComposerDraft;
     onChange: React.Dispatch<React.SetStateAction<ComposerDraft>>;
     conversationId: string | null;
+    draftOwnerKey?: string;
     disabled?: boolean;
     placeholder?: string;
     rows?: number;
@@ -182,6 +183,7 @@ export function ComposerEditor({
     draft,
     onChange,
     conversationId,
+    draftOwnerKey,
     disabled = false,
     placeholder = 'Write an answer, # add context, or / choose a prompt…',
     rows = 2,
@@ -245,7 +247,7 @@ export function ComposerEditor({
     const referenceGeneration = useRef(0);
     useEffect(() => { referenceGeneration.current += 1; setConversationQuery(null); setConversationError(''); setResolvingConversation(false);
         return () => { referenceGeneration.current += 1; };
-    }, [id, conversationId, conversationsEnabled]);
+    }, [id, conversationId, draftOwnerKey, conversationsEnabled]);
     const slashEnabled = !restricted;
     const mentionsActive = mentionsEnabled && !restricted;
     const uploadsEnabled = features.enable_chat_file_uploads === true && !uploadsDisabled && !restricted;
@@ -715,7 +717,7 @@ export function ComposerEditor({
         uploadIds: new Set<string>(),
         changeDraft: onChange,
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }), [id, conversationId]);
+    }), [id, conversationId, draftOwnerKey, bootstrap?.user?.id]);
     owner.uploadIds = new Set(draft.uploads.filter((upload) =>
         upload.state === 'uploading' || upload.state === 'processing',
     ).map((upload) => upload.id));
@@ -729,7 +731,7 @@ export function ComposerEditor({
     const retryFileId = useRef<string | null>(null);
     useEffect(() => {
         owner.active = true;
-        uploadConversation.current = conversationId;
+        uploadConversation.current = conversationId ?? draft.uploads.find((upload) => upload.conversationId)?.conversationId ?? null;
         uploadQueue.current = Promise.resolve();
         const ownedRequests = requests.current;
         const ownedFiles = files.current;
@@ -840,19 +842,19 @@ export function ComposerEditor({
                     uploadScopeGroupIds: upload.uploadScopeGroupIds,
                 },
             );
-            if (controller.signal.aborted || currentOwner.current !== capturedOwner) {
+            if (controller.signal.aborted || currentOwner.current !== capturedOwner || !capturedOwner.active) {
                 return;
             }
             const normalized = normalizeChatUpload(result, file.name);
+            if (owningConversationId && normalized.conversationId
+                && normalized.conversationId !== owningConversationId) {
+                throw new Error('The upload returned a different conversation. Remove it and try again.');
+            }
             linkChatUploadLocalPreview(upload.id, [
                 result.file_message_id,
                 result.workspace_document_id,
                 normalized.reference?.id,
             ]);
-            if (owningConversationId && normalized.conversationId
-                && normalized.conversationId !== owningConversationId) {
-                throw new Error('The upload returned a different conversation. Remove it and try again.');
-            }
             if (!uploadConversation.current && normalized.conversationId) {
                 uploadConversation.current = normalized.conversationId;
             }

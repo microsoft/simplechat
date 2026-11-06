@@ -1,7 +1,7 @@
 # test_v2_new_chat_reset.py
 """
 Browser regressions for starting a new chat in V2 while the open conversation is busy.
-Version: 0.261.256
+Version: 0.261.414
 Implemented in: 0.261.226
 
 Clicking New chat while an orchestration turn was planning or running kept the old turn's
@@ -149,6 +149,12 @@ class NewChatApi:
             route.fulfill(json=pending_actions_payload())
             return
         self.requests.append((request.method, path))
+        if request.method == "GET" and path in {"/api/action-credentials/pending", "/api/v2/user-input/pending"}:
+            route.fulfill(json={"requests": [], "csrf_token": "fixture-token"})
+            return
+        if request.method == "GET" and path == "/api/v2/orchestration/questions":
+            route.fulfill(json={"questions": [], "csrf_token": "fixture-token"})
+            return
         if path == "/api/create_conversation" and request.method == "POST":
             if self.hold_create:
                 self.pending.append(("create", route))

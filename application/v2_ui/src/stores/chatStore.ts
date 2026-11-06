@@ -160,6 +160,7 @@ import { readConversationParam } from '../lib/conversationUrl';
 import { refreshNotificationCount } from './notificationStore';
 import { useBootstrapStore } from './bootstrapStore';
 import { adoptConversationModeDraft, conversationModes, forgetConversationMode } from '../lib/conversationMode';
+import { composerAttachmentDrafts, composerAttachmentOwner } from '../lib/composerAttachmentDrafts';
 import { useCollaborationStore, participantName } from './collaborationStore';
 import { chatPendingActionsStore } from './m365PendingActionsStore';
 import { latestUserMessageId } from '../lib/m365PendingActions';
@@ -2497,6 +2498,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         stopCollaborationEvents();
         useCollaborationStore.getState().reset();
         conversationEpoch += 1;
+        const epoch = conversationEpoch;
         conversationModes.resetDraft();
 
         // Known from the rail row when there is one, which is the common case and costs no
@@ -2518,7 +2520,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             analysisContextRevision: get().analysisContextRevision + (analysisConversationChanged ? 1 : 0),
             analysisTurnRevision: analysisConversationChanged ? null : get().analysisTurnRevision,
             messages: [],
+            messagesLoading: Boolean(conversationId),
             messagesError: null,
+            composerImageReferences: [],
+            composerConversationReferences: [],
             completedReply: null,
             // Anything streaming belonged to the conversation being left. An orchestration turn
             // still running in this tab for the one being opened gets its Thinking state and
@@ -2537,6 +2542,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // Metadata belongs to the previous conversation; drop it so the drawer never
             // shows another thread's documents.
             metadata: null,
+            metadataLoading: false,
             metadataError: null,
             // Thread ids are per conversation, so learned attempt sets do not carry over.
             attemptsByThread: {},
@@ -2549,7 +2555,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return;
         }
 
-        set({ messagesLoading: true });
         const analysisRevision = get().analysisContextRevision;
         try {
             let prefetched = options.prefetched;
@@ -2561,7 +2566,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
             // Discarded if the reader moved on while the kind was being resolved; without
             // this the wrong thread's messages would be fetched and displayed.
-            if (get().activeConversationId !== conversationId) {
+            if (get().activeConversationId !== conversationId || conversationEpoch !== epoch) {
                 return;
             }
             set({ activeConversationKind: kind });
@@ -2574,7 +2579,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // masked one; see deletedMessages.ts.
             const messages = withoutDeletedMessages(loadedMessages);
 
-            if (get().activeConversationId !== conversationId) {
+            if (get().activeConversationId !== conversationId || conversationEpoch !== epoch) {
                 return;
             }
             set({ messages, messagesLoading: false, publicWorkspaceSelection: publicChatScopeFromMessages(messages) });
@@ -2647,7 +2652,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     });
             }
         } catch (error) {
-            if (get().activeConversationId !== conversationId) {
+            if (get().activeConversationId !== conversationId || conversationEpoch !== epoch) {
                 return;
             }
             set({
@@ -2738,6 +2743,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // that already exists, so there is no way to start one shared.
             activeConversationKind: null,
             messages: [],
+            composerImageReferences: [],
+            composerConversationReferences: [],
             // A load still in flight for the conversation being left returns without touching
             // this once it sees the reader has moved on, so the new chat would otherwise sit
             // behind loading placeholders instead of its empty state.
@@ -2757,6 +2764,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamAuthUrl: null,
             reconnectPhase: null,
             metadata: null,
+            metadataLoading: false,
             metadataError: null,
             // Closed rather than left behind. The header's Contents and Documents toggles
             // are drawn only while a conversation is open, so an open drawer would survive
@@ -2834,6 +2842,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
             forgetOrchestrationConversation(conversationId);
             forgetConversationMode(modeAccountId, conversationId);
+            composerAttachmentDrafts.forget(modeAccountId, conversationId);
         } catch (error) {
             set({ conversations: previous });
             toast.error(
@@ -2972,7 +2981,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 const failedIds = new Set(result?.failed_ids ?? []);
                 failed += failedIds.size;
                 for (const id of personalIds) {
-                    if (!failedIds.has(id)) forgetConversationMode(modeAccountId, id);
+                    if (!failedIds.has(id)) {
+                        forgetConversationMode(modeAccountId, id);
+                        composerAttachmentDrafts.forget(modeAccountId, id);
+                    }
                 }
             }
 
@@ -2988,6 +3000,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 outcomes.forEach((outcome, index) => {
                     if (outcome.status === 'fulfilled') {
                         forgetConversationMode(modeAccountId, removals[index].id);
+                        composerAttachmentDrafts.forget(modeAccountId, removals[index].id);
                     }
                 });
             }
@@ -3243,6 +3256,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             try {
                 const created = await createConversation(trimmed);
                 conversationId = created.conversation_id;
+                composerAttachmentDrafts.adoptConversation(
+                    composerAttachmentOwner(actorId ?? '', null, 'personal', epoch), conversationId,
+                );
                 if (options.agentSelection && (recoveryRevision !== getActionRecoveryRevision()
                     || conversationEpoch !== epoch
                     || actorId !== useBootstrapStore.getState().data?.user?.id)) {
@@ -4110,6 +4126,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     loadMetadata: async (conversationId) => {
+        const epoch = conversationEpoch;
+        const ownsLoad = () => get().activeConversationId === conversationId && conversationEpoch === epoch;
+        if (!ownsLoad()) return;
         set({ metadataLoading: true, metadataError: null });
         const collaborative = isCollaborativeConversation(get(), conversationId);
         try {
@@ -4119,15 +4138,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // drawer and summary all keep working untouched.
             const metadata = collaborative
                 ? await fetchCollaborationConversation(conversationId).then((result) => {
-                      useCollaborationStore.getState().setConversation(result.conversation);
+                      if (ownsLoad()) useCollaborationStore.getState().setConversation(result.conversation);
                       return metadataFromCollaboration(result.conversation);
                   })
                 : await fetchConversationMetadata(conversationId);
             // Discard if the user moved on while this was in flight.
-            if (get().activeConversationId !== conversationId) {
-                set({ metadataLoading: false });
-                return;
-            }
+            if (!ownsLoad()) return;
             set((state) => ({
                 metadata,
                 metadataLoading: false,
@@ -4151,6 +4167,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                       ],
             }));
         } catch (error) {
+            if (!ownsLoad()) return;
             set({
                 metadataLoading: false,
                 metadataError:
@@ -4161,6 +4178,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     reloadMessages: async (options) => {
         const conversationId = get().activeConversationId;
+        const epoch = conversationEpoch;
         const analysisRevision = get().analysisContextRevision;
         const shownBefore = get().messages;
         if (!conversationId) {
@@ -4171,7 +4189,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 get().activeConversationKind === 'collaborative'
                     ? await fetchCollaborationMessages(conversationId)
                     : await fetchMessages(conversationId);
-            if (get().activeConversationId !== conversationId) {
+            if (get().activeConversationId !== conversationId || conversationEpoch !== epoch) {
                 return 'done';
             }
             // Checked before anything is written, so a dropped re-read changes nothing at all.
@@ -4210,6 +4228,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // cites, so cached metadata is no longer trustworthy.
             set({ metadata: null });
         } catch (error) {
+            if (get().activeConversationId !== conversationId || conversationEpoch !== epoch) return 'done';
             set({
                 messagesError:
                     error instanceof Error ? error.message : 'Failed to reload messages.',
