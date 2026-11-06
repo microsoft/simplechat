@@ -5,7 +5,7 @@ counts:
   admin_groups: 15
   admin_tabs: 49
   admin_sections: 108
-  actions: 33
+  actions: 34
   chat_controls: 47
   sub_elements: 3
   app_pages: 31
@@ -1064,6 +1064,9 @@ actions:
   module: time_plugin.py
   class_name: TimePlugin
   summary: Time plugin with invocation logging for all kernel functions.
+- slug: user-input
+  module: user_input_plugin.py
+  class_name: UserInputPlugin
 - slug: wait
   module: wait_plugin.py
   class_name: WaitPlugin

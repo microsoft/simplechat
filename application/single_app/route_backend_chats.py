@@ -18,6 +18,7 @@ from agent_execution_context import AgentExecutionCancelled, DelegationBudget
 from action_credential_contracts import ActionCredentialsRequired
 from agent_delegation_runtime import AgentExecution, delegation_citations, delegation_usage, prepare_agent_execution
 from semantic_kernel import Kernel
+from agent_interaction_contracts import UserInputRequired, find_agent_interaction
 from semantic_kernel.agents import ChatCompletionAgent
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.contents.chat_history import ChatHistory
@@ -21359,7 +21360,7 @@ def register_route_backend_chats(bp):
                     try:
                         result = step['func']()
                         return step['on_success'](result)
-                    except (M365ApprovalRequired, M365SignInRequired, ActionCredentialsRequired):
+                    except (M365ApprovalRequired, M365SignInRequired, ActionCredentialsRequired, UserInputRequired):
                         raise
                     except Exception as e:
                         log_event(
@@ -26251,6 +26252,9 @@ def register_route_backend_chats(bp):
                                         )
                                     break
                                 except Exception as stream_error:
+                                    interaction = find_agent_interaction(stream_error)
+                                    if interaction is not None:
+                                        raise interaction
                                     if agent_retry_plan is None:
                                         candidate_retry_plan = classify_agent_stream_retry_mode(stream_error)
                                         if candidate_retry_plan and not accumulated_content and attempt_number == 0 and not delegation_budget.attempts:
@@ -26268,7 +26272,7 @@ def register_route_backend_chats(bp):
                                             )
                                             continue
                                     raise
-                        except ActionCredentialsRequired as error:
+                        except (ActionCredentialsRequired, UserInputRequired) as error:
                             plugin_logger_cb.deregister_callbacks(callback_key)
                             yield f"data: {json.dumps(error.event)}\n\n"
                             return

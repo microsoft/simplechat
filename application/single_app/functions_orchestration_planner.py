@@ -837,7 +837,14 @@ this instead:
 "candidate_ids":["<actual candidate id>"]}}}}
 The schema must be a FLAT object of simple fields. No nested objects. For genuine fixed
 choices, use a scalar enum for single choice or array items.enum for multiple choices. For
-ordinary explanations, use a string without enum. For ANY question asking the user to supply
+ordinary explanations, use a string without enum. For an open-ended preference with useful
+suggestions, keep the string (or string-array) schema
+WITHOUT an enum and use ui_hints.fields[field] = {"input":"choices","allow_custom":true,
+"choices":[{"value":"<answer>","label":"<short label>","description":"<optional explanation>"}]}.
+The user can choose a suggestion or write their own answer. Never use open suggestions for
+permissions, approvals, or constrained resource identities. Ask all currently known, genuinely
+blocking facts in one question set, usually two to four, with one field per page. Do not invent
+an interview or ask optional cosmetic questions simply to populate these controls. For ANY question asking the user to supply
 files, set ui_hints.fields[field].input to "files". Use type "string" for one file, or type
 "array" with items.type "string" for multiple files. NEVER put an enum on a file field.
 candidate_ids are optional, non-exhaustive suggestions drawn ONLY from actual

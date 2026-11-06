@@ -12,6 +12,7 @@ import { apiUrl, API_BASE } from './apiClient';
 import { v2ApiFetch } from './v2SourcePolicy';
 import type { ChatStreamEvent, ChatStreamRequest } from './types';
 import { publishCredentialRequest } from './actionCredentialEvents';
+import { publishUserInput } from './userInput';
 import {
     currentActionRecoveryHeaders, getActionRecoveryRevision, prepareActionRequest, publishActionRecoveryFailure,
 } from './actionRecovery';
@@ -300,6 +301,10 @@ async function consumeStreamResponse(
 ): Promise<void> {
     /** Returns true when the frame was terminal and reading should stop. */
     const handleEvent = (event: ChatStreamEvent): boolean => {
+        if (event.type === 'user_input_required' && event.input_request) {
+            publishUserInput(event.input_request);
+            return true;
+        }
         if (event.type === 'action_recovery_required') {
             handlers.onActionRecovery?.(event);
             result.actionRecoveryWaiting = true;

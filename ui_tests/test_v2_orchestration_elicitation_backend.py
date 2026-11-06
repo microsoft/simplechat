@@ -1,8 +1,9 @@
 # test_v2_orchestration_elicitation_backend.py
 """
 Browser-to-Flask regression for self-contained clarification continuation.
-Version: 0.261.367
+Version: 0.261.411
 Implemented in: 0.261.367
+Focus flow reviewed submission updated in: 0.261.411
 
 The real card, controller, resolver, planner, routes and persistence run unchanged.
 Only external model, storage and source-discovery I/O is deterministic. The browser
@@ -65,7 +66,7 @@ def clarification_ui(empty_history_runtime, editor_browser, editor_assets):
         if is_pending_actions_list(request.method, url.path):
             route.fulfill(json=pending_actions_payload())
             return
-        if request.method == "GET" and url.path == "/api/action-credentials/pending":
+        if request.method == "GET" and url.path in {"/api/action-credentials/pending", "/api/v2/user-input/pending"}:
             route.fulfill(json={"requests": []})
             return
         if not url.path.startswith("/api/v2/orchestration/"):
@@ -130,21 +131,23 @@ def test_answer_reaches_real_saved_review_plan(clarification_ui, second_question
     })""", request)
     question = page.get_by_role("region", name="Follow-up questions", exact=True)
     expect(question).to_be_visible()
-    expect(question.get_by_role("button", name="Finish", exact=True)).to_be_disabled()
+    expect(question.get_by_role("button", name="Review answers", exact=True)).to_be_disabled()
     assert len(harness.model_calls) == 1
 
     harness.replies.append(json.dumps(
         input_question("destination", "Where should it be delivered?") if second_question else plan_doc(),
     ))
     question.get_by_role("textbox", name="What is the delivery date?", exact=True).fill("2027-02-12")
-    question.get_by_role("button", name="Finish", exact=True).click()
+    question.get_by_role("button", name="Review answers", exact=True).click()
+    question.get_by_role("button", name="Use these answers", exact=True).click()
     if second_question:
         expect(question.get_by_role("textbox", name="Where should it be delivered?", exact=True)).to_be_visible()
-        expect(question.get_by_role("button", name="Finish", exact=True)).to_be_disabled()
+        expect(question.get_by_role("button", name="Review answers", exact=True)).to_be_disabled()
         assert len(harness.model_calls) == 2
         harness.replies.append(json.dumps(plan_doc()))
         question.get_by_role("textbox", name="Where should it be delivered?", exact=True).fill("North office")
-        question.get_by_role("button", name="Finish", exact=True).click()
+        question.get_by_role("button", name="Review answers", exact=True).click()
+        question.get_by_role("button", name="Use these answers", exact=True).click()
 
     expect(page.get_by_role("button", name="Edit the plan", exact=True).first).to_be_visible()
     expect(question).to_have_count(0)

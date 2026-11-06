@@ -1988,15 +1988,23 @@ def _credential_step_continuation(step, context):
         "mode": "orchestration", "run_id": _ctx(context, "run_id"),
         "step_id": step["step_id"], "turn_id": _ctx(context, "turn_id"),
         "checkpoint_id": "checkpoint_" + key_for(_ctx(context, "run_id"), step["step_id"]),
+        "user_input_enabled": bool(getattr(_ctx(context, "agent_execution_identity"), "supports_user_input", False)),
     }
     wait = (_ctx(context, "pending_results", {}) or {}).get(step["step_id"])
-    if isinstance(wait, dict) and wait.get("kind") == "action_credentials":
+    if isinstance(wait, dict) and wait.get("kind") in {"action_credentials", "user_input"}:
         descriptor["resume"] = True
     return descriptor
 
 
 def _credential_wait_result(error, emit):
+    from agent_interaction_contracts import UserInputRequired
+
     _emit(emit, error.event)
+    if isinstance(error, UserInputRequired):
+        return build_step_result(
+            status="waiting", summary="Waiting for your answers.",
+            wait={"kind": "user_input", "request_id": error.input_request["id"]},
+        )
     return build_step_result(
         status="waiting", summary="Waiting for personal action credentials.",
         wait={"kind": "action_credentials", "request_id": error.credential_request["id"]},
@@ -2009,7 +2017,7 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
     # Action dependencies initialize SK/Azure; keep them out of the adapter import path.
     import asyncio
     from agent_execution_context import AgentExecutionCancelled
-    from action_credential_contracts import ActionCredentialsRequired
+    from agent_interaction_contracts import AgentInteractionRequired
     from functions_action_credentials import credential_continuation
 
     arguments = _arguments(step)
@@ -2070,7 +2078,7 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
             ))
     except (AgentExecutionCancelled, OrchestrationInvocationCancelledError):
         return _cancelled_result('Action execution was cancelled.')
-    except ActionCredentialsRequired as error:
+    except AgentInteractionRequired as error:
         return _credential_wait_result(error, emit)
     except (
         OrchestrationInvocationServiceError, OrchestrationInvocationControlError,
@@ -2200,7 +2208,7 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
     # Flask state, and all steps share the run's root delegation budget.
     import asyncio
     from agent_execution_context import AgentExecutionCancelled, DelegationBudget
-    from action_credential_contracts import ActionCredentialsRequired
+    from agent_interaction_contracts import AgentInteractionRequired
     from functions_action_credentials import credential_continuation
 
     try:
@@ -2277,7 +2285,7 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
             operation_receipts = deepcopy(journal.receipts) if journal is not None else []
     except (AgentExecutionCancelled, OrchestrationInvocationCancelledError):
         return _cancelled_result('Agent execution was cancelled.')
-    except ActionCredentialsRequired as error:
+    except AgentInteractionRequired as error:
         return _credential_wait_result(error, emit)
     except (
         OrchestrationInvocationServiceError, OrchestrationInvocationControlError,

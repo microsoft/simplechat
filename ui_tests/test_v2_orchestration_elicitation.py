@@ -1,10 +1,11 @@
 # test_v2_orchestration_elicitation.py
 """
 UI test for the V2 chat orchestration elicitation card: paged schema form and the MCP answer shape.
-Version: 0.261.139
+Version: 0.261.411
 Implemented in: 0.261.085
 Rich answers implemented in: 0.261.096
 Single orchestration contract updated in: 0.261.139
+Focus flow and reviewed submission updated in: 0.261.411
 
 When the planner cannot plan without more from the user it returns an elicitation -- a flat
 JSON-Schema object of primitives -- instead of a plan. The card renders it as a short, paged
@@ -16,8 +17,8 @@ the REAL controller with a mocked plan stream. It asserts:
 
   * Fields render from `requested_schema.properties`, and an `enum` renders as a choice control
     (radios) rather than a free-text box.
-  * A `required` field gates Finish -- the submit stays disabled until it is answered.
-  * Paging works: Next advances, Back returns, and the last page's submit reads Finish.
+  * A `required` field gates review -- the submit stays disabled until it is answered.
+  * Paging works: Next advances, Back returns, and the last question leads to review.
   * Declining sends NO content (an empty object), while accepting carries the entered answer.
 
 No Azure credentials or server are required; the component, store and controller are the shipped
@@ -204,6 +205,8 @@ def test_enum_renders_as_a_choice_and_text_as_a_box():
         )
         assert shape["radioCount"] == 3, f"the enum must render 3 radios, saw {shape['radioCount']}"
         assert len(shape["radioNames"]) == 1, "the enum must remain one radio group"
+        assert page.get_by_role("textbox", name="Additional details for Tone (optional)").count() == 0
+        page.get_by_role("button", name="Add context or a file (optional)", exact=True).click()
         assert page.get_by_role("textbox", name="Additional details for Tone (optional)").count() == 1
         assert shape["optionText"] == ["formal", "casual", "playful"], shape["optionText"]
         print("  ok  the enum is a radio group and the string is a text box")
@@ -217,19 +220,19 @@ def test_enum_renders_as_a_choice_and_text_as_a_box():
 
 
 def test_required_field_gates_finish():
-    """On the last page the submit stays disabled until every required field is answered."""
-    print("Testing a required field gates Finish...")
+    """Review stays disabled until every required field on the page is answered."""
+    print("Testing a required field gates review...")
     page = _PAGE
     try:
         conv, turn = "c-elic", "t-el"
         page.evaluate(_SEED_ELICITATION, {"conv": conv, "turn": turn, "elicitation": _single_page_schema()})
 
         submit = "#mount-a button[type='submit']"
-        assert page.inner_text(submit).strip() == "Finish", "a single-page form's submit must read Finish"
+        assert page.inner_text(submit).strip() == "Review answers", "submission must go through review"
         assert page.eval_on_selector(submit, "el => el.disabled") is True, (
             "Finish must be disabled while the required topic is blank"
         )
-        assert "Answer the required fields to finish." in page.inner_text("#mount-a"), (
+        assert "Complete this answer before continuing." in page.inner_text("#mount-a"), (
             "the card must explain why Finish is disabled"
         )
 
@@ -241,8 +244,8 @@ def test_required_field_gates_finish():
         assert page.eval_on_selector(submit, "el => el.disabled") is False, (
             "Finish must enable once the required field is answered"
         )
-        assert "Answer the required fields to finish." not in page.inner_text("#mount-a")
-        print("  ok  Finish was gated until the required field was answered")
+        assert "Complete this answer before continuing." not in page.inner_text("#mount-a")
+        print("  ok  Review was gated until the required field was answered")
         return True
     except Exception as exc:  # noqa: BLE001
         print(f"Test failed: {exc}")
@@ -253,8 +256,8 @@ def test_required_field_gates_finish():
 
 
 def test_paging_next_back_and_finish():
-    """Next advances a page, Back returns, and the final page's submit reads Finish."""
-    print("Testing Next / Back / Finish paging...")
+    """Next advances a page, Back returns, and the final question leads to review."""
+    print("Testing Next / Back / Review paging...")
     page = _PAGE
     try:
         conv, turn = "c-elic", "t-el-paged"
@@ -294,7 +297,7 @@ def test_paging_next_back_and_finish():
             "() => document.querySelector('#mount-a [aria-label^=\"Question page\"]').innerText.trim() === '3/3'",
             timeout=5000,
         )
-        assert page.inner_text(submit).strip() == "Finish", "the last page's submit must read Finish"
+        assert page.inner_text(submit).strip() == "Review answers", "the last question must lead to review"
         # Nothing is required, so Finish is enabled straight away.
         assert page.eval_on_selector(submit, "el => el.disabled") is False
 
@@ -304,7 +307,7 @@ def test_paging_next_back_and_finish():
             "() => document.querySelector('#mount-a [aria-label^=\"Question page\"]').innerText.trim() === '2/3'",
             timeout=5000,
         )
-        print("  ok  paged forward to Finish and back again")
+        print("  ok  paged forward to review and back again")
         return True
     except Exception as exc:  # noqa: BLE001
         print(f"Test failed: {exc}")
@@ -367,6 +370,7 @@ def test_accepting_carries_the_answer():
             timeout=5000,
         )
         page.click("#mount-a button[type='submit']")
+        page.get_by_role("button", name="Use these answers", exact=True).click()
         page.wait_for_function("() => (window.__planCalls || []).length >= 2", timeout=5000)
 
         replan = page.evaluate("() => window.__planCalls[window.__planCalls.length - 1]")
