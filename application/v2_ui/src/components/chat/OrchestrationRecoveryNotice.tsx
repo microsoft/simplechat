@@ -210,7 +210,7 @@ export function OrchestrationRecoveryNotice({
         >
             <p role={saved?.error ? 'alert' : 'status'} className="font-medium text-text-1">
                 {legacy && saved?.error ? saved.error
-                    : saved?.transportUnknown ? 'Execution status is not confirmed. Your progress is saved.'
+                    : saved?.transportUnknown ? 'Reconnecting to progress… Your last known progress is saved.'
                     : saved?.error ? saved.error
                     : waiting ? 'Waiting for required results'
                     : revisionNeeded ? 'The answer still needs revision. Your progress is saved.'

@@ -50,7 +50,7 @@ _UUID_PREFIX_CITATION_ID_PATTERN = re.compile(
 )
 _INLINE_DOCUMENT_SOURCE_PATTERN = re.compile(
     r"\(Source:((?:(?!\(Source:).){1,256}?),"
-    r"\s{0,8}(Page(?:s)?|Sheet(?:s)?|Location):"
+    r"\s{0,8}(Page(?:s)?|Sheet(?:s)?|Location|Worksheet cell):"
     r"((?:(?!\(Source:).){0,256}?)\)"
     r"(?=\s{0,8}(?:\[#|$|[.;,!? \n]))",
     re.IGNORECASE,
@@ -356,6 +356,10 @@ def build_cited_source_subsets(
             _source_reference_matches_citation(source_reference, citation)
             for source_reference in unmatched_source_references
         )
+        if citation.get("native_evidence") or ":native-comments:" in citation_id:
+            # A worksheet/cell can contain several roots and replies. Only an exact
+            # retained identity proves which reviewer text the answer cited.
+            matched_by_source = False
         if not matched_by_id and not matched_by_source:
             continue
         if matched_by_id:

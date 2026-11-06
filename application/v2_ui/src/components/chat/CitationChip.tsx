@@ -40,6 +40,7 @@ function CitationDetail({
     const [data, setData] = useState<Citation | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [preview, setPreview] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -50,6 +51,8 @@ function CitationDetail({
                     citation_id: citation.citationId,
                     document_id: citation.documentId || undefined,
                     page_number: citation.locationValue || citation.pageNumber || undefined,
+                    native_evidence: citation.nativeEvidence,
+                    conversation_id: citation.conversationId,
                 });
                 if (!cancelled) {
                     setData(result);
@@ -77,12 +80,19 @@ function CitationDetail({
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.key === 'Escape') {
-                onClose();
+                if (preview) setPreview(false);
+                else onClose();
             }
         };
         document.addEventListener('keydown', onKeyDown);
         return () => document.removeEventListener('keydown', onKeyDown);
-    }, [onClose]);
+    }, [onClose, preview]);
+
+    if (preview) return <EnhancedCitationViewer
+        type="tabular" docId={citation.documentId} location={data?.native_annotation?.sheet || ''}
+        locationLabel="Sheet" metadata={{ document_id: citation.documentId, file_name: data?.file_name || group.fileName }}
+        onClose={() => setPreview(false)} onFallback={() => setPreview(false)}
+    />;
 
     return (
         <div
@@ -112,6 +122,7 @@ function CitationDetail({
                         type="button"
                         onClick={onClose}
                         aria-label="Close citation"
+                        autoFocus
                         className="shrink-0 rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
                     >
                         <X size={17} />
@@ -119,6 +130,29 @@ function CitationDetail({
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                    {data?.native_annotation && <section aria-label="Native workbook annotation" className="mb-4 space-y-2 text-sm">
+                        <h3 className="font-semibold text-text-1">
+                            {data.native_annotation.kind === 'note' ? 'Workbook note'
+                                : data.native_annotation.parent_id ? 'Threaded comment reply' : 'Threaded comment'}
+                        </h3>
+                        <p>Author: {data.native_annotation.author || 'Unavailable'}</p>
+                        <p>Worksheet / cell: {data.native_annotation.sheet || 'Unavailable'} / {data.native_annotation.cell || 'Unavailable'}</p>
+                        <p>Date: {data.native_annotation.date || 'Unavailable'}</p>
+                        {data.native_annotation.parent_id && <p>Reply to: {data.native_annotation.parent_id}</p>}
+                        <p>Resolved: {typeof data.native_annotation.resolved === 'boolean'
+                            ? data.native_annotation.resolved ? 'Yes' : 'No' : 'Unavailable'}</p>
+                        <p>Saved cell value: {data.native_annotation.cell_value_status === 'blank' ? 'Blank'
+                            : data.native_annotation.cell_value == null ? 'Unavailable (not recalculated)'
+                            : JSON.stringify(data.native_annotation.cell_value)}</p>
+                        <h3 className="pt-2 font-semibold text-text-1">Reviewer text</h3>
+                    </section>}
+                    {data?.native_coverage && <section aria-label="Native annotation coverage" className="mb-4 space-y-2 text-sm">
+                        <h3 className="font-semibold text-text-1">Native annotation inventory</h3>
+                        <p>{data.native_coverage.returned_records ?? 'Unknown'} of {data.native_coverage.total_records ?? 'unknown'} records retained.</p>
+                        <p>{data.native_coverage.partial || !data.native_coverage.inventory_complete
+                            ? 'Partial inventory; remaining annotations were not inspected.' : 'The saved annotation inventory was inspected completely.'}</p>
+                        <p>This is inventory coverage, not a cited worksheet cell or reviewer comment.</p>
+                    </section>}
                     {notice && (
                         <p className="mb-3 flex items-start gap-2 rounded-xl border border-edge bg-warn-soft px-3 py-2 text-xs text-warn">
                             <TriangleAlert size={14} className="mt-0.5 shrink-0" />
@@ -154,6 +188,9 @@ function CitationDetail({
                             This citation has no stored passage to show.
                         </p>
                     )}
+                    {!loading && !error && citation.nativeEvidence && <button type="button"
+                        className="mt-4 rounded-lg border border-edge px-3 py-2 text-sm text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                        onClick={() => setPreview(true)}>Open workbook preview (separate from annotation evidence)</button>}
                 </div>
             </GlassPanel>
         </div>
@@ -266,7 +303,7 @@ function CitationTarget({
     const [fallbackReason, setFallbackReason] = useState<string | null>(null);
 
     useEffect(() => {
-        if (!enhancedEnabled || !citation.documentId) {
+        if (!enhancedEnabled || !citation.documentId || citation.nativeEvidence || citation.nativeUnavailable) {
             setResolving(false);
             return;
         }
@@ -304,7 +341,7 @@ function CitationTarget({
         return () => {
             cancelled = true;
         };
-    }, [enhancedEnabled, citation.documentId, group.fileName]);
+    }, [enhancedEnabled, citation.documentId, citation.nativeEvidence, citation.nativeUnavailable, group.fileName]);
 
     const onFallback = useCallback((reason: string) => {
         // Surfaced rather than silent: the user asked to see the source, and should be

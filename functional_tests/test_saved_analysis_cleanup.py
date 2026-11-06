@@ -1,7 +1,7 @@
 # test_saved_analysis_cleanup.py
 """
 Functional tests for scoped saved Analyze cleanup.
-Version: 0.261.109
+Version: 0.261.417
 Implemented in: 0.261.109
 
 Deleting a reply must not delete a referenced workflow or mirrored origin.
@@ -21,10 +21,10 @@ def test_deleting_origin_cleans_only_its_real_chat_result(saved_chat):
     saved.cleanup_chat_analysis_messages(
         [saved_chat["message"]], conversation_id="conversation-1", owner_user_id="owner",
         delete_result=lambda *args: removed.append(args),
-        delete_thoughts=lambda *args: thoughts.append(args),
+        delete_thoughts=lambda message_id, user_id: thoughts.append((message_id, user_id)),
     )
     assert removed == [("owner", "conversation-1", "assistant-1")]
-    assert thoughts == [("conversation-1", "assistant-1", "owner")]
+    assert thoughts == [("assistant-1", "owner")]
 
 
 def test_deleting_mirror_does_not_delete_the_original_analysis(saved_chat):
@@ -32,7 +32,7 @@ def test_deleting_mirror_does_not_delete_the_original_analysis(saved_chat):
     saved.cleanup_chat_analysis_messages(
         [message], conversation_id="another-chat", owner_user_id="reader",
         delete_result=lambda *args: pytest.fail("The original result belongs to another message."),
-        delete_thoughts=lambda *args: None,
+        delete_thoughts=lambda message_id, user_id: None,
     )
 
 
@@ -44,7 +44,7 @@ def test_workflow_results_are_not_deleted_with_a_chat_reference(saved_chat):
     saved.cleanup_chat_analysis_messages(
         [message], conversation_id="conversation-1", owner_user_id="owner",
         delete_result=lambda *args: pytest.fail("Workflow result retention is owned by the workflow."),
-        delete_thoughts=lambda *args: None,
+        delete_thoughts=lambda message_id, user_id: None,
     )
 
 
@@ -74,7 +74,7 @@ def test_cleanup_failure_is_not_hidden(saved_chat):
     with pytest.raises(ConnectionError):
         saved.cleanup_chat_analysis_messages(
             [saved_chat["message"]], conversation_id="conversation-1", owner_user_id="owner",
-            delete_result=failed, delete_thoughts=lambda *args: None,
+            delete_result=failed, delete_thoughts=lambda message_id, user_id: None,
         )
 
 

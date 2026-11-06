@@ -267,6 +267,7 @@ for availability states and live-UI validation limits.
 - `[CHAT_UPLOAD_COLLABORATION_SHARING]`
 - `[CHAT_UPLOAD_WORKSPACE_CONTEXT]`
 - `[CITATION_EXTRACTION]`
+- `[CITATION]`
 - `[CI_AUTH]`
 - `[CLAIMS]`
 - `[COLLABORATION]`

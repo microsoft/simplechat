@@ -1,6 +1,6 @@
-# Context-only orchestration review recovery (v0.261.417)
+# Context-only orchestration review recovery (v0.261.418)
 
-Fixed/Implemented in version: **0.261.417**
+Fixed/Implemented in version: **0.261.418**
 (`application/single_app/config.py`).
 
 ## Issue and root cause
@@ -113,6 +113,15 @@ Production V2 assets are typechecked and built from the changed sources.
 The Cosmos inventory renews module-level reviews for unchanged storage-owner
 ASTs and SDK consumers. Classifications and all existing runtime evidence remain
 in place; no storage or domain validator was relaxed.
+
+After synchronizing base commit `a78255ac9`, the expanded review/native-citation
+functional selection passed 196 tests and 51 subtests; the shared progress,
+completeness, recovery and stream-citation UI selection passed 111 tests.
+Typecheck, both V2 builds, documentation coverage/quality and the zero-gap SDK
+inventory check passed again. The full offline SDK matrix above was run before
+this base synchronization. The merge preserves the base's task/phase activity
+headline and this fix's plan-only review diagnostics; version 0.261.418 avoids
+reusing the base's 0.261.417 release number.
 
 An additional GPT-6 AST-only parameter selection has two pre-existing fixture
 failures: its extracted `ModelEndpointBehavior` namespace omits

@@ -1,7 +1,7 @@
-# Model-assisted answer completeness (v0.261.417)
+# Model-assisted answer completeness (v0.261.418)
 
 Implemented in version: **0.261.382** (`application/single_app/config.py`).
-Fixed/Implemented in version: **0.261.417** (`application/single_app/config.py`).
+Fixed/Implemented in version: **0.261.418** (`application/single_app/config.py`).
 
 ## Purpose
 
@@ -66,7 +66,7 @@ unavailable for strict tasks; it is never reclassified as a passed review.
 
 ### Stable assessments and user-supplied source text
 
-Implemented in version: **0.261.417**, recorded in
+Implemented in version: **0.261.418**, recorded in
 `application/single_app/config.py`.
 
 When obligations are known, the assessment is keyed by the exact application-owned
@@ -181,7 +181,7 @@ and **Verification unavailable** from format validation. Expand **Answer
 completeness** for requirement explanations and the number of corrections used.
 Older runs without an assessment remain unchecked history.
 
-Since **0.261.417**, plan completion statements identify the source basis of an
+Since **0.261.418**, plan completion statements identify the source basis of an
 actual completed review: supplied text, gathered information, both, or the request
 itself. **Required output format validated** names only a completed format check.
 Neither a skipped review nor a review of an earlier candidate revision earns a

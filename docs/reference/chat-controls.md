@@ -4,12 +4,27 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.417"
+version: "0.261.418"
 ---
 
 ## How to use this reference
 
 Use this page when you can see a control in Chat but are not sure what it does or when to use it. The generated inventory lists 47 real controls plus 3 child sub-elements. The child elements `document-comparison-edit-btn-label`, `fork-conversation-button-label`, and `fork-conversation-button-spinner` are mentioned with their parent controls instead of receiving separate rows.
+
+### Native workbook evidence
+
+Fixed/Implemented in version: **0.261.417**
+(`application/single_app/config.py`).
+
+| Control | Purpose | Availability |
+| --- | --- | --- |
+| Native note/comment citation | Opens exact retained reviewer text and its worksheet/cell, author, reply metadata, and saved cell value. | A citation with an unambiguous retained native-evidence reference |
+| Open workbook preview (separate from annotation evidence) | Opens worksheet data independently; the preview is not presented as the cited reviewer text. | Successfully authorized native-evidence view |
+
+Source access and the inspected workbook version are rechecked when evidence
+opens. An unavailable historical reference stays unavailable rather than choosing
+a newer comment at the same cell. See
+[Inspect Excel data, comments, and structure]({{ '/guides/inspect-excel-workbooks/' | relative_url }}).
 
 ## Conversation list
 
@@ -967,12 +982,12 @@ plan rather than editing the main chat message. See
 | Run after editing | Executes the saved current revision only after explicit approval. Closing the editor does not approve it. | Start the work once its steps and sources match your intent. | Same as Edit; no revision or clarification may be pending |
 | Run task switch (Gather / Reason / Render plans) | Skips or restores an eligible task without deleting its declared inputs or outputs. Required producers identify their consumers and cannot be silently disabled. | Remove independent work, or learn which consumers must change through Ask planner first. | A Gather / Reason / Render plan that has not started; the final-response step cannot be disabled |
 | Prepared output schema | Expands the server-declared schema for a named structured result. | Check the intended shape before approving composition; this is a retained result, not a download. | A Gather / Reason / Render task with an output schema |
-| Semantic review: Auto / On / Off | Auto attempts review against the request and supplied content. Since **0.261.417**, eligible context-only prose can recover from a checker error after required checks pass; genuine content findings are not bypassed. On remains strict when administration permits review. Off skips optional review, not output validation or access/safety checks. | Keep useful checking without making a broken optional checker block a simple draft, or require completed review with On. | Editable V2 content-preparation step, since **0.261.416** |
+| Semantic review: Auto / On / Off | Auto attempts review against the request and supplied content. Since **0.261.418**, eligible context-only prose can recover from a checker error after required checks pass; genuine content findings are not bypassed. On remains strict when administration permits review. Off skips optional review, not output validation or access/safety checks. | Keep useful checking without making a broken optional checker block a simple draft, or require completed review with On. | Editable V2 content-preparation step, since **0.261.416** |
 | Server file format reference | Shows only a supplied shared export catalog, including source kinds and profiles. Its option-rule and default-limit disclosures are read-only. | Check the server's format descriptions before requesting a validated planner revision. | A Gather / Reason / Render view with a server-provided catalog; absent otherwise |
 | Load server file format reference | Retrieves the shared catalog using the selected plan's authorized run context. A failed read leaves formats unadvertised. | Inspect available format descriptions when they were not included with the current view. | A Gather / Reason / Render plan view without a loaded catalog |
 | Reference image chips (Generate image tasks) | Since **0.261.192**, lists the pictures a planned image will be based on, each with a thumbnail and name. In Review, removes a reference from the task or restores it; with every reference removed, the image is generated from its prompt alone. | Check that the plan uses the right pictures, such as the photo of your house, before it runs. | `enable_chat_orchestration` and `enable_image_generation`, with an image model that can use references and **Image** on when you attached the pictures |
 
-Fixed/Implemented in version: **0.261.417**
+Fixed/Implemented in version: **0.261.418**
 (`application/single_app/config.py`).
 Completed plan checks name their basis: your supplied text, gathered information,
 both, or the request itself. **Required output format validated** does not imply

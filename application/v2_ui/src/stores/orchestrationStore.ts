@@ -933,6 +933,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 return {};
             }
             return {
+                recoveryRevision: state.recoveryRevision + 1,
                 stepRuntime: {
                     ...state.stepRuntime,
                     [key]: { ...current, [stepId]: merged },
@@ -961,7 +962,11 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         if (patch.status === undefined && patch.summary === undefined) {
             return;
         }
+        const plan = get().plans[scopeKey(conversationId, turnId)];
+        if (!plan || !plan.steps.some((step) => step.step_id === stepId)
+            || (event.run_id && event.run_id !== plan.run_id)) return;
         get().updateStepStatus(conversationId, turnId, stepId, patch);
+        if (plan.run_id) get().updateRunRecovery(plan.run_id, { transportUnknown: false, error: null });
     },
 
     beginRun: (record) => {

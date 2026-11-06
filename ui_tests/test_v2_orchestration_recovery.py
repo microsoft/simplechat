@@ -1,7 +1,7 @@
 # test_v2_orchestration_recovery.py
 """
 Real-component browser coverage for orchestration failure and checkpoint recovery.
-Version: 0.261.416
+Version: 0.261.417
 Implemented in: 0.261.105
 Earlier-version run refusals covered in: 0.261.139
 Settled runs whose stored plan still reads running covered in: 0.261.141
@@ -66,6 +66,7 @@ class RecoveryApi:
         self.preparations = {}
         self.prepare_mode = "success"
         self.stream_mode = "failure"
+        self.status_reads_fail = False
         self.waiting = []
         # The failed step's failure; Microsoft 365 recovery tests replace it.
         self.failure = {"code": "step_timeout", "message": FAILURE}
@@ -276,6 +277,9 @@ class RecoveryApi:
             ]})
             return
         if path.startswith(editor_tests.RUNS + "/"):
+            if self.status_reads_fail:
+                route.fulfill(status=503, json={"error": "Progress temporarily unavailable."})
+                return
             run_id = path.split("/")[5]
             if path.endswith("/steps"):
                 route.fulfill(json={"steps": self.steps.get(run_id, [])})
@@ -513,7 +517,7 @@ def test_transport_loss_is_unknown_until_explicit_stop_calls_backend(recovery_ui
     api.stream_mode = "transport"
     mount_recovery(page, api)
     page.get_by_role("button", name="Approve and run the plan").click()
-    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
     expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
     assert not api.calls("/retry")
     assert not any("/cancel/" in request["path"] for request in api.requests)
@@ -522,6 +526,66 @@ def test_transport_loss_is_unknown_until_explicit_stop_calls_backend(recovery_ui
     expect(page.get_by_text("Stopped. Your progress is saved.", exact=True).first).to_be_visible()
     assert len([request for request in api.requests if "/cancel/" in request["path"]]) == 1
     assert main_state(page)["history"][CONVERSATION][0]["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("disconnected", [False, True])
+def test_successful_running_poll_restores_confirmed_task_without_replay(recovery_ui, disconnected):
+    page, api = recovery_ui
+    api.stream_mode = "transport"
+    api.status_reads_fail = disconnected
+    run_id = api.plan["run_id"]
+    api.steps[run_id] = [{"step_id": "read", "status": "running", "summary": "Reading workbook comments"}]
+    page.clock.install()
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    activity = page.get_by_test_id("quiet-activity")
+    if disconnected:
+        expect(activity.get_by_role("status")).to_contain_text("Reconnecting to progress")
+        api.status_reads_fail = False
+        page.evaluate("""({conversation, run}) => window.OrchHarness.controller
+            .reconcileOrchestrationRun(conversation, run)""", {"conversation": CONVERSATION, "run": run_id})
+    expect(activity.get_by_role("status")).to_have_text("Gathering: Read quarterly reports")
+    assert page.evaluate("""(id) => window.OrchHarness.stores.orchestration.useOrchestrationStore
+        .getState().runRecovery[id].transportUnknown""", run_id) is False
+    expect(page.get_by_text("Execution status not confirmed")).to_have_count(0)
+    expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
+    assert len(api.calls("/run")) == 1 and not api.calls("/retry")
+    assert not any("/cancel/" in request["path"] for request in api.requests)
+
+
+def test_fresh_scoped_step_clears_disconnect_and_fences_delayed_running_poll(recovery_ui):
+    page, api = recovery_ui
+    api.stream_mode = "transport"
+    page.clock.install()
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    run_id = api.plan["run_id"]
+    held = []
+
+    def delay_steps(route):
+        if urlsplit(route.request.url).path.endswith("/steps"):
+            held.append(route)
+        else:
+            route.fallback()
+
+    page.route("**/api/v2/orchestration/runs/**", delay_steps)
+    with page.expect_request(lambda request: urlsplit(request.url).path.endswith("/steps")):
+        page.evaluate("""({conversation, run}) => {
+            window.pollFinished = false;
+            void window.OrchHarness.controller.reconcileOrchestrationRun(conversation, run)
+                .then(() => window.pollFinished = true);
+        }""", {"conversation": CONVERSATION, "run": run_id})
+    page.evaluate("""({conversation, turn, run}) => {
+        const S = window.OrchHarness.stores.orchestration.useOrchestrationStore.getState();
+        S.updateRunRecovery(run, { transportUnknown: true });
+        S.applyStepEvent(conversation, turn, {run_id: run, step_id: 'answer', status: 'running'});
+    }""", {"conversation": CONVERSATION, "turn": TURN, "run": run_id})
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_have_text("Reasoning: Write the comparison")
+    for route in held:
+        route.fulfill(json={"steps": [{"step_id": "read", "status": "running"}]})
+    page.wait_for_function("() => window.pollFinished")
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_have_text("Reasoning: Write the comparison")
+    assert len(api.calls("/run")) == 1
 
 
 def test_legacy_history_explains_cannot_resume_without_inventing_reason(recovery_ui):
@@ -557,11 +621,17 @@ def test_server_confirmation_required_is_a_gate_not_an_automatic_retry(recovery_
 def test_transport_terminal_reconciliation_keeps_saved_failure_and_no_stop(recovery_ui):
     page, api = recovery_ui
     api.stream_mode = "transport"
+    page.clock.install()
     mount_recovery(page, api)
     page.get_by_role("button", name="Approve and run the plan").click()
-    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
+    page.wait_for_function("""() => {
+        const recovery = window.OrchHarness.stores.orchestration.useOrchestrationStore
+            .getState().runRecovery['recovery-chat-run-0'];
+        return recovery?.detailLoaded && !recovery.checking;
+    }""")
     api.finish(api.plan["run_id"])
-    check_saved_status(page)
+    page.clock.run_for(5000)
     expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
     assert main_state(page)["history"][CONVERSATION][0]["status"] == "failed"
     assert main_state(page)["messages"][-1]["id"] == f"assistant-{api.plan['run_id']}"
@@ -706,7 +776,7 @@ def test_terminal_status_waits_for_final_publication_after_transport_loss(recove
     page.clock.install()
     mount_recovery(page, api)
     page.get_by_role("button", name="Approve and run the plan").click()
-    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
 
     run_id = api.plan["run_id"]
     api.begin_finalization(run_id, status)
@@ -714,7 +784,7 @@ def test_terminal_status_waits_for_final_publication_after_transport_loss(recove
         api.records[run_id].pop("finalization_status")
     check_saved_status(page)
     try:
-        expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
+        expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_have_text("Saving final response")
     except AssertionError as error:
         raise AssertionError({
             "state": main_state(page),
@@ -756,7 +826,7 @@ def test_reload_keeps_polling_until_terminal_publication_is_saved(recovery_ui, s
     api.begin_finalization(run_id, status)
     page.clock.install()
     mount_recovery(page, api, saved=True)
-    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
     assert run_id in main_state(page)["inFlight"]
     expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
 
@@ -774,7 +844,7 @@ def test_expired_publication_reports_uncertainty_instead_of_an_unsaved_claim(rec
     api.stream_mode = "transport"
     mount_recovery(page, api)
     page.get_by_role("button", name="Approve and run the plan").click()
-    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
     run_id = api.plan["run_id"]
     api.begin_finalization(run_id, "failed")
     api.records[run_id]["finalization_status"] = "interrupted"
@@ -882,11 +952,11 @@ def test_transport_loss_then_legacy_refusal_ends_the_tracked_run(recovery_ui):
     page.clock.install()
     mount_recovery(page, api)
     page.get_by_role("button", name="Approve and run the plan").click()
-    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
     run_id = api.plan["run_id"]
     assert run_id in main_state(page)["inFlight"]
     api.legacy.add(run_id)
-    check_saved_status(page)
+    page.clock.run_for(5000)
     expect(page.get_by_text(LEGACY_PLAN_MESSAGE, exact=True).first).to_be_visible()
     state = main_state(page)
     assert run_id not in state["inFlight"]
@@ -907,7 +977,7 @@ def test_stop_on_a_legacy_run_releases_it_with_the_server_message(recovery_ui):
     page.clock.install()
     mount_recovery(page, api)
     page.get_by_role("button", name="Approve and run the plan").click()
-    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
     run_id = api.plan["run_id"]
     api.legacy.add(run_id)
     stop_from_composer(page)

@@ -1,8 +1,8 @@
 # test_orchestration_available_information.py
 """Normal answers and narrative files from accepted findings with honest information gaps.
 
-Version: 0.261.417
-Implemented in: 0.261.399; 0.261.417
+Version: 0.261.418
+Implemented in: 0.261.399; 0.261.418
 
 Real contracts, preparation, lineage, execution and file publication run offline.
 Scripted model assessments exercise control flow, not factual-accuracy calibration.

@@ -23256,7 +23256,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "877eb258682a1dfce83b5cb076b30d8f90fda087af9b2979381e88d9032527b3"
+        "module_sha256": "021344807772180334c29350dff78e14b25ede7b525e1bac8864db458874d63b"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation-partitioned parameterized query returns plain JSON rows; artifact/native selectors remain query parameters and no point-response conversion is inferred.",
@@ -23277,7 +23277,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "877eb258682a1dfce83b5cb076b30d8f90fda087af9b2979381e88d9032527b3"
+        "module_sha256": "021344807772180334c29350dff78e14b25ede7b525e1bac8864db458874d63b"
       },
       "classification": "sdk-compatible",
       "contract": "SDK point mappings retain owner/id/ETag fields and pass through the participation authorization boundary; no strict-dict assumption or identity default is added.",
@@ -23303,7 +23303,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "877eb258682a1dfce83b5cb076b30d8f90fda087af9b2979381e88d9032527b3"
+        "module_sha256": "021344807772180334c29350dff78e14b25ede7b525e1bac8864db458874d63b"
       },
       "classification": "sdk-compatible",
       "contract": "SDK point mapping is checked against the exact artifact conversation and producer; context metadata is patched using IfNotModified and its retained ETag without copying a wrapper into a strict JSON consumer.",
@@ -23324,7 +23324,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "877eb258682a1dfce83b5cb076b30d8f90fda087af9b2979381e88d9032527b3"
+        "module_sha256": "021344807772180334c29350dff78e14b25ede7b525e1bac8864db458874d63b"
       },
       "classification": "sdk-compatible",
       "contract": "SDK message mappings are read only after conversation participation is authorized, checked for exact message/conversation identity, and remain mapping-compatible for saved readers.",
@@ -23345,7 +23345,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "877eb258682a1dfce83b5cb076b30d8f90fda087af9b2979381e88d9032527b3"
+        "module_sha256": "021344807772180334c29350dff78e14b25ede7b525e1bac8864db458874d63b"
       },
       "classification": "sdk-compatible",
       "contract": "The point response is returned as an SDK-compatible Mapping for private-conversation lineage checks, preserving identity and ETag.",
@@ -23371,7 +23371,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "877eb258682a1dfce83b5cb076b30d8f90fda087af9b2979381e88d9032527b3"
+        "module_sha256": "021344807772180334c29350dff78e14b25ede7b525e1bac8864db458874d63b"
       },
       "classification": "sdk-compatible",
       "contract": "SDK point metadata and actor ownership are checked before a dictionary replacement; CAS preserves a concurrent assistant pointer and the function returns only the previous pointer.",
@@ -23399,7 +23399,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "877eb258682a1dfce83b5cb076b30d8f90fda087af9b2979381e88d9032527b3"
+        "module_sha256": "021344807772180334c29350dff78e14b25ede7b525e1bac8864db458874d63b"
       },
       "classification": "sdk-compatible",
       "contract": "SDK point metadata is checked for file/conversation/native-run/producer binding before nested metadata set operations with IfNotModified and the stored ETag; returned write documents are unused.",
@@ -23421,7 +23421,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "877eb258682a1dfce83b5cb076b30d8f90fda087af9b2979381e88d9032527b3"
+        "module_sha256": "021344807772180334c29350dff78e14b25ede7b525e1bac8864db458874d63b"
       },
       "classification": "sdk-compatible",
       "contract": "Current authorized SDK mapping is unpacked into a replacement body; IfNotModified uses the current ETag and 404/412 cannot overwrite a concurrent deletion fence.",
@@ -30804,7 +30804,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
+        "module_sha256": "3d3073c94f5a6e23582a99f7a9e54ea79500deb428ec64a167e4c806c7616764"
       },
       "classification": "sdk-compatible",
       "contract": "Fallback source discovery materializes plain query rows before current-revision selection; the access-index success path retains its owner-provided document list.",
@@ -30830,7 +30830,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
+        "module_sha256": "3d3073c94f5a6e23582a99f7a9e54ea79500deb428ec64a167e4c806c7616764"
       },
       "classification": "sdk-compatible",
       "contract": "The SDK document is field-read and mutated for sharing approval; upsert returns CosmosDict, accepted by isinstance(dict), and that persisted mapping with fresh ETag is passed to index synchronization. Browser JSON is projected separately.",
@@ -30851,7 +30851,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
+        "module_sha256": "3d3073c94f5a6e23582a99f7a9e54ea79500deb428ec64a167e4c806c7616764"
       },
       "classification": "sdk-compatible",
       "contract": "Bulk-tag source lookups consume plain query rows, check document ownership and pass selected ids to the document mutation owner; local discovery introduces no SDK point-to-strict conversion.",
@@ -30872,7 +30872,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
+        "module_sha256": "3d3073c94f5a6e23582a99f7a9e54ea79500deb428ec64a167e4c806c7616764"
       },
       "classification": "sdk-compatible",
       "contract": "Tag deletion iterates plain query rows and their tag lists before delegating mutations; query rows are not SDK point mappings.",
@@ -30893,7 +30893,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
+        "module_sha256": "3d3073c94f5a6e23582a99f7a9e54ea79500deb428ec64a167e4c806c7616764"
       },
       "classification": "sdk-compatible",
       "contract": "The legacy count fallback consumes a scalar query result, while document/index listing projections remain with their existing owners; no point wrapper is treated as an exact plain document.",
@@ -30914,7 +30914,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
+        "module_sha256": "3d3073c94f5a6e23582a99f7a9e54ea79500deb428ec64a167e4c806c7616764"
       },
       "classification": "sdk-compatible",
       "contract": "The SDK document supplies owner and sharing-list fields for removal checks before delegated mutation; no exact-dict domain admission occurs on the point value.",
@@ -30940,7 +30940,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
+        "module_sha256": "3d3073c94f5a6e23582a99f7a9e54ea79500deb428ec64a167e4c806c7616764"
       },
       "classification": "sdk-compatible",
       "contract": "The document CosmosDict supplies user_id and shared-user fields for owner authorization; the refreshed SDK mapping is passed to field-based notification projection, while sharing persistence remains with its document owner.",
@@ -30961,7 +30961,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
+        "module_sha256": "3d3073c94f5a6e23582a99f7a9e54ea79500deb428ec64a167e4c806c7616764"
       },
       "classification": "sdk-compatible",
       "contract": "The point document mapping is checked through user_id and shared-user fields before the document owner removes sharing; JSON responses contain explicit result fields, not the SDK wrapper.",
@@ -30982,7 +30982,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
+        "module_sha256": "3d3073c94f5a6e23582a99f7a9e54ea79500deb428ec64a167e4c806c7616764"
       },
       "classification": "sdk-compatible",
       "contract": "Tag rename discovery consumes plain query dictionaries and field-based tag/owner values before existing document mutation calls.",
@@ -31009,7 +31009,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "70ab9dc1019d5791b7f359a10cda466e6a3c76dc3b67d5625af50976a7e86eb1"
+        "module_sha256": "3d3073c94f5a6e23582a99f7a9e54ea79500deb428ec64a167e4c806c7616764"
       },
       "classification": "sdk-compatible",
       "contract": "The partitioned SDK conversation is checked through user_id before message discovery. File query rows stay plain, supply chunk/content fields and produce an explicit plain JSON content response.",

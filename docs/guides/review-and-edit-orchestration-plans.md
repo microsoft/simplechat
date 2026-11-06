@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.417"
+version: "0.261.418"
 ---
 
 ## Decide what should run
@@ -180,6 +180,14 @@ Fixed/Implemented in version: **0.261.416**
 (`application/single_app/config.py`).
 
 While work runs, Quiet activity keeps the conversation focused on your request.
+Since **0.261.417**, the activity headline names the confirmed task and phase,
+for example **Gathering: Read workbook comments** or **Reasoning: Prepare audit**.
+A successful running-status check restores this progress; it is not an unknown
+execution outcome. **Reconnecting to progress…** appears only when updates
+cannot be confirmed and qualifies displayed tasks as last known. Reconnection
+reads saved state without replaying tasks. **Saving final response** remains
+distinct from a successfully published answer.
+
 Expand the activity or open plan details to distinguish preparing an answer from
 checking it. **Stop** remains in the composer. Technical failure details stay in
 run inspection rather than taking over the answer.
@@ -196,7 +204,7 @@ This uses the administrator's bounded correction allowance, normally two; an
 explicit zero allows checking without automatic correction. If required checking cannot finish, the prepared work stays saved. An eligible
 retry reuses retained content without regenerating the composition.
 
-Fixed/Implemented in version: **0.261.417**
+Fixed/Implemented in version: **0.261.418**
 (`application/single_app/config.py`).
 When you ask for a simple rewrite or prose draft using text you already supplied,
 the original message is source material for checking the draft's meaning and

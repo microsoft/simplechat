@@ -432,6 +432,8 @@ def _input_document_citations(context, reference):
             }
         if not citation_id or location in (None, ''):
             continue
+        # The browser's retained-result capability is transport metadata, not model input.
+        citation = {key: value for key, value in citation.items() if key != 'native_evidence'}
         citations.append({
             **citation,
             'citation': build_inline_citation_marker(

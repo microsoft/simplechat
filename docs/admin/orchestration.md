@@ -5,7 +5,7 @@ description: "Orchestration lets a user describe what they want and have SimpleC
 section: "Administration"
 audience: admin
 admin_tab: orchestration
-version: "0.261.417"
+version: "0.261.418"
 ---
 
 
@@ -88,7 +88,7 @@ for content preparation. Auto attempts review; On requires a completed review
 when this admin setting permits it. Off does not disable required output/schema
 validation, access, provenance, or safety checks.
 
-Fixed/Implemented in version: **0.261.417**
+Fixed/Implemented in version: **0.261.418**
 (`application/single_app/config.py`).
 For an explicitly classified, single-step prose transformation or draft based
 only on supplied in-chat text, Auto can recover from a broken checker by retaining

@@ -24,6 +24,10 @@ from functions_file_sync import (
     build_synced_document_delete_guard,
 )
 from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_orchestration_result_contracts import ResultContractError, ResultRef
+from functions_orchestration_result_runtime import read_native_citation_evidence
+from functions_orchestration_results import ResultUnavailableError
+from functions_workflow_result_store import WorkflowResultIntegrityError
 from functions_document_access_index import (
     DOCUMENT_ACCESS_SCOPE_PERSONAL,
     is_document_access_shadow_validation_enabled,
@@ -1765,6 +1769,38 @@ def register_route_backend_documents(bp):
         if not citation_id:
             return jsonify({"error": "Missing citation_id"}), 400
 
+        if data.get("native_evidence") is not None or (
+            isinstance(citation_id, str) and ":native-comments:" in citation_id
+        ):
+            if not data.get("native_evidence") or not document_id or not data.get("conversation_id"):
+                return jsonify({"error": "Retained native citation evidence is unavailable."}), 404
+            try:
+                reference = ResultRef.from_dict(data["native_evidence"])
+                if (
+                    reference.producer.user_id != user_id
+                    or reference.producer.conversation_id != data["conversation_id"]
+                ):
+                    return jsonify({"error": "Unauthorized access to citation"}), 403
+                # Bootstrap depends on initialized config; load only for native citation reads.
+                from functions_orchestration_bootstrap import build_orchestration_services
+
+                services = build_orchestration_services(user_id, data["conversation_id"])
+                response = read_native_citation_evidence(
+                    services.results, reference, citation_id=citation_id, document_id=document_id,
+                )
+                return jsonify(response), 200
+            except ResultContractError:
+                return jsonify({"error": "Invalid native citation reference."}), 400
+            except (WorkflowResultIntegrityError, ResourceNotFoundError):
+                return jsonify({"error": "Retained native citation evidence is unavailable."}), 404
+            except ScreeningError as error:
+                return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
+            except (ResultUnavailableError, PermissionError):
+                return jsonify({"error": "The cited workbook or retained evidence is no longer available."}), 403
+            except Exception as error:
+                log_event("[CITATION] Native citation lookup failed.", extra={"error_type": type(error).__name__}, level=logging.WARNING)
+                return jsonify({"error": "Unable to load retained native citation evidence."}), 500
+
         def build_citation_response(chunk):
             return jsonify({
                 "cited_text": chunk.get("chunk_text", ""),
@@ -1812,7 +1848,8 @@ def register_route_backend_documents(bp):
             except ResourceNotFoundError:
                 continue
             except Exception as e:
-                return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+                log_event("[CITATION] Citation lookup failed.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
+                return jsonify({"error": "Unable to load the cited passage."}), 500
 
             if citation_response:
                 return citation_response

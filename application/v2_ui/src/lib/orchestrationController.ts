@@ -1335,6 +1335,7 @@ async function executeSavedPlan(
             onM365PendingActions: ingestOutgoingActions,
             onStep: (event) => {
                 const current = useOrchestrationStore.getState();
+                if (selectPlan(current, conversationId, turnId)?.run_id !== runId) return;
                 current.applyStepEvent(conversationId, turnId, event);
                 applyOrchestrationOutputEvent(runId, event);
                 current.mergeReasoningAdjustments(conversationId, turnId, event.reasoning_adjustments);
@@ -1587,6 +1588,7 @@ export async function loadOrchestrationRecovery(conversationId: string, runId: s
         status: record.status,
         ...(plan ? { plan } : {}),
         detailLoaded: true,
+        transportUnknown: false,
     }, readRevision);
     return admitted ? record : null;
 }
@@ -1605,7 +1607,7 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
     const store = useOrchestrationStore.getState();
     if (store.runRecovery[runId]?.checking) return;
     store.updateRunRecovery(runId, {
-        checking: true, transportUnknown: !isOrchestrationRunWaiting(store.runRecovery[runId] ?? {}),
+        checking: true,
     });
     try {
         const record = await loadOrchestrationRecovery(conversationId, runId);
@@ -1617,9 +1619,11 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
             return;
         }
         const attemptRevision = useOrchestrationStore.getState().runRecovery[runId]?.attemptRevision;
+        const progressRevision = useOrchestrationStore.getState().recoveryRevision;
         const steps = await fetchRunSteps(runId, { conversationId }).catch(() => []);
         const current = useOrchestrationStore.getState();
-        if (current.runRecovery[runId]?.attemptRevision !== attemptRevision) {
+        if (current.runRecovery[runId]?.attemptRevision !== attemptRevision
+            || current.recoveryRevision !== progressRevision) {
             current.updateRunRecovery(runId, { checking: false });
             if (isOrchestrationRunPending(current.runRecovery[runId] ?? {})) scheduleReconciliation(conversationId, runId);
             else if (current.inFlight[runId]) await reconcileOrchestrationRun(conversationId, runId);
@@ -1669,12 +1673,9 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
             }
             return;
         }
-        const waiting = isOrchestrationRunWaiting(record);
         current.updateRunRecovery(runId, {
-            checking: false, transportUnknown: !waiting,
-            error: waiting ? null : terminal
-                ? 'The server is saving the final response. Checking saved status; no retry will start.'
-                : 'The server has not confirmed a final result. Execution may still be running. Checking saved status; no retry will start.',
+            checking: false, transportUnknown: false,
+            error: terminal ? 'The server is saving the final response. Checking saved status; no retry will start.' : null,
         });
     } catch (error) {
         const legacyMessage = legacyPlanErrorMessage(error);

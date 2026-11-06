@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.415** (tracked in `application/single_app/config.py`)
+**Version: 0.261.417** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -31,6 +31,7 @@
 **Search evidence citation harness expectations aligned in version: 0.261.399**
 **Selected-document planning recovery and debug diagnostics fixed/implemented in version: 0.261.413**
 **Initial-turn persistence and browser-independent Auto planning implemented in version: 0.261.415**
+**Confirmed progress, exact native workbook citations, and saved-analysis cleanup fixed in version: 0.261.417**
 
 ## Overview
 
