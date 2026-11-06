@@ -16,6 +16,7 @@ from collaboration_models import is_shared_conversation_backing
 from functions_assist_submissions import normalize_submission_id
 from functions_chat_message_metadata import patch_message_metadata
 from functions_message_deletion import is_soft_deleted_message
+from functions_orchestration_planning import PLANNING_METADATA
 
 
 MODEL_FIELDS = ('model_deployment', 'model_id', 'model_endpoint_id', 'model_provider')
@@ -331,6 +332,7 @@ def retry_source_fingerprint(source):
             'button_states', 'prompt_selection', 'image_references', 'image_generation',
             'requested_reasoning_effort', 'time_zone', 'masked', 'masked_ranges',
             'orchestration', 'orchestration_turn_id', 'orchestration_inputs', 'orchestration_clarification_answers',
+            PLANNING_METADATA,
         ) if key in metadata
     }
     return hashlib.sha256(json.dumps(

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Orchestrate in shared conversations.
-Version: 0.261.270
+Version: 0.261.411
 Implemented in: 0.261.270
 
 Before 0.261.270 an orchestrated request in a shared conversation created a private
@@ -25,6 +25,9 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from azure.core import MatchConditions
+from azure.core.exceptions import AzureError
+from azure.cosmos._cosmos_responses import CosmosDict
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 TESTS = Path(__file__).resolve().parent
@@ -60,6 +63,32 @@ class CollaborationMessages(AtomicMemoryContainer):
             and (item.get("metadata") or {}).get("source_message_id") == params["@source_message_id"]
         ]
         return rows[:1]
+
+
+def test_shared_message_storage_uses_sdk_points_and_plain_queries():
+    messages = CollaborationMessages("conversation_id")
+    saved = messages.create_item({
+        "id": "shared-sdk-message", "conversation_id": SHARED_ID,
+        "content": REQUEST, "metadata": {"source_message_id": "source-sdk-message"},
+    })
+    point = messages.read_item("shared-sdk-message", SHARED_ID)
+    replaced = messages.replace_item(
+        point["id"], {**point, "content": ANSWER}, etag=point["_etag"],
+        match_condition=MatchConditions.IfNotModified,
+    )
+    rows = messages.query_items(
+        "SELECT * FROM c WHERE c.conversation_id = @conversation_id AND c.metadata.source_message_id = @source_message_id",
+        parameters=[
+            {"name": "@conversation_id", "value": SHARED_ID},
+            {"name": "@source_message_id", "value": "source-sdk-message"},
+        ],
+        partition_key=SHARED_ID,
+    )
+    assert type(saved) is type(point) is type(replaced) is CosmosDict
+    assert replaced["_etag"] != point["_etag"]
+    assert type(rows[0]) is dict and rows[0]["content"] == ANSWER
+    with pytest.raises(CosmosResourceNotFoundError):
+        messages.read_item("shared-sdk-message", "another-conversation")
 
 
 @pytest.fixture
@@ -197,6 +226,51 @@ def test_other_participants_are_asked_to_turn_off_orchestrate(shared):
     with pytest.raises(CosmosResourceNotFoundError):
         shared.harness.conversations.read_item(SHARED_ID, SHARED_ID)
     assert shared_thread(shared) == [] and shared.events == []
+
+
+def test_failed_initial_planning_has_a_saved_shared_question_and_owner_status(shared):
+    shared.harness.replies = [json.dumps({"kind": "plan", "steps": []})]
+    response = shared.client.post("/api/v2/orchestration/plan", json={
+        "conversation_id": SHARED_ID, "turn_id": "failed-shared-turn", "message": REQUEST,
+        "approval_mode": "manual", "planning_submission_id": "shared-submission",
+    }, buffered=True)
+    events = frames(response)
+    question, = shared_thread(shared)
+    query = {
+        "conversation_id": SHARED_ID, "message_id": question["metadata"]["source_message_id"],
+        "include_request": "1",
+    }
+    saved = shared.client.get("/api/v2/orchestration/turns/failed-shared-turn", query_string=query)
+    assert any(event.get("message_persisted") for event in events)
+    assert any(event.get("error") for event in events)
+    assert question["metadata"]["orchestration"]["planning_status"] == "planning"
+    assert question["metadata"]["orchestration"]["planning_submission_id"] == "shared-submission"
+    assert "_orchestration_planning" not in json.dumps(question)
+    assert saved.status_code == 200
+    assert saved.get_json()["turn"]["status"] == "failed"
+    login(shared, user_id="guest")
+    denied = shared.client.get("/api/v2/orchestration/turns/failed-shared-turn", query_string=query)
+    assert denied.status_code == 404
+
+
+def test_shared_mirror_failure_is_not_acknowledged_or_sent_to_the_model(shared, monkeypatch):
+    collaboration = importlib.import_module("functions_collaboration")
+
+    def fail(*args, **kwargs):
+        raise AzureError("PRIVATE_SHARED_WRITE_DIAGNOSTIC")
+
+    monkeypatch.setattr(collaboration, "persist_collaboration_message", fail)
+    shared.harness.replies = [json.dumps({"kind": "plan", "steps": [compose_step()]})]
+    response = shared.client.post("/api/v2/orchestration/plan", json={
+        "conversation_id": SHARED_ID, "turn_id": "unsaved-shared-turn", "message": REQUEST,
+        "approval_mode": "manual", "planning_submission_id": "shared-unsaved",
+    }, buffered=True)
+    events = frames(response)
+    assert any(event.get("code") == "planning_mirror_unavailable" for event in events)
+    assert not any(event.get("message_persisted") for event in events)
+    assert shared.harness.model_calls == []
+    assert shared_thread(shared) == []
+    assert "PRIVATE_SHARED_WRITE_DIAGNOSTIC" not in response.get_data(as_text=True)
 
 
 def test_anyone_else_cannot_tell_a_shared_conversation_exists(shared):

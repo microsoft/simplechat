@@ -38,6 +38,7 @@ import queue
 import threading
 import uuid
 from copy import deepcopy
+from contextlib import ExitStack
 from agent_execution_context import capture_execution_identity
 from datetime import datetime, timezone
 from functools import wraps
@@ -46,16 +47,16 @@ from azure.cosmos import exceptions
 from azure.core.exceptions import AzureError
 from azure.core import MatchConditions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
-from flask import Response, g, has_request_context, jsonify, make_response, request, session, stream_with_context
+from flask import Response, copy_current_request_context, g, has_request_context, jsonify, make_response, request, session, stream_with_context
 
-from config import cosmos_conversations_container, cosmos_messages_container
+from config import cosmos_conversations_container, cosmos_messages_container, cosmos_orchestration_runs_container
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_activity_logging import log_workflow_creation
 from functions_appinsights import log_event, workflow_log_context
 from functions_assist_submissions import SubmissionIdError, normalize_submission_id
-from public_chat_scope import prepare_public_chat_scope, public_chat_scope_required
+from public_chat_scope import prepare_public_chat_scope, public_chat_execution_scope, public_chat_scope_required
 from public_chat_scope_state import PublicChatScopeError, current_public_chat_scope
-from public_source_policy import current_public_source_policy
+from public_source_policy import current_public_source_policy, public_source_policy_context
 from functions_public_workspaces import resolve_public_chat_workspace_ids
 from functions_chat_content_checks import (
     CHECK_METADATA, check_chat_content, orchestration_input_text,
@@ -65,9 +66,11 @@ from functions_chat_content_review import (
     checked_history_messages, patch_chat_message_metadata, record_blocked_chat_attempt, reply_is_retracted,
 )
 from functions_chat_retry import (
-    MODEL_FIELDS, ChatRetryError, available_retry_attempts, claim_retry_attempt, load_owned_retry_message,
+    MODEL_FIELDS, ChatRetryError, agent_request_from_metadata, available_retry_attempts,
+    claim_retry_attempt, load_owned_retry_message,
     prepare_retry_attempt, reconcile_prepared_retry, retry_history_prefix, set_retry_attempt_state,
 )
+from functions_chat_stream_events import build_user_message_persisted_stream_payload
 from functions_message_deletion import is_soft_deleted_message
 from functions_saved_analysis import (
     analysis_result_contexts,
@@ -146,6 +149,13 @@ from functions_orchestration_memory import (
     OrchestrationMemoryError,
     load_orchestration_memory,
     validate_memory_context,
+)
+from functions_orchestration_planning import (
+    PLANNING_HEARTBEAT_SECONDS, PLANNING_METADATA, PlanningStateError,
+    cancel_planning_attempt, claim_planning_attempt, heartbeat_planning_attempt,
+    new_planning_attempt, planning_projection, planning_question_id, public_planning_message,
+    planning_was_cancelled, read_planning_attempt, record_planning_cancellation,
+    require_planning_claim, update_planning_attempt,
 )
 from functions_orchestration_collaboration import (
     SHARED_ORCHESTRATION_STALE_COPY,
@@ -236,6 +246,7 @@ from functions_orchestration_schema import (
     is_legacy_plan,
     plan_contract_version,
     normalize_elicitation,
+    plan_approval_floor,
     safe_failure,
 )
 from functions_settings import enabled_required, get_settings, get_user_settings, workflow_user_required
@@ -300,6 +311,261 @@ def _sse(generator, *, check_settings=None):
             if callable(close):
                 close()
     return Response(public_events(), mimetype='text/event-stream', headers=dict(SSE_HEADERS))
+
+
+def _require_planning_owner(holder):
+    if not holder.get('owned'):
+        return
+    _authorize_context_conversation(holder['conversation_id'], holder['user_id'])
+    if planning_was_cancelled(
+        cosmos_orchestration_runs_container, holder['conversation_id'], holder['user_id'],
+        holder['turn_id'], holder['submission_id'],
+    ):
+        cancel_planning_attempt(
+            cosmos_messages_container, holder['conversation_id'], holder['message_id'], holder['turn_id'],
+            submission_id=holder['submission_id'], claim_id=holder['claim_id'],
+        )
+        raise PlanningStateError('Planning was cancelled.', code='planning_cancelled')
+    require_planning_claim(
+        cosmos_messages_container, holder['conversation_id'], holder['message_id'],
+        holder['turn_id'], holder['claim_id'],
+    )
+
+
+def _update_planning_owner(holder, **updates):
+    return update_planning_attempt(
+        cosmos_messages_container, holder['conversation_id'], holder['message_id'],
+        holder['turn_id'], updates, claim_id=holder['claim_id'],
+    )
+
+
+def _planning_turn_row(conversation_id, user_id, message_id, turn_id, *, include_request=False):
+    _authorize_context_conversation(conversation_id, user_id)
+    question, state = read_planning_attempt(
+        cosmos_messages_container, conversation_id, message_id, turn_id,
+    )
+    row = planning_projection(question, state, include_request=include_request)
+    if state.get('run_id'):
+        record = get_orchestration_run(state['run_id'], user_id, conversation_id, strict=True)
+        if record:
+            if record.get('superseded_by_run_id'):
+                record = read_revision_run(record['run_id'], user_id, conversation_id, follow_current=True)
+                row['run_id'] = record['run_id']
+            row['run_started'] = bool(record.get('started_at'))
+            if record.get('started_at') or record.get('status') in ('failed', 'cancelled', 'completed'):
+                row['status'] = record['status']
+            elif state['status'] not in ('planning', 'cancelled', 'failed', 'interrupted'):
+                row['status'] = 'awaiting_review'
+    if row['status'] == 'awaiting_clarification':
+        pending = get_pending_elicitation(user_id, conversation_id, turn_id)
+        if not pending or pending.get('status') == 'completed':
+            raise PlanningStateError('The clarification changed. Reload its saved state.')
+        _validate_turn_memory_context(pending['turn_context'], user_id, conversation_id)
+        row['elicitation'] = pending['question']
+    return row
+
+
+def _stream_planning(events, holder, context, user_id, settings, run_plan):
+    """The browser observes a worker; disconnecting never closes its planner."""
+    frames = queue.Queue(maxsize=128)
+    attached = threading.Event()
+    attached.set()
+    finished = threading.Event()
+    stop_heartbeat = threading.Event()
+    heartbeat = None
+    started = False
+    end = object()
+    admitted_public_scope = current_public_chat_scope(user_id)
+    if admitted_public_scope is not None:
+        admitted_public_scope = {
+            **admitted_public_scope,
+            'workspace_ids': list(admitted_public_scope['workspace_ids']),
+        }
+
+    def emit(frame):
+        if attached.is_set():
+            try:
+                frames.put_nowait(frame)
+            except queue.Full:
+                attached.clear()
+
+    def renew():
+        while not stop_heartbeat.wait(PLANNING_HEARTBEAT_SECONDS):
+            try:
+                heartbeat_planning_attempt(
+                    cosmos_messages_container, holder['conversation_id'], holder['message_id'],
+                    holder['turn_id'], holder['claim_id'],
+                )
+            except (PlanningStateError, AzureError) as exc:
+                log_event(
+                    '[ORCHESTRATION] Planning heartbeat could not retain its claim.',
+                    level=logging.WARNING, extra={
+                        **workflow_log_context(conversation_id=holder['conversation_id'], turn_id=holder['turn_id']),
+                        'stage': 'planning_heartbeat', 'error_type': type(exc).__name__,
+                    },
+                )
+                return
+
+    def fail(message, code='planning_failed', **fields):
+        if holder.get('owned'):
+            try:
+                _update_planning_owner(holder, status='failed', error=message, error_code=code, **fields)
+            except (PlanningStateError, AzureError) as exc:
+                log_event(
+                    '[ORCHESTRATION] Planning failure could not update its saved question.',
+                    level=logging.WARNING, extra={'stage': 'planning_finalize', 'error_type': type(exc).__name__},
+                )
+        emit(serialize_sse({'error': message, 'code': code, 'done': True}))
+
+    @copy_current_request_context
+    def worker():
+        nonlocal heartbeat
+        auto_plan = None
+        terminal = False
+        scope = {
+            'seeds': context['seeds'], 'conversation_id': context.get('conversation_id'),
+            'resolve_public_chat_workspace_ids': resolve_public_chat_workspace_ids,
+            'read_conversation_for_public_chat': lambda value: _authorize_context_conversation(value, user_id),
+        }
+        try:
+            with ExitStack() as scopes:
+                scopes.enter_context(public_source_policy_context(
+                    user_id, context['seeds'].get('public_source_policy'),
+                ))
+                if admitted_public_scope is not None:
+                    g.public_chat_scope = admitted_public_scope
+                for frame in events:
+                    if holder.get('owned') and heartbeat is None:
+                        heartbeat = threading.Thread(target=renew, name='orchestration-planning-heartbeat', daemon=True)
+                        heartbeat.start()
+                    if not frame.startswith('data:'):
+                        emit(frame)
+                        continue
+                    payload = json.loads(frame.partition('data:')[2].strip())
+                    if holder.get('owned'):
+                        _require_planning_owner(holder)
+                        if payload.get('error'):
+                            fail(payload['error'], payload.get('code') or 'planning_failed')
+                            terminal = True
+                            continue
+                        if payload.get('type') == 'orchestration_elicitation':
+                            _update_planning_owner(holder, status='awaiting_clarification')
+                            terminal = True
+                        elif payload.get('type') == 'orchestration_plan':
+                            plan = payload['plan']
+                            automatic = (
+                                (plan.get('approval') or {}).get('mode') == 'auto'
+                                and (plan.get('approval') or {}).get('state') == 'approved'
+                                and not plan.get('requires_fresh_review')
+                                and not plan_approval_floor(plan)
+                            )
+                            _update_planning_owner(
+                                holder, status='planning' if automatic else 'awaiting_review',
+                                run_id=plan['run_id'],
+                            )
+                            payload['server_managed'] = True
+                            auto_plan = plan if automatic else None
+                            terminal = True
+                    emit(serialize_sse(payload))
+                    if holder.get('owned') and payload.get('type') == 'user_message_persisted':
+                        scope.update(seeds=context['seeds'], conversation_id=holder['conversation_id'])
+                        scopes.enter_context(public_chat_execution_scope(scope, user_id, settings))
+                if auto_plan is not None:
+                    _require_planning_owner(holder)
+                    response = make_response(run_plan({
+                        'run_id': auto_plan['run_id'], 'conversation_id': holder['conversation_id'],
+                    }))
+                    try:
+                        if response.status_code >= 400:
+                            failure = response.get_json(silent=True) or {}
+                            record = get_orchestration_run(
+                                auto_plan['run_id'], user_id, holder['conversation_id'], strict=True,
+                            )
+                            if record and record.get('started_at'):
+                                _update_planning_owner(holder, status='running', run_started=True)
+                            else:
+                                fail(
+                                    failure.get('error') or 'The saved plan could not start. Reload to review its status.',
+                                    'auto_admission_failed', run_started=False,
+                                )
+                        else:
+                            _update_planning_owner(holder, status='running', run_started=True)
+                            for frame in response.response:
+                                text = frame.decode('utf-8') if isinstance(frame, bytes) else frame
+                                if text.startswith('data:'):
+                                    payload = json.loads(text.partition('data:')[2].strip())
+                                    if payload.get('done'):
+                                        status = payload.get('status') or ('failed' if payload.get('error') else 'completed')
+                                        if status in ('completed', 'failed', 'cancelled'):
+                                            _update_planning_owner(
+                                                holder, status=status,
+                                                **({'error': payload['error']} if payload.get('error') else {}),
+                                            )
+                    finally:
+                        response.close()
+                elif holder.get('owned') and not terminal:
+                    fail('Planning ended without a saved result. Your question was saved. Retry to create a new plan.')
+        except PlanningStateError as exc:
+            log_event(
+                '[ORCHESTRATION] Planning stopped because its saved attempt changed.',
+                level=logging.WARNING, extra={'stage': 'planning_fence', 'code': exc.code},
+            )
+            if auto_plan is not None:
+                try:
+                    request_cancellation(
+                        auto_plan['run_id'], user_id, holder['conversation_id'],
+                        lambda: _authorize_context_conversation(holder['conversation_id'], user_id),
+                    )
+                except (AzureError, RecoveryError, ConversationContextError) as cancellation_error:
+                    log_event(
+                        '[ORCHESTRATION] A fenced plan could not confirm cancellation.',
+                        level=logging.ERROR, extra={'error_type': type(cancellation_error).__name__},
+                    )
+            emit(serialize_sse({'error': exc.public_message, 'code': exc.code, 'done': True}))
+        except Exception as exc:
+            log_event(
+                '[ORCHESTRATION] Background planning could not finish.',
+                level=logging.ERROR, extra={'stage': 'planning_worker', 'error_type': type(exc).__name__},
+            )
+            fail('Planning could not finish. Reload to check the saved question and retry.')
+        finally:
+            try:
+                events.close()
+            except Exception as exc:
+                log_event(
+                    '[ORCHESTRATION] Planning resources could not be closed.',
+                    level=logging.ERROR, extra={'stage': 'planning_close', 'error_type': type(exc).__name__},
+                )
+            finally:
+                stop_heartbeat.set()
+                if heartbeat is not None:
+                    heartbeat.join(timeout=1)
+                emit(end)
+                finished.set()
+
+    def observe():
+        nonlocal started
+        thread = threading.Thread(target=worker, name='orchestration-planning', daemon=True)
+        try:
+            thread.start()
+            started = True
+            while not finished.is_set() or not frames.empty():
+                try:
+                    frame = frames.get(timeout=SSE_KEEPALIVE_SECONDS)
+                    if frame is end:
+                        return
+                    yield frame
+                except queue.Empty:
+                    if not finished.is_set():
+                        yield SSE_KEEPALIVE_FRAME
+        finally:
+            attached.clear()
+            if not started:
+                events.close()
+
+    response = _sse(observe())
+    response.call_on_close(attached.clear)
+    return response
 
 
 def _orchestration_enabled(settings):
@@ -731,11 +997,11 @@ def _require_regeneration_source_idle(record):
         )
 
 
-def _regeneration_request(record):
+def _regeneration_request(record, *, require_selection=True):
     seeds = record.get('seeds') or record.get('original_seeds')
-    if not isinstance(seeds, dict) or not (
+    if not isinstance(seeds, dict) or (require_selection and not (
         seeds.get('model') or seeds.get('agent') or seeds.get('model_routing') == 'auto'
-    ):
+    )):
         raise _regeneration_unavailable()
     body = {
         'message': record['user_message'], 'conversation_id': record['conversation_id'],
@@ -759,7 +1025,7 @@ def _regeneration_request(record):
         'conversation_references': deepcopy(seeds.get('conversation_references') or []),
     }
     if seeds.get('agent'):
-        body['agent_info'] = deepcopy(seeds['agent'])
+        body['agent_info'] = agent_request_from_metadata(seeds['agent'])
     if seeds.get('model_routing') == 'auto':
         body['model_routing'] = 'auto'
     elif seeds.get('model'):
@@ -769,6 +1035,34 @@ def _regeneration_request(record):
     if record.get('time_zone'):
         body['time_zone'] = record['time_zone']
     return body
+
+
+def _planning_request(context, data):
+    body = _regeneration_request(context, require_selection=False)
+    body.update({
+        'turn_id': context['turn_id'], 'approval_mode': context.get('approval_mode') or '',
+        'revision': context.get('revision', 0),
+    })
+    if context.get('requires_fresh_review'):
+        body['requires_fresh_review'] = True
+    body.update(deepcopy(context.get('collaboration') or {}))
+    if 'elicitation_response' in data:
+        for key in (
+            'elicitation_response', 'elicitation_context', 'elicitation_id',
+            'elicitation_revision', 'elicitation_submission_id',
+        ):
+            if key in data:
+                body[key] = deepcopy(data[key])
+    return body
+
+
+def _restore_turn_selections(context, previous):
+    for key in (
+        'user_message_id', 'user_message_fingerprint', 'seeds', 'original_seeds',
+        'answered_questions', 'prompt_selection', 'memory_audience', 'memory_scope', 'time_zone',
+    ):
+        if key in previous:
+            context[key] = deepcopy(previous[key])
 
 
 def _regeneration_input_fingerprint(record):
@@ -1016,6 +1310,7 @@ def _with_prepared_regeneration(view):
                 cosmos_messages_container, cosmos_conversations_container, user_id, question_id,
             )
             body, context = _restore_prepared_regeneration(question, user_id, get_settings())
+            planning_submission_id = data.get('planning_submission_id')
             question = claim_retry_attempt(
                 cosmos_messages_container, cosmos_conversations_container, user_id,
                 question['conversation_id'], question['id'], kind='orchestration',
@@ -1023,6 +1318,8 @@ def _with_prepared_regeneration(view):
             )
             turn_id = question['metadata']['orchestration']['turn_id']
             body.update({'turn_id': turn_id, 'retry_user_message_id': question['id'], 'approval_mode': 'manual'})
+            if planning_submission_id is not None:
+                body['planning_submission_id'] = planning_submission_id
             data.clear()
             data.update(body)
             g.orchestration_regeneration_context = context
@@ -1083,12 +1380,17 @@ def _regeneration_planning_events(events, context):
                 'requires_fresh_review': True,
             })
     finally:
-        if question_id and not terminal:
-            set_retry_attempt_state(
-                cosmos_messages_container, context['conversation_id'], question_id, 'interrupted',
-                error='Planning was interrupted. Retry this question to create another plan.',
-                expected_states={'planning'},
-            )
+        try:
+            if question_id and not terminal:
+                set_retry_attempt_state(
+                    cosmos_messages_container, context['conversation_id'], question_id, 'interrupted',
+                    error='Planning was interrupted. Retry this question to create another plan.',
+                    expected_states={'planning'},
+                )
+        finally:
+            close = getattr(events, 'close', None)
+            if callable(close):
+                close()
 
 
 def _plan_replay():
@@ -1455,19 +1757,26 @@ def _shared_turn_details(data):
     return {key: value for key, value in details.items() if value}
 
 
-def _mirror_planned_turn(conversation_id, user_id, message_id, turn_context):
-    """Show a shared conversation's orchestrated question to everyone; the plan never waits on it."""
+def _mirror_planned_turn(conversation_id, user_id, message_id, turn_context, *, required=False):
+    """Admission can require a durable shared copy before acknowledging the question."""
     try:
         conversation = cosmos_conversations_container.read_item(
             item=conversation_id, partition_key=conversation_id,
         )
         if not is_orchestration_backing(conversation) or conversation.get('user_id') != user_id:
             return
-        message = cosmos_messages_container.read_item(item=message_id, partition_key=conversation_id)
+        message = public_planning_message(
+            cosmos_messages_container.read_item(item=message_id, partition_key=conversation_id),
+        )
         sender = normalize_collaboration_user(get_current_user_info() or {}) or {'user_id': user_id}
         mirror_orchestration_turn(conversation, message, sender, details=turn_context.get('collaboration'))
     except Exception as exc:
         log_mirror_failure('question', exc)
+        if required:
+            raise PlanningStateError(
+                'The question could not be posted to the shared conversation. Retry to save it there.',
+                code='planning_mirror_unavailable', status_code=503,
+            ) from exc
 
 
 def _elicitation_outcome_events(outcome, turn_context, user_id, conversation_id):
@@ -1505,6 +1814,7 @@ def _elicitation_outcome_events(outcome, turn_context, user_id, conversation_id)
 
 def _persist_planned_turn(
     plan, turn_context, user_id, conversation_id, submission=None, expected_previous_run=None,
+    before_commit=None,
 ):
     if turn_context.get('requires_fresh_review'):
         plan['requires_fresh_review'] = True
@@ -1530,6 +1840,8 @@ def _persist_planned_turn(
     turn_context['user_message_id'] = message_id
     turn_context['user_message_fingerprint'] = fingerprint
     _mirror_planned_turn(conversation_id, user_id, message_id, turn_context)
+    if before_commit is not None:
+        before_commit()
     create_orchestration_run(
         plan, user_id, conversation_id=conversation_id, idempotent=True,
         turn_context=turn_context, expected_previous_run=expected_previous_run,
@@ -1549,20 +1861,15 @@ def _persist_planned_turn(
 
 def _save_turn_message(
     conversation_id, user_id, turn_id, message, previous=None, prompt_selection=None,
-    content_check=None, image_references=None,
+    content_check=None, image_references=None, planning=None,
 ):
     """A stable ID makes retries and revised plans reuse their original user message."""
     _authorize_context_conversation(conversation_id, user_id)
     message_id = (previous or {}).get('user_message_id') or (
-        f"user_orchestration_{uuid.uuid5(uuid.NAMESPACE_URL, f'{conversation_id}:{turn_id}').hex}"
+        planning_question_id(conversation_id, turn_id)
     )
-    try:
-        stored = cosmos_messages_container.read_item(
-            item=message_id, partition_key=conversation_id
-        )
-    except CosmosResourceNotFoundError:
-        stored = None
-    if stored is not None:
+
+    def validate(stored):
         normalized = normalize_history_message(stored)
         if (
             not normalized or normalized['role'] != 'user'
@@ -1574,6 +1881,16 @@ def _save_turn_message(
             )
         ):
             raise ConversationContextError('This turn changed. Submit a new request.')
+        return normalized
+
+    try:
+        stored = cosmos_messages_container.read_item(
+            item=message_id, partition_key=conversation_id
+        )
+    except CosmosResourceNotFoundError:
+        stored = None
+    if stored is not None:
+        normalized = validate(stored)
         if content_check or image_references:
             metadata = stored.setdefault("metadata", {})
             if content_check:
@@ -1600,15 +1917,25 @@ def _save_turn_message(
         metadata[CHECK_METADATA] = deepcopy(content_check)
     if image_references:
         metadata['image_references'] = deepcopy(image_references)
+    if planning is not None:
+        metadata[PLANNING_METADATA] = deepcopy(planning)
+
+    def create_question(document):
+        try:
+            cosmos_messages_container.create_item(document)
+        except exceptions.CosmosResourceExistsError:
+            validate(cosmos_messages_container.read_item(item=message_id, partition_key=conversation_id))
+
     saved = _save_message(
         conversation_id, 'user', message,
         metadata=metadata,
         message_id=message_id,
+        persist=create_question,
     )
     if not saved:
         raise ConversationContextError('The user message could not be saved.')
     stored = cosmos_messages_container.read_item(item=saved, partition_key=conversation_id)
-    return saved, normalize_history_message(stored)['fingerprint']
+    return saved, validate(stored)['fingerprint']
 
 
 def _sum_token_usage(*usages):
@@ -2289,6 +2616,115 @@ def register_route_backend_orchestration(bp):
             payload, status = _regeneration_error(exc)
             return jsonify(payload), status
 
+    @bp.route("/api/v2/orchestration/turns/<turn_id>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_turn_status(turn_id):
+        """Read an owned question's planning state without starting or approving work."""
+        user_id = get_current_user_id()
+        conversation_id = _text(request.args.get('conversation_id'))
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        if not conversation_id:
+            return jsonify({'error': 'A conversation id is required.'}), 400
+        message_id = _text(request.args.get('message_id')) or planning_question_id(conversation_id, turn_id)
+        try:
+            row = _planning_turn_row(
+                conversation_id, user_id, message_id, turn_id,
+                include_request=request.args.get('include_request') == '1',
+            )
+            response = jsonify({'turn': row})
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except PlanningStateError as exc:
+            return jsonify({'error': exc.public_message, 'code': exc.code}), exc.status_code
+        except ConversationContextError:
+            return jsonify({'error': 'Conversation not found.'}), 404
+        except (PlanRevisionError, PlanValidationError, OrchestrationMemoryError) as exc:
+            payload, status = _plan_edit_error(exc)
+            return jsonify(payload), status
+        except (AzureError, TypeError) as exc:
+            log_event(
+                '[ORCHESTRATION] Saved planning status could not be read.',
+                level=logging.ERROR, extra={'stage': 'planning_status', 'error_type': type(exc).__name__},
+            )
+            return jsonify({'error': 'Planning status is unavailable. Reload to try again.'}), 503
+
+    @bp.route("/api/v2/orchestration/turns/<turn_id>/cancel", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_turn_cancel(turn_id):
+        """Durably stop a submission, including the interval before its acknowledgement."""
+        user_id = get_current_user_id()
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({'error': 'A stop request must be an object.'}), 400
+        conversation_id = _text(data.get('conversation_id'))
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        if not conversation_id:
+            return jsonify({'error': 'A conversation id is required.'}), 400
+        message_id = _text(data.get('message_id')) or planning_question_id(conversation_id, turn_id)
+        try:
+            _authorize_context_conversation(conversation_id, user_id)
+            submission_id = _text(data.get('submission_id'))
+            try:
+                _question, current = read_planning_attempt(
+                    cosmos_messages_container, conversation_id, message_id, turn_id,
+                )
+            except PlanningStateError as exc:
+                if exc.status_code != 404 or not submission_id:
+                    raise
+                current = None
+            submission_id = submission_id or current['submission_id']
+            if not submission_id or len(submission_id) > 256 or len(turn_id) > 256:
+                raise PlanningStateError('The stop request is invalid.', code='invalid_request', status_code=400)
+            record_planning_cancellation(
+                cosmos_orchestration_runs_container, conversation_id, user_id, turn_id, submission_id,
+            )
+            # Admission or Auto handoff may have advanced since the first read.
+            try:
+                _question, current = read_planning_attempt(
+                    cosmos_messages_container, conversation_id, message_id, turn_id,
+                )
+            except PlanningStateError as exc:
+                if exc.status_code != 404:
+                    raise
+                current = None
+            if current is not None and current['submission_id'] == submission_id:
+                current = cancel_planning_attempt(
+                    cosmos_messages_container, conversation_id, message_id, turn_id,
+                    submission_id=submission_id,
+                )
+                if current.get('run_id'):
+                    target = read_revision_run(current['run_id'], user_id, conversation_id, follow_current=True)
+                    request_cancellation(
+                        target['run_id'], user_id, conversation_id,
+                        lambda: _authorize_context_conversation(conversation_id, user_id),
+                    )
+            row = _planning_turn_row(
+                conversation_id, user_id, message_id, turn_id, include_request=True,
+            ) if current is not None and current['submission_id'] == submission_id else None
+            return jsonify({
+                'success': True, 'turn_id': turn_id, 'submission_id': submission_id,
+                **({'turn': row} if row is not None else {}),
+            })
+        except PlanningStateError as exc:
+            return jsonify({'error': exc.public_message, 'code': exc.code}), exc.status_code
+        except ConversationContextError:
+            return jsonify({'error': 'Conversation not found.'}), 404
+        except (PlanRevisionError, PlanValidationError, CheckpointError) as exc:
+            payload, status = _plan_edit_error(exc)
+            return jsonify(payload), status
+        except (AzureError, RecoveryError, TypeError) as exc:
+            log_event(
+                '[ORCHESTRATION] Planning stop could not be confirmed.',
+                level=logging.ERROR, extra={'stage': 'planning_cancel', 'error_type': type(exc).__name__},
+            )
+            return jsonify({'error': 'Stop could not be confirmed. Retry Stop or check saved status.'}), 503
+
     @bp.route("/api/v2/orchestration/plan", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -2528,6 +2964,7 @@ def register_route_backend_orchestration(bp):
         # restores the original turn's canonical seeds.
         identity = _request_identity(user_id)
         planner_model = None
+        planning_holder = {}
 
         def close_planning_resources():
             try:
@@ -2538,17 +2975,8 @@ def register_route_backend_orchestration(bp):
 
         def generate():
             nonlocal turn_context, seeds, answered_record, approval_mode, replan_hint, planner_model
+            resolved_conversation_id = conversation_id
             try:
-                if submission and submission.get('outcome'):
-                    outcome = submission['outcome']
-                    _validate_turn_memory_context(turn_context, user_id, conversation_id)
-                    if outcome['kind'] == 'plan':
-                        _persist_planned_turn(
-                            outcome['document'], turn_context, user_id, conversation_id, submission,
-                        )
-                    complete_elicitation_submission(submission)
-                    yield from _elicitation_outcome_events(outcome, turn_context, user_id, conversation_id)
-                    return
                 if submission:
                     _authorize_context_conversation(conversation_id, user_id)
                     resolved_conversation_id, created = conversation_id, False
@@ -2569,12 +2997,99 @@ def register_route_backend_orchestration(bp):
                     return
                 if input_check.metadata:
                     turn_context[CHECK_METADATA] = input_check.metadata
+                turn_context.update({'conversation_id': resolved_conversation_id, 'revision': revision})
+                if revision and not submission and not turn_context.get('regeneration_of_run_id'):
+                    previous_selection = get_latest_turn_run(resolved_conversation_id, user_id, turn_id)
+                    if previous_selection:
+                        if previous_selection.get('user_message') != message:
+                            raise ConversationContextError('This turn changed. Submit a new request.')
+                        _restore_turn_selections(turn_context, previous_selection)
+                        seeds = turn_context['seeds']
+                        answered_record = turn_context['answered_questions']
+                prepared = new_planning_attempt(
+                    _planning_request(turn_context, data), turn_id,
+                    _text(data.get('planning_submission_id')) or _text(data.get('elicitation_submission_id'))
+                    or f'{turn_id}:{revision}',
+                    revision=revision,
+                )
+                message_id, message_fingerprint = _save_turn_message(
+                    resolved_conversation_id, user_id, turn_id, message,
+                    previous=turn_context, prompt_selection=turn_context.get('prompt_selection'),
+                    content_check=input_check.metadata,
+                    image_references=image_reference_provenance_from_seeds(seeds),
+                    planning=prepared,
+                )
+                claim, owned = claim_planning_attempt(
+                    cosmos_messages_container, resolved_conversation_id, message_id, prepared,
+                    retry=turn_context.get('requires_fresh_review') is True, continuation=is_reply,
+                    retry_failed_submission=is_reply or not data.get('planning_submission_id'),
+                )
+                planning_holder.update({
+                    'conversation_id': resolved_conversation_id, 'user_id': user_id,
+                    'turn_id': turn_id, 'message_id': message_id, 'claim_id': claim['claim_id'],
+                    'owned': owned,
+                    'submission_id': claim['submission_id'],
+                })
+                _authorize_context_conversation(resolved_conversation_id, user_id)
+                if planning_was_cancelled(
+                    cosmos_orchestration_runs_container, resolved_conversation_id, user_id,
+                    turn_id, claim['submission_id'],
+                ):
+                    cancel_planning_attempt(
+                        cosmos_messages_container, resolved_conversation_id, message_id, turn_id,
+                        submission_id=claim['submission_id'],
+                    )
+                    planning_holder['owned'] = owned = False
+                turn_context['user_message_id'] = message_id
+                turn_context['user_message_fingerprint'] = message_fingerprint
+                if owned:
+                    saved_model = {
+                        key: claim['request'][key] for key in MODEL_FIELDS if claim['request'].get(key)
+                    }
+                    if saved_model and not seeds.get('agent') and seeds.get('model_routing') != 'auto':
+                        seeds = {**seeds, 'model': saved_model}
+                    turn_context['seeds'] = seeds
+                    _touch_conversation(resolved_conversation_id, user_id)
+                    _mirror_planned_turn(
+                        resolved_conversation_id, user_id, message_id, turn_context, required=True,
+                    )
+                    log_event(
+                        '[ORCHESTRATION] Initial planning question saved.',
+                        extra={
+                            **workflow_log_context(conversation_id=resolved_conversation_id, turn_id=turn_id),
+                            'stage': 'planning_admission', 'status': 'saved',
+                        },
+                    )
                 if created or not conversation_id:
                     # Announced with the same event the chat stream uses, so the client
                     # adopts a new conversation's id by the path it already knows.
                     yield build_conversation_metadata_event(
                         resolved_conversation_id, _text(message, 80)
                     )
+                yield serialize_sse({
+                    **build_user_message_persisted_stream_payload(resolved_conversation_id, message_id),
+                    'turn_id': turn_id, 'server_managed': True,
+                    'planning_submission_id': claim['submission_id'],
+                })
+                if not owned:
+                    yield serialize_sse({
+                        'type': 'orchestration_turn', 'done': True,
+                        'turn': _planning_turn_row(
+                            resolved_conversation_id, user_id, message_id, turn_id, include_request=True,
+                        ),
+                    })
+                    return
+                if submission and submission.get('outcome'):
+                    outcome = submission['outcome']
+                    _validate_turn_memory_context(turn_context, user_id, resolved_conversation_id)
+                    if outcome['kind'] == 'plan':
+                        _persist_planned_turn(
+                            outcome['document'], turn_context, user_id, resolved_conversation_id, submission,
+                            before_commit=lambda: _require_planning_owner(planning_holder),
+                        )
+                    complete_elicitation_submission(submission)
+                    yield from _elicitation_outcome_events(outcome, turn_context, user_id, resolved_conversation_id)
+                    return
 
                 observed_pending = None
                 current_revision = revision
@@ -2630,18 +3145,13 @@ def register_route_backend_orchestration(bp):
                             raise ConversationContextError('This turn changed. Submit a new request.')
                         snapshot = _conversation_context_for_run(previous, user_id, settings)
                         current_revision = max(revision, int(previous.get('revision') or 0) + 1)
-                        for key in (
-                            'user_message_id', 'user_message_fingerprint', 'seeds', 'original_seeds',
-                            'answered_questions', 'prompt_selection', 'memory_audience', 'memory_scope',
-                            'time_zone',
-                        ):
-                            if key in previous:
-                                turn_context[key] = deepcopy(previous[key])
+                        _restore_turn_selections(turn_context, previous)
                         seeds = turn_context['seeds']
                         answered_record = turn_context['answered_questions']
                     else:
                         snapshot = _load_conversation_snapshot(
                             resolved_conversation_id, user_id, settings, turn_id=turn_id,
+                            before_message_id=message_id,
                         )
                 turn_context['conversation_context'] = snapshot
                 turn_context['revision'] = current_revision
@@ -2674,6 +3184,9 @@ def register_route_backend_orchestration(bp):
                         **(turn_context.get('original_seeds') or seeds),
                         'model': dict(seeds['model']),
                     }
+                    frozen_request = _planning_request(turn_context, data)
+                    frozen_request.pop('message')
+                    _update_planning_owner(planning_holder, request=frozen_request, revision=current_revision)
                 except (ValueError, PermissionError, PlannerError, AzureError) as exc:
                     log_event(
                         '[ORCHESTRATION] The planner model could not be selected.',
@@ -2790,6 +3303,7 @@ def register_route_backend_orchestration(bp):
                             'required': ['clarification'],
                         },
                     }, run_id=None, revision=current_revision)
+                    _require_planning_owner(planning_holder)
                     outcome = _save_pending_elicitation(
                         elicitation, turn_context, user_id, resolved_conversation_id, turn_id,
                         submission=submission, expected_pending=observed_pending,
@@ -2973,6 +3487,7 @@ def register_route_backend_orchestration(bp):
                 turn_context['planning_token_usage'] = planning_usage
                 if kind == 'elicitation':
                     plan['revision'] = current_revision
+                    _require_planning_owner(planning_holder)
                     outcome = _save_pending_elicitation(
                         plan, turn_context, user_id, resolved_conversation_id, turn_id,
                         submission=submission, expected_pending=observed_pending,
@@ -2989,6 +3504,7 @@ def register_route_backend_orchestration(bp):
                 _persist_planned_turn(
                     plan, turn_context, user_id, resolved_conversation_id, submission,
                     expected_previous_run=planning_base,
+                    before_commit=lambda: _require_planning_owner(planning_holder),
                 )
                 if submission:
                     complete_elicitation_submission(submission)
@@ -2996,6 +3512,8 @@ def register_route_backend_orchestration(bp):
                     outcome, turn_context, user_id, resolved_conversation_id,
                 )
 
+            except PlanningStateError as exc:
+                yield serialize_sse({'error': exc.public_message, 'code': exc.code, 'done': True})
             except PlanRevisionError as exc:
                 payload, _status = _plan_edit_error(exc)
                 yield serialize_sse(payload)
@@ -3046,9 +3564,10 @@ def register_route_backend_orchestration(bp):
             finally:
                 close_planning_resources()
 
-        streamed = _sse(stream_with_context(_regeneration_planning_events(generate(), turn_context)))
-        streamed.call_on_close(close_planning_resources)
-        return streamed
+        return _stream_planning(
+            _regeneration_planning_events(generate(), turn_context),
+            planning_holder, turn_context, user_id, settings, _run_saved_plan,
+        )
 
     @bp.route("/api/v2/orchestration/runs/<run_id>/editor", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -3232,12 +3751,8 @@ def register_route_backend_orchestration(bp):
             )
             return jsonify({'error': 'Saved progress could not be verified. Please retry.', 'code': 'recovery_unavailable'}), 503
 
-    @bp.route("/api/v2/orchestration/run", methods=["POST"])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @user_required
-    def orchestration_run():
-        """Execute an approved plan, streaming step progress and the answer."""
+    def _run_saved_plan(data):
+        """One execution-admission boundary for reviewed and server-owned Auto plans."""
         settings = get_settings()
         if not _orchestration_enabled(settings):
             return jsonify({'error': 'Chat orchestration is not enabled.'}), 403
@@ -3246,7 +3761,6 @@ def register_route_backend_orchestration(bp):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        data = request.get_json(silent=True) or {}
         if not isinstance(data, dict) or 'plan' in data:
             return jsonify({'error': 'Run the saved plan by its ID, not a submitted plan.'}), 400
         run_id = _text(data.get('run_id'))
@@ -3414,6 +3928,14 @@ def register_route_backend_orchestration(bp):
         return _prepare_execution_stream(
             record, data, user_id, settings, snapshot, identity, agent_execution_identity, services,
         )
+
+    @bp.route("/api/v2/orchestration/run", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_run():
+        """Execute an approved plan, streaming step progress and the answer."""
+        return _run_saved_plan(request.get_json(silent=True) or {})
 
     @bp.route("/api/v2/orchestration/cancel/<run_id>", methods=["POST"])
     @swagger_route(security=get_auth_security())

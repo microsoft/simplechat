@@ -1,6 +1,6 @@
 # Orchestration Checkpoint Recovery
 
-**Version: 0.261.358**
+**Version: 0.261.411**
 
 Implemented in version: **0.261.105**, recorded in
 `application/single_app/config.py`.
@@ -52,6 +52,26 @@ Per-file automatic attempts are separate from retrying a failed orchestration
 plan.
 
 ## Dependencies and configuration
+
+### A failure before a plan exists
+
+Fixed/Implemented in version: **0.261.411**
+(`application/single_app/config.py`).
+
+Initial planning now saves its accepted question and lifecycle before producing
+a plan. A failed initial planning pass therefore remains visible after
+navigation or reload. Its **Retry** action reuses canonical request selections
+and requires a new manual review; there are no completed execution checkpoints
+to reuse at that stage.
+
+Planning observation can disconnect while originally authorized Auto work
+continues server-side. Reopening follows the saved attempt rather than starting
+another run. An expired planning lease is shown as an interruption requiring
+deliberate recovery. See the
+[initial-turn persistence fix](../fixes/ORCHESTRATION_INITIAL_TURN_PERSISTENCE_FIX.md)
+for admission, cancellation, and browser-restoration boundaries.
+
+### Recovering an execution
 
 The existing `enable_chat_orchestration` setting enables the workflow. Each
 capability, source, agent, action, and model must still be enabled and accessible

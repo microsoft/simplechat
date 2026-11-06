@@ -784,6 +784,7 @@ export interface OrchestrationPlanRequest extends OrchestrationSeeds {
     message: string;
     conversation_id?: string | null;
     turn_id?: string;
+    planning_submission_id?: string;
     elicitation_response?: ElicitationResponse;
     elicitation_id?: string;
     elicitation_revision?: number;
@@ -836,6 +837,34 @@ export interface PlannedTurnIdentity {
     user_message_id: string;
 }
 
+export interface SavedPlanningTurn {
+    conversation_id: string;
+    turn_id: string;
+    user_message_id: string;
+    submission_id: string;
+    status: PlanStatus | 'planning' | 'awaiting_clarification' | 'awaiting_review' | 'interrupted';
+    updated_at: string;
+    run_id?: string;
+    run_started?: boolean;
+    error?: string;
+    error_code?: string;
+    request?: OrchestrationPlanRequest;
+    elicitation?: Elicitation;
+}
+
+function isSavedPlanningTurn(value: unknown): value is SavedPlanningTurn {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const turn = value as Record<string, unknown>;
+    return ['conversation_id', 'turn_id', 'user_message_id', 'submission_id', 'status', 'updated_at']
+        .every((field) => typeof turn[field] === 'string' && Boolean(turn[field]))
+        && [
+            'planning', 'awaiting_clarification', 'awaiting_review', 'interrupted',
+            'draft', 'awaiting_approval', 'approved', 'running', 'waiting',
+            'completed', 'failed', 'cancelled', 'superseded',
+        ].includes(String(turn.status))
+        && (turn.run_started === undefined || typeof turn.run_started === 'boolean');
+}
+
 export interface PlanStreamEvent {
     reasoning_adjustments?: ReasoningResolution[];
     type?: 'thought' | 'orchestration_plan' | 'orchestration_elicitation' | string;
@@ -844,6 +873,8 @@ export interface PlanStreamEvent {
     editor?: PlanEditorState;
     export_catalog?: OrchestrationExportFormat[];
     turn_identity?: PlannedTurnIdentity;
+    server_managed?: boolean;
+    turn?: SavedPlanningTurn;
     done?: boolean;
     error?: string;
     details?: unknown;
@@ -883,11 +914,14 @@ export interface PlanStreamHandlers {
      * new conversation's id by the path it already knows rather than a second mechanism.
      */
     onConversationMetadata?: (event: ChatStreamEvent) => void;
+    onUserMessagePersisted?: (event: ChatStreamEvent) => void;
+    onTurn?: (turn: SavedPlanningTurn) => void;
     /** The planner produced a plan; the stream is over. */
     onPlan?: (
         plan: OrchestrationPlan,
         exportCatalog?: OrchestrationExportFormat[],
         turnIdentity?: PlannedTurnIdentity,
+        serverManaged?: boolean,
     ) => void;
     /** The planner asked a question instead of planning; the stream is over. */
     onElicitation?: (elicitation: Elicitation) => void;
@@ -959,6 +993,51 @@ export interface RunStreamResult {
 export const ORCHESTRATION_PLAN_PATH = '/api/v2/orchestration/plan';
 export const ORCHESTRATION_RUN_PATH = '/api/v2/orchestration/run';
 export const ORCHESTRATION_RUNS_PATH = '/api/v2/orchestration/runs';
+
+export async function fetchOrchestrationTurn(
+    conversationId: string,
+    turnId: string,
+    options: { messageId?: string; includeRequest?: boolean; signal?: AbortSignal } = {},
+): Promise<SavedPlanningTurn> {
+    const params = new URLSearchParams({ conversation_id: conversationId });
+    if (options.messageId) params.set('message_id', options.messageId);
+    if (options.includeRequest) params.set('include_request', '1');
+    const payload = await api.get<{ turn: SavedPlanningTurn }>(
+        `/api/v2/orchestration/turns/${encodeURIComponent(turnId)}?${params}`, options.signal,
+    );
+    if (!isSavedPlanningTurn(payload.turn)
+        || payload.turn.conversation_id !== conversationId || payload.turn.turn_id !== turnId
+        || (options.messageId && payload.turn.user_message_id !== options.messageId)
+        || (options.includeRequest && (
+            !payload.turn.request || typeof payload.turn.request.message !== 'string'
+            || payload.turn.request.conversation_id !== conversationId || payload.turn.request.turn_id !== turnId
+        ))) {
+        throw new Error('The saved planning status did not match this question.');
+    }
+    return payload.turn;
+}
+
+export async function cancelOrchestrationTurn(
+    conversationId: string, turnId: string, submissionId: string, messageId?: string,
+): Promise<SavedPlanningTurn | null> {
+    const result = await api.post<{
+        success: boolean; turn_id: string; submission_id: string; turn?: SavedPlanningTurn;
+    }>(
+        `/api/v2/orchestration/turns/${encodeURIComponent(turnId)}/cancel`,
+        {
+            conversation_id: conversationId, submission_id: submissionId,
+            ...(messageId && !messageId.startsWith('pending-user-') ? { message_id: messageId } : {}),
+        },
+    );
+    if (!result.success || result.turn_id !== turnId || result.submission_id !== submissionId) {
+        throw new Error('Stop could not be confirmed for this planning submission.');
+    }
+    if (result.turn && (!isSavedPlanningTurn(result.turn)
+        || result.turn.conversation_id !== conversationId || result.turn.turn_id !== turnId)) {
+        throw new Error('Stop returned an invalid saved planning status.');
+    }
+    return result.turn ?? null;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Stored runs                                                                 */
@@ -1329,6 +1408,22 @@ async function readPlanStream(
             return false;
         }
 
+        if (event.type === 'user_message_persisted') {
+            handlers.onUserMessagePersisted?.(event as ChatStreamEvent);
+            return false;
+        }
+
+        if (event.type === 'orchestration_turn') {
+            if (!isSavedPlanningTurn(event.turn)) {
+                result.errored = true;
+                handlers.onError?.('The saved planning status was invalid.');
+            } else {
+                result.completed = true;
+                handlers.onTurn?.(event.turn);
+            }
+            return true;
+        }
+
         const editor = event.editor ? {
             ...event.editor,
             ...(Array.isArray(event.export_catalog) ? { export_catalog: event.export_catalog } : {}),
@@ -1350,7 +1445,7 @@ async function readPlanStream(
             }
             result.completed = true;
             if (result.plan) {
-                handlers.onPlan?.(result.plan, event.export_catalog, event.turn_identity);
+                handlers.onPlan?.(result.plan, event.export_catalog, event.turn_identity, event.server_managed === true);
             }
             return true;
         }

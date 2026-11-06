@@ -29,7 +29,11 @@ import {
     fetchConversationRuns, fetchOrchestrationRun, fetchRunSteps,
     isOrchestrationRunPending, persistedRunPlan,
 } from './orchestration';
-import { loadOrchestrationRecovery, reconcileOrchestrationRun, refreshOrchestrationPlanEditor } from './orchestrationController';
+import {
+    loadOrchestrationRecovery, reconcileOrchestrationRun, refreshOrchestrationPlanEditor,
+    resumeOrchestrationPlanning,
+} from './orchestrationController';
+import { neutralizeTimedApproval } from './orchestrationPlan';
 import type { Json } from './orchestration';
 import { hasPendingOrchestrationOutputs } from './orchestrationOutputs';
 
@@ -59,6 +63,7 @@ export function resetOrchestrationResume(): void {
 export async function resumeOrchestrationForConversation(
     conversationId: string,
 ): Promise<void> {
+    await resumeOrchestrationPlanning(conversationId);
     if (!conversationId || consideredConversations.has(conversationId)) {
         return;
     }
@@ -217,32 +222,4 @@ function conversationHasReplyAfter(conversationId: string, userMessageId: string
     return chat.messages
         .slice(index + 1)
         .some((message) => message.role === 'assistant');
-}
-
-/**
- * Turn a restored timed approval into a manual one.
- *
- * A timed plan's contract is "this runs unless you stop it in the next N seconds", and that
- * bargain was offered to whoever was watching at the time. Restoring it verbatim would restart the
- * clock on a device that was not there, and run real work -- searches, documents, model calls --
- * because someone opened a laptop. The plan is restored as an ordinary approval instead: the same
- * steps, the same everything else, but it waits to be asked for.
- */
-function neutralizeTimedApproval(plan: Json): Json {
-    if (!plan || typeof plan !== 'object' || Array.isArray(plan)) {
-        return plan;
-    }
-    const record = plan as Record<string, unknown>;
-    const approval = record.approval;
-    if (!approval || typeof approval !== 'object' || Array.isArray(approval)) {
-        return plan;
-    }
-    const approvalRecord = approval as Record<string, unknown>;
-    if (approvalRecord.mode !== 'timed' && approvalRecord.mode !== 'auto') {
-        return plan;
-    }
-    return {
-        ...record,
-        approval: { ...approvalRecord, mode: 'manual', timeout_seconds: 0 },
-    } as Json;
 }

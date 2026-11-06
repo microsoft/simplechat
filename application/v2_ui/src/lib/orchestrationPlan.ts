@@ -55,6 +55,16 @@ import { normalizeReasoningAdjustments } from './reasoning';
 export const DOCUMENT_ARRAY_FIELDS = ['document_ids', 'right_document_ids', 'reference_document_ids', 'reference_message_ids'] as const;
 export const REFERENCE_ARRAY_FIELDS = ['reference_document_ids', 'reference_message_ids'] as const;
 
+/** Reopening a saved proposal is never a new timed or automatic approval. */
+export function neutralizeTimedApproval(plan: Json): Json {
+    if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return plan;
+    const approval = plan.approval;
+    if (!approval || typeof approval !== 'object' || Array.isArray(approval)) return plan;
+    const record = approval as Record<string, unknown>;
+    if (record.mode !== 'timed' && record.mode !== 'auto') return plan;
+    return { ...plan, approval: { ...record, mode: 'manual', timeout_seconds: 0 } };
+}
+
 const STEP_STATUSES: readonly StepStatus[] = [
     'pending',
     'running',

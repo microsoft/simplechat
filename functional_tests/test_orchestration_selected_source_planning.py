@@ -1,7 +1,7 @@
 # test_orchestration_selected_source_planning.py
 """Selected attachments remain usable during planning and clarification.
 
-Version: 0.261.357
+Version: 0.261.411
 Implemented in: 0.261.355
 
 Uses real source projection, parsers, resolution and HTTP planning with external
@@ -692,6 +692,9 @@ def test_clarification_adds_an_authorized_source_without_duplicate_turns(
         "clarification_context": {"reason": "source_selection", "document_ids": ["narrative-doc"]},
     })]
     first = frames(runtime.client.post("/api/v2/orchestration/plan", json=body, buffered=True))
+    question_id = next(
+        frame["user_message_id"] for frame in first if frame.get("type") == "user_message_persisted"
+    )
     question = next(frame["elicitation"] for frame in first if frame.get("elicitation"))
     harness.replies = [
         json.dumps({
@@ -730,5 +733,7 @@ def test_clarification_adds_an_authorized_source_without_duplicate_turns(
     assert pending["turn_context"]["seeds"]["document_ids"] == ["narrative-doc", "tabular-doc"]
     assert len(pending["answered_questions"]) == 1
     assert pending["user_message"] == request
-    assert sum(row.get("content") == request for row in harness.messages.items.values()) == 0
+    saved_questions = [row for row in harness.messages.items.values() if row.get("content") == request]
+    assert len(saved_questions) == 1
+    assert saved_questions[0]["id"] == question_id
     assert harness.blobs.file_uploads == 0 and harness.assistant_messages() == []

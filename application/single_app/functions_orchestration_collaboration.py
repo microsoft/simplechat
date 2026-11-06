@@ -164,7 +164,14 @@ def mirror_orchestration_turn(conversation, user_message, sender_user, *, detail
         'source_conversation_id': conversation['id'],
         'source_role': 'user',
         'orchestration_turn_id': metadata.get('orchestration_turn_id'),
-        'orchestration': {'turn_id': metadata.get('orchestration_turn_id')},
+        'orchestration': {
+            'turn_id': metadata.get('orchestration_turn_id'),
+            **{
+                key: (metadata.get('orchestration') or {})[key]
+                for key in ('planning_status', 'planning_submission_id')
+                if key in (metadata.get('orchestration') or {})
+            },
+        },
     }
     if isinstance(details.get('invocation_target'), dict):
         extra['ai_invocation_target'] = details['invocation_target']

@@ -1,7 +1,7 @@
 # test_orchestration_harness_routes.py
 """
 Real authenticated routes and bootstrap for orchestration file admission.
-Version: 0.261.324
+Version: 0.261.411
 Implemented in: 0.261.127
 Initial-claim timing coverage added in: 0.261.129
 Auto-routing admission and content-review file visibility added in: 0.261.131
@@ -96,6 +96,7 @@ def runtime(modules, monkeypatch):
         (modules.config, "cosmos_conversations_container", conversations),
         (modules.route, "cosmos_conversations_container", conversations),
         (modules.config, "cosmos_orchestration_runs_container", runs),
+        (modules.route, "cosmos_orchestration_runs_container", runs),
         (modules.runs, "cosmos_orchestration_runs_container", runs),
         (modules.config, "cosmos_personal_workflow_run_items_container", results),
         (modules.config, "cosmos_messages_container", messages),
@@ -664,6 +665,7 @@ def real_http_harness(modules, monkeypatch):
     for name, value in (
         ("cosmos_conversations_container", harness.conversations),
         ("cosmos_messages_container", harness.messages),
+        ("cosmos_orchestration_runs_container", harness.runs),
         ("get_settings", lambda: dict(harness.settings)),
         ("get_user_settings", lambda user_id: {"settings": {}}),
     ):
