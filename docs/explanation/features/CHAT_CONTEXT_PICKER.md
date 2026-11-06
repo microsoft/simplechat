@@ -4,7 +4,7 @@ Choosing which documents a message is grounded in, and seeing that choice before
 you send it.
 
 **Implemented in version:** 0.261.089
-**Updated in version:** 0.261.411 (`application/single_app/config.py`)
+**Updated in version:** 0.261.414 (`application/single_app/config.py`)
 **Workspace sidebar implemented in version: 0.261.395.**
 **Inline answers implemented in version:** 0.261.096
 **Interface:** V2 only. The classic interface is unchanged.
@@ -57,7 +57,7 @@ request rather than left attached to the next message.
 
 ### Conversation-owned selections
 
-Fixed/Implemented in version: **0.261.411**
+Fixed/Implemented in version: **0.261.414**
 (`application/single_app/config.py`).
 
 Unsent source selections and uploads belong to the conversation where they were

@@ -583,7 +583,7 @@ class AgentExecution:
                 frame.budget.raise_authentication_requirement(frame.identity)
                 if frame.invocation_capture is not None:
                     frame.invocation_capture.refuse()
-                if _has_delegation_tool(selected):
+                if _has_delegation_tool(selected) or frame.identity.supports_user_input:
                     from functions_settings import get_settings
 
                     authorization_context = self.identity.bridge(self.reference) if self.identity.bridge else nullcontext()
@@ -601,7 +601,13 @@ class AgentExecution:
                     if "max_auto_invoke_attempts" in self.settings:
                         invocation_settings["max_auto_invoke_attempts"] = self.settings["max_auto_invoke_attempts"]
                     with agent_execution(frame):
-                        kernel, selected = _build_local_agent(canonical, invocation_settings)
+                        if frame.identity.supports_user_input:
+                            kernel, selected = _build_local_agent(
+                                canonical, invocation_settings,
+                                construction_profile=getattr(selected, "construction_profile", "agent-core"),
+                            )
+                        else:
+                            kernel, selected = _build_local_agent(canonical, invocation_settings)
                 if retry_override:
                     invocation_retry_state = retry_override[1](selected, retry_override[0])
             if descriptor is None:
@@ -611,6 +617,8 @@ class AgentExecution:
                     "construction_profile": getattr(selected, "construction_profile", "agent-core"),
                     **capture_chat_origin(self.identity.user_id, self.identity.conversation_id),
                 }
+            if frame.identity.supports_user_input:
+                descriptor = {**descriptor, "user_input_enabled": True}
             if streaming:
                 with agent_execution(frame), credential_continuation(descriptor):
                     # Stream wrappers such as the M365 continuation journal set

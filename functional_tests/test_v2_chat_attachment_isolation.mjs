@@ -1,6 +1,6 @@
 // test_v2_chat_attachment_isolation.mjs
-// Version: 0.261.411
-// Implemented in: 0.261.411
+// Version: 0.261.414
+// Implemented in: 0.261.414
 // Executes real attachment ownership, recovery, adoption, and source-name helpers without I/O.
 
 import assert from 'node:assert/strict';

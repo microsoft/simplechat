@@ -25,11 +25,13 @@ error, not evidence that the task can be answered without gathering information.
 Every plan uses the Gather / Reason / Render contract. There is one planner prompt,
 ``PLANNER_SYSTEM_PROMPT``, and one validator.
 
-Version: 0.261.367
+Version: 0.261.413
 Gathered results must be read, and an action's chart reaches the answer, in: 0.261.293
 Empty-history clarification continuation fixed in: 0.261.367
+Selected-document planning recovery and debug diagnostics added in: 0.261.413
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -40,7 +42,7 @@ from azure.core.exceptions import AzureError
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 from config import cognitive_services_scope
-from functions_appinsights import log_event, workflow_log_context
+from functions_appinsights import is_debug_enabled, log_event, workflow_log_context
 from functions_document_analysis_results import narrative_analysis_options
 from functions_orchestration_context import conversation_reference_messages, resolve_elicitation_candidates
 from functions_orchestration_deliverables import build_deliverable_availability
@@ -75,6 +77,7 @@ from functions_orchestration_schema import (
     WORKFLOW_RUN_INVALID_CODE,
     PlanValidationError,
     available_information_plan,
+    effective_plan_document_ids,
     normalize_elicitation,
     normalize_plan,
     plan_document_ids,
@@ -100,6 +103,7 @@ PLANNER_MAX_TOKENS = 4000
 PLANNER_TEMPERATURE = 0.1
 # Known declaration and source-binding failures share one correction round.
 PLAN_REPAIR_ATTEMPTS = 1
+PLANNER_DEBUG_MAX_ITEMS = 32
 # A workflow proposal gets the same correction round; one that still fails is dropped from the
 # plan, and the rest of the plan runs without it.
 WORKFLOW_REPAIR_CODES = frozenset({WORKFLOW_BLUEPRINT_INVALID_CODE, WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE})
@@ -119,6 +123,7 @@ HANDOFF_REPAIRABLE_PLAN_CODES = frozenset({*WORKFLOW_HANDOFF_REPAIR_CODES, PLAN_
 WORKFLOW_CONTEXT_UNAVAILABLE_RULE = 'workflow_context_unavailable'
 REPAIRABLE_PLAN_CODES = frozenset({
     'deliverables_invalid', 'source_kind_invalid', 'source_binding_required',
+    'analysis_options_invalid', 'selected_requirements_missing',
     'conversation_retrieval_conflict', *WORKFLOW_REPAIR_CODES,
     *WORKFLOW_RUN_REPAIR_CODES, *WORKFLOW_RESULTS_REPAIR_CODES,
 })
@@ -132,6 +137,13 @@ SOURCE_KIND_FAILURE_MESSAGE = (
 )
 SOURCE_BINDING_FAILURE_MESSAGE = (
     'The plan could not bind the selected documents. Please retry your request.'
+)
+ANALYSIS_OPTIONS_FAILURE_MESSAGE = (
+    'The document-analysis plan could not be validated. Please retry your request.'
+)
+SELECTED_REQUIREMENTS_FAILURE_MESSAGE = (
+    'The plan could not include all selected documents or operations. '
+    'Your selection is unchanged. Please retry your request.'
 )
 WORKFLOW_FAILURE_MESSAGE = (
     'The plan could not include the workflow you asked for. Please retry, or create the '
@@ -837,7 +849,14 @@ this instead:
 "candidate_ids":["<actual candidate id>"]}}}}
 The schema must be a FLAT object of simple fields. No nested objects. For genuine fixed
 choices, use a scalar enum for single choice or array items.enum for multiple choices. For
-ordinary explanations, use a string without enum. For ANY question asking the user to supply
+ordinary explanations, use a string without enum. For an open-ended preference with useful
+suggestions, keep the string (or string-array) schema
+WITHOUT an enum and use ui_hints.fields[field] = {"input":"choices","allow_custom":true,
+"choices":[{"value":"<answer>","label":"<short label>","description":"<optional explanation>"}]}.
+The user can choose a suggestion or write their own answer. Never use open suggestions for
+permissions, approvals, or constrained resource identities. Ask all currently known, genuinely
+blocking facts in one question set, usually two to four, with one field per page. Do not invent
+an interview or ask optional cosmetic questions simply to populate these controls. For ANY question asking the user to supply
 files, set ui_hints.fields[field].input to "files". Use type "string" for one file, or type
 "array" with items.type "string" for multiple files. NEVER put an enum on a file field.
 candidate_ids are optional, non-exhaustive suggestions drawn ONLY from actual
@@ -1341,6 +1360,31 @@ def plan_repair_message(error, *, handoff_present=False):
     ``handoff_present`` says the rejected plan holds an enabled workflow_handoff step, so an answer
     the plan was told to write is steered away from the handed-off part.
     """
+    if error.code == 'analysis_options_invalid':
+        return (
+            f'The server rejected the Analyze options ({error.rule}). '
+            'For ordinary narrative analysis, omit analysis_options so the server supplies its defaults, '
+            'or use {"version":"analysis-options-v2","mode":"source_observations"} without required_fields '
+            'or calculation rules. For reconciled fields/calculations, use '
+            '{"version":"analysis-options-v2","mode":"reconciled_records"} and supported rules. '
+            'Do not discard user-required fields or calculations to make observation mode validate. '
+            'Do not mix legacy narrative_findings with a v2 version or omit the version for a v2 mode. '
+            'Preserve every selected document, requested operation and deliverable, and bind the actual '
+            'findings to the answer. Return the complete corrected plan as one JSON object.'
+        )
+    if error.code == 'selected_requirements_missing':
+        return (
+            f'The plan omitted selected work ({error.rule}). Recheck required_capabilities and every '
+            'ID in user_selected.documents. Use candidate_documents and selected_sources for '
+            'server-verified identities and types, not permission to add unselected sources. '
+            'Retain every selected document through compatible, enabled source-reading work with its '
+            'exact authorized document ID, not merely a filename in an instruction. '
+            'Use narrative Analyze only for narrative sources; use offered spreadsheet operations for '
+            'tabular sources, including the available native inspection/evidence path when appropriate. '
+            'Do not widen retrieval, remove a selection, invent a source, or replace grounded work with '
+            'a general-knowledge answer. Discovery samples are not complete source evidence. '
+            'Preserve every requested deliverable and return the complete corrected plan as one JSON object.'
+        )
     if getattr(error, 'code', None) == 'conversation_retrieval_conflict':
         return (
             'This request must use the selected conversation messages, not workspace or web retrieval. '
@@ -1660,8 +1704,11 @@ def plan_request(
     actions = context.get('actions') or []
 
     correlation = workflow_log_context(conversation_id=conversation_id, turn_id=turn_id)
+    deployment, current_proposal = None, None
+    proposal_documents = {}
 
     def _failure(reason, error=None, *, stage=None, message=None, attempt=None):
+        _diagnose(stage or 'planning_failed', current_proposal, attempt=attempt, error=error)
         log_event(
             '[ORCHESTRATION_PLANNER] The request could not be planned.',
             level=logging.WARNING, extra={
@@ -1687,8 +1734,130 @@ def plan_request(
         if isinstance(candidate, dict) and candidate.get('source_kind')
     }
 
+    def _diagnose(stage, proposal=None, *, attempt=None, error=None):
+        if not is_debug_enabled():
+            return
+        raw_steps = proposal.get('steps') if isinstance(proposal, dict) else None
+        steps = [step for step in raw_steps if isinstance(step, dict)] if isinstance(raw_steps, list) else []
+        readable = {'steps': [
+            {
+                'capability_id': step.get('capability_id'),
+                'enabled': step.get('enabled', True),
+                'arguments': step.get('arguments') if isinstance(step.get('arguments'), dict) else {},
+            } for step in steps
+        ]}
+        selected = {value for value in (seeds or {}).get('document_ids') or [] if isinstance(value, str)}
+        authorized = {value for value in authorized_document_ids or [] if isinstance(value, str)}
+        used = set(effective_plan_document_ids(readable, seeds))
+        missing = selected - used
+        if stage == 'plan_proposal':
+            proposal_documents[attempt] = used
+        binding = [
+            deployment,
+            *[getattr(planner_model, name, None) for name in (
+                'source', 'model_id', 'endpoint_id', 'provider', 'behavior_name',
+            )],
+        ]
+        details = {
+            **correlation, 'stage': stage, 'attempt': attempt,
+            'selected_document_count': len(selected), 'authorized_document_count': len(authorized),
+            'authorization_scope_supplied': authorized_document_ids is not None,
+            'used_document_count': len(used), 'matched_document_count': len(selected & used),
+            'missing_document_count': len(missing), 'unselected_document_count': len(used - selected),
+            'required_capability_count': len(required),
+            'missing_capability_count': len(set(required) - {
+                step['capability_id'] for step in steps
+                if isinstance(step.get('capability_id'), str) and step.get('enabled', True)
+            }),
+            'step_count': len(steps), 'omitted_step_count': max(0, len(steps) - PLANNER_DEBUG_MAX_ITEMS),
+            'remaining_corrections': max(0, PLAN_REPAIR_ATTEMPTS + 1 - (attempt or 1)),
+            'normalization_lost_document_count': (
+                len(proposal_documents.get(attempt, set()) - used)
+                if stage in ('plan_normalized', 'selected_requirements', 'plan_validated') else 0
+            ),
+            'model_routing_auto': (seeds or {}).get('model_routing') == 'auto',
+            'planner_binding_provided': planner_model is not None,
+            'planner_binding_hash': hashlib.sha256(json.dumps([
+                value if isinstance(value, str) else None for value in binding
+            ]).encode('utf-8')).hexdigest(),
+            'document_set_hash': hashlib.sha256(json.dumps(sorted(used)).encode('utf-8')).hexdigest(),
+        }
+        if isinstance(error, PlanValidationError):
+            details.update(validation_code=error.code, validation_rule=error.rule)
+        source_ids = sorted(selected | used, key=lambda value: (value not in missing, value))
+        details['omitted_document_count'] = max(0, len(source_ids) - PLANNER_DEBUG_MAX_ITEMS)
+        log_event('[ORCHESTRATION_PLANNER] Planning diagnostic.', extra=details)
+        candidates = {
+            source['document_id']: source
+            for source in [*(context.get('candidate_documents') or []), *(context.get('selected_sources') or [])]
+            if isinstance(source, dict) and isinstance(source.get('document_id'), str)
+        }
+        for document_id in source_ids[:PLANNER_DEBUG_MAX_ITEMS]:
+            source = candidates.get(document_id, {})
+            inspection = source.get('inspection')
+            log_event('[ORCHESTRATION_PLANNER] Source binding diagnostic.', extra={
+                **correlation, 'stage': stage, 'attempt': attempt,
+                'document_id_hash': hashlib.sha256(document_id.encode('utf-8', errors='replace')).hexdigest(),
+                'selected': document_id in selected, 'used': document_id in used,
+                'authorized': document_id in authorized if authorized_document_ids is not None else None,
+                'source_is_narrative': source.get('source_kind') == 'narrative',
+                'source_is_tabular': source.get('source_kind') == 'tabular',
+                'source_availability_known': source.get('availability') in ('available', 'unavailable'),
+                'source_available': source.get('availability') == 'available',
+                'inspection_limited': isinstance(inspection, dict) and inspection.get('status') == 'limited',
+            })
+        for step in steps[:PLANNER_DEBUG_MAX_ITEMS]:
+            arguments = step.get('arguments') if isinstance(step.get('arguments'), dict) else {}
+            options = arguments.get('analysis_options')
+            option_fields = options if isinstance(options, dict) else {}
+            log_event('[ORCHESTRATION_PLANNER] Step binding diagnostic.', extra={
+                **correlation, **workflow_log_context(step_id=step.get('step_id')),
+                'stage': stage, 'attempt': attempt,
+                'capability_id': (
+                    step['capability_id'] if isinstance(step.get('capability_id'), str)
+                    and step['capability_id'] in available_ids else 'unknown'
+                ),
+                'enabled': step.get('enabled', True) is not False,
+                'document_ids_present': 'document_ids' in arguments,
+                'reference_present': 'reference' in arguments,
+                'source_input_present': isinstance(step.get('inputs'), dict) and 'sources' in step['inputs'],
+                'analysis_options_present': 'analysis_options' in arguments,
+                'analysis_options_object': isinstance(options, dict),
+                'options_version_present': 'version' in option_fields,
+                'options_version_v1': option_fields.get('version') == 'analysis-options-v1',
+                'options_version_v2': option_fields.get('version') == 'analysis-options-v2',
+                'options_mode_present': 'mode' in option_fields,
+                'options_mode_observations': option_fields.get('mode') == 'source_observations',
+                'options_mode_records': option_fields.get('mode') == 'reconciled_records',
+                'options_mode_legacy': option_fields.get('mode') == 'narrative_findings',
+                'required_field_count': (
+                    len(option_fields['required_fields'])
+                    if isinstance(option_fields.get('required_fields'), list) else 0
+                ),
+                'calculation_rules_present': bool(option_fields.get('transformation_spec')),
+                'unknown_option_field_count': len(set(option_fields) - {
+                    'version', 'mode', 'required_fields', 'transformation_spec',
+                }),
+            })
+
+    def _correction_messages(error, stage, attempt, reply, *, handoff_present=False):
+        _diagnose(stage, current_proposal, attempt=attempt, error=error)
+        log_event(
+            '[ORCHESTRATION_PLANNER] Asking the planner to correct a rejected plan.',
+            level=logging.INFO, extra={
+                **correlation, 'reason': error.code, 'attempt': attempt, 'revision': revision,
+                'stage': stage, 'validation_code': error.code, 'validation_rule': error.rule,
+            },
+        )
+        return [
+            *messages,
+            {'role': 'assistant', 'content': reply},
+            {'role': 'user', 'content': plan_repair_message(error, handoff_present=handoff_present)},
+        ]
+
     def _normalize(raw, capability_ids, availability, selected_image, **options):
         raw = _with_analysis_semantics(raw, edit_context)
+        _diagnose('analysis_defaults', raw, attempt=attempt)
         if conversation_only and any(
             step.get('enabled', True) and step.get('capability_id') in CONVERSATION_RETRIEVAL_CAPABILITIES
             for step in raw.get('steps') or [] if isinstance(step, dict)
@@ -1772,6 +1941,7 @@ def plan_request(
     except (PlannerError, APIError, AzureError, ValueError) as exc:
         return _failure('model_configuration_failed', exc, stage='model_binding')
 
+    _diagnose('planner_input')
     messages = build_planner_messages(
         context, replan_hint=replan_hint, edit_context=edit_context,
         contract_version=contract_version,
@@ -1794,7 +1964,7 @@ def plan_request(
         try:
             reply, usage = _call_planner(client, deployment, messages, require_complete_response=True)
         except (PlannerError, APIError, AzureError) as exc:
-            return _failure('model_request_failed', exc, stage='model_request')
+            return _failure('model_request_failed', exc, stage='model_request', attempt=attempt)
         if usage is not None:
             usage_seen = True
             for field in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
@@ -1804,7 +1974,9 @@ def plan_request(
 
         parsed = extract_planner_json(reply)
         if not parsed:
-            return _failure('unparseable_plan')
+            return _failure('unparseable_plan', stage='plan_parsing', attempt=attempt)
+        current_proposal = parsed
+        _diagnose('plan_proposal', parsed, attempt=attempt)
         # Only the server reports why a workflow was not started or read, and only the server
         # decides that a plan waits for a workflow run; a model cannot write either.
         parsed.pop('workflow_run_notes', None)
@@ -1890,38 +2062,27 @@ def plan_request(
                     elicitation['token_usage'] = dict(token_usage)
                 return 'elicitation', elicitation
             except PlanValidationError as exc:
-                # A question we cannot render is worse than no question: the run would stall
-                # on a card that never appears. Planning again without the option is the only
-                # honest recovery.
                 log_event(
-                    f"[ORCHESTRATION_PLANNER] Discarding an unrenderable question set: {exc}",
-                    level=logging.WARNING,
+                    '[ORCHESTRATION_PLANNER] Discarding an unrenderable question set.',
+                    level=logging.WARNING, extra={
+                        **correlation, 'stage': 'plan_clarification', 'attempt': attempt,
+                        'validation_code': exc.code, 'validation_rule': exc.rule,
+                    },
                 )
-                return plan_request(
-                    user_message,
-                    planner_context,
-                    conversation_id,
-                    user_id,
-                    settings=settings,
-                    approval_mode=approval_mode,
-                    authorized_document_ids=authorized_document_ids,
-                    replan_hint=replan_hint,
-                    revision=revision,
-                    allow_elicitation=False,
-                    turn_id=turn_id,
-                    seeds=seeds,
-                    document_labels=document_labels,
-                    request_context=request_context,
-                    planner_model=planner_model,
-                    edit_context=edit_context,
-                    contract_version=contract_version,
-                    existing_results=existing_results,
-                    composition_profiles=composition_profiles,
-                    export_catalog=export_catalog,
-                )
+                if attempt > PLAN_REPAIR_ATTEMPTS:
+                    return _failure('invalid_elicitation', exc, stage='plan_clarification', attempt=attempt)
+                allow_elicitation = False
+                messages = [
+                    *messages, {'role': 'assistant', 'content': reply},
+                    {'role': 'user', 'content': (
+                        'The clarification could not be rendered. Return a complete corrected plan '
+                        'for the unchanged request and authorized source selection, not another elicitation.'
+                    )},
+                ]
+                continue
 
         if kind == 'elicitation':
-            return _failure('repeated_elicitation')
+            return _failure('repeated_elicitation', stage='plan_clarification', attempt=attempt)
 
         raw_steps = parsed.get('steps')
         if not isinstance(raw_steps, list) or not raw_steps:
@@ -1959,26 +2120,15 @@ def plan_request(
             if repairable and attempt <= PLAN_REPAIR_ATTEMPTS:
                 # One correction round: the planner sees exactly why the server refused the
                 # plan, such as a promised file no step renders, and answers the same request.
-                log_event(
-                    '[ORCHESTRATION_PLANNER] Asking the planner to correct a rejected plan.',
-                    level=logging.INFO, extra={
-                        **correlation, 'reason': exc.code, 'attempt': attempt, 'revision': revision,
-                        'stage': 'plan_normalization', 'validation_code': exc.code,
-                        'validation_rule': exc.rule,
-                    },
-                )
+                handoff_present = False
                 if handoff_offered:
                     # Loaded only when the request may hand work off.
                     from functions_orchestration_workflow_handoffs import plan_has_workflow_handoff
 
-                    repair = plan_repair_message(exc, handoff_present=plan_has_workflow_handoff(pristine))
-                else:
-                    repair = plan_repair_message(exc)
-                messages = [
-                    *messages,
-                    {'role': 'assistant', 'content': reply},
-                    {'role': 'user', 'content': repair},
-                ]
+                    handoff_present = plan_has_workflow_handoff(pristine)
+                messages = _correction_messages(
+                    exc, 'plan_normalization', attempt, reply, handoff_present=handoff_present,
+                )
                 continue
             if not ((workflow_error or run_error or results_error or handoff_error) and edit_context is None):
                 return _failure(
@@ -1987,6 +2137,7 @@ def plan_request(
                         'deliverables_invalid': DELIVERABLES_FAILURE_MESSAGE,
                         'source_kind_invalid': SOURCE_KIND_FAILURE_MESSAGE,
                         'source_binding_required': SOURCE_BINDING_FAILURE_MESSAGE,
+                        'analysis_options_invalid': ANALYSIS_OPTIONS_FAILURE_MESSAGE,
                         'conversation_retrieval_conflict': (
                             'This request needs the conversation content, not a workspace search. '
                             'Select or paste the target text and create a new plan.'
@@ -2149,11 +2300,20 @@ def plan_request(
                 for text in handoff_drop['repairs']:
                     if text not in repairs:
                         repairs.append(text)
+        _diagnose('plan_normalized', plan, attempt=attempt)
+        current_proposal = plan
+        try:
+            validate_plan_requirements(plan, seeds, allow_changes=edit_context is not None)
+        except PlanValidationError as exc:
+            if exc.code == 'selected_requirements_missing' and attempt <= PLAN_REPAIR_ATTEMPTS:
+                messages = _correction_messages(exc, 'selected_requirements', attempt, reply)
+                continue
+            return _failure(
+                'invalid_plan_or_missing_requirement', exc, stage='selected_requirements',
+                message=SELECTED_REQUIREMENTS_FAILURE_MESSAGE, attempt=attempt,
+            )
+        _diagnose('plan_validated', plan, attempt=attempt)
         break
-    try:
-        validate_plan_requirements(plan, seeds, allow_changes=edit_context is not None)
-    except PlanValidationError as exc:
-        return _failure('invalid_plan_or_missing_requirement', exc, stage='selected_requirements')
     if (
         edit_context is not None and image_selected
         and not any(

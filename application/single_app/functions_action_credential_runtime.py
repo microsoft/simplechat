@@ -43,7 +43,12 @@ def configure_action_credential_runtime():
     def capture_chat_origin(user_id, conversation_id):
         data = request.get_json(silent=True) if has_request_context() else None
         message_id = data.get("m365_collaboration_message_id") if isinstance(data, dict) else None
-        return conversations.chat_origin(user_id, conversation_id, message_id) if message_id else {}
+        origin = conversations.chat_origin(user_id, conversation_id, message_id) if message_id else {}
+        if has_request_context() and request.headers.get("X-SimpleChat-UI") == "v2" and isinstance(data, dict):
+            from functions_m365_runtime import m365_resume_payload
+
+            origin["interaction_payload"] = m365_resume_payload(data)
+        return origin
 
     def publish_chat_result(user_id, item, saved):
         context = conversations.authorize_request(user_id, item)
@@ -119,3 +124,31 @@ def configure_action_credential_runtime():
         authorize_source=access.assert_document_available,
         resolve_agent=resolve_agent,
     ))
+    # Bind initialized validators rather than importing orchestration/bootstrap in a tool.
+    from functions_user_input import configure_user_input, UserInputServices, UserInputError
+    from functions_orchestration_schema import normalize_elicitation, validate_elicitation_schema
+    from functions_orchestration_context import normalize_elicitation_answer, ElicitationContextError
+
+    def normalize_question(spec, checkpoint_id):
+        _schema, errors = validate_elicitation_schema(spec.get("requested_schema"))
+        if errors or _schema is None:
+            raise UserInputError("input_invalid", 400)
+        return normalize_elicitation(spec, checkpoint_id, revision=1)
+
+    def normalize_answer(question, response, context, user_id, conversation_id):
+        try:
+            return normalize_elicitation_answer(
+                question, response, context, user_id, conversation_id, settings=functions_settings.get_settings(),
+            )
+        except ElicitationContextError as error:
+            raise UserInputError("input_invalid", 400) from error
+
+    def capture_citations(frame):
+        from functions_orchestration_adapters import _agent_citations
+
+        return _agent_citations(
+            None, frame.identity.user_id, frame.identity.conversation_id, set(),
+            root_id=frame.budget.root_id, scoped_invocations=frame.budget.invocations(),
+        )
+
+    configure_user_input(UserInputServices(normalize_question, normalize_answer, capture_citations))

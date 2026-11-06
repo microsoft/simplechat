@@ -23,6 +23,7 @@ import * as userSettingsStore from '../../../application/v2_ui/src/stores/userSe
 import * as assistThreadStore from '../../../application/v2_ui/src/stores/assistThreadStore';
 import * as m365PendingActionsStore from '../../../application/v2_ui/src/stores/m365PendingActionsStore';
 import * as appSessionStore from '../../../application/v2_ui/src/stores/appSessionStore';
+import * as userInputStore from '../../../application/v2_ui/src/stores/userInputStore';
 import * as controller from '../../../application/v2_ui/src/lib/orchestrationController';
 import * as plan from '../../../application/v2_ui/src/lib/orchestrationPlan';
 import * as orchestration from '../../../application/v2_ui/src/lib/orchestration';
@@ -33,6 +34,7 @@ import { composerAttachmentDrafts } from '../../../application/v2_ui/src/lib/com
 
 import { OrchestrationPlanCard } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanCard';
 import { ElicitationCard } from '../../../application/v2_ui/src/components/chat/ElicitationCard';
+import { UserInputCards } from '../../../application/v2_ui/src/components/chat/UserInputCards';
 import { CredentialRequestCards } from '../../../application/v2_ui/src/components/chat/CredentialRequestCard';
 import { ActionRecoveryNotice } from '../../../application/v2_ui/src/components/chat/ActionRecoveryNotice';
 import * as actionRecovery from '../../../application/v2_ui/src/lib/actionRecovery';
@@ -222,6 +224,7 @@ type ComponentName =
     | 'ModelCatalogManager'
     | 'OrchestrationPlanCard'
     | 'ElicitationCard'
+    | 'UserInputCards'
     | 'CredentialRequestCards'
     | 'ActionRecoveryNotice'
     | 'ActionCredentialAuthoring'
@@ -256,6 +259,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     ModelCatalogManager,
     OrchestrationPlanCard,
     ElicitationCard,
+    UserInputCards,
     CredentialRequestCards,
     ActionRecoveryNotice,
     ActionCredentialAuthoring,
@@ -337,6 +341,7 @@ function unmount(containerId: string): void {
 
 /** Unmount everything and clear both stores and persisted runs, for isolation between tests. */
 function reset(): void {
+    userInputStore.useUserInputStore.setState({ actorId: null, records: {} });
     conversationModes.reset();
     for (const [containerId, root] of roots) {
         root.unmount();
@@ -420,6 +425,7 @@ const harness = {
         assistThread: assistThreadStore,
         pendingActions: m365PendingActionsStore,
         appSession: appSessionStore,
+        userInput: userInputStore,
     },
     controller,
     plan,

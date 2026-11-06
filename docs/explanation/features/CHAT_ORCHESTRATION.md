@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.402** (tracked in `application/single_app/config.py`)
+**Version: 0.261.413** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -29,6 +29,7 @@
 **Current-message source interpretation and memory-aware request resolution fixed in version: 0.261.349**
 **Private conversation references (`~`), `conversation_search` / `conversation_read`, and queued `conversation_send` handoffs added in version: 0.261.381**
 **Search evidence citation harness expectations aligned in version: 0.261.399**
+**Selected-document planning recovery and debug diagnostics fixed/implemented in version: 0.261.413**
 
 ## Overview
 
@@ -67,6 +68,36 @@ and delivery checks.
 - Direct action access additionally requires Semantic Kernel and the default-off
   `enable_chat_orchestration_actions` switch. Existing action scope settings and
   governance continue to determine which actions the caller can use.
+
+## Selected documents, planning, and Analyze
+
+Picking a document supplies a source requirement; it does not automatically run
+Analyze. A new upload can undergo extraction/OCR and indexing before a chat plan
+exists. Planning can also inspect bounded spreadsheet headers and samples to
+choose compatible work. Neither is execution of an orchestration Analyze step.
+Only a validated, approved plan reaches the execution adapters. Automatic approval
+does not bypass validation.
+
+Since **0.261.413**, a proposal that omits a selected file or declares incompatible
+Analyze options receives targeted correction feedback. It shares the existing
+single correction with other repairable planning failures: a second, different
+failure does not start another retry budget. The server keeps source access,
+source-kind checks, every required selection, and the selected planner model.
+An explicit later plan edit can still narrow the selection, with a review warning.
+
+Analyze's internal options describe independent source observations versus
+reconciled records, not an administrator toggle. Ordinary new narrative steps
+receive observation defaults when the model omits these options. Explicit
+version/mode combinations are checked together; saved legacy meanings remain
+unchanged. An uncorrectable proposal fails clearly rather than becoming an
+ungrounded answer or silently excluding a file.
+
+The existing debug logging switch enables content-free proposal and source-binding
+diagnostics in console and Application Insights. These distinguish a model omission
+from a normalization change using hashes, counts, and rejection rules, without
+recording document contents or the model reply. See the
+[document planning recovery fix](../fixes/ORCHESTRATION_DOCUMENT_PLANNING_RECOVERY_FIX.md)
+and [logging reference](../../reference/logging-tags.md#selected-document-planning-diagnostics).
 
 ## Internal dependency contract (M4)
 
@@ -1431,6 +1462,7 @@ to the front.
 | `functional_tests/test_v2_orchestration_deliverables.mjs` | Browser normalization of deliverables and `delivers`, deliverable states that follow their steps, labels, generated-image helpers, a terminal frame read through the real run stream client, and a retry's image grouped under every answer that lists it, in React V2 and the classic client |
 | `ui_tests/test_v2_orchestration_generated_images.py` | The live chat loading an answer's generated images after the run, planned image cards that never offer Approve or Approve all while their image loads, and a reused image shown under both the earlier and the retried answer |
 | `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable binding is refused, and a run-time document still respects the configured ceiling |
+| `functional_tests/test_orchestration_document_planning_recovery.py` | Picked-document HTTP planning across five file formats, preserved previews and Analyze availability, strict option semantics, source/operation retention, one shared correction including malformed questions, editor compatibility, Auto routing, no execution during planning, and private-content-free debug diagnostics in both sinks |
 | `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, nullable unused clarifications, strict response validation, bounded repair, token accounting, provider/refusal handling, contextualized adapters, synthesis roles, and URL provenance |
 | `functional_tests/test_orchestration_conversation_context_routes.py` | New and existing conversations across HTTP/SSE planning and execution, all approval modes, null clarifications, bounded recovery, model selection and attribution, revocation, completion failures, stream cleanup, stale sources and legacy cutoffs |
 | `ui_tests/test_v2_orchestration_conversation_context.py` | Matching clarification/model transport, cancellation, original-turn continuity, all approval modes, visible answer model names and navigation |

@@ -49,12 +49,13 @@ from azure.core.exceptions import ServiceRequestError
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from openai import APIConnectionError, APITimeoutError
+from elicitation_choices import normalize_choice_hint, choice_answer_errors
 
 from blob_container_readiness import STORAGE_FAILURE_CODE, STORAGE_FAILURE_MESSAGE
 from agent_execution_context import AgentDelegationTimeout
 from functions_m365_operations import M365_SOURCES
 from functions_model_catalog import ModelCatalogError
-from functions_document_analysis_results import normalize_analysis_options
+from functions_document_analysis_results import AnalysisOptionsError, normalize_analysis_options
 from functions_web_iq import WebIQError, get_web_search_provider, resolve_web_iq_types
 from functions_orchestration_registry import (
     APPROVAL_FLOOR_MANUAL,
@@ -1042,9 +1043,27 @@ def validate_dependency_plan(
             if type(arguments) is not dict:
                 raise PlanValidationError('Step arguments must be an object.')
             canonical_bytes(arguments)
+            analysis_options = None
+            if capability_id == 'document_analyze' and 'analysis_options' in arguments:
+                try:
+                    analysis_options = normalize_analysis_options(arguments['analysis_options'])
+                except ValueError as exc:
+                    raise PlanValidationError(
+                        'The declared Analyze semantics or field requirements are unsupported.',
+                        code='analysis_options_invalid',
+                        rule=exc.rule if isinstance(exc, AnalysisOptionsError) else 'analysis_options_invalid',
+                    ) from exc
+                option_schema = capability['inputs']['properties']['analysis_options']
+                if not Draft202012Validator(option_schema).is_valid(arguments['analysis_options']):
+                    raise PlanValidationError(
+                        'The declared Analyze options do not match their contract.',
+                        code='analysis_options_invalid', rule='analysis_options_schema_invalid',
+                    )
             if not Draft202012Validator(capability['inputs']).is_valid(arguments):
                 raise PlanValidationError('Step arguments do not match the capability contract.')
             arguments = deepcopy(arguments)
+            if analysis_options is not None:
+                arguments['analysis_options'] = analysis_options
             if capability_id in ('web_search', 'deep_research') and 'result_types' in arguments:
                 try:
                     if get_web_search_provider(settings) == 'web_iq':
@@ -1055,14 +1074,6 @@ def validate_dependency_plan(
                         raise WebIQError('result_type_disabled')
                 except WebIQError as exc:
                     raise PlanValidationError('A requested web discovery type is disabled.') from exc
-            if capability_id == 'document_analyze' and 'analysis_options' in arguments:
-                try:
-                    arguments['analysis_options'] = normalize_analysis_options(arguments['analysis_options'])
-                except ValueError as exc:
-                    raise PlanValidationError(
-                        'The declared Analyze semantics or field requirements are unsupported.',
-                        code='analysis_options_invalid',
-                    ) from exc
             if capability_id == CAPABILITY_TABULAR_ANALYZE:
                 # Native query/transform validators run only for explicitly admitted native work.
                 from functions_orchestration_native_results import validate_native_orchestration_arguments
@@ -1380,7 +1391,7 @@ def plan_document_ids(plan, *, include_disabled=False):
             document_ids.extend(_string_list(arguments.get(field)))
         if step.get('capability_id') == 'document_inspect':
             reference = arguments.get('reference') or {}
-            if reference.get('kind') == 'document':
+            if isinstance(reference, dict) and reference.get('kind') == 'document':
                 document_ids.extend(_string_list(reference.get('document_id')))
     return list(dict.fromkeys(document_ids))
 
@@ -1472,7 +1483,13 @@ def validate_plan_requirements(plan, seeds=None, *, allow_changes=False):
     if selected_documents - used_documents:
         messages.append('The plan does not use all selected documents.')
     if messages and not allow_changes:
-        raise PlanValidationError(' '.join(messages))
+        raise PlanValidationError(
+            ' '.join(messages), code='selected_requirements_missing',
+            rule=(
+                'selected_documents_and_capabilities_missing' if missing and selected_documents - used_documents
+                else 'selected_capabilities_missing' if missing else 'selected_documents_missing'
+            ),
+        )
     if messages:
         repairs = plan.setdefault('validation', {}).setdefault('repairs', [])
         for message in messages:
@@ -2427,6 +2444,12 @@ def normalize_elicitation(elicitation, run_id, revision=0, candidate_references=
     for name, hint in fields.items():
         if name not in schema['properties'] or not isinstance(hint, dict):
             continue
+        if hint.get('input') == 'choices':
+            try:
+                resource_fields[name] = normalize_choice_hint(schema['properties'][name], hint)
+            except ValueError as exc:
+                raise PlanValidationError('The planner supplied an invalid choice question.') from exc
+            continue
         if hint.get('input') != 'files':
             continue
         rules = schema['properties'][name]
@@ -2541,6 +2564,7 @@ def validate_elicitation_response(elicitation, response):
         if name not in cleaned or cleaned[name] == []:
             errors.append(f"'{name}' is required.")
 
+    errors.extend(choice_answer_errors(elicitation or {}, cleaned))
     if errors:
         return None, errors
 

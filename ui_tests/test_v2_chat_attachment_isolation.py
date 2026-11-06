@@ -1,8 +1,8 @@
 # test_v2_chat_attachment_isolation.py
 """
 Browser regressions for conversation-owned V2 chat attachments.
-Version: 0.261.411
-Implemented in: 0.261.411
+Version: 0.261.414
+Implemented in: 0.261.414
 
 The real sidebar, composer, stores, and request builders run against synthetic
 APIs through the existing local/Azure Playwright connection. Navigation must

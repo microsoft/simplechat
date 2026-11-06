@@ -1,6 +1,6 @@
 # V2 Conversation Attachment Isolation Fix
 
-Fixed/Implemented in version: **0.261.411**
+Fixed/Implemented in version: **0.261.414**
 
 The application version is recorded in `application/single_app/config.py`.
 
@@ -48,8 +48,8 @@ Related asynchronous paths had incomplete ownership checks:
 | `application/v2_ui/src/lib/documentSourceSelection.ts` | Uses matching conversation upload/document metadata for titles and filenames. Keeps IDs separate from display names and uses an explicit unavailable-details label when necessary. |
 | `application/v2_ui/src/stores/chatStore.ts` | Guards relevant message/metadata results and errors with the navigation epoch, clears queued reference handoffs during navigation, binds created conversations to the originating attachment draft, and forgets drafts after successful removal. |
 | `ui_tests/fixtures/orchestration/harness_entry.tsx` | Resets the retained attachment cache between isolated browser scenarios. |
-| `ui_tests/test_v2_new_chat_reset.py` | Supplies the real composer's empty pending-credential read in the shared synthetic API fixture, reused by the new attachment suite. Strict unexpected-request checks remain enabled. |
-| `application/single_app/config.py` | Updates `VERSION` to `0.261.411`. |
+| `ui_tests/test_v2_new_chat_reset.py` | Supplies the real composer's empty pending-credential and guided-question reads in the shared synthetic API fixture, reused by the new attachment suite. Strict unexpected-request checks remain enabled. |
+| `application/single_app/config.py` | Updates `VERSION` to `0.261.414` after integrating the current V2 base. |
 
 ### Ownership and retention
 
@@ -113,6 +113,7 @@ and TypeScript type check pass.
 | `node .\functional_tests\test_v2_chat_attachment_isolation.mjs` | Passed. |
 | `npm --prefix .\application\v2_ui run build` | Passed, including TypeScript compilation. The existing large-bundle advisory remains. |
 | `python -m pytest .\ui_tests\test_v2_new_chat_reset.py .\ui_tests\test_v2_chat_attachment_isolation.py -q --tb=short` | 33 passed after completing the shared API fixture. |
+| `python -m pytest .\ui_tests\test_v2_chat_attachment_isolation.py .\ui_tests\test_v2_new_chat_reset.py .\ui_tests\test_v2_guided_user_input.py -q --tb=short` | 40 passed after integrating the current V2 base at version `0.261.414` and its pending-question read contracts. |
 | Context-picker and new-chat functional checks, excluding the confirmed obsolete source-literal assertion below | 16 passed, 1 deselected. |
 | `python .\functional_tests\test_docs_app_surface_coverage.py` | 7/7 checks passed; the committed inventory is current. |
 | `python .\functional_tests\test_docs_site_quality.py` | 6/6 documentation source checks passed. |

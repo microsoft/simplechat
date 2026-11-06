@@ -59,6 +59,8 @@ import { ThoughtsList, ThoughtsProgressCard } from './ThoughtsList';
 import { useMessageScroll } from './useMessageScroll';
 import { OrchestrationPlanCard } from './OrchestrationPlanCard';
 import { ElicitationCard } from './ElicitationCard';
+import { UserInputCards } from './UserInputCards';
+import { restorePendingQuestions } from '../../lib/orchestrationController';
 import { CredentialRequestCards } from './CredentialRequestCard';
 import {
     selectActiveTurn,
@@ -1575,6 +1577,14 @@ function TypingIndicator() {
  * An elicitation supersedes a plan, because a turn that is still asking a question has no plan yet.
  */
 function ActiveOrchestrationCard({ conversationId }: { conversationId: string }) {
+    const [questionError, setQuestionError] = useState('');
+    useEffect(() => {
+        const controller = new AbortController();
+        void restorePendingQuestions(conversationId, controller.signal).catch(() => {
+            if (!controller.signal.aborted) setQuestionError('Pending questions could not be checked. Reopen this conversation to retry.');
+        });
+        return () => controller.abort();
+    }, [conversationId]);
     const turnId = useOrchestrationStore((state) => selectActiveTurn(state, conversationId));
     const hasElicitation = useOrchestrationStore((state) =>
         turnId ? selectElicitation(state, conversationId, turnId) !== null : false,
@@ -1584,7 +1594,7 @@ function ActiveOrchestrationCard({ conversationId }: { conversationId: string })
     );
 
     if (!conversationId || !turnId) {
-        return null;
+        return questionError ? <p role="alert" className="text-sm text-danger">{questionError}</p> : null;
     }
     if (hasElicitation) {
         return <ElicitationCard conversationId={conversationId} turnId={turnId} />;
@@ -1766,6 +1776,21 @@ export function MessageList() {
                             return (
                                 <div key={message.id} data-scroll-message-id={message.id}>
                                     <MessageBubble message={message} proposalImages={proposalImagesByMessage.get(message.id)} />
+                                    {message.role === 'assistant' && message.metadata?.user_input_answers
+                                        && typeof message.metadata.user_input_answers === 'object'
+                                        && !Array.isArray(message.metadata.user_input_answers) ? (
+                                            <details className="mt-2 text-sm text-text-2">
+                                                <summary className="min-h-11 cursor-pointer">Answers used for this response</summary>
+                                                <dl className="space-y-2 py-2">
+                                                    {Object.entries(message.metadata.user_input_answers).map(([label, value]) => (
+                                                        <div key={label}><dt className="font-medium">{label}</dt>
+                                                            <dd className="whitespace-pre-wrap break-words">{Array.isArray(value)
+                                                                ? value.map(String).join(', ') : typeof value === 'boolean'
+                                                                    ? value ? 'Yes' : 'No' : String(value)}</dd></div>
+                                                    ))}
+                                                </dl>
+                                            </details>
+                                        ) : null}
                                     {here && <StreamingBubble />}
                                     {here && <StreamingPendingActions />}
                                     {error && <div data-retry-error={message.id}><ResponseError message={error} authUrl={localRetry?.authUrl} /></div>}
@@ -1784,6 +1809,8 @@ export function MessageList() {
                             <ActiveOrchestrationCard conversationId={activeConversationId} />
                         )}
                         {activeConversationId ? <CredentialRequestCards conversationId={activeConversationId}
+                            conversationKind={activeConversationKind} /> : null}
+                        {activeConversationId ? <UserInputCards conversationId={activeConversationId}
                             conversationKind={activeConversationKind} /> : null}
                         {activeConversationKind !== 'collaborative' && (
                             <ConversationHandoffCards conversationId={activeConversationId} />

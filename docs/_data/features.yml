@@ -1,4 +1,4 @@
-# Feature documentation and full-slide explanations; capability snapshot 0.261.398.
+# Feature documentation and full-slide explanations; capability snapshot 0.261.411.
 # Collection page bodies are generated; keep durable explanations here.
 model-routing:
   name: "Model routing and endpoints"
@@ -652,6 +652,8 @@ agents:
       url: /guides/create-an-agent/
     - title: "Create an agent with actions"
       url: /guides/create-an-agent-with-actions/
+    - title: "Answer an agent's follow-up questions"
+      url: /guides/answer-agent-questions/
   reference:
     - title: "Actions reference"
       url: /reference/actions/
@@ -1169,6 +1171,8 @@ chat-orchestration:
   guides:
     - title: "Review and edit orchestration plans"
       url: /guides/review-and-edit-orchestration-plans/
+    - title: "Answer an agent's follow-up questions"
+      url: /guides/answer-agent-questions/
     - title: "Create files with orchestration"
       url: /guides/create-files-with-orchestration/
   reference:

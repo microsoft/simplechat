@@ -1,6 +1,7 @@
 // test_v2_elicitation_answers.ts
-// Version: 0.261.096
+// Version: 0.261.411
 // Implemented in: 0.261.096
+// Open-choice coverage added in: 0.261.411
 // Validates primitive answers and answer-local context without a browser or Azure services.
 
 import assert from 'node:assert/strict';
@@ -26,6 +27,37 @@ const chatAttachment: ComposerReference = {
     kind: 'chat_attachment', id: 'conversation-file-message', label: 'Attached image',
     scope: { kind: 'chat', id: 'conversation-1', name: 'This conversation' },
 };
+
+{
+    const spec = question({
+        audience: { type: 'string' },
+        focus: { type: 'array', items: { type: 'string' } },
+    });
+    spec.ui_hints.fields = {
+        audience: { input: 'choices', choices: [{ value: 'Team', label: 'Project team' }], allow_custom: true },
+        focus: { input: 'choices', choices: [{ value: 'Risks', label: 'Risks' }], allow_custom: true },
+    };
+    const draft = createElicitationDraft(spec);
+    draft.values.audience = 'Team';
+    draft.values.focus = ['Risks'];
+    draft.customFields.audience = true;
+    draft.customFields.focus = true;
+    draft.customValues.audience = 'Partners';
+    draft.customValues.focus = 'Costs';
+    const built = buildElicitationAnswer(spec, draft, {});
+    assert.deepEqual(built.errors, {});
+    assert.deepEqual(built.response.content, { audience: 'Partners', focus: ['Risks', 'Costs'] });
+    assert.equal(built.context.audience, undefined, 'Custom values are answers, not hidden supplemental text');
+    draft.customValues.audience = '   ';
+    const invalid = buildElicitationAnswer(spec, draft, {});
+    assert.match(invalid.errors.audience, /Enter your answer/);
+    draft.customFields.audience = false;
+    const selected = buildElicitationAnswer(spec, draft, {});
+    assert.equal(selected.response.content.audience, 'Team');
+    spec.requested_schema.properties.focus.maxItems = 1;
+    const tooMany = buildElicitationAnswer(spec, draft, {});
+    assert.match(tooMany.errors.focus, /at most 1/);
+}
 
 function question(properties: Record<string, ElicitationFieldSchema>, required = Object.keys(properties)): Elicitation {
     return {

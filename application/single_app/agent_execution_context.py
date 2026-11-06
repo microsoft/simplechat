@@ -107,6 +107,7 @@ class ExecutionIdentity:
     email: Optional[str] = None
     publish_authentication_requirement: Optional[Callable] = field(default=None, repr=False, compare=False)
     public_source_policy: str = LEGACY_VISIBLE
+    supports_user_input: bool = False
 
 
 @dataclass(frozen=True)
@@ -200,7 +201,7 @@ def agent_execution(frame):
             _execution_frame.reset(token)
 
 
-def capture_execution_identity(user_id, conversation_id=None):
+def capture_execution_identity(user_id, conversation_id=None, *, request_payload=None):
     """Capture authenticated identity and admitted retrieval limits, never workspace preferences.
 
     Flask is imported here because workers use the context types without a Flask
@@ -244,7 +245,10 @@ def capture_execution_identity(user_id, conversation_id=None):
     @contextmanager
     def bridge(agent):
         # An app context as well as a request context is needed to isolate g.
-        with app.app_context(), app.test_request_context("/internal/agent-execution", base_url=origin), public_source_policy_context(user_id, source_policy):
+        with app.app_context(), app.test_request_context(
+            "/internal/agent-execution", base_url=origin,
+            **({"json": deepcopy(request_payload)} if request_payload is not None else {}),
+        ), public_source_policy_context(user_id, source_policy):
             session.update(deepcopy(identity_session))
             g.conversation_id = conversation_id
             g.request_agent_info = deepcopy(agent)
@@ -277,4 +281,12 @@ def capture_execution_identity(user_id, conversation_id=None):
         tuple(authenticated_user.get("roles") or ()), authenticated_user.get("preferred_username"),
         publish_authentication_requirement,
         public_source_policy=source_policy,
+        supports_user_input=(
+            request.headers.get("X-SimpleChat-UI") == "v2"
+            and (
+                request.path == "/api/chat/stream"
+                or request.path.startswith(("/api/v2/orchestration/", "/api/v2/user-input/"))
+                or (request.path.startswith("/api/collaboration/") and request.path.endswith("/stream"))
+            )
+        ),
     )

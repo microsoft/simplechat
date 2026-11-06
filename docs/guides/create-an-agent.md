@@ -4,7 +4,7 @@ title: "Create an agent"
 description: "Build a reusable assistant with a clear role, model, knowledge, and instructions."
 section: "Guides"
 audience: user
-version: "0.261.368"
+version: "0.261.411"
 ---
 
 ## What this does
@@ -34,6 +34,11 @@ Create an agent when a task benefits from consistent behavior, such as policy re
 - Upload and process workspace documents first if the agent should use assigned knowledge.
 
 ## Personal agents in V2
+
+Since **0.261.411**, interactive local agents can collect necessary facts through
+a reviewed [follow-up question flow]({{ '/guides/answer-agent-questions/' | relative_url }}).
+They can pause during work and continue retained tool history after the answer.
+This does not add the tool to Foundry-backed agents or unattended workflows.
 
 In V2, **My Workspace > Agents > New agent** opens a full-page editor. Use its
 sections to configure the model, approved actions, knowledge, and instructions

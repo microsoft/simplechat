@@ -74,7 +74,7 @@ file upload. If pasting does not provide a file, use **Attach a file** instead.
 
 ## Switching conversations in V2
 
-Fixed/Implemented in version: **0.261.411**
+Fixed/Implemented in version: **0.261.414**
 (`application/single_app/config.py`).
 
 Unsent attachment selections stay with the conversation where you added them.

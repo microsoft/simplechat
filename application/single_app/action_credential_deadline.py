@@ -20,7 +20,7 @@ def execution_deadline(value, *, now=None):
     started = getter("credential_wait_started_at")
     if started and getter("status") == "waiting":
         waits = getter("pending_results", {}) or {}
-        if any(wait.get("kind") == "action_credentials" for wait in waits.values()):
+        if any(wait.get("kind") in {"action_credentials", "user_input"} for wait in waits.values()):
             moment = datetime.fromisoformat(started)
             if moment.tzinfo is None:
                 raise ValueError("An aware credential wait timestamp is required.")
