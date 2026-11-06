@@ -367,14 +367,19 @@ class PlanRevisionRouteTests(unittest.TestCase):
                          self.runs.read_item(original_id, 'conv1')['user_message'])
 
     def test_review_narrowing_reaches_the_planner(self):
-        self.model.plan_override = revised_plan(searches=2)
-        self.model.plan_override['steps'][-1]['inputs'].pop('findings_1')
+        self.model.plan_override = revised_plan(searches=1)
+        self.model.plan_override['steps'].insert(1, {
+            'step_id': 'alternative', 'capability_id': 'compose', 'title': 'Draft an independent alternative',
+            'arguments': {'instruction': 'Draft general winery comparison criteria.',
+                          'knowledge_basis': 'general_knowledge'},
+            'outputs': [{'name': 'answer', 'kind': 'markdown-v1'}],
+        })
         editor = self.open_editor(edits={
-            'disabled_step_ids': ['search_1'], 'removed_document_ids': {},
+            'disabled_step_ids': ['alternative'], 'removed_document_ids': {},
         })
         updated, _body = self.revise(editor, revised_plan(searches=0))
         supplied = json.loads(self.edit_calls[-1]['messages'][1]['content'])['plan_edit']['current_plan']
-        self.assertFalse(next(step for step in supplied['steps'] if step['step_id'] == 'search_1')['enabled'])
+        self.assertFalse(next(step for step in supplied['steps'] if step['step_id'] == 'alternative')['enabled'])
         self.assertEqual(updated['edits'], {'disabled_step_ids': [], 'removed_document_ids': {}})
 
     def use_picked_documents(self):

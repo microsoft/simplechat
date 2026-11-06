@@ -25,7 +25,9 @@ import { useMemo } from 'react';
 import { clsx } from 'clsx';
 import { Archive, FileText, RotateCcw, X } from 'lucide-react';
 import { Toggle } from '../ui/primitives';
-import { TaskCompletenessDetails } from '../ui/TaskCompletenessDetails';
+import { CheckStageList, TaskCompletenessDetails } from '../ui/TaskCompletenessDetails';
+import { completenessReport, plannedCheckStages } from '../../lib/taskCompleteness';
+import { setPlanSemanticReview } from '../../lib/orchestrationController';
 import {
     selectEdits,
     selectCanEditPlan,
@@ -409,8 +411,12 @@ export function OrchestrationRunView({
             ? [...planInputDocuments].filter(([, document]) => document.selectedByUser).map(([id]) => id)
             : explicitDocuments;
         const fileSpecification = plannedFileSpecification(step);
+        const selectedReview = edits.semantic_review?.[step.step_id] ?? step.arguments.semantic_review;
+        const reviewValue = selectedReview === 'on' || selectedReview === 'off' ? selectedReview : 'auto';
+        const reviewEnabled = completenessReport(stepRuntime[step.step_id]?.task_completeness)?.semantic_enabled;
         const args = readableArguments(step).filter(([key]) =>
-            !fileSpecification || !['file_name', 'output_format', 'profile', 'options'].includes(key),
+            key !== 'semantic_review'
+                && (!fileSpecification || !['file_name', 'output_format', 'profile', 'options'].includes(key)),
         );
 
         return (
@@ -475,7 +481,49 @@ export function OrchestrationRunView({
                         {summary ? (
                             <p className="mt-1 text-xs text-text-2">{summary}</p>
                         ) : null}
+                        <CheckStageList value={stepRuntime[step.step_id]?.task_completeness} />
                         <TaskCompletenessDetails value={stepRuntime[step.step_id]?.task_completeness} />
+                        {!stepRuntime[step.step_id]?.task_completeness && plannedCheckStages(step).length > 0 ? (
+                            <div className="mt-2 text-xs text-text-2">
+                                {planRequiresApproval(plan)
+                                    ? <><p className="font-medium">Planned preparation and checks</p>
+                                        <ul className="mt-1 space-y-1">
+                                            {plannedCheckStages({ ...step, arguments: {
+                                                ...step.arguments,
+                                                ...(edits.semantic_review?.[step.step_id]
+                                                    ? { semantic_review: edits.semantic_review[step.step_id] } : {}),
+                                            } }).map((label) => <li key={label}>{label} — Planned</li>)}
+                                        </ul></>
+                                    : <p>Detailed checking stages were not saved for this step.</p>}
+                            </div>
+                        ) : null}
+                        {step.capability_id === 'compose' ? (
+                            <div className="mt-3 space-y-1 text-xs text-text-2">
+                                <label className="flex flex-wrap items-center gap-2">
+                                    <span>Semantic review</span>
+                                    <select aria-label={`Semantic review for ${step.title}`}
+                                        value={reviewValue}
+                                        disabled={!editable || !willRun}
+                                        onChange={(event) => void setPlanSemanticReview(
+                                            { conversationId, turnId }, step.step_id,
+                                            event.target.value as 'auto' | 'on' | 'off',
+                                        )}
+                                        className="min-h-11 rounded-lg border border-edge bg-surface-2 px-2 text-text-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+                                        <option value="auto">Auto (recommended)</option>
+                                        <option value="on">On</option>
+                                        <option value="off">Off</option>
+                                    </select>
+                                </label>
+                                <p>{(edits.semantic_review?.[step.step_id] ?? step.arguments.semantic_review) === 'off'
+                                    ? 'Optional semantic review is off. Required format, access and safety checks still apply.'
+                                    : 'Reviews prepared content against your request when supported and enabled by your administrator. Required checks always apply.'}</p>
+                                {typeof reviewEnabled === 'boolean' ? (
+                                    <p>{reviewEnabled ? 'Semantic review enabled for this run.'
+                                        : 'Semantic review was not enabled for this run. Required checks remain separate.'}</p>
+                                ) : null}
+                                {planRequiresApproval(plan) ? <p>Changing this choice pauses automatic approval and requires you to run the reviewed plan.</p> : null}
+                            </div>
+                        ) : null}
 
                         {isAction ? (
                             <dl className="mt-2 text-xs" data-testid="orchestration-action-input">
@@ -718,6 +766,14 @@ export function OrchestrationRunView({
     return (
         <div className="space-y-3 p-3">
             <ReasoningAdjustmentNotice adjustments={plan.reasoning_adjustments} />
+            {plan.validation.repairs.length ? (
+                <details className="text-xs text-text-2">
+                    <summary className="cursor-pointer rounded py-2">Plan adjustments</summary>
+                    <ul className="list-disc space-y-1 pl-4">
+                        {plan.validation.repairs.map((repair, index) => <li key={index}>{repair}</li>)}
+                    </ul>
+                </details>
+            ) : null}
             <OrchestrationRecoveryNotice
                 conversationId={conversationId} runId={plan.run_id} plan={plan} status={plan.status}
             />

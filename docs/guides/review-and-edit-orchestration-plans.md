@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.415"
+version: "0.261.416"
 ---
 
 ## Decide what should run
@@ -133,6 +133,19 @@ without stored passage references are not rewritten automatically.
 
 ### Work from content already in the conversation
 
+Fixed/Implemented in version: **0.261.416**
+(`application/single_app/config.py`).
+An unambiguous image already attached to the conversation can supply a
+transcription request without another file-selection question. When saved
+extracted text is absent, the source step uses the image itself through the
+authorized vision-capable model. Unavailable image bytes or a model without
+vision support need recovery; they do not become an invented transcription.
+If several attachments are plausible, clarification can still be necessary.
+
+For workspace-backed Excel workbooks, annotation requests use native Notes and
+threaded-comment inspection, preserving available metadata and saved cell
+values. Reported pagination and resource limits still bound what was inspected.
+
 Fixed/Implemented in version: **0.261.341**
 (`application/single_app/config.py`).
 When you ask to rewrite, audit, summarize, or otherwise transform material
@@ -163,6 +176,27 @@ appropriate configured model; repeating the unchanged plan does not add space.
 
 ## Review versus Edit
 
+Fixed/Implemented in version: **0.261.416**
+(`application/single_app/config.py`).
+
+While work runs, Quiet activity keeps the conversation focused on your request.
+Expand the activity or open plan details to distinguish preparing an answer from
+checking it. **Stop** remains in the composer. Technical failure details stay in
+run inspection rather than taking over the answer.
+
+Content preparation steps offer **Semantic review: Auto / On / Off** before
+execution. Auto normally reviews the prepared content against your instructions
+and supplied evidence. On requests that review where administration permits it.
+Off skips optional semantic review only: required output formats, source access,
+and safety checks still apply. A skipped review is not a passed factual check.
+
+When checking finds an actionable omission or format problem, SimpleChat uses
+the actual findings to adjust the answer and check the changed version again.
+This uses the administrator's bounded correction allowance, normally two; an
+explicit zero allows checking without automatic correction. If checking cannot
+finish, the prepared work stays saved rather than becoming an unchecked answer.
+An eligible retry rechecks retained content without regenerating the composition.
+
 Since **0.261.321**, integration steps show whether they **Gather information** or perform
 a **Requested operation**. For example, an email request can research missing event facts,
 prepare the email, and pass that content as a named input to an email action. Use
@@ -175,8 +209,8 @@ card for the actual outcome: a pending draft or schedule is not a completed send
 Old M365 plans without explicit operation intent remain read-only until replanned.
 
 **Review** opens the existing drawer. You can inspect steps and their rationales,
-switch off eligible steps, and remove documents from a step. These controls
-only reduce the work already proposed.
+switch off eligible steps, and remove documents from a step. These controls reduce the work already proposed or change its optional semantic
+review choice; they cannot remove required validators.
 
 **Edit** opens a full-screen preview with **Ask planner** and **History**. Use it
 to discuss a change instead of asking a new question in the main conversation.

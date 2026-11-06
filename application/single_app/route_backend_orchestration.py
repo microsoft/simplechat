@@ -112,6 +112,7 @@ from functions_orchestration_context import (
     resolve_candidate_documents,
     resolve_elicitation_references,
     resolve_image_reference_candidates,
+    resolve_conversation_attachments,
     image_reference_provenance_from_seeds,
     resolve_seeds,
     validate_clarification_answers,
@@ -3209,6 +3210,9 @@ def register_route_backend_orchestration(bp):
                 services = _orchestration_services(
                     user_id, resolved_conversation_id, settings=settings,
                 )
+                seeds = resolve_conversation_attachments(
+                    message, user_id, resolved_conversation_id, seeds=seeds, settings=settings,
+                )
                 selected_candidates = None
                 source_scopes = {} if workflow_configured else None
                 if seeds.get('document_ids'):
@@ -3225,6 +3229,9 @@ def register_route_backend_orchestration(bp):
                     item['planning_source'] for item in selected_candidates or []
                     if item.get('planning_source')
                 ]
+                for source in selected_sources:
+                    if source['document_id'] in (seeds.get('resolved_attachment_ids') or []):
+                        source['resolved_attachment'] = True
                 resolved_conversations = {'references': []}
                 if seeds.get('conversation_references'):
                     resolved_conversations = _conversation_resolver()(
@@ -3412,6 +3419,7 @@ def register_route_backend_orchestration(bp):
                     request_resolution=resolution, actions=action_catalog,
                     answered_questions=answered_record,
                     memory_context=memory_context,
+                    selected_sources=selected_sources,
                 )
                 if answered_record:
                     context['answered_now'] = answered_record
@@ -3419,8 +3427,13 @@ def register_route_backend_orchestration(bp):
                 # Every plan uses the one contract; a legacy turn was refused before this point.
                 contract_version = DEPENDENCY_PLAN_CONTRACT_VERSION
                 if services.document_transform_candidate_reader is not None:
+                    chat_attachment_ids = {
+                        item['id'] for item in seeds.get('elicitation_references') or []
+                        if item.get('kind') == 'chat_attachment'
+                    }
                     seeds['document_transform_references'] = services.document_transform_candidate_reader(
-                        [candidate['document_id'] for candidate in candidates],
+                        [candidate['document_id'] for candidate in candidates
+                         if candidate['document_id'] not in chat_attachment_ids],
                     )
                     turn_context['seeds'] = deepcopy(seeds)
                     context['document_transform_references'] = deepcopy(seeds['document_transform_references'])

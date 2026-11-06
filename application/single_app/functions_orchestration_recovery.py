@@ -669,11 +669,27 @@ def recovery_projection(record):
         reason in {'input_partial_not_recoverable', 'search_result_incomplete'}
         and _available_information_continuation_plan(record) is not None
     )
+    checking_steps = {
+        step['step_id'] for step in steps
+        if step['step_id'] in retry and step.get('capability_id') == 'compose'
+        and step.get('status') == 'failed'
+        and (step.get('failure') or {}).get('code') in ('completeness_unavailable', 'completeness_incomplete')
+        and (step.get('task_completeness') or {}).get('preparation_status') == 'prepared'
+    }
+    runtime_steps = {step['step_id']: step for step in steps}
+    check_only = bool(checking_steps) and reason is None and not uncertain and all(
+        step['step_id'] in checking_steps or (
+            step.get('capability_id') == 'render_file'
+            and (runtime_steps.get(step['step_id']) or {}).get('status') in ('pending', 'skipped')
+        )
+        for step in record['plan'].get('steps') or [] if step['step_id'] in retry
+    )
     return {
         'eligible': reason is None, 'reason_code': reason, 'message': message,
         'expected_version': record.get('recovery_version'),
         'source_run_id': run_id, 'retry_step_ids': retry, 'reused_step_ids': reused,
         'requires_confirmation': uncertain,
+        **({'retry_scope': 'check'} if check_only else {}),
         **({'can_use_available_information': True} if can_use_available else {}),
         **({'current_run_id': current} if current and current != run_id else {}),
     }
@@ -1413,6 +1429,30 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
                     delattr(context, key)
             else:
                 setattr(context, key, value)
+    if record.get('retry_of_run_id') and not narrative_continuation and not allow_waiting:
+        retained_checks = {}
+        source_store = checkpoint_store(source, authorize)
+        for step in record['plan'].get('steps') or []:
+            saved = source_steps.get(step['step_id']) or {}
+            upstream = set(step.get('depends_on') or ()) | {
+                spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None
+            }
+            if (
+                step.get('enabled') and step['capability_id'] == 'compose'
+                and upstream <= set(payloads)
+                and saved.get('status') == 'failed'
+                and (saved.get('failure') or {}).get('code') in ('completeness_unavailable', 'completeness_incomplete')
+            ):
+                assessment = source_store.load_completeness(step['step_id'], binding=source_binding)
+                if assessment is not None:
+                    retained_checks[step['step_id']] = assessment
+        context.completeness_retry_states = retained_checks
+        if record.get('retry_scope') == 'check' and any(
+            step.get('enabled') and step['capability_id'] == 'compose'
+            and step['step_id'] not in payloads and step['step_id'] not in retained_checks
+            for step in record['plan'].get('steps') or []
+        ):
+            raise CheckpointError('checkpoint_unavailable')
     return payloads
 
 
@@ -1536,6 +1576,7 @@ def prepare_retry(run_id, user_id, data, *, authorize, validate, message_contain
         'attempt_root_run_id': record.get('attempt_root_run_id') or run_id,
         'recovery_version': uuid.uuid4().hex, 'edit_version': uuid.uuid4().hex,
         'retry_reused_step_ids': recovery['reused_step_ids'],
+        'retry_scope': recovery.get('retry_scope', 'step'),
         'retry_confirmed_external_effects': bool(data.get('confirm_external_effects')),
         'inherited_checkpoints': {
             step_id: {

@@ -5,7 +5,7 @@ description: "Orchestration lets a user describe what they want and have SimpleC
 section: "Administration"
 audience: admin
 admin_tab: orchestration
-version: "0.261.398"
+version: "0.261.416"
 ---
 
 
@@ -75,9 +75,19 @@ required calculations, and complete-only transformations keep their stricter rul
 | Maximum Answer Corrections | Bound the shared format, visual and completeness repair allowance per composition. | 2 | `chat_orchestration_completeness_max_corrections`; 0-5, zero means check-only. |
 
 Every answer correction is checked again and uses the same bounded allowance.
-For available-information responses, one malformed assessment may be checked
+Since **0.261.416**, one malformed assessment may be checked
 again without changing the answer or consuming an answer correction. This protocol
 repair is reserved durably and cannot loop or replay connector work.
+Requirement descriptions need not be reproduced verbatim: the application keeps
+the canonical scope and matches assessment identifiers. Corrections receive the
+actual validation findings, and an unchanged replacement stops rather than
+blindly consuming the remaining allowance.
+
+In V2 plan details, **Semantic review: Auto / On / Off** controls optional review
+for content preparation. Auto preserves default-on review; On cannot override this
+admin setting. Off does not disable required output/schema validation, access,
+provenance, or safety checks. Preparation and checking have separate recorded
+stages, so a checker outage is not presented as failed source gathering.
 Disabling restores the previous single format/visual correction.
 This adds model calls but never authorizes connector replay. See
 [model-assisted completeness](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/MODEL_ASSISTED_COMPLETENESS.md).

@@ -1,8 +1,8 @@
 # test_task_completeness_ui.py
 """Classic/V2 admin and real-component completeness outcome coverage.
 
-Version: 0.261.382
-Implemented in: 0.261.382
+Version: 0.261.416
+Implemented in: 0.261.382; 0.261.416
 Uses existing Python Azure Playwright-compatible fixtures and synthetic API data.
 """
 
@@ -70,9 +70,9 @@ def test_v2_admin_correction_limit_and_opt_out_roundtrip(orchestration_admin):
 
 
 @pytest.mark.parametrize("status,label", [
-    ("complete", "Corrected and complete"),
-    ("incomplete", "Incomplete"),
-    ("verification_unavailable", "Verification unavailable"),
+    ("complete", "Reviewed after adjustment"),
+    ("incomplete", "Answer needs revision"),
+    ("verification_unavailable", "Checking couldn't finish"),
 ])
 @pytest.mark.parametrize("width", [390, 1440])
 def test_saved_report_is_visible_accessible_and_inert(recovery_ui, status, label, width):
@@ -87,32 +87,41 @@ def test_saved_report_is_visible_accessible_and_inert(recovery_ui, status, label
         }],
     }
     mount_recovery(page, api, saved=True)
-    page.get_by_role("button", name="Review saved attempt").first.click()
-    report = page.get_by_test_id("task-completeness")
-    expect(report).to_contain_text(label)
+    request_count = len(api.calls("/run"))
+    # This component harness omits the shell's Plan button; open its real review panel.
+    page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.getState().setDrawerMode('plan')")
+    drawer = page.get_by_role("complementary", name="Review drawer")
+    drawer.get_by_role("tab", name="Map", exact=True).click()
+    drawer.get_by_role("button", name=api.plan["intent"]["summary"], exact=False).click()
+    expect(drawer.get_by_role("tab", name="Run", exact=True)).to_have_attribute("aria-selected", "true")
+    report = drawer.get_by_test_id("task-completeness")
     summary = report.locator("summary")
+    expect(summary).to_contain_text(f"Answer checking: {label}")
     summary.focus()
     page.keyboard.press("Enter")
     expect(report.get_by_text("Requested date omitted.", exact=True)).to_be_visible()
+    expect(report.get_by_text("<img src=x onerror=window.unsafeExecuted=true>", exact=True)).to_be_visible()
+    expect(report.get_by_text("Detailed stage history was not saved for this report.", exact=True)).to_be_visible()
+    expect(report.get_by_role("list", name="Answer checking stages")).to_have_count(0)
     expect(report.locator("img")).to_have_count(0)
     assert page.evaluate("() => window.unsafeExecuted === undefined")
-    request_count = len(api.calls("/run"))
     page.evaluate("(id) => window.OrchHarness.resume.resumeOrchestrationForConversation(id)", api.plan["conversation_id"])
     assert len(api.calls("/run")) == request_count
 
 
-def test_classic_outcome_uses_text_nodes_not_html(page):
+@pytest.mark.parametrize("version", [1, 2])
+def test_classic_outcome_uses_text_nodes_not_html(page, version):
     source = ROOT / "application" / "single_app" / "static" / "js" / "workflow" / "completeness.js"
     page.set_content('<main id="report"></main>')
     # Execute the checked-in module body without import/export setup or a live server.
     page.add_script_tag(content=source.read_text(encoding="utf-8").replace("export function", "function", 1))
-    page.evaluate("""() => appendWorkflowCompleteness(document.getElementById('report'), [{
+    page.evaluate("""version => appendWorkflowCompleteness(document.getElementById('report'), [{
         task_name: '<script>bad()</script>',
         workflow_result: {task_completeness: {
-            version: 1, status: 'complete', corrections: 2,
+            version, status: 'complete', corrections: 2,
             requirements: [{requirement: '<img src=x onerror=bad()>', status: 'satisfied', reason: 'Complete.'}]
         }}
-    }])""")
+    }])""", version)
     report = page.get_by_test_id("task-completeness")
     report.locator("summary").click()
     expect(report).to_contain_text("Corrected and complete")

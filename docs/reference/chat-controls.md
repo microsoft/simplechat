@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.411"
+version: "0.261.416"
 ---
 
 ## How to use this reference
@@ -931,6 +931,12 @@ clears only that selection; other requirements remain intact.
 
 ## Inline follow-up questions (V2 interface)
 
+Fixed/Implemented in version: **0.261.416**
+(`application/single_app/config.py`).
+Answered forms collapse to a compact status while planning continues. The
+recoverable answer draft remains available if submission or replanning fails;
+finishing an answer is not approval to execute the resulting plan.
+
 Implemented in **0.261.096**. These controls appear when chat orchestration needs more
 information before it can plan the request. They use the composer's editing capabilities
 without adding another model, agent, or execution toolbar. See
@@ -954,13 +960,14 @@ plan rather than editing the main chat message. See
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
-| Review | Opens the plan drawer with step details and narrowing-only controls. | Inspect the proposed sources and work, or remove something unnecessary. | `enable_chat_orchestration` |
+| Review | Opens the plan drawer with step details, source narrowing, and optional semantic-review choices. | Inspect the proposed sources, checks, and work before approving. | `enable_chat_orchestration` |
 | Edit | Opens the full-screen plan editor and holds the plan for manual approval, stopping its countdown. | Change the proposed approach before it runs. | Same as Review; the plan must not have started |
 | Ask planner | Sends a change request to the planner for a validated revision, or answers its scoped clarification. Since **0.261.201**, the request can carry `#` documents and tags; see **Documents and tags in Ask planner** above. | Add a permitted step, remove work, or refine the task without duplicating the main conversation. | Same as Edit; existing capability and source permissions apply |
 | History and restore | Shows previous plan versions and creates a newly validated current version when restoring one. | Return to an earlier approach without deleting later history. | Same as Edit |
 | Run after editing | Executes the saved current revision only after explicit approval. Closing the editor does not approve it. | Start the work once its steps and sources match your intent. | Same as Edit; no revision or clarification may be pending |
 | Run task switch (Gather / Reason / Render plans) | Skips or restores an eligible task without deleting its declared inputs or outputs. Required producers identify their consumers and cannot be silently disabled. | Remove independent work, or learn which consumers must change through Ask planner first. | A Gather / Reason / Render plan that has not started; the final-response step cannot be disabled |
 | Prepared output schema | Expands the server-declared schema for a named structured result. | Check the intended shape before approving composition; this is a retained result, not a download. | A Gather / Reason / Render task with an output schema |
+| Semantic review: Auto / On / Off | Selects optional review of prepared content against the request and supplied evidence. Auto normally reviews substantive content; administration remains the outer bound. Required output validation and access/safety checks cannot be disabled here. | Choose review intentionally without confusing a skipped semantic check with verified content. | Editable V2 content-preparation step, since **0.261.416** |
 | Server file format reference | Shows only a supplied shared export catalog, including source kinds and profiles. Its option-rule and default-limit disclosures are read-only. | Check the server's format descriptions before requesting a validated planner revision. | A Gather / Reason / Render view with a server-provided catalog; absent otherwise |
 | Load server file format reference | Retrieves the shared catalog using the selected plan's authorized run context. A failed read leaves formats unadvertised. | Inspect available format descriptions when they were not included with the current view. | A Gather / Reason / Render plan view without a loaded catalog |
 | Reference image chips (Generate image tasks) | Since **0.261.192**, lists the pictures a planned image will be based on, each with a thumbnail and name. In Review, removes a reference from the task or restores it; with every reference removed, the image is generated from its prompt alone. | Check that the plan uses the right pictures, such as the photo of your house, before it runs. | `enable_chat_orchestration` and `enable_image_generation`, with an image model that can use references and **Image** on when you attached the pictures |
@@ -1005,6 +1012,15 @@ or automatically execute an orchestration plan. Historical requests without
 complete saved inputs explain how to review a new request in the composer.
 
 ## Orchestration failure recovery (V2 interface)
+
+Fixed/Implemented in version: **0.261.416**
+(`application/single_app/config.py`).
+Quiet activity presents compact progress rather than operational diagnostics.
+Expand it or inspect the plan to see preparation and checking separately.
+An eligible checker-only retry uses the retained candidate and correction
+allowance instead of regenerating the composition. Checking that remains
+unavailable does not release an unchecked answer. **Stop** stays in the composer;
+saved status and technical diagnoses remain in run inspection.
 
 Implemented in **0.261.105**. A failed run keeps an explanation in the conversation
 and Run view instead of silently cancelling the answering step. Recovery uses the

@@ -1,5 +1,4 @@
 // OrchestrationPlanCard.tsx
-import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
 import { OrchestrationRecoveryNotice } from './OrchestrationRecoveryNotice';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
 import { OrchestrationDeliverables } from './OrchestrationDeliverables';
@@ -20,7 +19,7 @@ import { OrchestrationWorkflowHandoffNotice } from './OrchestrationWorkflowHando
 // is drawn to reflect. See `orchestrationStore.ts` and `InlineImageProposal.tsx`.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Clock3, Eye, ListChecks, Loader2, PenLine, TriangleAlert, X } from 'lucide-react';
+import { Check, Clock3, Eye, ListChecks, Loader2, PenLine, X } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
 import { useChatStore } from '../../stores/chatStore';
 import {
@@ -35,7 +34,6 @@ import {
 } from '../../stores/orchestrationStore';
 import {
     applyPlanEdits,
-    describePlanner,
     describeRunProgress,
     isPlanRunnable,
     isPlanTerminal,
@@ -53,30 +51,9 @@ import {
 import {
     isOrchestrationRunSettled,
     isOrchestrationRunWaiting,
-    type CostClass,
-    type OrchestrationPlan,
 } from '../../lib/orchestration';
-
-/** Highest cost class among the steps that will run, or null when none carry one. */
-function highestCost(plan: OrchestrationPlan): CostClass | null {
-    const rank: Record<CostClass, number> = { low: 1, medium: 2, high: 3 };
-    let best: CostClass | null = null;
-    for (const step of plan.steps) {
-        if (!step.enabled) {
-            continue;
-        }
-        if (!best || rank[step.estimated_cost] > rank[best]) {
-            best = step.estimated_cost;
-        }
-    }
-    return best;
-}
-
-const costTone: Record<CostClass, string> = {
-    low: 'text-text-3',
-    medium: 'text-warn',
-    high: 'text-danger',
-};
+import { completenessActivity } from '../../lib/taskCompleteness';
+import { CheckStageList } from '../ui/TaskCompletenessDetails';
 
 /** The countdown ring for timed approval, drawn from the fraction of time left. */
 function CountdownRing({ fraction }: { fraction: number }) {
@@ -242,43 +219,44 @@ export function OrchestrationPlanCard({
     // the streaming bubble stays out of the way until there is an answer, so its status line says
     // what the run is doing in words.
     if (runInFlight || waiting) {
-        const total = summary.step_count;
-        let completed = 0;
-        for (const step of editedPlan?.steps ?? []) {
-            if (!step.enabled) {
-                continue;
-            }
-            const status = stepRuntime[step.step_id]?.status;
-            if (status === 'completed' || status === 'partial' || status === 'skipped') {
-                completed += 1;
-            }
-        }
-        const progress = describeRunProgress(editedPlan?.steps ?? [], stepRuntime, waiting);
+        const uncertain = recovery?.transportUnknown === true;
+        const runningStep = editedPlan?.steps.find((step) => step.enabled && stepRuntime[step.step_id]?.status === 'running');
+        const checkActivity = runningStep ? completenessActivity(stepRuntime[runningStep.step_id]?.task_completeness) : null;
+        const progress = checkActivity ?? describeRunProgress(editedPlan?.steps ?? [], stepRuntime, waiting);
         return (
-            <div className="my-3 rounded-2xl border border-edge-strong bg-surface-sunken px-3 py-2">
-                <ReasoningAdjustmentNotice adjustments={plan.reasoning_adjustments} />
-                <OrchestrationRecoveryNotice conversationId={conversationId}
-                    runId={plan.run_id} plan={plan} status={plan.status} />
-                <div className="flex items-center gap-2 text-sm">
-                    {waiting ? <Clock3 size={15} className="shrink-0 text-warn" aria-hidden="true" />
-                        : <Loader2 size={15} className="shrink-0 animate-spin text-accent" aria-hidden="true" />}
-                    <span className="min-w-0 flex-1 truncate text-text-1" title={summary.intent_summary}>
-                        {summary.intent_summary || 'Running the plan'}
-                    </span>
-                    <span className="shrink-0 tabular-nums text-text-3">
-                        {completed}/{total}
-                    </span>
-                    <GlassButton
-                        size="sm"
-                        variant="subtle"
-                        onClick={openReview}
-                        aria-label="Review the running plan"
-                    >
-                        <Eye size={14} />
-                        Review
+            <div className="my-3 min-w-0 text-sm text-text-2" data-testid="quiet-activity">
+                <details>
+                    <summary className="cursor-pointer rounded py-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+                        <span className="ml-1 inline-flex max-w-full items-center gap-2 align-middle">
+                            {waiting || uncertain ? <Clock3 size={14} className="shrink-0" aria-hidden="true" />
+                                : <Loader2 size={14} className="shrink-0 motion-safe:animate-spin" aria-hidden="true" />}
+                            <span role="status" aria-live="polite" className="min-w-0 break-words">
+                                {uncertain ? 'Execution status not confirmed' : waiting ? 'Waiting for results' : progress || 'Thinking'}
+                            </span>
+                        </span>
+                    </summary>
+                    <ol aria-label="Plan activity" className="ml-4 space-y-3 border-l border-edge py-2 pl-4 text-xs">
+                        {editedPlan?.steps.filter((step) => step.enabled).map((step) => {
+                            const runtime = stepRuntime[step.step_id];
+                            const state = runtime?.status ?? step.status;
+                            return <li key={step.step_id} className="min-w-0">
+                                <span className="break-words">{step.title}</span>
+                                <span className="ml-2 text-text-3">
+                                    {state === 'completed' ? 'Done' : state === 'partial' ? 'Results with limits'
+                                        : state === 'running' ? uncertain ? 'Status unconfirmed' : completenessActivity(runtime?.task_completeness) || 'In progress'
+                                        : state === 'waiting' ? 'Waiting for results' : state === 'pending' ? 'Next'
+                                        : state === 'skipped' ? 'Skipped' : state === 'cancelled' ? 'Stopped' : 'Needs attention'}
+                                </span>
+                                <CheckStageList value={runtime?.task_completeness} />
+                            </li>;
+                        })}
+                    </ol>
+                    <GlassButton size="sm" variant="ghost" onClick={openReview} aria-label="Review the running plan">
+                        Run details
                     </GlassButton>
-                </div>
-                {progress ? <p role="status" className="mt-1 text-xs text-text-3">{progress}</p> : null}
+                    {uncertain || waiting ? <OrchestrationRecoveryNotice conversationId={conversationId}
+                        runId={plan.run_id} plan={plan} status={plan.status} /> : null}
+                </details>
                 <OrchestrationOutputs conversationId={conversationId} runId={plan.run_id} />
             </div>
         );
@@ -286,15 +264,12 @@ export function OrchestrationPlanCard({
 
     // Awaiting approval (manual or timed), or approved-but-not-yet-running for the brief instant
     // before the run registers. The blocking state: this is the only place the card takes space.
-    const cost = highestCost(editedPlan ?? plan);
     const runnable = editedPlan ? isPlanRunnable(editedPlan) && !runBlocked : false;
-    const repairs = plan.validation.repairs;
     const bindingIssues = planBindingIssues(plan, edits);
     const remainingSeconds = Math.ceil(remainingMs / 1000);
 
     return (
         <div className="my-3 rounded-2xl border border-edge-strong bg-surface-sunken p-3">
-            <ReasoningAdjustmentNotice adjustments={plan.reasoning_adjustments} />
             <div className="flex items-start gap-2">
                 <ListChecks size={16} className="mt-0.5 shrink-0 text-accent" />
                 <div className="min-w-0 flex-1">
@@ -305,20 +280,6 @@ export function OrchestrationPlanCard({
                         <span>
                             {summary.step_count} {summary.step_count === 1 ? 'step' : 'steps'}
                         </span>
-                        {cost ? (
-                            <>
-                                <span aria-hidden="true">·</span>
-                                <span className={costTone[cost]}>{cost} cost</span>
-                            </>
-                        ) : null}
-                        {plan.planner ? (
-                            <>
-                                <span aria-hidden="true">·</span>
-                                <span data-testid="orchestration-plan-card-planner" title={describePlanner(plan) ?? undefined}>
-                                    planned by {plan.planner.label}
-                                </span>
-                            </>
-                        ) : null}
                     </p>
                 </div>
             </div>
@@ -333,22 +294,6 @@ export function OrchestrationPlanCard({
                 <p role="status" className="mt-2 text-xs text-text-2">
                     Fresh plan: review before running. Earlier completed actions are not undone and may be repeated.
                 </p>
-            ) : null}
-
-            {repairs.length > 0 ? (
-                // The plan that runs may differ from what the model proposed; saying so is the
-                // point. `validation.repairs` is the honest record of what the server corrected.
-                <div className="mt-2 flex items-start gap-2 rounded-xl bg-warn-soft px-2.5 py-2 text-xs text-warn">
-                    <TriangleAlert size={14} className="mt-0.5 shrink-0" />
-                    <div className="min-w-0">
-                        <p className="font-medium">Adjusted before running</p>
-                        <ul className="mt-0.5 list-disc space-y-0.5 pl-4">
-                            {repairs.map((repair, index) => (
-                                <li key={index}>{repair}</li>
-                            ))}
-                        </ul>
-                    </div>
-                </div>
             ) : null}
 
             {bindingIssues.length ? (

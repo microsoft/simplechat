@@ -1,13 +1,14 @@
 # test_task_completeness_runtime.py
 """Real-module verification, correction, result eligibility and durable storage.
 
-Version: 0.261.384
-Implemented in: 0.261.382; 0.261.384
+Version: 0.261.416
+Implemented in: 0.261.382; 0.261.384; 0.261.416
 """
 
 import importlib
 import json
 import sys
+from copy import copy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -63,7 +64,7 @@ def test_default_on_composition_corrects_twice_with_persisted_final_assessment(h
 def test_exhaustion_blocks_rendering_and_reports_a_safe_failure(harness):
     harness.settings["enable_chat_orchestration_completeness_check"] = True
     harness.create([compose_step(), render_step("save", "md")], replies=[
-        "Evaluation", report("missing"), "Evaluation", report("missing"), "Evaluation", report("missing"),
+        "Evaluation", report("missing"), "Evaluation first", report("missing"), "Evaluation final", report("missing"),
     ], final_response=input_binding("prepare", "answer"))
     harness.prepare().execute()
     saved = harness.read()
@@ -77,11 +78,78 @@ def test_exhaustion_blocks_rendering_and_reports_a_safe_failure(harness):
 
 def test_unavailable_checker_never_publishes_success(harness):
     harness.settings["enable_chat_orchestration_completeness_check"] = True
-    harness.create([compose_step()], replies=["Evaluation", '{"requirements":[]}'])
+    harness.create([compose_step()], replies=["Evaluation", '{"requirements":[]}', '{"requirements":[]}'])
     harness.prepare().execute()
     assert harness.read()["status"] == "failed"
     assert stored_steps(harness)[0]["failure"]["code"] == "completeness_unavailable"
+    assert len(harness.model_calls) == 3
+
+
+@pytest.mark.parametrize("with_corrections", [False, True])
+@pytest.mark.parametrize("checkpoint_missing", [False, True])
+def test_explicit_retry_rechecks_retained_candidate_without_regeneration(harness, with_corrections, checkpoint_missing):
+    harness.settings["enable_chat_orchestration_completeness_check"] = True
+    replies = (
+        ["Evaluation", report("missing"), "Evaluation first", report("missing"), "Evaluation final", report("missing")]
+        if with_corrections else ["Evaluation", '{"requirements":[]}', '{"requirements":[]}']
+    )
+    harness.create([compose_step()], replies=replies)
+    execution = harness.prepare()
+    execution.execute()
+    original = harness.read()
+    assert harness.recovery.recovery_projection(original)["retry_scope"] == "check"
+    authorize = lambda: harness.bootstrap.read_owned_conversation("owner", "conversation-1")
+
+    def validate(source):
+        probe = copy(execution.context)
+        probe.result_service = harness.services().results
+        return harness.recovery.validate_resume(
+            source, probe, harness.settings, authorize, source_run_id=source["id"],
+        )
+
+    child = harness.recovery.prepare_retry(
+        original["id"], "owner", {
+            "conversation_id": "conversation-1", "expected_version": original["recovery_version"],
+            "submission_id": "explicit-check-retry",
+        }, authorize=authorize, validate=validate, message_container=harness.messages,
+    )
+    harness.run_id = child["id"]
+    assert child["retry_scope"] == "check"
+    harness.replies = [report("satisfied")]
+    if checkpoint_missing:
+        harness.monkeypatch.setattr(type(execution.context.completeness_store), "load_completeness", lambda *args, **kwargs: None)
+    harness.prepare().execute()
+    if checkpoint_missing:
+        assert harness.read()["status"] == "failed"
+        assert len(harness.model_calls) == len(replies)
+        return
+    assert harness.read()["status"] == "completed", harness.read().get("failure")
+    assert len(harness.model_calls) == len(replies) + 1
+    assert harness.model_calls[-1]["messages"][0]["content"].startswith("Independently check")
+    checked_payload = json.loads(harness.model_calls[-1]["messages"][-1]["content"])
+    assert checked_payload["candidate"] == ("Evaluation final" if with_corrections else "Evaluation")
+    assert stored_steps(harness)[0]["task_completeness"]["corrections"] == (2 if with_corrections else 0)
+
+
+def test_semantic_review_off_preserves_mandatory_schema_correction(harness):
+    harness.settings["enable_chat_orchestration_completeness_check"] = True
+    step = compose_step()
+    step["arguments"]["semantic_review"] = "off"
+    step["outputs"] = [{
+        "name": "answer", "kind": "structured-v1",
+        "schema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]},
+    }]
+    harness.create([step], replies=['{"answer":{"total":"12"}}', '{"answer":{"total":12}}'])
+    execution = harness.prepare()
+    execution.execute()
+    assert harness.read()["status"] == "completed", harness.read().get("failure")
     assert len(harness.model_calls) == 2
+    feedback = json.loads(harness.model_calls[1]["messages"][-1]["content"])
+    assert '"path": ["total"]' in feedback["deficiencies"][0]
+    assert '"expected": "number"' in feedback["deficiencies"][0]
+    report_value = stored_steps(harness)[0]["task_completeness"]
+    assert report_value["deterministic_status"] == "passed" and report_value["semantic_enabled"] is False
+    assert report_value["stages"][-1]["status"] == "skipped"
 
 
 @pytest.mark.parametrize("initial", ['{"status":"Evaluation"}', "Not JSON"])
@@ -471,4 +539,3 @@ def test_pdf_source_review_extracts_page_coverage_and_unfound_source_completes(h
     assert compacted["pdf_pages_reviewed"] == 2
     notes = adapters._notes_from_source_review({"pages": [compacted]})
     assert any("2 of 2 PDF page(s) inspected" in note for note in notes)
-

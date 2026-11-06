@@ -1,7 +1,7 @@
 # test_v2_orchestration_recovery.py
 """
 Real-component browser coverage for orchestration failure and checkpoint recovery.
-Version: 0.261.399
+Version: 0.261.416
 Implemented in: 0.261.105
 Earlier-version run refusals covered in: 0.261.139
 Settled runs whose stored plan still reads running covered in: 0.261.141
@@ -192,6 +192,9 @@ class RecoveryApi:
         if is_pending_actions_list(request.method, path):
             route.fulfill(json=pending_actions_payload())
             return
+        if request.method == "GET" and path in {"/api/v2/user-input/pending", "/api/action-credentials/pending"}:
+            route.fulfill(json={"requests": [], "csrf_token": "fixture-token"})
+            return
         if path == "/api/action-credentials/pending" and request.method == "GET":
             route.fulfill(json={"requests": []})
             return
@@ -355,6 +358,32 @@ def start_failure(page, api):
     expect(page.get_by_text(FAILURE, exact=True).first).to_be_visible()
     expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
 
+def open_recovery_details(scope):
+    """Advanced controls are explicit disclosures, never default diagnostic panels."""
+    activity = scope.locator('[data-testid="quiet-activity"] > details')
+    if activity.count() and not activity.first.get_attribute("open"):
+        activity.first.locator("summary").first.click()
+    details = scope.locator('section[aria-label="Orchestration recovery"] > details')
+    for index in range(details.count()):
+        item = details.nth(index)
+        if not item.get_attribute("open"):
+            item.locator("summary").first.click()
+
+
+def review_saved_attempt(page):
+    open_recovery_details(page)
+    page.get_by_role("button", name="Review saved attempt").first.click()
+
+
+def check_saved_status(page):
+    open_recovery_details(page)
+    page.get_by_role("button", name="Check saved status").first.click()
+
+
+def stop_from_composer(page):
+    page.evaluate("() => window.OrchHarness.mount('mount-b', 'Composer')")
+    page.get_by_role("button", name="Stop generating").click()
+
 
 def main_state(page):
     return page.evaluate("""() => {
@@ -375,8 +404,9 @@ def test_failure_persists_in_main_and_drawer_and_confirmed_retry_reuses_progress
     failed_message = main_state(page)["messages"][-1]
     assert failed_message["metadata"]["orchestration"]["outcome"] == "failed"
     assert failed_message["hybrid_citations"][0]["document_id"] == "doc-a"
-    page.get_by_role("button", name="Review saved attempt").first.click()
+    review_saved_attempt(page)
     drawer = page.get_by_role("complementary", name="Review drawer")
+    open_recovery_details(drawer)
     expect(drawer.get_by_text(FAILURE, exact=True)).to_be_visible()
     expect(drawer.locator("p").filter(has_text="Reuse saved results:")).to_contain_text("Read quarterly reports")
     drawer.get_by_role("button", name="Retry from failed step").click()
@@ -407,7 +437,7 @@ def test_reload_keeps_failure_without_automatic_retry_and_recovery_is_explicit(r
     assert not api.calls("/run") and not api.calls("/retry")
     expect(page.get_by_role("button", name="Retry", exact=True).first).to_be_enabled()
     expect(page.get_by_role("button", name="Review orchestration recovery")).to_have_count(0)
-    page.get_by_role("button", name="Review saved attempt").first.click(force=True)
+    review_saved_attempt(page)
     expect(page.get_by_role("complementary", name="Review drawer")).to_be_visible()
     assert not any("/api/message/" in request["path"] for request in api.requests)
 
@@ -464,6 +494,7 @@ def test_recovery_conflict_and_lost_preparation_keep_previous_failure(recovery_u
     page.get_by_role("button", name="Retry from failed step").click()
     with page.expect_request("**/retry"):
         page.get_by_role("dialog").get_by_role("button", name="Confirm retry").click()
+    open_recovery_details(page)
     expect(page.get_by_role("alert").filter(has_text="Recovery").first).to_be_visible()
     assert len(api.calls("/run")) == 1
     assert main_state(page)["messages"][-1]["content"] == FAILURE
@@ -482,13 +513,13 @@ def test_transport_loss_is_unknown_until_explicit_stop_calls_backend(recovery_ui
     api.stream_mode = "transport"
     mount_recovery(page, api)
     page.get_by_role("button", name="Approve and run the plan").click()
-    expect(page.get_by_text("Checking execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
     expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
     assert not api.calls("/retry")
     assert not any("/cancel/" in request["path"] for request in api.requests)
     assert not main_state(page)["history"].get(CONVERSATION)
-    page.get_by_role("button", name="Stop execution").first.click()
-    expect(page.get_by_text("This attempt was stopped", exact=False).first).to_be_visible()
+    stop_from_composer(page)
+    expect(page.get_by_text("Stopped. Your progress is saved.", exact=True).first).to_be_visible()
     assert len([request for request in api.requests if "/cancel/" in request["path"]]) == 1
     assert main_state(page)["history"][CONVERSATION][0]["status"] == "cancelled"
 
@@ -501,7 +532,8 @@ def test_legacy_history_explains_cannot_resume_without_inventing_reason(recovery
         record.pop(key, None)
     api.messages = api.messages[:1]
     mount_recovery(page, api, saved=True)
-    expect(page.get_by_text("This historical attempt has no verified recovery checkpoint.", exact=False)).to_be_visible()
+    open_recovery_details(page)
+    expect(page.get_by_text("No verified retry checkpoint is available.", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
     assert not api.calls("/run") and not api.calls("/retry")
 
@@ -527,9 +559,9 @@ def test_transport_terminal_reconciliation_keeps_saved_failure_and_no_stop(recov
     api.stream_mode = "transport"
     mount_recovery(page, api)
     page.get_by_role("button", name="Approve and run the plan").click()
-    expect(page.get_by_text("Checking execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
     api.finish(api.plan["run_id"])
-    page.get_by_role("button", name="Check saved status").first.click()
+    check_saved_status(page)
     expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
     assert main_state(page)["history"][CONVERSATION][0]["status"] == "failed"
     assert main_state(page)["messages"][-1]["id"] == f"assistant-{api.plan['run_id']}"
@@ -674,15 +706,15 @@ def test_terminal_status_waits_for_final_publication_after_transport_loss(recove
     page.clock.install()
     mount_recovery(page, api)
     page.get_by_role("button", name="Approve and run the plan").click()
-    expect(page.get_by_text("Checking execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
 
     run_id = api.plan["run_id"]
     api.begin_finalization(run_id, status)
     if pending_contract == "lease-only":
         api.records[run_id].pop("finalization_status")
-    page.get_by_role("button", name="Check saved status").first.click()
+    check_saved_status(page)
     try:
-        expect(page.get_by_text("Checking execution status", exact=False).first).to_be_visible()
+        expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
     except AssertionError as error:
         raise AssertionError({
             "state": main_state(page),
@@ -724,7 +756,7 @@ def test_reload_keeps_polling_until_terminal_publication_is_saved(recovery_ui, s
     api.begin_finalization(run_id, status)
     page.clock.install()
     mount_recovery(page, api, saved=True)
-    expect(page.get_by_text("Checking execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
     assert run_id in main_state(page)["inFlight"]
     expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
 
@@ -742,12 +774,12 @@ def test_expired_publication_reports_uncertainty_instead_of_an_unsaved_claim(rec
     api.stream_mode = "transport"
     mount_recovery(page, api)
     page.get_by_role("button", name="Approve and run the plan").click()
-    expect(page.get_by_text("Checking execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
     run_id = api.plan["run_id"]
     api.begin_finalization(run_id, "failed")
     api.records[run_id]["finalization_status"] = "interrupted"
     api.records[run_id]["recovery"] = api.recovery(run_id)
-    page.get_by_role("button", name="Check saved status").first.click()
+    check_saved_status(page)
     expect(page.get_by_text("before a final conversation message could be confirmed", exact=False).first).to_be_visible()
     expect(page.get_by_text("message was not saved", exact=False)).to_have_count(0)
     assert not main_state(page)["inFlight"]
@@ -761,6 +793,7 @@ def test_failure_text_is_inert_and_confirmation_is_keyboard_accessible_on_mobile
     api.records[api.plan["run_id"]]["failure"]["message"] = sentinel
     page.set_viewport_size({"width": 390, "height": 844})
     mount_recovery(page, api, saved=True)
+    open_recovery_details(page)
     expect(page.get_by_text(sentinel, exact=True)).to_be_visible()
     expect(page.locator('[onerror]')).to_have_count(0)
     assert page.evaluate("window.recoveryExecuted") is None
@@ -849,11 +882,11 @@ def test_transport_loss_then_legacy_refusal_ends_the_tracked_run(recovery_ui):
     page.clock.install()
     mount_recovery(page, api)
     page.get_by_role("button", name="Approve and run the plan").click()
-    expect(page.get_by_text("Checking execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
     run_id = api.plan["run_id"]
     assert run_id in main_state(page)["inFlight"]
     api.legacy.add(run_id)
-    page.get_by_role("button", name="Check saved status").first.click()
+    check_saved_status(page)
     expect(page.get_by_text(LEGACY_PLAN_MESSAGE, exact=True).first).to_be_visible()
     state = main_state(page)
     assert run_id not in state["inFlight"]
@@ -874,10 +907,10 @@ def test_stop_on_a_legacy_run_releases_it_with_the_server_message(recovery_ui):
     page.clock.install()
     mount_recovery(page, api)
     page.get_by_role("button", name="Approve and run the plan").click()
-    expect(page.get_by_text("Checking execution status", exact=False).first).to_be_visible()
+    expect(page.get_by_text("Execution status", exact=False).first).to_be_visible()
     run_id = api.plan["run_id"]
     api.legacy.add(run_id)
-    page.get_by_role("button", name="Stop execution").first.click()
+    stop_from_composer(page)
     expect(page.get_by_text(LEGACY_PLAN_MESSAGE, exact=True).first).to_be_visible()
     assert run_id not in main_state(page)["inFlight"]
     assert not has_active_orchestration(page)
@@ -1007,8 +1040,9 @@ def test_ended_run_shows_unfinished_steps_as_not_finished_and_offers_retry(recov
     mount_recovery(page, api, saved=True)
     expect(page.get_by_text(WAIT_FAILURE["message"], exact=True).first).to_be_visible()
     expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
-    page.get_by_role("button", name="Review saved attempt").first.click()
+    review_saved_attempt(page)
     drawer = page.get_by_role("complementary", name="Review drawer")
+    open_recovery_details(drawer)
     research = drawer.locator('[data-step-id="research"]')
     expect(research.locator('[data-step-status="unfinished"]')).to_have_text("Not finished")
     expect(research.get_by_text("The run ended before this step finished.", exact=True)).to_be_visible()
@@ -1029,7 +1063,7 @@ def test_file_that_cannot_be_retried_alone_offers_retry_from_failed_step(recover
     fail_file(api, can_retry=False)
     mount_recovery(page, api, saved=True)
     expect(page.get_by_text(SIGN_IN_FILE_MESSAGE, exact=True).first).to_be_visible()
-    expect(page.get_by_text("A file could not be created and cannot be retried on its own.", exact=False).first).to_be_visible()
+    expect(page.get_by_text("Some work could not finish. Your completed results are saved.", exact=True).first).to_be_visible()
     expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
     expect(page.get_by_text("Review each file separately.", exact=False)).to_have_count(0)
     expect(page.get_by_role("button", name="Retry file bank_analysis.docx")).to_have_count(0)
@@ -1045,7 +1079,7 @@ def test_file_that_can_be_retried_alone_keeps_only_the_file_retry(recovery_ui):
     fail_file(api, can_retry=True)
     mount_recovery(page, api, saved=True)
     expect(page.get_by_role("button", name="Retry file bank_analysis.docx").first).to_be_visible()
-    expect(page.get_by_text("Review each file separately.", exact=False).first).to_be_visible()
+    expect(page.get_by_text("A file needs attention. Review its file controls below.", exact=True).first).to_be_visible()
     expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
     assert not api.calls("/run") and not api.calls("/retry")
 
@@ -1118,6 +1152,7 @@ def test_unverified_available_information_flags_never_offer_continuation(recover
     api.recovery = lambda run_id: {**original(run_id), "can_use_available_information": flag}
     api.finish(api.plan["run_id"])
     mount_recovery(page, api, saved=True)
+    open_recovery_details(page)
     expect(page.get_by_role("button", name="Review saved attempt").first).to_be_visible()
     expect(page.get_by_role("button", name="Use available information", exact=True)).to_have_count(0)
     assert not api.calls("/run") and not api.calls("/retry")

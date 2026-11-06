@@ -25,10 +25,12 @@ import {
     type RunHistoryEntry,
     type TrackedRun,
 } from '../../stores/orchestrationStore';
-import { orderStepsForDisplay } from '../../lib/orchestrationPlan';
+import { applyPlanEdits, emptyPlanEdits, orderStepsForDisplay } from '../../lib/orchestrationPlan';
 import { fetchConversationRuns, fetchRunSteps, isOrchestrationRunWaiting } from '../../lib/orchestration';
 import type { OrchestrationPlan, PersistedRunStep } from '../../lib/orchestration';
 import { legacyPlanErrorMessage } from '../../lib/orchestrationErrors';
+import { plannedCheckStages } from '../../lib/taskCompleteness';
+import { CheckStageList } from '../ui/TaskCompletenessDetails';
 
 /** Mirror of the store's private scope key; the NUL separator must match `orchestrationStore`. */
 function scopeKey(conversationId: string, turnId: string): string {
@@ -80,6 +82,8 @@ export function OrchestrationMapView({
     const inFlightMap = useOrchestrationStore((state) => state.inFlight);
     const plansMap = useOrchestrationStore((state) => state.plans);
     const runRecovery = useOrchestrationStore((state) => state.runRecovery);
+    const runtimeMap = useOrchestrationStore((state) => state.stepRuntime);
+    const editsMap = useOrchestrationStore((state) => state.edits);
     const hydrationStatus = useOrchestrationStore((state) =>
         selectHydrationStatus(state, conversationId),
     );
@@ -269,15 +273,16 @@ export function OrchestrationMapView({
                 const isShown = row.turnId === shownTurnId;
                 const candidate = plansMap[scopeKey(conversationId, row.turnId)];
                 const plan: OrchestrationPlan | undefined = candidate?.run_id === row.runId ? candidate : undefined;
-                const planSteps = plan ? orderStepsForDisplay(plan.steps) : [];
+                const planSteps = plan ? orderStepsForDisplay(
+                    applyPlanEdits(plan, editsMap[scopeKey(conversationId, row.turnId)] ?? emptyPlanEdits()).steps,
+                ) : [];
+                const savedSteps = (fetchedSteps[row.runId] ?? []).slice()
+                    .sort((a, b) => (a.step_index ?? 0) - (b.step_index ?? 0));
                 // A plan in memory is authoritative; otherwise the stored step records stand in,
                 // which is what lets a row from another device expand to real titles.
                 const stepTitles: string[] = plan
                     ? planSteps.map((step) => step.title)
-                    : (fetchedSteps[row.runId] ?? [])
-                          .slice()
-                          .sort((a, b) => (a.step_index ?? 0) - (b.step_index ?? 0))
-                          .map((step, index) => step.title || `Step ${index + 1}`);
+                    : savedSteps.map((step, index) => step.title || `Step ${index + 1}`);
                 const stepCount = plan ? planSteps.length : row.stepCount || stepTitles.length;
                 const artifactCount = row.artifactCount;
                 const stepsLoading = loadingSteps.has(row.runId);
@@ -367,9 +372,18 @@ export function OrchestrationMapView({
                                             <span className="shrink-0 font-mono text-text-3">
                                                 {index + 1}
                                             </span>
-                                            <span className="min-w-0 truncate" title={title}>
-                                                {title}
-                                            </span>
+                                            <div className="min-w-0">
+                                                <span className="break-words">{title}</span>
+                                                <CheckStageList value={planSteps[index]
+                                                    ? runtimeMap[scopeKey(conversationId, row.turnId)]?.[planSteps[index].step_id]?.task_completeness
+                                                    : savedSteps[index]?.task_completeness} />
+                                                {plan?.approval.state === 'pending' && planSteps[index]
+                                                    && !history.some((entry) => entry.runId === row.runId)
+                                                    ? <ul className="mt-1 space-y-1 text-text-3">
+                                                        {plannedCheckStages(planSteps[index]).map((label) =>
+                                                            <li key={label}>{label} — Planned</li>)}
+                                                    </ul> : null}
+                                            </div>
                                         </li>
                                     ))}
                                 </ol>

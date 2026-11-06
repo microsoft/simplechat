@@ -90,6 +90,8 @@ export interface OrchestrationRecovery {
     reused_step_ids: string[];
     requires_confirmation: boolean;
     can_use_available_information?: boolean;
+    /** Only a server-confirmed checker checkpoint may use the check-only recovery label. */
+    retry_scope?: 'check' | 'step';
 }
 
 /** The server's check, after a run, of whether the answer shows a chart or diagram the user asked for. */
@@ -160,6 +162,7 @@ export function normalizeOrchestrationRecovery(value: unknown): OrchestrationRec
         // Missing replay-safety information must never silently authorize external effects.
         requires_confirmation: data.requires_confirmation !== false,
         ...(data.can_use_available_information === true ? { can_use_available_information: true } : {}),
+        ...(data.retry_scope === 'check' || data.retry_scope === 'step' ? { retry_scope: data.retry_scope } : {}),
     };
 }
 
@@ -602,6 +605,7 @@ export interface OrchestrationPlan {
 export interface PlanEdits {
     disabled_step_ids: string[];
     removed_document_ids: Record<string, string[]>;
+    semantic_review?: Record<string, 'auto' | 'on' | 'off'>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -909,6 +913,8 @@ export interface RunStreamEvent extends ChatStreamEvent, OrchestrationAttempt {
 /* -------------------------------------------------------------------------- */
 
 export interface PlanStreamHandlers {
+    /** Durable acceptance, before replacement planning has finished. */
+    onElicitationAccepted?: (event: PlanStreamEvent) => void;
     /** A planner reasoning step arrived (`type: "thought"`). */
     onThought?: (event: ChatStreamEvent) => void;
     /**
@@ -1415,6 +1421,11 @@ async function readPlanStream(
 
         if (event.type === 'user_message_persisted') {
             handlers.onUserMessagePersisted?.(event as ChatStreamEvent);
+            return false;
+        }
+
+        if (event.type === 'orchestration_elicitation_accepted') {
+            handlers.onElicitationAccepted?.(event);
             return false;
         }
 

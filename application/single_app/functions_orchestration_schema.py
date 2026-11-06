@@ -1800,8 +1800,8 @@ def apply_plan_edits(
 ):
     """Apply a user's edits to a plan before it runs.
 
-    Only two things are editable, and both narrow the plan rather than widening it:
-    disabling a step, and removing documents from one. A user may not add a capability or
+    Edits disable steps, remove documents, or select optional semantic review.
+    A user may not add a capability or
     a document through this path, because doing so would let the browser assemble a plan
     that never passed the planner's own reasoning or the authorization check that followed
     it. Widening belongs to re-planning, which goes back through validation.
@@ -1819,9 +1819,21 @@ def apply_plan_edits(
     disabled = set(_string_list(edits.get('disabled_step_ids')))
     removed_documents = edits.get('removed_document_ids')
     removed_documents = removed_documents if isinstance(removed_documents, dict) else {}
+    semantic_review = edits.get('semantic_review', {})
+    if type(semantic_review) is not dict or any(
+        type(key) is not str or value not in ('auto', 'on', 'off')
+        for key, value in semantic_review.items()
+    ):
+        raise PlanValidationError('The semantic review choice is invalid.')
+    review_steps = {step['step_id'] for step in plan.get('steps') or () if step['capability_id'] == 'compose'}
+    if set(semantic_review) - review_steps:
+        raise PlanValidationError('Semantic review can only be changed for prepared content.')
 
     edited = False
     for step in plan.get('steps') or ():
+        if step['step_id'] in semantic_review:
+            step['arguments']['semantic_review'] = semantic_review[step['step_id']]
+            edited = True
         if step['step_id'] in disabled and step.get('enabled', True):
             step['enabled'] = False
             edited = True
@@ -1995,8 +2007,8 @@ FAILURE_MESSAGES = {
     ),
     'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
     STORAGE_FAILURE_CODE: STORAGE_FAILURE_MESSAGE,
-    'completeness_incomplete': 'The answer did not satisfy the requested requirements within its correction allowance.',
-    'completeness_unavailable': 'The answer could not be verified. Review model availability, access and context limits.',
+    'completeness_incomplete': "The answer still needs an adjustment after checking. Your progress is saved.",
+    'completeness_unavailable': "I couldn't finish checking the prepared answer. Your progress is saved.",
     'search_result_too_large': (
         'The full search response exceeds the retained-result storage budget. No shortened result was '
         'accepted. Narrow the search or select fewer sources and create a new plan.'

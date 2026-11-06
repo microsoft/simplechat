@@ -5,7 +5,6 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { useChatStore } from '../../stores/chatStore';
 import { useOrchestrationStore } from '../../stores/orchestrationStore';
 import {
-    cancelOrchestration,
     loadOrchestrationRecovery,
     openOrchestrationRecovery,
     reconcileOrchestrationRun,
@@ -20,6 +19,15 @@ import { legacyPlanErrorMessage } from '../../lib/orchestrationErrors';
 import { filesNeedPlanRetry } from '../../lib/orchestrationOutputs';
 import { M365ApprovalInlineCard } from './M365ApprovalInlineCard';
 import { OrchestrationM365Notice } from './OrchestrationM365Notice';
+
+/** A failure-only saved reply is represented by recovery, not duplicated as answer prose. */
+export function isCheckingFailureNotice(content: string, metadata: unknown): boolean {
+    const attempt = normalizeOrchestrationAttempt(metadata);
+    return attempt.outcome === 'failed' && Boolean(attempt.run_id)
+        && ['completeness_unavailable', 'completeness_incomplete', 'task_incomplete', 'verification_unavailable']
+            .includes(attempt.failure?.code ?? '')
+        && Boolean(content.trim()) && content.trim() === attempt.failure?.message.trim();
+}
 
 function RecoveryConfirmation({
     busy, onConfirm, onClose,
@@ -91,7 +99,6 @@ export function OrchestrationRecoveryNotice({
     const waiting = isOrchestrationRunWaiting(runState);
     const failed = !waiting && (outcome === 'failed' || outcome === 'partial' || outcome === 'cancelled');
     const newer = attempt.recovery?.current_run_id || attempt.latest_attempt_run_id;
-    const previousRunId = attempt.retry_of_run_id;
     // A retry that finished needs no notice: its answer is the reply, and the attempt it
     // replaced is hidden from the thread. Its saved attempts stay reachable from the message's
     // details. A prepared retry that has not run yet still offers to run it.
@@ -140,6 +147,11 @@ export function OrchestrationRecoveryNotice({
     };
     const titleFor = (stepId: string) => currentPlan?.steps.find((step) => step.step_id === stepId)?.title || stepId;
     const allFailures = [...(attempt.failure ? [attempt.failure] : []), ...(attempt.failures ?? [])];
+    const checkingFailed = allFailures.some((failure) =>
+        ['completeness_unavailable', 'completeness_incomplete', 'task_incomplete', 'verification_unavailable']
+            .includes(failure.code));
+    const revisionNeeded = allFailures.some((failure) =>
+        ['completeness_incomplete', 'task_incomplete'].includes(failure.code));
     const replaced = Boolean(newer && newer !== runId);
     const approvalFailure = allFailures.find(
         (failure) => failure.code === 'm365_approval_required' && Boolean(failure.approval_id),
@@ -194,48 +206,22 @@ export function OrchestrationRecoveryNotice({
     return (
         <section
             aria-label="Orchestration recovery"
-            className="alert mt-3 space-y-2 rounded-xl border border-edge bg-surface-sunken p-3 text-xs text-text-2"
+            className="mt-3 space-y-2 text-sm text-text-2"
         >
-            <p role="status" className="font-medium text-text-1">
-                {saved?.transportUnknown ? 'Checking execution status'
+            <p role={saved?.error ? 'alert' : 'status'} className="font-medium text-text-1">
+                {legacy && saved?.error ? saved.error
+                    : saved?.transportUnknown ? 'Execution status is not confirmed. Your progress is saved.'
+                    : saved?.error ? saved.error
                     : waiting ? 'Waiting for required results'
-                    : outcome === 'partial' ? 'Partially completed'
-                    : outcome === 'failed' ? 'The plan could not complete'
-                    : outcome === 'cancelled' ? 'This attempt was stopped' : 'Saved execution attempt'}
-                {attempt.attempt_index ? ` - Attempt ${attempt.attempt_index}` : ''}
+                    : revisionNeeded ? 'The answer still needs revision. Your progress is saved.'
+                    : checkingFailed ? "I couldn't finish checking the answer. Your progress is saved."
+                    : fileOutputs && !planRetryForFiles ? 'A file needs attention. Review its file controls below.'
+                    : outcome === 'partial' ? 'Some work could not finish. Your completed results are saved.'
+                    : outcome === 'failed' ? 'The work could not finish. Your progress is saved.'
+                    : outcome === 'cancelled' ? 'Stopped. Your progress is saved.' : 'Saved work is ready to review.'}
             </p>
-            {attempt.failure?.message ? <p>{attempt.failure.message}</p> : null}
-            {saved?.error ? <p role="alert">{saved.error}</p> : null}
             {failed && !saved?.transportUnknown && !legacy && !replaced ? (
                 <OrchestrationM365Notice failures={allFailures} />
-            ) : null}
-            {waiting ? (
-                <p>
-                    This computation is still pending in the same attempt. Dependent tasks will wait for its results.
-                    Checking saved status or reloading does not run the task again.
-                </p>
-            ) : null}
-            {failed && !saved?.transportUnknown && !legacy ? (
-                <p>{fileOutputs && !planRetryForFiles ? 'Review each file separately. File retry controls do not repeat the plan or its producer tasks.'
-                    : planRetryForFiles && recovery?.eligible && (!newer || newer === runId)
-                    ? 'A file could not be created and cannot be retried on its own. Retry from failed step creates the plan\'s files again without repeating completed plan steps.'
-                    : recovery?.message || (newer && newer !== runId
-                    ? 'A newer execution attempt already exists. Review its saved result.'
-                    : recovery?.eligible
-                    ? 'Resume the saved plan without repeating completed plan steps.'
-                    : 'This historical attempt has no verified recovery checkpoint. It cannot be resumed; start a new plan deliberately if needed.')}</p>
-            ) : null}
-            {availableInformationAllowed ? (
-                <p>
-                    You can still prepare an answer and the requested narrative files from the accepted findings,
-                    with missing information explained. Completed source work will not run again.
-                </p>
-            ) : null}
-            {failed && planRetryOffered && recovery?.reused_step_ids.length ? (
-                <p><strong>Reuse saved results:</strong> {recovery.reused_step_ids.map(titleFor).join(', ')}.</p>
-            ) : null}
-            {failed && planRetryOffered && recovery?.retry_step_ids.length ? (
-                <p><strong>Execute on retry:</strong> {recovery.retry_step_ids.map(titleFor).join(', ')}.</p>
             ) : null}
             <div className="flex flex-wrap gap-2">
                 {!fileOutputs && preparedRetry ? (
@@ -247,31 +233,13 @@ export function OrchestrationRecoveryNotice({
                 {retryAllowed ? (
                     <GlassButton size="sm" disabled={Boolean(saved?.busy || streaming || active)}
                         onClick={() => void retry()}>
-                        {saved?.busy ? 'Preparing retry...' : 'Retry from failed step'}
+                        {saved?.busy ? 'Preparing retry...' : recovery?.retry_scope === 'check' ? 'Retry check' : 'Retry from failed step'}
                     </GlassButton>
                 ) : null}
-                {availableInformationAllowed ? (
+                {availableInformationAllowed && !retryAllowed ? (
                     <GlassButton size="sm" disabled={Boolean(saved?.busy || streaming || active)}
                         onClick={() => void retry(undefined, true)}>
                         {saved?.busy ? 'Preparing answer...' : 'Use available information'}
-                    </GlassButton>
-                ) : null}
-                {newer && newer !== runId ? (
-                    <GlassButton size="sm" variant="subtle"
-                        onClick={() => openOrchestrationRecovery(conversationId, newer)}>
-                        View current attempt
-                    </GlassButton>
-                ) : null}
-                {previousRunId ? (
-                    <GlassButton size="sm" variant="subtle"
-                        onClick={() => openOrchestrationRecovery(conversationId, previousRunId)}>
-                        View previous attempt
-                    </GlassButton>
-                ) : null}
-                {!legacy ? (
-                    <GlassButton size="sm" variant="ghost"
-                        onClick={() => openOrchestrationRecovery(conversationId, runId)}>
-                        Review saved attempt
                     </GlassButton>
                 ) : null}
                 {!legacy && (waiting || saved?.transportUnknown || saved?.error) ? (
@@ -280,13 +248,35 @@ export function OrchestrationRecoveryNotice({
                         Check saved status
                     </GlassButton>
                 ) : null}
-                {(waiting || saved?.transportUnknown) && inFlight[runId] ? (
-                    <GlassButton size="sm" variant="ghost"
-                        onClick={() => void cancelOrchestration(conversationId, runId)}>
-                        Stop execution
-                    </GlassButton>
-                ) : null}
             </div>
+            {!legacy ? <details className="text-xs">
+                <summary className="cursor-pointer rounded py-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+                    Run details
+                </summary>
+                <div className="space-y-2 py-2">
+                    {attempt.failure?.message ? <p>{attempt.failure.message}</p> : null}
+                    {saved?.error && saved.transportUnknown ? <p role="alert">{saved.error}</p> : null}
+                    {waiting ? <p>Pending work has not failed. Checking saved status does not execute it again.</p> : null}
+                    {recovery?.message ? <p>{recovery.message}</p> : null}
+                    {failed && !recovery?.eligible && !legacy ? <p>No verified retry checkpoint is available.</p> : null}
+                    {failed && planRetryOffered && recovery?.reused_step_ids.length ? (
+                        <p><strong>Reuse saved results:</strong> {recovery.reused_step_ids.map(titleFor).join(', ')}.</p>
+                    ) : null}
+                    {failed && planRetryOffered && recovery?.retry_step_ids.length ? (
+                        <p><strong>Execute on retry:</strong> {recovery.retry_step_ids.map(titleFor).join(', ')}.</p>
+                    ) : null}
+                    {availableInformationAllowed && retryAllowed ? (
+                        <GlassButton size="sm" disabled={Boolean(saved?.busy || streaming || active)}
+                            onClick={() => void retry(undefined, true)}>Use available information</GlassButton>
+                    ) : null}
+                    {!legacy ? <GlassButton size="sm" variant="ghost"
+                        onClick={() => openOrchestrationRecovery(conversationId, runId)}>Review saved attempt</GlassButton> : null}
+                    {newer && newer !== runId ? <GlassButton size="sm" variant="ghost"
+                        onClick={() => openOrchestrationRecovery(conversationId, newer)}>View current attempt</GlassButton> : null}
+                    {attempt.retry_of_run_id ? <GlassButton size="sm" variant="ghost"
+                        onClick={() => openOrchestrationRecovery(conversationId, attempt.retry_of_run_id!)}>View previous attempt</GlassButton> : null}
+                </div>
+            </details> : null}
             {confirmation}
         </section>
     );

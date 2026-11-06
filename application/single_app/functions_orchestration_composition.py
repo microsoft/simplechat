@@ -25,6 +25,7 @@ Microsoft 365 answers avoid routine provenance introductions without losing disc
 import json
 import logging
 import re
+from copy import deepcopy
 
 from jsonschema import Draft202012Validator
 
@@ -235,6 +236,8 @@ def _compose_correction(error, outputs):
     names = ', '.join(_quoted(output['name']) for output in outputs)
     return ' '.join((
         f'Your previous reply could not be used: {problem}.',
+        (f'Validation differences: {json.dumps(error.validation_issues, ensure_ascii=False)}.'
+         if getattr(error, 'validation_issues', None) else ''),
         f'Reply again with only one JSON object whose keys are exactly {names}, and no other text.',
         *(_output_shape(output) for output in outputs),
     ))
@@ -265,8 +268,18 @@ def validate_prepared_output(specification, value, *, profile_validator=None):
         raise ResultContractError('result_kind_incompatible')
     if 'schema' in specification:
         validate_inline_output_schema(specification['schema'])
-        if not Draft202012Validator(specification['schema']).is_valid(value):
-            raise ResultContractError('result_schema_invalid')
+        issues = []
+        for issue in Draft202012Validator(specification['schema']).iter_errors(value):
+            issues.append({
+                'path': list(issue.absolute_path), 'constraint': issue.validator,
+                'expected': issue.validator_value, 'observed_type': type(issue.instance).__name__,
+            })
+            if len(issues) == 8:
+                break
+        if issues:
+            error = ResultContractError('result_schema_invalid')
+            error.validation_issues = issues
+            raise error
     if 'profile' in specification:
         if not callable(profile_validator):
             raise ResultContractError('result_profile_unavailable')
@@ -517,6 +530,7 @@ def check_retained_final_response(step, result, context, *, settings, emit=None,
                          if reference.completeness.status == 'partial' and narrative_result_ready(reference) else {})},
             evidence=evidence, policy=policy, invoke=invoke_check,
             validate=lambda value: [], checkpoint=checkpoint, saved_state=saved, recheck=recheck,
+            owner_step_id=step['step_id'],
             on_error=lambda error_type: log_event(
                 '[ORCHESTRATION_EXECUTOR] Retained final-answer verification unavailable.',
                 level=logging.WARNING, extra={'error_type': error_type, 'step_id': step['step_id']},
@@ -766,13 +780,26 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     raise
             return values
 
-        check_policy = completeness_policy(settings, 'chat_orchestration')
+        check_policy = completeness_policy(
+            settings, 'chat_orchestration',
+            semantic_review=step['arguments'].get('semantic_review', 'auto'),
+        )
         completeness_store = getattr(context, 'completeness_store', None)
         completeness_binding = getattr(context, 'completeness_binding', None)
         saved_completeness = (
             completeness_store.load_completeness(step['step_id'], binding=completeness_binding)
             if check_policy['enabled'] and completeness_store is not None else None
         )
+        if saved_completeness is None and check_policy['enabled']:
+            retained_check = (getattr(context, 'completeness_retry_states', None) or {}).get(step['step_id'])
+            if retained_check is not None:
+                saved_completeness = deepcopy(retained_check)
+                # This is an explicit new checking attempt, never a replay of an ambiguous correction.
+                if saved_completeness.get('status') in ('verification_unavailable', 'incomplete'):
+                    saved_completeness.update(
+                        status='checking', reason_code='', report_repairs=0,
+                        deterministic_status='pending', semantic_status='pending',
+                    )
         recheck()
         response = (
             saved_completeness['original'] if saved_completeness
@@ -814,6 +841,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
 
             def save_completeness(state):
                 state['model_binding'] = step.get('model_binding') or {'model_id': str(context.gpt_model or '')}
+                state['owner_step_id'] = step['step_id']
                 if completeness_store is not None:
                     completeness_store.save_completeness(
                         step['step_id'], state, binding=completeness_binding,
@@ -821,7 +849,13 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 if callable(emit):
                     emit({
                         'type': 'step', 'step_id': step['step_id'], 'phase': 'running',
-                        'summary': 'Checking answer completeness.' if state['status'] != 'correcting' else 'Correcting the answer from available evidence.',
+                        'summary': (
+                            'Adjusting the answer from the checking feedback.' if state['status'] == 'correcting'
+                            else 'Checking the prepared answer.' if state['status'] not in ('complete', 'incomplete', 'verification_unavailable')
+                            else 'Answer prepared; checking could not finish.' if state['status'] == 'verification_unavailable'
+                            else 'Answer needs an adjustment.' if state['status'] == 'incomplete'
+                            else 'Prepared answer checks completed.'
+                        ),
                         'task_completeness': public_completeness_report(state),
                     })
 
@@ -861,6 +895,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 evidence=completeness_evidence,
                 policy=check_policy, invoke=invoke_check, validate=validate_candidate,
                 checkpoint=save_completeness, saved_state=saved_completeness, recheck=recheck,
+                owner_step_id=step['step_id'],
                 on_error=lambda error_type: log_event(
                     '[ORCHESTRATION_EXECUTOR] Task completeness verification unavailable.',
                     level=logging.WARNING, extra={'error_type': error_type, 'step_id': step['step_id']},

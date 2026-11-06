@@ -178,6 +178,15 @@ class ConversationRouteTests(unittest.TestCase):
         }
         identity = lambda function: function
         dependencies = {
+            "functions_settings": fake_module(
+                "functions_settings", get_settings=lambda: dict(self.settings),
+                get_user_settings=lambda user_id: {"settings": {}},
+                enabled_required=lambda *args: identity, workflow_user_required=identity,
+            ),
+            "functions_public_workspaces": fake_module(
+                "functions_public_workspaces",
+                resolve_public_chat_workspace_ids=lambda *args, **kwargs: [],
+            ),
             "functions_authentication": fake_module(
                 "functions_authentication",
                 get_current_user_id=lambda: "user1",
@@ -357,6 +366,7 @@ class ConversationRouteTests(unittest.TestCase):
             patch.object(self.store, "cosmos_orchestration_run_steps_container", self.steps),
             patch.object(self.route, "cosmos_conversations_container", self.conversations),
             patch.object(self.route, "cosmos_messages_container", self.messages),
+            patch.object(self.route, "shared_conversation", lambda conversation_id: None),
             patch.object(self.route, "get_settings", lambda: dict(self.settings)),
             patch.object(self.route, "_now_iso", lambda: "2026-09-01T13:00:00+00:00"),
             patch.object(self.route, "resolve_orchestration_model", model_resolver),
@@ -379,6 +389,8 @@ class ConversationRouteTests(unittest.TestCase):
                 external_source_preflight=lambda *a, **k: None,
                 capture_external_source_configuration=lambda *a, **k: None,
                 native_bridge_for_step=None,
+                selected_source_context_reader=None,
+                document_transform_candidate_reader=None,
                 export_catalog=lambda: [],
                 capability_request_bindings=lambda: {
                     "external_source_preflight": lambda *a, **k: None,

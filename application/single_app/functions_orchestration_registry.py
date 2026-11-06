@@ -764,6 +764,10 @@ CAPABILITY_REGISTRY = (
             "The question asks about information likely held in the user's own documents, "
             "and no particular document has been named. Prefer this over analysing a whole "
             "document when a few passages would answer the question."
+            " For Excel Notes or threaded comments, use native_section=comments with explicit "
+            "document_ids. This reads the native inventory across pages, including available "
+            "authors, replies, dates, resolution, worksheet/cell and saved cell values. Bind "
+            "prepared or evidence to compose; row analysis alone cannot read annotations."
         ),
         'settings_gates': (),
         'settings_gates_any': (
@@ -792,6 +796,10 @@ CAPABILITY_REGISTRY = (
                     'default': 'all',
                 },
                 'top_n': {'type': 'integer', 'minimum': 1, 'maximum': 50, 'default': 12},
+                'native_section': {
+                    'type': 'string', 'enum': ['comments'],
+                    'description': 'Read actual Excel Notes/threaded comments instead of search excerpts.',
+                },
             },
             'required': ['query'],
             'additionalProperties': False,
@@ -1614,6 +1622,10 @@ CAPABILITY_REGISTRY = (
                 'knowledge_basis': {'type': 'string', 'enum': list(KNOWLEDGE_BASES)},
                 'response_policy': {
                     'type': 'string', 'enum': ['available_information', 'complete_inputs'],
+                },
+                'semantic_review': {
+                    'type': 'string', 'enum': ['auto', 'on', 'off'],
+                    'description': 'Optional semantic review; required output validation always runs.',
                 },
                 'visuals': {
                     'type': 'array', 'items': {'type': 'string', 'enum': list(VISUAL_KINDS)},
