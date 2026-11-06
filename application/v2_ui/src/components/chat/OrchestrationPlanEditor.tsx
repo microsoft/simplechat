@@ -423,6 +423,7 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
                                                         ...(context ? { elicitation_context: context } : {}),
                                                     })}
                                                     onCancel={() => void cancelChange()}
+                                                    onReconcile={() => void refreshOrchestrationPlanEditor(target)}
                                                 />
                                             ) : null}
                                         </>

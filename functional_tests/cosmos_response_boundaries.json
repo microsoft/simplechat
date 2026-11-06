@@ -19812,14 +19812,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f900cc5f3e7de61d2e8305f11e1d6c8d7e0277542d439c9f0d1c9a722bc86bac"
+        "module_sha256": "fc94c0938f3f1442ddfea3618810647e971a37e11e0ab480a6b7b06f4612c4e0"
       },
       "classification": "sdk-compatible",
       "contract": "Authorized chat-attachment readiness uses partitioned query rows, which remain plain dictionaries; workspace manifests and readiness checks consume field projections without changing strict reference validation.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_sources.py::test_sdk_chat_attachment_reference_readiness_query"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_context.py::_image_reference_message_candidates": {
       "boundary": {
@@ -19833,14 +19833,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f900cc5f3e7de61d2e8305f11e1d6c8d7e0277542d439c9f0d1c9a722bc86bac"
+        "module_sha256": "fc94c0938f3f1442ddfea3618810647e971a37e11e0ab480a6b7b06f4612c4e0"
       },
       "classification": "sdk-compatible",
       "contract": "Partitioned message point mappings are checked for conversation identity, image/file role and supported filename; only a plain candidate DTO is emitted, never the SDK document.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_sources.py::test_sdk_image_reference_candidates_use_partitioned_message_read"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_context.py::_owned_elicitation_conversation": {
       "boundary": {
@@ -19854,14 +19854,56 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f900cc5f3e7de61d2e8305f11e1d6c8d7e0277542d439c9f0d1c9a722bc86bac"
+        "module_sha256": "fc94c0938f3f1442ddfea3618810647e971a37e11e0ab480a6b7b06f4612c4e0"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation point mapping is authorized through user_id and passed to Mapping-compatible scope-lock readers; missing or foreign conversations retain ElicitationContextError rather than an empty fallback.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_sources.py::test_sdk_owned_elicitation_conversation_authorizes_current_owner"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_orchestration_context.py::resolve_conversation_attachments": {
+      "boundary": {
+        "sha256": "f0d3c518a92ce987131361aa32d9b1503c6fa9660ccf42876cb6cc763e73b1b4",
+        "points": [],
+        "queries": [
+          {
+            "method": "query_items",
+            "receiver": "cosmos_messages_container",
+            "response": "consumed"
+          }
+        ],
+        "batches": [],
+        "module_sha256": "fc94c0938f3f1442ddfea3618810647e971a37e11e0ab480a6b7b06f4612c4e0"
+      },
+      "classification": "sdk-compatible",
+      "contract": "Bounded partitioned query rows are plain dictionaries. Current ownership, audience and source authorization are applied before emitting metadata-only plain candidate DTOs; content and SDK point documents are never emitted to the planner.",
+      "tests": [
+        "functional_tests/test_orchestration_attachment_native_evidence.py::test_http_existing_image_repairs_redundant_choice_then_reads_authorized_text"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_orchestration_context.py::validate_conversation_attachment": {
+      "boundary": {
+        "sha256": "51b1c0eb0ed02b80fe6a35727ef70aae48a3ab9e1bc590a2c399eaac1c5113c7",
+        "points": [
+          {
+            "method": "read_item",
+            "receiver": "cosmos_messages_container",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "fc94c0938f3f1442ddfea3618810647e971a37e11e0ab480a6b7b06f4612c4e0"
+      },
+      "classification": "sdk-compatible",
+      "contract": "The real SDK message point mapping is consumed through Mapping-compatible field access for current conversation identity, upload readiness and masking. Authorized saved text is read only after this check and late masking retains the failure path.",
+      "tests": [
+        "functional_tests/test_orchestration_attachment_native_evidence.py::test_http_existing_image_repairs_redundant_choice_then_reads_authorized_text"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_continuation.py::ContinuationExecutionLease._roll_guard": {
       "boundary": {
@@ -20200,14 +20242,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "75cedc145f0f817c43fb3244baf9664fbe510d74017db3b695420b24fc6f30bf"
+        "module_sha256": "3dd5d4c559ae1e8095661ba333632a08f55b9d105286b48cacca46f450c0d5ce"
       },
       "classification": "sdk-compatible",
       "contract": "Owned revision reads and execution claims normalize the outer wrapper; ownership, lineage and ETag fencing stay in this owner.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_plan_revisions.py::complete_plan_revision": {
       "boundary": {
@@ -20221,14 +20263,14 @@
             "response": "consumed"
           }
         ],
-        "module_sha256": "75cedc145f0f817c43fb3244baf9664fbe510d74017db3b695420b24fc6f30bf"
+        "module_sha256": "3dd5d4c559ae1e8095661ba333632a08f55b9d105286b48cacca46f450c0d5ce"
       },
       "classification": "sdk-compatible",
       "contract": "Owned revision reads and execution claims normalize the outer wrapper; ownership, lineage and ETag fencing stay in this owner.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_plan_revisions.py::plan_editor_state": {
       "boundary": {
@@ -20242,14 +20284,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "75cedc145f0f817c43fb3244baf9664fbe510d74017db3b695420b24fc6f30bf"
+        "module_sha256": "3dd5d4c559ae1e8095661ba333632a08f55b9d105286b48cacca46f450c0d5ce"
       },
       "classification": "sdk-compatible",
       "contract": "Owned revision reads and execution claims normalize the outer wrapper; ownership, lineage and ETag fencing stay in this owner.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_plan_revisions.py::read_revision_run": {
       "boundary": {
@@ -20263,14 +20305,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "75cedc145f0f817c43fb3244baf9664fbe510d74017db3b695420b24fc6f30bf"
+        "module_sha256": "3dd5d4c559ae1e8095661ba333632a08f55b9d105286b48cacca46f450c0d5ce"
       },
       "classification": "normalized-strict",
       "contract": "Owned revision reads and execution claims normalize the outer wrapper; ownership, lineage and ETag fencing stay in this owner.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_planning.py::_read_question": {
       "boundary": {
@@ -20375,10 +20417,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2433e312b18c4bb9c7a592fb1c296a935f6d3f55c713a04d041f48aae1eb505c"
+        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
       },
       "classification": "sdk-compatible",
-      "contract": "Guard and message SDK point mappings supply owner/token/claim/digest fields. The guard digest still exactly binds the expected publication; metadata-stripped plain projections use strict publication-only numeric equivalence without coercing booleans, strings or changed values. Lease ownership is checked before and after the probe.",
+      "contract": "Review 0.261.416: publication matching owner AST is unchanged. SDK guard/message mappings supply ownership and digest fields; metadata-stripped plain projections reach publication_documents_match, with lease checks before and after the probe.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py",
@@ -20408,14 +20450,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2433e312b18c4bb9c7a592fb1c296a935f6d3f55c713a04d041f48aae1eb505c"
+        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
       },
       "classification": "sdk-compatible",
-      "contract": "Guard-create and conditional-replace responses are discarded; a conflicting guard is read through mapping fields and its original _etag is used with IfNotModified before ownership is rechecked. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
+      "contract": "Review 0.261.416: guard admission owner AST is unchanged. Returned writes are unused; conflicting SDK guard mappings supply owner/token/claim fields and original _etag for conditional replacement. Metadata stripping constructs a plain replacement.",
       "evidence_scope": "owner-runtime",
-      "tests": [
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      "tests": ["functional_tests/test_orchestration_cosmos_response_contract.py"]
     },
     "application/single_app/functions_orchestration_recovery.py::ExecutionLease.publish_message": {
       "boundary": {
@@ -20445,14 +20485,12 @@
             "response": "unused"
           }
         ],
-        "module_sha256": "2433e312b18c4bb9c7a592fb1c296a935f6d3f55c713a04d041f48aae1eb505c"
+        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
       },
       "classification": "sdk-compatible",
-      "contract": "Guard/current-message point mappings feed ownership and retraction checks; metadata is stripped into plain batch bodies while original ETags fence atomic publication. Batch status/body responses remain separate from point documents. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
+      "contract": "Review 0.261.416: message publication owner AST is unchanged. SDK point mappings feed ownership/retraction checks; metadata-stripped plain bodies and original ETags fence atomic publication. Batch responses are unused.",
       "evidence_scope": "owner-runtime",
-      "tests": [
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      "tests": ["functional_tests/test_orchestration_cosmos_response_contract.py"]
     },
     "application/single_app/functions_orchestration_recovery.py::_replace": {
       "boundary": {
@@ -20466,14 +20504,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2433e312b18c4bb9c7a592fb1c296a935f6d3f55c713a04d041f48aae1eb505c"
+        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
       },
       "classification": "normalized-strict",
-      "contract": "The run replacement preserves the input _etag with IfNotModified, rejects non-document responses through CheckpointError and normalizes the returned SDK document before lease/checkpoint strict contracts; domain values are not recursively repaired. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
+      "contract": "Review 0.261.416: run replacement owner AST is unchanged. Input ETags fence IfNotModified; normalize_cosmos_document returns a plain document before downstream lease/checkpoint contracts. Non-document responses take CheckpointError.",
       "evidence_scope": "owner-runtime",
-      "tests": [
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      "tests": ["functional_tests/test_orchestration_cosmos_response_contract.py"]
     },
     "application/single_app/functions_orchestration_recovery.py::claim_waiting_continuation": {
       "boundary": {
@@ -20487,14 +20523,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2433e312b18c4bb9c7a592fb1c296a935f6d3f55c713a04d041f48aae1eb505c"
+        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
       },
       "classification": "sdk-compatible",
-      "contract": "The publication-guard point mapping is checked for user/conversation/run identity before a plain claim descriptor is retained; run claims keep their normalized storage-owner boundary and conditional ETags. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
+      "contract": "Review 0.261.416: waiting-continuation owner AST is unchanged. SDK publication-guard mappings are checked for actor/conversation/run identity before constructing a plain claim descriptor; run claims use the normalized replacement owner and conditional ETags.",
       "evidence_scope": "owner-runtime",
-      "tests": [
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      "tests": ["functional_tests/test_orchestration_cosmos_response_contract.py"]
     },
     "application/single_app/functions_orchestration_recovery.py::cleanup_conversation_checkpoints": {
       "boundary": {
@@ -20519,14 +20553,12 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2433e312b18c4bb9c7a592fb1c296a935f6d3f55c713a04d041f48aae1eb505c"
+        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
       },
       "classification": "sdk-compatible",
-      "contract": "Conversation point mappings provide owner and _etag for a conditional deletion fence; replacements are plain metadata-stripped projections and responses are discarded. Run discovery consumes plain partitioned query rows. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
+      "contract": "Review 0.261.416: cleanup owner AST is unchanged. Conversation SDK mappings supply owner/_etag; metadata-stripped plain replacements fence deletion and write responses are unused. Partitioned query rows remain plain.",
       "evidence_scope": "owner-runtime",
-      "tests": [
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      "tests": ["functional_tests/test_orchestration_cosmos_response_contract.py"]
     },
     "application/single_app/functions_orchestration_recovery.py::fence_publication": {
       "boundary": {
@@ -20550,18 +20582,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2433e312b18c4bb9c7a592fb1c296a935f6d3f55c713a04d041f48aae1eb505c"
+        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
       },
       "classification": "sdk-compatible",
-      "contract": "The guard point mapping supplies run/user ownership and _etag; a plain metadata-stripped tombstone is conditionally replaced, with create/replace responses discarded and conflicts retried without borrowing another owner. Review 0.261.380: Module-only terminal-result assessment retention; this storage owner AST and response consumer are unchanged.",
+      "contract": "Review 0.261.416: publication-fence owner AST is unchanged. SDK guard mappings supply owner/_etag; metadata-stripped plain tombstones use conditional replacement. Write responses are unused and conflicts cannot borrow another owner.",
       "evidence_scope": "owner-runtime",
-      "tests": [
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      "tests": ["functional_tests/test_orchestration_cosmos_response_contract.py"]
     },
     "application/single_app/functions_orchestration_recovery.py::prepare_retry": {
       "boundary": {
-        "sha256": "38538cae627d01b568dfccb75f188a4e1063313ec7124f03067aeed6511d6d5c",
+        "sha256": "996605757fab6f0452f292e973a775117410b7ea6fd9824b10475d9a44384261",
         "points": [],
         "queries": [],
         "batches": [
@@ -20571,15 +20601,16 @@
             "response": "unused"
           }
         ],
-        "module_sha256": "2433e312b18c4bb9c7a592fb1c296a935f6d3f55c713a04d041f48aae1eb505c"
+        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
       },
       "classification": "response-unused",
-      "contract": "Retry preparation ignores transactional batch response bodies. Owned run rereads normalize CosmosDict before strict binding and checkpoint contracts; output-only continuation verifies captured source digests, original production provenance, current actor scope and the approved narrative-only transition before creating its child.",
+      "contract": "Review 0.261.416: retry batch response bodies remain unused. Owned rereads normalize SDK documents before strict binding/checkpoint validation and plain child publication. Check-only retry scope is server-derived; retained candidate reuse preserves correction allowance and refuses missing checkpoints instead of regenerating.",
       "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_orchestration_available_information.py::test_saved_complete_only_failure_can_continue_without_reanalyzing",
         "functional_tests/test_orchestration_cosmos_response_contract.py",
-        "functional_tests/test_orchestration_search_result_integrity.py"
+        "functional_tests/test_orchestration_available_information.py::test_saved_complete_only_failure_can_continue_without_reanalyzing",
+        "functional_tests/test_orchestration_search_result_integrity.py",
+        "functional_tests/test_task_completeness_runtime.py::test_explicit_retry_rechecks_retained_candidate_without_regeneration"
       ]
     },
     "application/single_app/functions_orchestration_runs.py::_publish_replanned_run": {
@@ -31357,15 +31388,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation point mapping proves owner/nondeleted state through field access and now rechecks shared-source membership before dependent reads; missing or unauthorized records retain ConversationContextError.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_conversation_sources.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_checkpoint_artifact_versions": {
       "boundary": {
@@ -31379,14 +31410,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "Artifact point mappings are JSON-encoded by the existing checkpoint fingerprint helper; SDK dictionary subclasses are supported and nested artifact validation is unchanged.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_conversation_context_for_run": {
       "boundary": {
@@ -31400,15 +31431,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "The saved turn point mapping is normalized by normalize_history_message before role/conversation/fingerprint validation; history-disabled snapshots fail before reuse and source authorization is rechecked.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_conversation_sources.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_ensure_conversation": {
       "boundary": {
@@ -31432,14 +31463,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "Requested conversation point mappings supply owner/scope/deletion fields; constructed create/upsert bodies are plain and write responses are discarded. Shared ownership is established separately, not inferred from wrapper type.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_link_regeneration_thread": {
       "boundary": {
@@ -31453,14 +31484,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "Point answer mappings supply conversation/visibility and nested thread fields; metadata patching retains its existing owner and stale or missing answers are not silently restored.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_load_conversation_snapshot": {
       "boundary": {
@@ -31480,14 +31511,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "A cutoff point mapping supplies authorized conversation/role/timestamp; plain bounded query rows pass through screening and saved-analysis sanitization before plain snapshot construction.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_load_ledger": {
       "boundary": {
@@ -31501,14 +31532,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "Ledger source revalidation consumes plain projected query rows to check source visibility; failed reads omit the ledger rather than authorizing point documents or widening scope.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_load_regeneration_snapshot": {
       "boundary": {
@@ -31522,14 +31553,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "Historical context discovery consumes plain partitioned query rows, applies retry-prefix/screening rules and builds a bounded plain conversation snapshot.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_mirror_planned_turn": {
       "boundary": {
@@ -31548,14 +31579,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "Conversation SDK mappings feed existing mapping-compatible shared authorization. The saved question is normalized by public_planning_message before projection/mirroring; private claims are not shared, and required admission mirror failures are explicit.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_shared_conversations.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_persist_planned_turn": {
       "boundary": {
@@ -31569,15 +31600,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "The review-required question point mapping uses nested metadata mapping updates and the existing conditional metadata writer. Planning ownership is checked before run publication; no raw SDK question reaches an exact-dictionary JSON contract.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py::test_explicit_retry_uses_saved_inputs_and_one_question",
         "functional_tests/test_orchestration_message_regeneration.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_run_response_removed": {
       "boundary": {
@@ -31591,14 +31622,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "The assistant point mapping supplies role/deletion/mask metadata to reply_is_retracted; absence is treated as removed, never as an empty valid response.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_save_message": {
       "boundary": {
@@ -31612,12 +31643,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "response-unused",
       "contract": "The message upsert response is discarded; screening and source-availability checks occur before publication, and persistence errors retain the existing failure path.",
-      "evidence_scope": "owner-runtime",
-      "tests": []
+      "tests": [],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_save_turn_message": {
       "boundary": {
@@ -31636,14 +31667,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "Question SDK point mappings are consumed by normalize_history_message and metadata mapping operations. The projected history dictionary, not the SDK wrapper, is fingerprinted. Create-only admission and conditional lifecycle writes preserve the original question.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_save_turn_message.create_question": {
       "boundary": {
@@ -31662,7 +31693,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "The question create response is discarded. A racing 409 rereads an SDK point and validates the existing question instead of upserting over it; mismatched content fails without a save acknowledgement.",
@@ -31688,14 +31719,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "The conversation point mapping supplies owner/deletion and mutable index fields; replace response is discarded and the Mapping-compatible cache invalidator consumes the authorized input.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_validate_checkpoint_artifacts": {
       "boundary": {
@@ -31709,14 +31740,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "Artifact point mappings are checked by field access for conversation/user/visibility and nested content metadata; no top-level exact-dictionary result contract consumes them.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_validate_saved_conversation_context": {
       "boundary": {
@@ -31730,19 +31761,19 @@
           }
         ],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
       "contract": "Source revalidation consumes plain bounded query rows through screening and strict saved-snapshot checks; no point wrapper is repaired into a domain context. Selected-history projection uses plain SDK query rows, existing visibility/fingerprint checks and admitted typed result references; new full-text projection and assistant-only result selection are exercised through real planning, execution and editor routes with SDK-default containers.",
-      "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_followup_citation_provenance.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::register_route_backend_orchestration.orchestration_plan": {
       "boundary": {
-        "sha256": "a1e3bd6dfcd5c021b81436c680a7e1ff8e9e49f2f8d006d8c027c7d18ff2531b",
+        "sha256": "d624632ffa277aa6b9996c012eea1db246319dac2d33087d1bddf0a32ad9423a",
         "points": [
           {
             "method": "read_item",
@@ -31752,16 +31783,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "471268db20d1197bc1b1f7a6af6a0d7cef95091d35c5dd85ba398c5588d97894"
+        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
       },
       "classification": "sdk-compatible",
-      "contract": "Clarification admission reads the SDK conversation through mapping access and rechecks ownership before dependent work. Durable planning is delegated to the normalized planning owner; canonical server selections and pre-turn snapshots are preserved.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Clarification admission reads the SDK conversation through Mapping-compatible field access and current ownership checks. Authorized attachment DTOs are selected before planning; raw SDK responses never enter strict planner source contracts. Durable planning remains delegated to the existing normalized planning owner.",
       "tests": [
-        "functional_tests/test_orchestration_elicitation_routes.py",
-        "functional_tests/test_orchestration_conversation_context_routes.py",
-        "functional_tests/test_orchestration_planning_persistence.py"
-      ]
+        "functional_tests/test_orchestration_attachment_native_evidence.py::test_http_existing_image_repairs_redundant_choice_then_reads_authorized_text"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_plugins.py::edit_plugin": {
       "boundary": {

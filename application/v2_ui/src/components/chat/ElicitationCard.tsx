@@ -11,7 +11,7 @@ import {
 } from '../../stores/orchestrationStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
-import { answerElicitation } from '../../lib/orchestrationController';
+import { answerElicitation, reconcileElicitationAnswer } from '../../lib/orchestrationController';
 import {
     buildElicitationAnswer,
     elicitationFieldKind,
@@ -37,7 +37,10 @@ export function ElicitationCard({
         selectElicitation(state, conversationId, turnId));
     const draft = useOrchestrationStore((state) =>
         selectElicitationDraft(state, conversationId, turnId));
-    if (!elicitation || !draft) {
+    useEffect(() => {
+        if (draft?.accepted) document.querySelector<HTMLElement>('[data-scroll-live-reply] [role="status"]')?.focus();
+    }, [draft?.accepted]);
+    if (!elicitation || !draft || draft.accepted) {
         return null;
     }
     return (
@@ -53,6 +56,7 @@ export function ElicitationCard({
                 elicitationId: elicitation.elicitation_id,
                 elicitationRevision: elicitation.revision ?? 0,
             })}
+            onReconcile={() => void reconcileElicitationAnswer(conversationId, turnId)}
         />
     );
 }
@@ -65,6 +69,7 @@ export function ElicitationForm({
     onDraftChange,
     onAnswer,
     onCancel,
+    onReconcile,
     cancelLabel = 'Cancel and abandon this request',
     ariaLabel = 'Follow-up questions',
 }: {
@@ -74,6 +79,7 @@ export function ElicitationForm({
     onDraftChange: (update: (current: ElicitationDraft) => ElicitationDraft) => void;
     onAnswer: (response: ElicitationResponse, context?: ElicitationContext) => void;
     onCancel?: () => void;
+    onReconcile?: () => void;
     cancelLabel?: string;
     ariaLabel?: string;
 }) {
@@ -83,6 +89,8 @@ export function ElicitationForm({
     const activeConversationId = useChatStore((state) => state.activeConversationId);
     const instanceId = useId().replace(/:/g, '');
     const pageRef = useRef<HTMLDivElement>(null);
+    const statusRef = useRef<HTMLDivElement>(null);
+    const wasSubmitting = useRef(false);
 
     const promptContext: PromptResolutionContext = useMemo(() => {
         const ownMessages = activeConversationId === conversationId ? messages : [];
@@ -102,14 +110,33 @@ export function ElicitationForm({
     const pageIndex = Math.min(draft?.pageIndex ?? 0, pages.length);
 
     useEffect(() => {
+        if (draft.submitting || draft.accepted || draft.uncertain) return;
         const target = pageRef.current?.querySelector<HTMLElement>(
             'input:not([type="file"]):not([disabled]), textarea:not([disabled]), button:not([disabled])',
         );
         (target ?? pageRef.current)?.focus();
-    }, [pageIndex, elicitation?.elicitation_id, elicitation?.revision]);
+    }, [pageIndex, elicitation?.elicitation_id, elicitation?.revision, draft.submitting, draft.accepted, draft.uncertain]);
+
+    useEffect(() => {
+        if (draft.submitting && !wasSubmitting.current) statusRef.current?.focus();
+        wasSubmitting.current = draft.submitting;
+    }, [draft.submitting]);
 
     if (!elicitation || !draft || !answer) {
         return null;
+    }
+    if (draft.submitting || draft.accepted || draft.uncertain) {
+        return (
+            <div ref={statusRef} tabIndex={-1} role="status" aria-live="polite"
+                className="my-3 flex flex-wrap items-center gap-2 text-sm text-text-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                data-testid="elicitation-submission">
+                <span>{draft.accepted ? 'Planning with your answers…'
+                    : draft.uncertain ? 'Confirming your answers. Your draft is saved.' : 'Submitting your answers…'}</span>
+                {draft.uncertain && onReconcile ? (
+                    <GlassButton size="sm" variant="ghost" onClick={onReconcile}>Check saved status</GlassButton>
+                ) : null}
+            </div>
+        );
     }
     const isReview = pageIndex === pages.length;
     const canFinish = Object.keys(answer.errors).length === 0 && !answer.pendingUploads;

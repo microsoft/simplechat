@@ -778,7 +778,8 @@ export function planEditsAreEmpty(edits: PlanEdits): boolean {
     if (edits.disabled_step_ids.length > 0) {
         return false;
     }
-    return Object.values(edits.removed_document_ids).every((ids) => ids.length === 0);
+    return Object.values(edits.removed_document_ids).every((ids) => ids.length === 0)
+        && Object.keys(edits.semantic_review ?? {}).length === 0;
 }
 
 export function isStepDisabled(edits: PlanEdits, stepId: string): boolean {
@@ -897,6 +898,13 @@ export function applyPlanEdits(plan: OrchestrationPlan, edits: PlanEdits): Orche
 
     const steps = plan.steps.map((step) => {
         let next = step;
+
+        const review = edits.semantic_review?.[step.step_id];
+        if (step.capability_id === 'compose' && ['auto', 'on', 'off'].includes(review ?? '')
+            && (step.arguments.semantic_review ?? 'auto') !== review) {
+            next = { ...next, arguments: { ...next.arguments, semantic_review: review! } };
+            edited = true;
+        }
 
         if (disabled.has(step.step_id) && next.enabled) {
             next = { ...next, enabled: false };

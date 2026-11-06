@@ -7,7 +7,7 @@ import re
 from copy import deepcopy
 
 
-REPORT_VERSION = 1
+REPORT_VERSION = 2
 MAX_CORRECTIONS = 5
 MAX_PAYLOAD_BYTES = 4 * 1024 * 1024
 REQUIREMENT_STATUSES = frozenset(("satisfied", "missing", "unsupported", "conflicting", "uncertain"))
@@ -76,8 +76,12 @@ answer_quote: one contiguous verbatim substring copied directly from candidate f
 representative verbatim phrase from candidate; never use ellipses or join separate lines),
 otherwise a substring or empty string.
 Use evidence_refs for source-dependent satisfied facts. Never invent source references.
-When previous requirements are supplied, preserve every id and requirement verbatim and
-reassess all of them; do not drop a requirement to make an answer pass.
+When previous requirements are supplied, preserve every id and reassess all of them.
+The application owns their descriptions; do not add, remove, or redefine obligations.
+You may paraphrase their descriptions, which are not compared as exact text.
+Judge meaning against the full approved scope and evidence, not lexical similarity.
+Equivalent descriptions can satisfy the request; changed numbers, negation, omitted questions,
+explicit exact-text constraints, and unsupported claims cannot.
 When response_policy is available_information, the application supplies the obligations before
 assessment. Assess every question within the scoped instruction, not only the facts answered.
 A precise, honest unknown or attributed unresolved disagreement handles a question successfully;
@@ -122,7 +126,7 @@ def _digest(value):
     return hashlib.sha256(_serialize(value).encode("utf-8")).hexdigest()
 
 
-def completeness_policy(settings, scope):
+def completeness_policy(settings, scope, *, semantic_review="auto"):
     """Absent keys opt in; explicit false and zero survive normalization."""
     if scope not in ("workflow", "chat_orchestration"):
         raise CompletenessError("completeness_policy_invalid")
@@ -132,7 +136,12 @@ def completeness_policy(settings, scope):
     limit = settings.get(f"{scope}_completeness_max_corrections", 2)
     if type(limit) is not int or not 0 <= limit <= MAX_CORRECTIONS:
         raise CompletenessError("completeness_policy_invalid")
-    return {"enabled": enabled, "max_corrections": limit}
+    if semantic_review not in ("auto", "on", "off"):
+        raise CompletenessError("completeness_policy_invalid")
+    policy = {"enabled": enabled, "max_corrections": limit}
+    if semantic_review == "off":
+        policy["semantic_enabled"] = False
+    return policy
 
 
 def _strip_json_fences(payload):
@@ -324,35 +333,65 @@ def normalize_assessment(payload, *, candidate, evidence, previous=()):
         item["answer_quote"] = _resolve_answer_quote(
             item["answer_quote"], item["status"], item["requirement"], candidate,
         )
-    if previous and {item["id"]: item["requirement"].strip() for item in requirements} != {
-        item["id"]: item["requirement"].strip() for item in previous
-    }:
-        raise CompletenessError("completeness_requirements_changed")
+    if previous:
+        canonical = {item["id"]: item["requirement"] for item in previous}
+        if ids != set(canonical):
+            raise CompletenessError("completeness_requirements_changed")
+        for item in requirements:
+            item["requirement"] = canonical[item["id"]]
     return requirements
 
 
 def public_completeness_report(state):
     """Allowlist only inert explanation metadata, never candidates, prompts or evidence."""
-    if not isinstance(state, dict) or state.get("version") != REPORT_VERSION:
+    if not isinstance(state, dict) or state.get("version") not in (1, REPORT_VERSION):
         return {}
-    return {
-        "version": REPORT_VERSION,
+    status = state.get("status", "verification_unavailable")
+    semantic = state.get("policy", {}).get("enabled", True) and state.get("policy", {}).get("semantic_enabled", True)
+    deterministic = state.get("deterministic_status", "passed" if status == "complete" else "pending")
+    semantic_status = "skipped" if not semantic else state.get("semantic_status") or (
+        "completed" if status == "complete" else
+        "failed" if status in ("incomplete", "verification_unavailable") and state.get("check_kind", "semantic") == "semantic" else
+        "running" if state.get("check_kind") == "semantic" else "pending"
+    )
+    report = {
+        "version": state["version"],
         "status": "checking" if state.get("status") == "repairing_assessment"
         else state.get("status", "verification_unavailable"),
         "corrections": state.get("corrections", 0),
         "max_corrections": state.get("policy", {}).get("max_corrections", 0),
         "checks": state.get("checks", 0),
         "reason_code": state.get("reason_code", ""),
+        "preparation_status": "prepared",
+        "check_kind": state.get("check_kind", "semantic"),
+        "deterministic_status": deterministic,
+        "semantic_enabled": bool(semantic),
+        "stages": [
+            {"id": "prepare", "kind": "preparation", "label": "Prepare answer", "status": "completed",
+             "owner_step_id": state.get("owner_step_id"), "candidate_revision": state.get("candidate_revision", 0)},
+            {"id": "format", "label": "Validate format", "status": {
+                "passed": "completed", "failed": "failed", "pending": "pending",
+            }.get(deterministic, "pending"), "kind": "deterministic", "owner_step_id": state.get("owner_step_id"),
+             "candidate_revision": state.get("candidate_revision", 0)},
+            {"id": "semantic", "label": "Review against request and evidence", "status": semantic_status,
+             "kind": "semantic", "owner_step_id": state.get("owner_step_id"),
+             "candidate_revision": state.get("candidate_revision", 0)},
+        ],
         "requirements": [
             {key: item[key] for key in ("id", "requirement", "status", "reason") if key in item}
             for item in state.get("requirements", [])
         ],
     }
+    if state["version"] == 1:
+        return {key: report[key] for key in (
+            "version", "status", "corrections", "max_corrections", "checks", "reason_code", "requirements",
+        )}
+    return report
 
 
 def check_and_correct(
     candidate, *, instruction, contract, evidence, policy, invoke, validate,
-    checkpoint=None, saved_state=None, recheck=None, on_error=None,
+    checkpoint=None, saved_state=None, recheck=None, on_error=None, owner_step_id=None,
 ):
     """Check every candidate, with one persisted allowance shared by all validators.
 
@@ -370,16 +409,22 @@ def check_and_correct(
         {"id": identifier, "requirement": requirement, "status": "missing", "reason": "Not yet assessed.",
          "evidence_refs": [], "answer_quote": ""}
         for identifier, requirement in NARRATIVE_OBLIGATIONS
-    ] if narrative else []
+    ] if narrative and policy.get("semantic_enabled", True) else []
     request_bytes = len(_serialize(request).encode("utf-8"))
-    identity = _digest({"request": request, "original": candidate, "version": REPORT_VERSION})
+    state_version = saved_state.get("version") if saved_state else REPORT_VERSION
+    identity = _digest({"request": request, "original": candidate, "version": state_version})
     state = deepcopy(saved_state) if saved_state else {
         "version": REPORT_VERSION, "identity": identity, "original": candidate,
         "candidate": candidate, "policy": dict(policy), "corrections": 0, "checks": 0,
         "requirements": obligations, "attempts": [], "status": "checking", "reason_code": "",
         "report_repairs": 0,
+        "check_kind": "deterministic", "deterministic_status": "pending", "semantic_status": "pending",
+        "owner_step_id": owner_step_id,
+        "candidate_revision": 0,
     }
-    if state.get("identity") != identity or state.get("version") != REPORT_VERSION:
+    if state.get("identity") != identity or state.get("version") not in (1, REPORT_VERSION):
+        raise CompletenessError("completeness_checkpoint_mismatch")
+    if state.get("policy") != policy:
         raise CompletenessError("completeness_checkpoint_mismatch")
     if type(state.get("corrections")) is not int or not 0 <= state["corrections"] <= MAX_CORRECTIONS:
         raise CompletenessError("completeness_checkpoint_invalid")
@@ -400,6 +445,8 @@ def check_and_correct(
 
     def stop(reason):
         state.update(status="verification_unavailable", reason_code=reason)
+        if state.get("check_kind") == "semantic":
+            state["semantic_status"] = "failed"
         save()
         return state["candidate"], state
 
@@ -419,9 +466,15 @@ def check_and_correct(
             return stop("completeness_context_limit")
         if callable(recheck):
             recheck()
+        state["check_kind"] = "deterministic"
+        state["candidate_sha256"] = _digest(current)
         deficiencies = validate(current)
+        state["deterministic_status"] = "failed" if deficiencies else "passed"
         state["checks"] += 1
-        if not deficiencies:
+        if not deficiencies and policy.get("semantic_enabled", True):
+            state["check_kind"] = "semantic"
+            state["semantic_status"] = "running"
+            save()
             payload = {
                 **request, "candidate": current,
                 "previous_requirements": [
@@ -430,9 +483,12 @@ def check_and_correct(
                 ],
             }
             def assess():
+                content = _serialize(payload)
+                if len(content.encode("utf-8")) > MAX_PAYLOAD_BYTES:
+                    raise CompletenessError("completeness_context_limit")
                 reply = invoke([
                     {"role": "system", "content": CHECK_POLICY},
-                    {"role": "user", "content": _serialize(payload)},
+                    {"role": "user", "content": content},
                 ], "completeness_check")
                 return normalize_assessment(
                     reply, candidate=current, evidence=evidence, previous=state["requirements"],
@@ -442,9 +498,9 @@ def check_and_correct(
                 requirements = assess()
             except Exception as error:
                 if callable(on_error):
-                    on_error(type(error).__name__)
+                    on_error(str(error) if isinstance(error, CompletenessError) else type(error).__name__)
                 if (
-                    not narrative or not isinstance(error, CompletenessError)
+                    not isinstance(error, CompletenessError)
                     or str(error) not in _REPAIRABLE_REPORT_CODES or state.get("report_repairs", 0) >= 1
                 ):
                     return stop(str(error) if isinstance(error, CompletenessError) else "completeness_verification_unavailable")
@@ -456,13 +512,16 @@ def check_and_correct(
                     requirements = assess()
                 except Exception as repair_error:
                     if callable(on_error):
-                        on_error(type(repair_error).__name__)
+                        on_error(str(repair_error) if isinstance(repair_error, CompletenessError) else type(repair_error).__name__)
                     return stop(
                         str(repair_error) if isinstance(repair_error, CompletenessError)
                         else "completeness_verification_unavailable"
                     )
             state["requirements"] = requirements
             deficiencies = [item for item in requirements if item["status"] != "satisfied"]
+            state["semantic_status"] = "failed" if deficiencies else "completed"
+        elif not policy.get("semantic_enabled", True):
+            state["semantic_status"] = "skipped"
         state["candidate_sha256"] = _digest(current)
         state["attempts"].append({
             "candidate_sha256": state["candidate_sha256"],
@@ -474,15 +533,7 @@ def check_and_correct(
             state.update(status="complete", reason_code="")
             save()
             return current, state
-        if (
-            state["corrections"] >= state["policy"]["max_corrections"]
-            or (
-                not narrative and any(
-                    isinstance(item, dict) and item.get("status") in ("unsupported", "conflicting", "uncertain")
-                    for item in deficiencies
-                )
-            )
-        ):
+        if state["corrections"] >= state["policy"]["max_corrections"]:
             state.update(status="incomplete", reason_code="completeness_requirements_unmet")
             save()
             return current, state
@@ -490,11 +541,18 @@ def check_and_correct(
         state["status"] = "correcting"
         save()
         try:
+            correction_context = _serialize({
+                **request, "candidate": current, "deficiencies": deficiencies,
+                "previous_attempts": [
+                    {key: value for key, value in attempt.items() if key != "candidate"}
+                    for attempt in state["attempts"][-MAX_CORRECTIONS:]
+                ],
+            })
+            if len(correction_context.encode("utf-8")) > MAX_PAYLOAD_BYTES:
+                raise CompletenessError("completeness_context_limit")
             corrected = invoke([
                 {"role": "system", "content": CORRECTION_POLICY},
-                {"role": "user", "content": _serialize({
-                    **request, "candidate": current, "deficiencies": deficiencies,
-                })},
+                {"role": "user", "content": correction_context},
             ], "completeness_correct")
             if type(corrected) is not str or not corrected.strip():
                 raise CompletenessError("completeness_correction_invalid")
@@ -504,5 +562,14 @@ def check_and_correct(
             if callable(on_error):
                 on_error(type(error).__name__)
             return stop(str(error) if isinstance(error, CompletenessError) else "completeness_correction_unavailable")
-        state.update(candidate=corrected, status="checking")
+        if corrected == current:
+            state.update(status="incomplete", reason_code="completeness_no_progress")
+            save()
+            return current, state
+        if current != state["original"]:
+            state["attempts"][-1]["candidate"] = current
+        state.update(
+            candidate=corrected, candidate_revision=state.get("candidate_revision", 0) + 1,
+            status="checking", deterministic_status="pending", semantic_status="pending",
+        )
         save()

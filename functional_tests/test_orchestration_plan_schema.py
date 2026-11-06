@@ -1,9 +1,10 @@
 # test_orchestration_plan_schema.py
 """
 Functional test for the chat orchestration plan contract and validator.
-Version: 0.261.139
+Version: 0.261.416
 Implemented in: 0.261.085
 Single orchestration contract updated in: 0.261.139
+Optional semantic review implemented in: 0.261.416
 
 Planner output is untrusted input. A plan arrives as JSON written by a language model,
 and naming a capability that does not exist, using one an administrator disabled,
@@ -184,6 +185,25 @@ def test_edits_narrow_dependency_plans_and_preserve_final_response():
         with pytest.raises(schema.PlanValidationError):
             schema.apply_plan_edits(plan, {'disabled_step_ids': ['draft']})
         assert plan == original
+
+
+def test_optional_review_edits_validate_step_identity_and_preserve_contract():
+    plan = _normalize({
+        'planner_contract_version': 2, 'steps': [_search(), _compose()],
+        'final_response': _binding('draft'),
+    })
+    with stubbed_app_imports():
+        import functions_orchestration_schema as schema
+
+        schema.apply_plan_edits(plan, {'semantic_review': {'draft': 'off'}})
+        assert plan['steps'][1]['arguments']['semantic_review'] == 'off'
+        assert plan['steps'][1]['outputs'] == [{'name': 'answer', 'kind': 'markdown-v1'}]
+        assert plan['approval']['edited'] is True
+        for invalid in ({'find': 'off'}, {'unknown': 'off'}, {'draft': 'skip'}, []):
+            original = deepcopy(plan)
+            with pytest.raises(schema.PlanValidationError):
+                schema.apply_plan_edits(plan, {'semantic_review': invalid})
+            assert plan == original
 
 
 def test_approval_mode_decides_initial_status():

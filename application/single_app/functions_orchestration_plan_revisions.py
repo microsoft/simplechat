@@ -375,11 +375,18 @@ def _normalize_edits(plan, edits):
     if edits is None:
         return {'disabled_step_ids': [], 'removed_document_ids': {}}
     _json_text(edits)
-    if not isinstance(edits, dict) or set(edits) - {'disabled_step_ids', 'removed_document_ids'}:
-        raise _invalid('Only step disabling and document removal are allowed.')
+    if not isinstance(edits, dict) or set(edits) - {'disabled_step_ids', 'removed_document_ids', 'semantic_review'}:
+        raise _invalid('Only step disabling, document removal and optional review choices are allowed.')
     steps = {step['step_id']: step for step in plan.get('steps') or []}
     disabled = edits.get('disabled_step_ids', [])
     removed = edits.get('removed_document_ids', {})
+    semantic_review = edits.get('semantic_review', {})
+    if type(semantic_review) is not dict or any(
+        step_id not in steps or steps[step_id].get('capability_id') != 'compose'
+        or choice not in ('auto', 'on', 'off')
+        for step_id, choice in semantic_review.items()
+    ):
+        raise _invalid('Choose a supported semantic review option for a content preparation step.')
     if not isinstance(disabled, list) or not isinstance(removed, dict):
         raise _invalid('Invalid step or document removals.')
     if any(not _valid_id(step_id) or step_id not in steps for step_id in disabled):
@@ -406,6 +413,7 @@ def _normalize_edits(plan, edits):
     return {
         'disabled_step_ids': list(dict.fromkeys(disabled)),
         'removed_document_ids': clean_removed,
+        **({'semantic_review': dict(semantic_review)} if semantic_review else {}),
     }
 
 

@@ -170,7 +170,7 @@ export function AnalysisResult({
                         {open && !page && !error ? 'Loading saved findings… ' : ''}
                         {error || (open && page
                             ? `Showing ${displayed ? page.offset + 1 : 0}–${page.offset + displayed} of ${page.total_records} records · ${displayedSources} of ${page.source_count} sources on this page.`
-                            : `0 of ${descriptor.record_count} records displayed · ${descriptor.source_count} sources in the saved analysis.`)}
+                            : `${descriptor.record_count} saved findings · ${descriptor.source_count} sources.`)}
                     </p>
                     <p className="mt-1 text-xs text-text-2">{analysisValidationNotice(status, descriptor.semantics)}</p>
                     <GlassButton size="sm" className="mt-2" onClick={() => {
@@ -179,20 +179,6 @@ export function AnalysisResult({
                     }}>
                         Ask about this analysis
                     </GlassButton>
-                    <a
-                        className="ml-3 text-xs text-text-3 underline underline-offset-2"
-                        href={`/api/analysis_results?${new URLSearchParams({
-                            conversation_id: descriptor.conversation_id,
-                            message_id: descriptor.message_id,
-                            result_sha256: descriptor.result_sha256,
-                            representation: 'diagnostics',
-                        })}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        aria-label="View diagnostics as JSON (opens a new tab)"
-                    >
-                        View diagnostics (JSON)
-                    </a>
                     <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="mt-2">
                         <summary className="cursor-pointer text-sm font-medium text-text-2">
                             Findings and limitations
@@ -226,6 +212,20 @@ export function AnalysisResult({
                                     </article>
                                 ))}
                                 {page && page.total_records === 0 && <p className="text-sm text-text-2">No accepted findings were saved.</p>}
+                                <details className="my-2 text-xs text-text-3">
+                                    <summary className="cursor-pointer py-2">Advanced analysis details</summary>
+                                    <a className="underline underline-offset-2"
+                                        href={`/api/analysis_results?${new URLSearchParams({
+                                            conversation_id: descriptor.conversation_id,
+                                            message_id: descriptor.message_id,
+                                            result_sha256: descriptor.result_sha256,
+                                            representation: 'diagnostics',
+                                        })}`}
+                                        target="_blank" rel="noopener noreferrer"
+                                        aria-label="View diagnostics as JSON (opens a new tab)">
+                                        View diagnostics (JSON)
+                                    </a>
+                                </details>
                                 <nav aria-label="Findings pages" className="mt-2 flex flex-wrap gap-2">
                                     <GlassButton size="sm" disabled={!page || previousOffsets.length === 0} onClick={() => {
                                         setOffset(previousOffsets[previousOffsets.length - 1]);

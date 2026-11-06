@@ -46,7 +46,7 @@ import { GeneratedArtifactCard } from './GeneratedArtifactCard';
 import { AnalysisResult } from './AnalysisResult';
 import type { SavedAnalysisDescriptor } from '../../lib/types';
 import { IconButton, MessageActions } from './MessageActions';
-import { OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
+import { isCheckingFailureNotice, OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
 import { WorkflowProposalCards } from './WorkflowProposalCard';
 import { WorkflowRunLinks } from './WorkflowRunLinks';
@@ -1173,7 +1173,8 @@ function MessageBubbleInner({
                         {message.thoughts && message.thoughts.length > 0 && (
                             <ThoughtsPanel thoughts={message.thoughts} />
                         )}
-                        {!artifactsReplaceText && (
+                        {!artifactsReplaceText && !(masks.ranges.length === 0
+                            && isCheckingFailureNotice(message.content, message.metadata?.orchestration)) && (
                             <div ref={hasSavedAnalysis ? bodyRef : undefined}>
                                 <ImageProposalScope
                                     assistantMessageId={message.id}
@@ -1400,6 +1401,11 @@ function StreamingBubble() {
     const chatWidth = useUiStore((state) => state.chatWidth);
     const runCardShowsProgress = useOrchestrationStore((state) =>
         selectActiveTurnRunInFlight(state, activeConversationId ?? ''));
+    const questionShowsStatus = useOrchestrationStore((state) => {
+        const turnId = state.activeTurns[activeConversationId ?? ''];
+        const draft = turnId ? state.elicitationDrafts[`${activeConversationId}\u0000${turnId}`] : undefined;
+        return Boolean(draft && !draft.accepted && (draft.submitting || draft.uncertain));
+    });
     const [showReconnectedNote, setShowReconnectedNote] = useState(false);
 
     useEffect(() => {
@@ -1418,7 +1424,7 @@ function StreamingBubble() {
     const activityLabel = retryPresentation && !retryPresentation.admitted ? 'Preparing retry'
         : orchestrationSurface === 'planning' ? 'Planning' : 'Thinking';
 
-    if (runShownOnCard && !streamingContent) {
+    if ((runShownOnCard || questionShowsStatus) && !streamingContent) {
         return null;
     }
 
@@ -1430,7 +1436,7 @@ function StreamingBubble() {
 
     return (
         <div data-scroll-live-reply className="flex justify-start">
-            <div className={clsx('glass-flat rounded-2xl px-4 py-3', bubbleWidthClass(chatWidth))}>
+            <div className={clsx(streamingContent ? 'glass-flat rounded-2xl px-4 py-3' : 'min-w-0 py-2', bubbleWidthClass(chatWidth))}>
                 {/* Shown while connecting even when partial content is already on screen:
                     without it, a response that stopped mid-sentence just looks frozen. */}
                 {connecting && (
@@ -1450,12 +1456,13 @@ function StreamingBubble() {
                 {streamingContent ? (
                     <AssistantMarkdown content={streamingContent} streaming />
                 ) : (
-                    <span className="flex items-center gap-1.5 text-sm text-text-3">
+                    <span role="status" tabIndex={-1} aria-live="polite"
+                        className="flex items-center gap-1.5 rounded text-sm text-text-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
                         <span className="flex gap-1">
                             {[0, 150, 300].map((delay) => (
                                 <span
                                     key={delay}
-                                    className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-3"
+                                    className="h-1.5 w-1.5 motion-safe:animate-pulse rounded-full bg-text-3"
                                     style={{ animationDelay: `${delay}ms` }}
                                 />
                             ))}

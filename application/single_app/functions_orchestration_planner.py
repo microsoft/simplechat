@@ -1206,6 +1206,7 @@ def resolve_conversation_request(
             'context_references': (seeds or {}).get('elicitation_references') or [],
         },
         'selected_sources': resolver_source_context(selected_sources),
+        'conversation_attachments': deepcopy((seeds or {}).get('conversation_attachments') or []),
     }
     try:
         if planner_model is not None:
@@ -1222,7 +1223,7 @@ def resolve_conversation_request(
 
     messages = [
         {'role': 'system', 'content': RESOLUTION_SYSTEM_PROMPT + (
-            SOURCE_PLANNING_INSTRUCTIONS if selected_sources else ''
+            SOURCE_PLANNING_INSTRUCTIONS if selected_sources or (seeds or {}).get('conversation_attachments') else ''
         )},
         {'role': 'user', 'content': json.dumps(
             payload, ensure_ascii=False, separators=(',', ':')

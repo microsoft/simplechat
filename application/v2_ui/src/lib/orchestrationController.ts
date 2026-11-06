@@ -277,6 +277,12 @@ async function applySavedPlanningTurn(conversationId: string, watch: PlanningWat
     rememberPlanningContext(turn);
     updateQuestionPlanning(turn);
     const store = useOrchestrationStore.getState();
+    const answeringDraft = selectElicitationDraft(store, conversationId, turn.turn_id);
+    if (answeringDraft?.submissionId && (turn.submission_id === answeringDraft.submissionId
+        || turn.request?.elicitation_submission_id === answeringDraft.submissionId)) {
+        store.acceptElicitationSubmission(conversationId, turn.turn_id, answeringDraft.elicitationId,
+            answeringDraft.revision, answeringDraft.submissionId);
+    }
     store.setActiveTurn(conversationId, turn.turn_id);
     const chat = useChatStore.getState();
     if (turn.status === 'planning') {
@@ -330,6 +336,10 @@ async function applySavedPlanningTurn(conversationId: string, watch: PlanningWat
         chat.settleOrchestrationTurn(conversationId, { turnId: turn.turn_id, status: 'cancelled', accumulated: '' });
     } else {
         const error = turn.error || 'Planning was interrupted. Your question was saved. Retry to create a new plan.';
+        if (answeringDraft && !answeringDraft.accepted) {
+            store.failElicitationSubmission(conversationId, turn.turn_id, answeringDraft.elicitationId,
+                answeringDraft.revision, error);
+        }
         updateQuestionPlanning({ ...turn, error });
         chat.settleOrchestrationTurn(conversationId, { turnId: turn.turn_id, status: 'failed', error });
         if (useChatStore.getState().activeConversationId === conversationId) {
@@ -402,7 +412,7 @@ export async function resumeOrchestrationPlanning(conversationId: string): Promi
     await checkPlanningWatch(conversationId, watch);
 }
 
-export type ElicitationSubmitResult = { ok: true } | { ok: false; error: string };
+export type ElicitationSubmitResult = { ok: true } | { ok: false; error: string; uncertain?: boolean };
 
 interface ElicitationContinuation {
     elicitation: Elicitation;
@@ -500,6 +510,7 @@ async function dispatchPlan(
     addUserMessage: boolean,
     continuation?: ElicitationContinuation,
 ): Promise<ElicitationSubmitResult> {
+    let uncertain = false;
     // The ids the turn is keyed on. Mutable because the server can, in principle, reconcile
     // either one mid-stream: it names a brand-new conversation on `conversation_metadata`, and it
     // echoes the turn id back on the plan. The client sends both and the server honours both, so
@@ -681,6 +692,13 @@ async function dispatchPlan(
             onUserMessagePersisted: (event) => {
                 if (!isCurrentRequest() || typeof event.user_message_id !== 'string'
                     || !event.user_message_id || typeof event.conversation_id !== 'string') return;
+                if (continuation && event.server_managed === true
+                    && event.planning_submission_id !== continuation.submissionId) return;
+                // The existing server-managed admission event follows validated answer persistence,
+                // before the planner runs. Initial-message persistence is never answer acceptance.
+                const acceptedAnswer = continuation && event.server_managed === true
+                    && event.conversation_id === currentConversationId && event.turn_id === currentTurnId
+                    && event.planning_submission_id === continuation.submissionId;
                 adoptServerConversationId(event.conversation_id, undefined);
                 adoptServerTurnId(typeof event.turn_id === 'string' ? event.turn_id : undefined);
                 useChatStore.getState().reconcileOrchestrationUserMessage({
@@ -690,6 +708,12 @@ async function dispatchPlan(
                 });
                 context.pendingUserMessageId = event.user_message_id;
                 context.serverManaged = event.server_managed === true;
+                if (acceptedAnswer && continuation) {
+                    useOrchestrationStore.getState().acceptElicitationSubmission(
+                        currentConversationId, currentTurnId, continuation.elicitationId,
+                        continuation.revision, continuation.submissionId,
+                    );
+                }
                 if (typeof event.planning_submission_id === 'string' && event.planning_submission_id) {
                     context.submissionId = event.planning_submission_id;
                 }
@@ -717,6 +741,7 @@ async function dispatchPlan(
                 const normalized = normalizePlan(context.requiresFreshReview
                     ? { ...plan, requires_fresh_review: true } : plan);
                 if (!normalized?.plan_id || !normalized.run_id || !normalized.turn_id
+                    || (normalized.revision ?? 0) < context.revision
                     || normalized.conversation_id !== currentConversationId || !isPlanRunnable(normalized)
                     || (turnIdentity && (
                         turnIdentity.conversation_id !== normalized.conversation_id
@@ -767,10 +792,22 @@ async function dispatchPlan(
                 produced = true;
                 maybeAutoOpenDrawer(currentConversationId, normalized);
             },
+            onElicitationAccepted: (event) => {
+                if (!isCurrentRequest() || !continuation
+                    || event.conversation_id !== currentConversationId || event.turn_id !== currentTurnId
+                    || event.elicitation_id !== continuation.elicitationId
+                    || event.elicitation_revision !== continuation.revision
+                    || event.elicitation_submission_id !== continuation.submissionId) return;
+                useOrchestrationStore.getState().acceptElicitationSubmission(
+                    currentConversationId, currentTurnId, continuation.elicitationId,
+                    continuation.revision, continuation.submissionId,
+                );
+            },
             onElicitation: (elicitation) => {
                 if (!isCurrentRequest()) {
                     return;
                 }
+                if ((elicitation.revision ?? 0) < context.revision) return;
                 adoptServerTurnId(elicitation.turn_id);
                 context.revision = elicitation.revision ?? context.revision;
                 if (context.serverManaged) {
@@ -788,6 +825,7 @@ async function dispatchPlan(
                 if (!isCurrentRequest()) {
                     return;
                 }
+                uncertain = Boolean(continuation && !error?.code);
                 if (context.serverManaged && !error?.code) {
                     failure = message;
                     needsRecovery = true;
@@ -903,7 +941,7 @@ async function dispatchPlan(
             error: failure,
         });
     }
-    return { ok: false, error: failure };
+    return { ok: false, error: failure, uncertain };
 }
 
 /**
@@ -1059,7 +1097,7 @@ export async function answerElicitation(params: {
         || store.activeTurns[conversationId] !== turnId) {
         return fail('This question is no longer active. Open the current request to continue.');
     }
-    if (draft.submitting) {
+    if (draft.submitting || draft.accepted || draft.uncertain) {
         return { ok: false, error: 'An answer is already being submitted.' };
     }
     if (response.action === 'cancel') {
@@ -1121,12 +1159,46 @@ export async function answerElicitation(params: {
         },
     );
     if (!result.ok) {
+        if (result.uncertain) {
+            useOrchestrationStore.getState().updateElicitationDraft(
+                conversationId, turnId, elicitation.elicitation_id, elicitation.revision ?? 0,
+                (current) => current.accepted ? current : {
+                    ...current, submitting: false, uncertain: true,
+                    error: 'Your answers are saved in this tab. Checking whether they were received.',
+                },
+            );
+            await reconcileElicitationAnswer(conversationId, turnId);
+            return result;
+        }
         if (turnContexts.get(key) === nextContext) {
             turnContexts.set(key, previous);
         }
         return fail(result.error);
     }
     return result;
+}
+
+/** Reconcile an ambiguous answer without resending it or losing its draft. */
+export async function reconcileElicitationAnswer(conversationId: string, turnId: string): Promise<void> {
+    const state = useOrchestrationStore.getState();
+    const draft = selectElicitationDraft(state, conversationId, turnId);
+    if (!draft || draft.accepted || !draft.submissionId) return;
+    try {
+        const turn = await fetchOrchestrationTurn(conversationId, turnId, { includeRequest: true });
+        if (turn.submission_id === draft.submissionId
+            || turn.request?.elicitation_submission_id === draft.submissionId) {
+            state.acceptElicitationSubmission(conversationId, turnId, draft.elicitationId, draft.revision, draft.submissionId);
+            followPlanningTurn(conversationId, turnId, turn.user_message_id, turn.submission_id);
+        } else if (turn.status === 'awaiting_clarification'
+            && turn.elicitation?.elicitation_id === draft.elicitationId
+            && (turn.elicitation.revision ?? 0) === draft.revision) {
+            state.updateElicitationDraft(conversationId, turnId, draft.elicitationId, draft.revision,
+                (current) => ({ ...current, uncertain: false, submitting: false,
+                    error: 'The answer was not accepted. Review your saved answers and try again.' }));
+        }
+    } catch {
+        // An unavailable status is not evidence that the answer was rejected. Keep resends blocked.
+    }
 }
 
 /**
@@ -2001,6 +2073,18 @@ export async function openOrchestrationPlanEditor(target: PlanEditorTarget): Pro
     await loadPlanEditorState(target, true);
 }
 
+/** Policy edits share the editor's durable manual-approval hold without opening its dialog. */
+export async function setPlanSemanticReview(
+    target: PlanEditorTarget, stepId: string, value: 'auto' | 'on' | 'off',
+): Promise<void> {
+    const store = useOrchestrationStore.getState();
+    if (!selectCanEditPlan(store, target.conversationId, target.turnId)) return;
+    store.updatePlanEditor(target.conversationId, target.turnId, (editor) => editor);
+    const result = await loadPlanEditorState(target, true);
+    if (result.ok) useOrchestrationStore.getState().setSemanticReview(
+        target.conversationId, target.turnId, stepId, value,
+    );
+}
 /** Read-only hydration also works with an old run ID; the server resolves the current revision. */
 export async function refreshOrchestrationPlanEditor(
     target: PlanEditorTarget,
@@ -2050,6 +2134,7 @@ export async function submitPlanRevision(
     if (!session?.state || !plan || !selectCanEditPlan(store, conversationId, turnId)
         || session.loading || session.cancellationStatus === 'cancelling'
         || (!discarding && (session.submitting || session.blocked || session.state.busy
+            || (action.action === 'answer' && (session.pendingDraft?.accepted || session.pendingDraft?.uncertain))
             || editorControllers.has(key) || plan.edit_version !== session.state.version))) {
         return { ok: false, error: 'Wait for the current plan to be saved before editing.' };
     }
@@ -2180,6 +2265,17 @@ export async function submitPlanRevision(
             ...editor, submission: { id: sentId, fingerprint },
         }));
         const result = await reviseOrchestrationPlan(requestPlan.run_id, body, {
+            onElicitationAccepted: (event) => {
+                if (!isEditorRequestCurrent(target, controller) || action.action !== 'answer'
+                    || event.conversation_id !== conversationId || event.turn_id !== turnId
+                    || event.elicitation_id !== action.elicitation_id
+                    || event.elicitation_revision !== action.elicitation_revision
+                    || event.elicitation_submission_id !== sentId) return;
+                useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                    ...editor, pendingDraft: editor.pendingDraft
+                        ? { ...editor.pendingDraft, accepted: true, uncertain: false } : null,
+                }));
+            },
             onThought: (event) => {
                 if (isEditorRequestCurrent(target, controller)) {
                     useOrchestrationStore.getState().mergeReasoningAdjustments(
@@ -2206,6 +2302,8 @@ export async function submitPlanRevision(
         } else {
             useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
                 ...editor,
+                pendingDraft: action.action === 'answer' && !info?.code && editor.pendingDraft
+                    ? { ...editor.pendingDraft, uncertain: !editor.pendingDraft.accepted } : editor.pendingDraft,
                 ...(options.inlineError ? {} : { error: failure }),
                 blocked: discarding || info?.code === 'plan_changed' || info?.code === 'edit_in_progress'
                     || info?.code === 'already_run' || info?.status === 403 || info?.status === 404,
@@ -2218,6 +2316,8 @@ export async function submitPlanRevision(
         }
         useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
             ...editor,
+            pendingDraft: action.action === 'answer' && editor.pendingDraft
+                ? { ...editor.pendingDraft, uncertain: !editor.pendingDraft.accepted } : editor.pendingDraft,
             ...(options.inlineError ? {} : { error: failure }),
             blocked: discarding || editor.blocked,
         }));

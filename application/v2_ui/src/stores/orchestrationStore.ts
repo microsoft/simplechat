@@ -26,6 +26,7 @@ import { create } from 'zustand';
 import { normalizeReasoningAdjustments } from '../lib/reasoning';
 import { isOrchestrationRunPending, isOrchestrationRunWaiting, normalizeOrchestrationAttempt, normalizeOrchestrationFailure } from '../lib/orchestration';
 import { createElicitationDraft, type ElicitationDraft } from '../lib/elicitationAnswers';
+import { canAdoptCompletenessReport } from '../lib/taskCompleteness';
 import type { OrchestrationOutputRetry } from '../lib/orchestrationOutputs';
 import {
     applyPlanEdits,
@@ -393,6 +394,9 @@ interface OrchestrationState {
     setElicitation: (conversationId: string, turnId: string, elicitation: Elicitation) => void;
     /** Forget a turn's question, typically once it has been answered. */
     clearElicitation: (conversationId: string, turnId: string) => void;
+    acceptElicitationSubmission: (
+        conversationId: string, turnId: string, elicitationId: string, revision: number, submissionId: string,
+    ) => void;
     updateElicitationDraft: (
         conversationId: string,
         turnId: string,
@@ -416,6 +420,7 @@ interface OrchestrationState {
     ) => void;
 
     disableStep: (conversationId: string, turnId: string, step: OrchestrationStep) => void;
+    setSemanticReview: (conversationId: string, turnId: string, stepId: string, value: 'auto' | 'on' | 'off') => void;
     enableStep: (conversationId: string, turnId: string, stepId: string) => void;
     removeDocument: (
         conversationId: string,
@@ -623,7 +628,10 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                         cancellationStatus: previous.cancellationStatus === 'cancelling'
                             ? 'cancelling' : 'idle',
                         pendingDraft: pending
-                            ? sameQuestion ? previous.pendingDraft : createElicitationDraft(pending)
+                            ? sameQuestion ? {
+                                ...previous.pendingDraft!,
+                                ...(editor.busy ? {} : { uncertain: false, submitting: false }),
+                            } : createElicitationDraft(pending)
                             : null,
                         previewRunId: null,
                         previewPlan: null,
@@ -726,6 +734,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             const sameQuestion = previous?.elicitation_id === elicitation.elicitation_id
                 && previous.revision === elicitation.revision;
             const draft = sameQuestion ? state.elicitationDrafts[key] : undefined;
+            if (draft?.accepted) return {};
             return {
                 plans,
                 elicitations: { ...state.elicitations, [key]: elicitation },
@@ -767,10 +776,21 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         });
     },
 
+    acceptElicitationSubmission: (conversationId, turnId, elicitationId, revision, submissionId) => {
+        const key = scopeKey(conversationId, turnId);
+        const draft = get().elicitationDrafts[key];
+        if (!draft || draft.elicitationId !== elicitationId || draft.revision !== revision
+            || draft.submissionId !== submissionId) return;
+        set((state) => ({
+            elicitationDrafts: { ...state.elicitationDrafts,
+                [key]: { ...draft, submitting: false, accepted: true, uncertain: false, error: null } },
+        }));
+    },
+
     beginElicitationSubmission: (conversationId, turnId, elicitationId, submissionId, fingerprint) => {
         const key = scopeKey(conversationId, turnId);
         const draft = get().elicitationDrafts[key];
-        if (!draft || draft.elicitationId !== elicitationId || draft.submitting) {
+        if (!draft || draft.elicitationId !== elicitationId || draft.submitting || draft.accepted || draft.uncertain) {
             return false;
         }
         set((state) => ({
@@ -792,7 +812,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         const key = scopeKey(conversationId, turnId);
         set((state) => {
             const draft = state.elicitationDrafts[key];
-            if (!draft || draft.elicitationId !== elicitationId || draft.revision !== revision) {
+            if (!draft || draft.elicitationId !== elicitationId || draft.revision !== revision || draft.accepted) {
                 return {};
             }
             return {
@@ -802,6 +822,22 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 },
             };
         });
+    },
+
+    setSemanticReview: (conversationId, turnId, stepId, value) => {
+        const state = get();
+        const key = scopeKey(conversationId, turnId);
+        const editor = state.planEditors[key];
+        if (!selectCanEditPlan(state, conversationId, turnId)
+            || selectPlanRunBlocked(state, conversationId, turnId)
+            || !editor?.state || editor.state.busy || editor.state.pending
+            || !['auto', 'on', 'off'].includes(value)) return;
+        const step = state.plans[key]?.steps.find((item) => item.step_id === stepId);
+        if (step?.capability_id !== 'compose') return;
+        const current = state.edits[key] ?? emptyPlanEdits();
+        set({ edits: { ...state.edits, [key]: {
+            ...current, semantic_review: { ...current.semantic_review, [stepId]: value },
+        } } });
     },
 
     disableStep: (conversationId, turnId, step) => {
@@ -857,7 +893,8 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         set((state) => {
             const current = state.edits[key];
             if (!current || (current.disabled_step_ids.length === 0 &&
-                Object.keys(current.removed_document_ids).length === 0)) {
+                Object.keys(current.removed_document_ids).length === 0
+                && Object.keys(current.semantic_review ?? {}).length === 0)) {
                 return {};
             }
             return { edits: { ...state.edits, [key]: emptyPlanEdits() } };
@@ -884,6 +921,9 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             const merged: StepRuntime = {
                 ...existing,
                 ...patch,
+                task_completeness: patch.task_completeness === undefined
+                    || !canAdoptCompletenessReport(existing.task_completeness, patch.task_completeness)
+                    ? existing.task_completeness : patch.task_completeness,
                 status: patch.status ?? existing.status,
                 summary: patch.summary ?? existing.summary,
             };

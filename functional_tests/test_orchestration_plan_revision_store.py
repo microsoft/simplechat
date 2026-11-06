@@ -1,9 +1,10 @@
 # test_orchestration_plan_revision_store.py
 """
 Functional tests for the pre-execution plan revision persistence boundary.
-Version: 0.261.139
+Version: 0.261.416
 Implemented in: 0.261.102
 Single orchestration contract updated in: 0.261.139
+Optional semantic review implemented in: 0.261.416
 
 Uses real storage helpers and SDK batch formatting with an atomic in-memory container.
 No Azure network, model, or main-thread message writes are needed.
@@ -357,6 +358,10 @@ class PlanRevisionStoreTests(unittest.TestCase):
             {'edits': {'removed_document_ids': {'search': ['not-present']}}},
             {'edits': {'removed_document_ids': {'unknown': ['doc1']}}},
             {'edits': {'disabled_step_ids': 'search'}},
+            {'edits': {'semantic_review': {'search': 'off'}}},
+            {'edits': {'semantic_review': {'unknown': 'on'}}},
+            {'edits': {'semantic_review': {'answer': 'ignore'}}},
+            {'edits': {'semantic_review': []}},
         ):
             with self.subTest(overrides=overrides):
                 self.assert_error('invalid_request', self.claim, held, status=400, **overrides)
@@ -367,6 +372,13 @@ class PlanRevisionStoreTests(unittest.TestCase):
         self.assertIsNone(self.read()['edit_claim'])
         self.assert_error('plan_changed', self.claim, held, expected_version='stale')
         self.assert_error('plan_changed', self.claim, self.original, expected_version='')
+
+    def test_optional_review_overlay_is_held_without_mutating_the_approved_contract(self):
+        overlay = {'semantic_review': {'answer': 'off'}}
+        held = self.hold(edits=overlay)
+        saved = self.claim(held, edits=overlay)
+        self.assertEqual(saved['request']['edits']['semantic_review'], {'answer': 'off'})
+        self.assertEqual(saved['record']['plan']['steps'], self.original['plan']['steps'])
 
     def test_publication_mints_identity_and_preserves_immutable_context(self):
         held = self.hold()

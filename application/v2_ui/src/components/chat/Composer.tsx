@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { currentConversationEpoch, useChatStore, type ComposerOptions } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { selectActiveTurnRunInFlight, selectPlan, useOrchestrationStore } from '../../stores/orchestrationStore';
 import { useCollaborationStore } from '../../stores/collaborationStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { sendCollaborationTyping } from '../../lib/collaboration';
@@ -1529,11 +1530,17 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         stopTyping();
     };
 
+    const activePlanInFlight = useOrchestrationStore((state) =>
+        selectActiveTurnRunInFlight(state, activeConversationId ?? ''));
     /** Stop the visible stream's owner, not another orchestration running in the background. */
     const handleStop = () => {
-        if (activeConversationId && useChatStore.getState().orchestrationSurface
+        if (activeConversationId && (useChatStore.getState().orchestrationSurface || (!streaming && activePlanInFlight))
             && hasActiveOrchestration(activeConversationId)) {
-            cancelOrchestration(activeConversationId);
+            const state = useOrchestrationStore.getState();
+            const turnId = state.activeTurns[activeConversationId];
+            const runId = activePlanInFlight && turnId
+                ? selectPlan(state, activeConversationId, turnId)?.run_id : undefined;
+            void cancelOrchestration(activeConversationId, runId);
             return;
         }
         stopStreaming();
@@ -2363,7 +2370,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 )}
                             </button>
 
-                            {streaming ? (
+                            {streaming || activePlanInFlight ? (
                                 <button
                                     type="button"
                                     onClick={handleStop}

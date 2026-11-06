@@ -34,6 +34,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 from copy import deepcopy
 from datetime import datetime, timezone
 
@@ -892,6 +893,116 @@ def resolve_elicitation_references(references, user_id, conversation_id, setting
     )
 
 
+def _readable_attachment(message):
+    metadata = message.get('metadata') or {}
+    return (
+        message.get('role') in ('file', 'image')
+        and not is_soft_deleted_message(message)
+        and not any(metadata.get(key) for key in ('masked', 'masked_ranges', 'is_generated_chat_artifact'))
+        and not (metadata.get('content_moderation') or {}).get('removed')
+        and (metadata.get('thread_info') or {}).get('active_thread') is not False
+        and _elicitation_document_ready(message)
+        and (message.get('role') != 'image' or metadata.get('is_user_upload') or message.get('is_user_upload'))
+    )
+
+
+def validate_conversation_attachment(document_id, user_id, conversation_id):
+    """Recheck visibility at the read boundary, not just at planning time."""
+    from config import cosmos_messages_container
+
+    conversation = _owned_elicitation_conversation(user_id, conversation_id)
+    authorize_conversation_source_access(conversation, user_id)
+    message = cosmos_messages_container.read_item(item=document_id, partition_key=conversation_id)
+    if message.get('conversation_id') != conversation_id or not _readable_attachment(message):
+        raise ElicitationContextError('That attachment is no longer available.', reason='document_unavailable')
+    return message
+
+
+def resolve_conversation_attachments(message, user_id, conversation_id, *, seeds, settings=None):
+    """Discover only this conversation's attachments and resolve a clear reading reference."""
+    from config import cosmos_messages_container
+    from functions_orchestration_source_access import resolve_orchestration_source_manifest
+
+    conversation = _owned_elicitation_conversation(user_id, conversation_id)
+    authorize_conversation_source_access(conversation, user_id)
+    rows = list(cosmos_messages_container.query_items(
+        query=(
+            'SELECT TOP 17 c.id, c.conversation_id, c.role, c.filename, c.file_name, '
+            'c.status, c.percentage_complete, c.workspace_document_id, c.file_content_source, '
+            'c.metadata, c.timestamp, c.is_user_upload FROM c WHERE c.conversation_id = @conversation_id '
+            'AND c.role IN ("file", "image") ORDER BY c.timestamp DESC'
+        ),
+        parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+        partition_key=conversation_id,
+    ))
+    inventory = []
+    references = {}
+    for row in rows[:16]:
+        if row.get('conversation_id') != conversation_id or not _readable_attachment(row):
+            continue
+        identifier = _workspace_document_id(row) or row.get('id')
+        if not identifier or identifier in references:
+            continue
+        try:
+            if _workspace_document_id(row):
+                manifest = resolve_orchestration_source_manifest(
+                    [identifier], user_id, conversation_id=conversation_id,
+                    doc_scope=seeds.get('doc_scope') or 'all',
+                    active_group_ids=seeds.get('active_group_ids') or None,
+                    active_public_workspace_ids=seeds.get('active_public_workspace_ids') or None,
+                )
+                if len(manifest) != 1 or manifest[0].get('authorization_status') != 'authorized':
+                    continue
+                source = manifest[0]
+                reference = {
+                    'kind': 'document', 'id': identifier,
+                    'scope': {'kind': source['scope'], 'id': source.get('scope_id')},
+                }
+            else:
+                reference = {
+                    'kind': 'chat_attachment', 'id': identifier,
+                    'scope': {'kind': 'chat', 'id': conversation_id},
+                }
+            authorized = resolve_elicitation_references([reference], user_id, conversation_id, settings)[0]
+        except (ElicitationContextError, PermissionError):
+            continue
+        except LookupError as exc:
+            if type(exc) is not LookupError:
+                raise
+            continue
+        name = authorized['label']
+        references[identifier] = authorized
+        inventory.append({
+            'document_id': identifier, 'message_id': row['id'], 'file_name': name,
+            'media_kind': 'image' if is_reference_image_file_name(name) else 'file',
+            'availability': 'available',
+        })
+    resolved = deepcopy(seeds)
+    resolved['conversation_attachments'] = inventory
+    resolved['conversation_attachments_truncated'] = len(rows) > 16
+    # Explicit selections and scope filters always win. Discovery is not selection.
+    if seeds_are_explicit(seeds) or seeds.get('tags') or seeds.get('image_generation'):
+        return resolved
+    text = _text(message).casefold()
+    matches = [
+        item for item in inventory
+        if any(re.search(rf'(?<!\w){re.escape(value.casefold())}(?!\w)', text)
+               for value in (item['document_id'], item['file_name']) if value)
+    ]
+    if not matches and re.search(
+        r'\b(?:the|this|that|attached|uploaded)\s+(?:image|picture|photo|screenshot)\b', text,
+    ):
+        matches = [item for item in inventory if item['media_kind'] == 'image']
+    if len(matches) == 1 and len(rows) <= 16:
+        chosen = matches[0]
+        identifier = chosen['document_id']
+        resolved['document_ids'] = [identifier]
+        resolved['document_labels'] = {identifier: chosen['file_name']}
+        resolved['elicitation_references'] = [references[identifier]]
+        resolved['resolved_attachment_ids'] = [identifier]
+    return resolved
+
+
 # --------------------------------------------------------------------------------------
 # Workspace references outside a conversation
 # --------------------------------------------------------------------------------------
@@ -1547,6 +1658,9 @@ def enrich_planner_candidates(
             }
             if set(planning_sources) != selected:
                 raise ValueError('Selected source context did not match the selection.')
+            for identifier in seeds.get('resolved_attachment_ids') or []:
+                if identifier in planning_sources:
+                    planning_sources[identifier]['resolved_attachment'] = True
         except (AzureError, ScreeningError, SourceContextError, ValueError, TypeError, ConnectionError, TimeoutError) as exc:
             log_event(
                 '[ORCHESTRATION_CONTEXT] Selected source preparation failed.',
@@ -1567,6 +1681,8 @@ def enrich_planner_candidates(
             'source_kind': available[candidate['document_id']].get('source_kind'),
             **({'planning_source': planning_sources[candidate['document_id']]}
                if candidate['document_id'] in planning_sources else {}),
+            **({'resolved_attachment': True}
+               if candidate['document_id'] in (seeds.get('resolved_attachment_ids') or []) else {}),
         }
         for candidate in candidates if candidate['document_id'] in available
     ]
@@ -2346,6 +2462,7 @@ def build_planner_context(
             if candidate.get('planning_source')
         ]),
         'conversation_references': deepcopy(seeds.get('conversation_references') or []),
+        'conversation_attachments': deepcopy(seeds.get('conversation_attachments') or []),
         'image_reference_documents': deepcopy(seeds.get('image_reference_documents') or []),
         'image_reference_messages': deepcopy(seeds.get('image_reference_messages') or []),
         'document_transform_references': deepcopy(

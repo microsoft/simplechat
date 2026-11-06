@@ -326,7 +326,7 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                     or type(prepared) is not dict
                     or prepared.get('version') != 'orchestration-gathered-content-v1'
                     or prepared.get('capability_id') != 'document_search'
-                    or prepared.get('content_scope') != 'returned_excerpts'
+                    or prepared.get('content_scope') not in ('returned_excerpts', 'native_excel_annotations')
                     or type(prepared.get('citations')) is not list
                 ):
                     raise ResultContractError('result_citations_invalid')
@@ -517,6 +517,15 @@ def retain_document_search_result(step, context, results, *, source_manifest, ci
         'Complete only for the returned search response and its discovered source identities.',
         'Top-N retrieval is not exhaustive corpus discovery or whole-document coverage.',
     )
+    native_coverage = search_scope.get('native_inspection')
+    partial = bool(native_coverage and any(item.get('partial') for item in native_coverage))
+    if native_coverage:
+        limitations = (
+            'Native annotation evidence contains saved workbook records, not recalculated worksheet data.',
+            'Reviewer feedback is distinct from the saved cell value; missing metadata must not be inferred.',
+        )
+        if partial:
+            limitations += ('The native annotation inventory is partial; remaining records were not inspected.',)
     retained, grouped = [], {}
     for index, hit in enumerate(results):
         if type(hit) is not dict or type(hit.get('chunk_text')) is not str:
@@ -550,18 +559,22 @@ def retain_document_search_result(step, context, results, *, source_manifest, ci
             'whole_document_coverage': False, 'exhaustive_corpus_coverage': False,
         },
     }
+    if native_coverage:
+        prepared['content_scope'] = 'native_excel_annotations'
+        prepared['coverage']['native_inspection'] = deepcopy(native_coverage)
     return service.persist_task_result(
-        producer=context.result_producer(step), role='gather', status='complete',
+        producer=context.result_producer(step), role='gather', status='partial' if partial else 'complete',
         outputs=[
             NamedOutput('evidence', 'evidence-set-v1', retained, Completeness(
-                'complete', len(retained), len(retained), Coverage(len(retained), len(retained), 'items'),
-                'valid', ('lossless_search_response',), limitations,
+                'partial' if partial else 'complete', len(retained), len(retained),
+                Coverage(len(retained), len(retained), 'items'),
+                'partial' if partial else 'valid', ('lossless_search_response',), limitations,
             )),
             NamedOutput('sources', 'source-set-v1', sources, Completeness(
                 'complete', len(sources), len(sources), Coverage(len(sources), len(sources), 'sources'),
                 'valid', ('authorized_discovered_source_identities',), limitations,
             )),
-            NamedOutput('prepared', 'structured-v1', prepared, _complete(1, limitations)),
+            NamedOutput('prepared', 'structured-v1', prepared, _complete(1, limitations, partial=partial)),
         ],
         sources=sources, origin='grounded' if sources else 'generated',
         guard_token=context.result_guard_token_for_step(step['step_id']),

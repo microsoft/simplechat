@@ -37,6 +37,8 @@ export interface ElicitationDraft {
     customValues: Record<string, string>;
     pageIndex: number;
     submitting: boolean;
+    accepted?: boolean;
+    uncertain?: boolean;
     error: string | null;
     submissionId: string | null;
     submissionFingerprint: string | null;

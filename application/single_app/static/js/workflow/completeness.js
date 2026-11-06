@@ -7,7 +7,7 @@ export function appendWorkflowCompleteness(parent, tasks) {
     }
     for (const task of tasks) {
         const report = task?.workflow_result?.task_completeness;
-        if (report?.version !== 1) {
+        if (report?.version !== 1 && report?.version !== 2) {
             continue;
         }
         const labels = {
