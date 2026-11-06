@@ -3471,11 +3471,11 @@ def register_route_backend_orchestration(bp):
             questions = list_pending_questions(user_id, conversation_id)
             return jsonify({"questions": questions, "csrf_token": get_interaction_csrf_token()}), 200, {"Cache-Control": "no-store"}
         except ConversationContextError:
-            return jsonify({"error": "Conversation not found."}), 404
+            return jsonify({"error": "Conversation not found."}), 404, {"Cache-Control": "no-store"}
         except Exception as error:
             log_event("[ORCHESTRATION_RUNS] Pending questions could not be loaded.",
                       extra={"error_type": type(error).__name__}, level=logging.ERROR)
-            return jsonify({"error": "Pending questions could not be loaded."}), 503
+            return jsonify({"error": "Pending questions could not be loaded."}), 503, {"Cache-Control": "no-store"}
 
     @bp.route("/api/v2/orchestration/questions/cancel", methods=["POST"])
     @swagger_route(security=get_auth_security())

@@ -1,4 +1,4 @@
-# Guided user input (v0.261.411)
+# Guided user input (v0.261.412)
 
 ## Overview
 
@@ -68,6 +68,11 @@ The response routes are:
 | `POST /api/v2/user-input/<request_id>/stop` | Stop the actor's accepted standalone continuation without restarting the task. |
 | `GET /api/v2/orchestration/questions` | Recover the latest pending planner question without exposing its private planning context. |
 | `POST /api/v2/orchestration/questions/cancel` | Persist cancellation of an identified planner question. |
+
+Question-recovery cache handling was fixed in version **0.261.412**, recorded in
+`application/single_app/config.py`. All recovery responses, including missing
+conversation and storage-failure responses, use `Cache-Control: no-store` so a
+retry rechecks the current access and storage state.
 
 Identical answer retries reuse the stored result. A repeated completed continuation
 does not execute tools again. A live or uncertain continuation is not automatically

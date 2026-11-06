@@ -1,8 +1,9 @@
 # test_guided_user_input_orchestration.py
 """Functional tests for durable user-input waits in real orchestration execution.
 
-Version: 0.261.411
+Version: 0.261.412
 Implemented in: 0.261.411
+Question recovery cache coverage added in: 0.261.412
 Uses the existing initialized application and SDK-default offline harness.
 """
 
@@ -10,7 +11,8 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import importlib
 import time
-from flask import Flask, session
+from flask import Blueprint, Flask, session
+import pytest
 
 from test_action_credentials_orchestration_continuation import (
     configure_real_credentials, harness, initialized_continuation,  # noqa: F401
@@ -47,6 +49,38 @@ def test_human_input_wait_uses_the_bounded_existing_deadline_allowance():
     assert deadline == original + timedelta(minutes=10)
     bounded = clock.execution_deadline(record, now=now + timedelta(days=2))
     assert bounded == original + timedelta(days=1)
+
+
+@pytest.mark.parametrize("outcome,status", [
+    ("disabled", 200), ("success", 200), ("missing", 404), ("unavailable", 503),
+])
+def test_question_recovery_responses_are_never_cached(harness, monkeypatch, outcome, status):
+    routes = importlib.import_module("route_backend_orchestration")
+    monkeypatch.setattr(routes, "get_settings", lambda: {"enable_chat_orchestration": outcome != "disabled"})
+    monkeypatch.setattr(routes, "get_current_user_id", lambda: "owner")
+    monkeypatch.setattr(routes, "login_required", lambda function: function)
+    monkeypatch.setattr(routes, "user_required", lambda function: function)
+
+    def authorize(conversation_id, user_id):
+        if outcome == "missing":
+            raise routes.ConversationContextError("Conversation unavailable.")
+
+    def questions(user_id, conversation_id):
+        if outcome == "unavailable":
+            raise RuntimeError("Storage unavailable in this test.")
+        return []
+
+    monkeypatch.setattr(routes, "_authorize_context_conversation", authorize)
+    monkeypatch.setattr(routes, "list_pending_questions", questions)
+    app = Flask("question-recovery-cache")
+    app.secret_key = "local-test-only"
+    blueprint = Blueprint("question-recovery-cache", __name__)
+    routes.register_route_backend_orchestration(blueprint)
+    app.register_blueprint(blueprint)
+    response = app.test_client().get("/api/v2/orchestration/questions?conversation_id=conversation-1")
+    assert response.status_code == status
+    assert response.is_json
+    assert response.headers.get("Cache-Control") == "no-store"
 
 
 def test_user_input_wait_requires_its_claim_and_preserves_completed_steps(harness, monkeypatch):
