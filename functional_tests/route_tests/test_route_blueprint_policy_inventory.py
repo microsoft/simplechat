@@ -574,8 +574,10 @@ def test_public_routes_are_explicitly_listed() -> None:
 
 
 def test_plan_editor_routes_keep_the_orchestration_security_policy() -> None:
-    """Every editor operation stays on the authenticated orchestration Blueprint."""
+    """Editor and initial-turn operations stay on the authenticated orchestration Blueprint."""
     expected = {
+        "/api/v2/orchestration/turns/<turn_id>": "orchestration_turn_status",
+        "/api/v2/orchestration/turns/<turn_id>/cancel": "orchestration_turn_cancel",
         "/api/v2/orchestration/runs/<run_id>/editor": "orchestration_plan_editor",
         "/api/v2/orchestration/runs/<run_id>/edit": "orchestration_begin_plan_edit",
         "/api/v2/orchestration/runs/<run_id>/revisions": "orchestration_revise_plan",

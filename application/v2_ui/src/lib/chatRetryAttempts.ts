@@ -25,6 +25,23 @@ export interface ResponseAttempt {
     run_id?: string;
 }
 
+export function initialPlanningState(message: ChatMessage | undefined): {
+    status?: string; submissionId?: string; sourceMessageId?: string;
+    runId?: string; runStarted?: boolean; error?: string;
+} {
+    const value = message?.metadata?.orchestration;
+    if (!isRecord(value)) return {};
+    return {
+        status: typeof value.planning_status === 'string' ? value.planning_status : undefined,
+        submissionId: typeof value.planning_submission_id === 'string' ? value.planning_submission_id : undefined,
+        sourceMessageId: typeof message?.metadata?.source_message_id === 'string'
+            ? message.metadata.source_message_id : undefined,
+        runId: typeof value.run_id === 'string' ? value.run_id : undefined,
+        runStarted: typeof value.planning_run_started === 'boolean' ? value.planning_run_started : undefined,
+        error: typeof value.planning_error === 'string' ? value.planning_error : undefined,
+    };
+}
+
 function isRecord(value: unknown): value is Json {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -136,6 +153,10 @@ export function retryReplyMetadata(metadata: Json, presentation: RetryPresentati
 }
 
 export function selectedAttemptError(question: ChatMessage, messages: ChatMessage[]): string | undefined {
+    const planning = initialPlanningState(question);
+    if ((!planning.runId || planning.error) && ['failed', 'interrupted'].includes(planning.status ?? '')) {
+        return planning.error || 'Planning did not complete. Your question was saved. You can retry it.';
+    }
     const attempt = savedResponseAttempt(question);
     if (!['failed', 'interrupted'].includes(attempt.state ?? '')) return undefined;
     const thread = messageThreadId(question);

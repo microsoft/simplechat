@@ -1,7 +1,7 @@
 # test_v2_new_chat_reset.py
 """
 Browser regressions for starting a new chat in V2 while the open conversation is busy.
-Version: 0.261.414
+Version: 0.261.415
 Implemented in: 0.261.226
 
 Clicking New chat while an orchestration turn was planning or running kept the old turn's
@@ -185,6 +185,13 @@ class NewChatApi:
         if path.startswith("/api/chat/stream/cancel/"):
             # Answered so a regression shows up as an assertion, not a hung request.
             route.fulfill(json={"success": True})
+            return
+        if request.method == "POST" and path.startswith("/api/v2/orchestration/turns/") and path.endswith("/cancel"):
+            body = request.post_data_json
+            route.fulfill(json={
+                "success": True, "turn_id": unquote(path.split("/")[-2]),
+                "submission_id": body["submission_id"],
+            })
             return
         if path == "/api/v2/orchestration/runs":
             route.fulfill(json={"runs": []})

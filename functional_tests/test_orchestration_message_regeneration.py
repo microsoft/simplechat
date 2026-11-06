@@ -1,7 +1,7 @@
 # test_orchestration_message_regeneration.py
 """
 Functional coverage for fresh, review-required orchestration message generations.
-Version: 0.261.320
+Version: 0.261.415
 Implemented in: 0.261.317
 
 The real planning, revision, execution, and retry state machines run against the
@@ -18,7 +18,7 @@ import uuid
 import pytest
 
 from test_orchestration_harness_routes import modules as harness_modules, real_http_harness  # noqa: F401
-from test_orchestration_elicitation_routes import reply_payload, resolution, style_question
+from test_orchestration_elicitation_routes import reply_payload, style_question
 from test_orchestration_model_selection import TERRA_SELECTION
 from test_support.offline_bootstrap import offline_app_imports
 from test_support.orchestration_harness_execution import compose_step, input_binding
@@ -46,8 +46,9 @@ def frames(response):
         if frame.startswith('data:') and frame.partition('data:')[2].strip() != '[DONE]'
     ]
 
-def planning_replies(*, answered=False):
-    return ([json.dumps(resolution(QUESTION))] if answered else []) + [
+def planning_replies():
+    # Answered clarifications do not invent history in this source-free fixture.
+    return [
         json.dumps({'kind': 'plan', 'steps': [compose_step()], 'final_response': input_binding('prepare')}),
     ]
 
@@ -128,9 +129,7 @@ def prepare(context, source, *, submission_id=None, **fields):
 
 
 def plan_again(context, prepared, **overrides):
-    context.harness.replies = planning_replies(answered=bool(
-        prepared['user_message']['metadata'].get('orchestration_clarification_answers'),
-    ))
+    context.harness.replies = planning_replies()
     response = context.client.post(
         '/api/v2/orchestration/plan', json={**prepared['plan_request'], **overrides}, buffered=True,
     )
@@ -182,6 +181,8 @@ def test_regeneration_forces_review_despite_auto_and_disabled_approval_override(
     })
     assert refused.status_code == 409, refused.get_data(as_text=True)
     assert refused.get_json()['code'] == 'fresh_review_required'
+
+
     context.harness.replies = ['The regenerated complete answer.']
     approved = context.client.post('/api/v2/orchestration/run', json={
         'conversation_id': 'conv1', 'run_id': plan['run_id'], 'plan_id': plan['plan_id'],
@@ -194,6 +195,16 @@ def test_regeneration_forces_review_despite_auto_and_disabled_approval_override(
     assert answer['metadata']['thread_info']['thread_attempt'] == 2
     assert answer['metadata']['thread_info']['thread_id'] == prepared['thread_id']
     assert context.messages.read_item(prepared['user_message_id'], 'conv1')['metadata']['response_attempt']['state'] == 'completed'
+
+
+def test_prepared_regeneration_preserves_the_client_planning_submission_id(context):
+    original = source_run(context)
+    _, prepared = prepare(context, original['user_message_id'])
+    response, events = plan_again(context, prepared, planning_submission_id='client-regeneration-submission')
+    acknowledged = next(event for event in events if event.get('type') == 'user_message_persisted')
+    assert response.status_code == 200
+    assert acknowledged['planning_submission_id'] == 'client-regeneration-submission'
+    assert acknowledged['user_message_id'] == prepared['user_message_id']
 
 
 def test_duplicate_preparation_and_invocation_cannot_create_extra_generations(context):
@@ -392,7 +403,7 @@ def test_clarification_preserves_answers_and_manual_review(context, failed_conti
     response = context.client.post('/api/v2/orchestration/plan', json=prepared['plan_request'], buffered=True)
     events = frames(response)
     question = next(event['elicitation'] for event in events if event.get('elicitation'))
-    context.harness.replies = [] if failed_continuation else planning_replies(answered=True)
+    context.harness.replies = [] if failed_continuation else planning_replies()
     answer = reply_payload(question, turn_id=prepared['turn_id'])
     answer['conversation_id'] = 'conv1'
     answer['approval_mode'] = 'auto'

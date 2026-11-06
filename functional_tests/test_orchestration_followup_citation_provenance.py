@@ -1,7 +1,7 @@
 # test_orchestration_followup_citation_provenance.py
 """Selected sourced answers retain provenance through formatting-only follow-ups.
 
-Version: 0.261.370
+Version: 0.261.415
 Implemented in: 0.261.370
 
 Real planning routes, retained results, composition and publication run with
@@ -9,6 +9,7 @@ offline provider/storage boundaries. No source search is repeated for formatting
 """
 
 from copy import deepcopy
+from datetime import datetime, timezone
 import importlib
 import json
 
@@ -160,7 +161,7 @@ def test_user_text_does_not_admit_unselected_answer_sources(sourced_conversation
     harness = case['runtime'].harness
     user = {
         'id': 'pasted-text', 'conversation_id': 'conversation-1', 'role': 'user',
-        'content': ANSWER, 'timestamp': '2099-01-01T00:00:00+00:00',
+        'content': ANSWER, 'timestamp': datetime.now(timezone.utc).isoformat(),
     }
     harness.messages.create_item(user)
     message_id = user['id'] if selection == 'pasted' else case['record']['user_message_id']

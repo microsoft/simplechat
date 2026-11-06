@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.411"
+version: "0.261.415"
 ---
 
 ## Decide what should run
@@ -50,6 +50,31 @@ A genuinely missing source, business rule, or other essential fact can still nee
 another question. There is no one-question limit, and unanswered required fields
 still prevent submission. When your plan is ready, the selected approval mode still
 applies; answering a question does not authorize execution by itself.
+
+## Leave or refresh without losing an accepted question
+
+Fixed/Implemented in version: **0.261.415**
+(`application/single_app/config.py`).
+
+Once the server accepts your question, it saves the question and its planning
+state before the plan is ready. You can switch conversations or refresh, then
+return to the saved question and its current status. Originally authorized Auto
+work continues server-side; a review-required plan still waits for approval.
+Reopening a saved countdown does not approve it again.
+
+A planning failure stays with the saved question. Use **Retry** to reuse its
+original selections and review a new plan rather than rebuilding the request
+from today's composer controls. Follow-up questions are restored too, so answer
+the current question instead of submitting another copy of the original request.
+
+Use **Stop** when you want cancellation. Leaving the page is not Stop. If Stop
+races with completion, the saved answer is restored rather than described as
+cancelled. Work already performed by an external integration is not rolled back.
+A status outage reports uncertainty and does not start another execution.
+
+An interrupted server worker can require an explicit retry. The saved question
+remains available, but this is not a promise of transparent recovery from every
+process restart, or reconstruction of messages an older version never saved.
 
 ## Choose requirements, not permissions
 

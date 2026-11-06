@@ -140,7 +140,7 @@ import {
 } from '../lib/chatContext';
 import { currentAttempt, messageThreadId } from '../lib/threads';
 import {
-    adoptRetryQuestion, beginRetryPresentation, insertRetryReply, messageOrchestrationTurn,
+    adoptRetryQuestion, beginRetryPresentation, initialPlanningState, insertRetryReply, messageOrchestrationTurn,
     retryQuestion, retryReplyMetadata, savedResponseAttempt, updateRetryState, type RetryPresentation,
 } from '../lib/chatRetryAttempts';
 import { withoutDeletedMessages } from '../lib/deletedMessages';
@@ -152,6 +152,7 @@ import {
     forgetOrchestrationConversation,
     planRegeneratedMessage,
     retryOrchestrationPlanning,
+    resumeOrchestrationPlanning,
 } from '../lib/orchestrationController';
 import { foundryAuthUrl } from '../lib/foundryAuth';
 import { announceCompletedReply, type CompletedReply } from '../lib/replyEvents';
@@ -1746,7 +1747,9 @@ export async function resumeActionRecoveryChat(body: ChatStreamRequest): Promise
         }] });
     }
     useChatStore.setState({
-        streaming: true, streamingContent: '', streamError: null, thoughts: [],
+        streaming: true,
+        orchestrationSurface: null,
+        streamingContent: '', streamError: null, thoughts: [],
         streamAuthUrl: null, streamingReasoningAdjustments: [],
     });
     const { action_recovery: previousDecision, ...pending } = body;
@@ -2583,6 +2586,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 return;
             }
             set({ messages, messagesLoading: false, publicWorkspaceSelection: publicChatScopeFromMessages(messages) });
+            void resumeOrchestrationPlanning(conversationId);
             const descriptor = latestSavedAnalysis(messages);
             if (descriptor && !get().analysisContextChosen) {
                 get().selectAnalysisResult(descriptor, analysisRevision);
@@ -4051,7 +4055,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 && message.role === 'user' && message.metadata?.orchestration_turn_id === turnId;
             const optimistic = state.messages.find((message) => matches(message) && message.id === optimisticId);
             if (!optimistic) return state;
-            const saved = state.messages.find((message) => message.id === savedId);
+            const saved = state.messages.find((message) =>
+                message.id === savedId || mirroredSourceId(message) === savedId);
             if (saved && !matches(saved)) return state;
             return {
                 messages: state.messages.flatMap((message) =>
@@ -4277,8 +4282,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         const message = get().messages.find((candidate) => candidate.id === messageId);
         const recoveryConversationId = get().activeConversationId;
-        if (messageId.startsWith('pending-user-')) {
-            const turnId = message?.metadata?.orchestration_turn_id;
+        const planning = initialPlanningState(message);
+        if (messageId.startsWith('pending-user-') || (planning.status && !savedResponseAttempt(message).kind && (
+            !planning.runId || (planning.runStarted === false && ['failed', 'interrupted'].includes(planning.status))
+        ))) {
+            const turnId = messageOrchestrationTurn(message);
             const result = recoveryConversationId && typeof turnId === 'string' && turnId
                 ? await retryOrchestrationPlanning(recoveryConversationId, turnId, messageId)
                 : {

@@ -96,6 +96,7 @@ from functions_message_artifacts import (
     filter_assistant_artifact_items,
     hydrate_agent_citations_from_artifacts,
 )
+from functions_orchestration_planning import PlanningStateError, public_planning_message
 from functions_message_deletion import (
     exclude_soft_deleted_messages,
     is_soft_deleted_message,
@@ -1648,7 +1649,13 @@ def register_route_backend_conversations(bp):
                     "message": "Microsoft 365 action cards could not be loaded. Reload the conversation to try again.",
                 }), status_code
 
-            return jsonify({'messages': messages})
+            return jsonify({'messages': [public_planning_message(message) for message in messages]})
+        except PlanningStateError as error:
+            log_event(
+                '[ORCHESTRATION] Saved planning history could not be projected.',
+                level=logging.ERROR, extra={'stage': 'planning_history', 'code': error.code},
+            )
+            return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
         except PermissionError:
             return jsonify({'error': 'Forbidden'}), 403
         except LookupError:

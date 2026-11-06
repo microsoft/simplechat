@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional regressions for picked-document planning and debug diagnostics.
-Version: 0.261.413
+Version: 0.261.415
 Implemented in: 0.261.413
+Server-owned Auto handoff integration: 0.261.415
 
 Real authenticated routes, source metadata, planner, validation and logger
 serialization run with external model/storage I/O isolated. Diagnostics must
@@ -20,6 +21,7 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
+from flask import Response
 from jsonschema import Draft202012Validator
 from openai import APITimeoutError
 from openpyxl import Workbook
@@ -272,8 +274,9 @@ def test_advertised_analyze_schema_rejects_incompatible_semantics(planning, opti
 @pytest.mark.parametrize("extension", ["png", "pdf", "docx", "csv", "xlsx"])
 @pytest.mark.parametrize("approval", ["manual", "auto"])
 def test_http_picked_document_recovery_preserves_scope_and_does_not_execute(
-    planning, monkeypatch, caplog, extension, approval,
+    planning, modules, monkeypatch, caplog, extension, approval,
 ):
+    """Planning stays side-effect free; only approved Auto plans hand off afterward."""
     harness = planning.harness
     documents = harness.config.cosmos_user_documents_container
     record = documents.read_item(LEFT, LEFT)
@@ -289,6 +292,8 @@ def test_http_picked_document_recovery_preserves_scope_and_does_not_execute(
         harness.blobs.records[("PRIVATE_CONTAINER", "PRIVATE_PATH")]["data"] = content.getvalue()
     execute = Mock(side_effect=AssertionError("Planning must not execute a step."))
     monkeypatch.setattr(harness.execution, "prepare_harness_execution", execute)
+    handoff = Mock(return_value=Response(mimetype="text/event-stream"))
+    monkeypatch.setattr(modules.route, "_prepare_execution_stream", handoff)
     adapters = importlib.import_module("functions_orchestration_adapters")
     monkeypatch.setitem(adapters.ADAPTER_REGISTRY, "document_analyze", execute)
     request = "Answer the question using only the selected file."
@@ -328,6 +333,11 @@ def test_http_picked_document_recovery_preserves_scope_and_does_not_execute(
     assert plan["approval"]["mode"] == approval
     assert harness.schema.effective_plan_document_ids(plan, {"document_ids": [LEFT]}) == [LEFT]
     assert plan["steps"][0]["capability_id"] == "document_search"
+    assert handoff.call_count == (1 if approval == "auto" else 0)
+    if approval == "auto":
+        admitted = handoff.call_args.args[0]
+        assert admitted["id"] == plan["run_id"]
+        assert harness.schema.effective_plan_document_ids(admitted["plan"], {"document_ids": [LEFT]}) == [LEFT]
     assert execute.call_count == 0
     assert harness.blobs.file_uploads == 0 and harness.assistant_messages() == []
     summary = diagnostic_records(caplog, stage="plan_validated", message="[ORCHESTRATION_PLANNER] Planning diagnostic.")[-1]

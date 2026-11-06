@@ -1529,16 +1529,10 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         stopTyping();
     };
 
-    /**
-     * Stop the work in flight, whichever kind it is.
-     *
-     * A plan or run has no server-side cancel endpoint the way a chat stream does, so Stop can
-     * only abort the reader; the controller settles the thread either way and keeps the partial
-     * answer. Routed by whether the conversation has an orchestration stream open, so Stop does
-     * the right thing without the button needing to know which mode produced the work.
-     */
+    /** Stop the visible stream's owner, not another orchestration running in the background. */
     const handleStop = () => {
-        if (activeConversationId && hasActiveOrchestration(activeConversationId)) {
+        if (activeConversationId && useChatStore.getState().orchestrationSurface
+            && hasActiveOrchestration(activeConversationId)) {
             cancelOrchestration(activeConversationId);
             return;
         }

@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.413** (tracked in `application/single_app/config.py`)
+**Version: 0.261.415** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -30,6 +30,7 @@
 **Private conversation references (`~`), `conversation_search` / `conversation_read`, and queued `conversation_send` handoffs added in version: 0.261.381**
 **Search evidence citation harness expectations aligned in version: 0.261.399**
 **Selected-document planning recovery and debug diagnostics fixed/implemented in version: 0.261.413**
+**Initial-turn persistence and browser-independent Auto planning implemented in version: 0.261.415**
 
 ## Overview
 
@@ -48,6 +49,26 @@ agent. That step uses a bounded function-calling loop limited to the selected ac
 its required companions.
 
 This is a V2 interface feature. The classic interface is unchanged.
+
+### Leave and reopen an accepted request
+
+Fixed/Implemented in version: **0.261.415**
+(`application/single_app/config.py`).
+
+An accepted question is saved before planning completes. Switching conversations
+or refreshing does not discard it: reopening restores its planning, follow-up,
+review, or failure state. Auto work authorized by the original submission
+continues server-side; manual/review plans still wait for approval. A restored
+countdown is not a new authorization to run.
+
+If planning fails, use the saved question's **Retry** action to reuse its original
+selections and review a new plan. This initial-planning retry is different from
+resuming completed execution checkpoints. A status outage does not silently start
+another attempt, and an interrupted worker leaves a recoverable state rather
+than permanent Planning. **Stop**, not navigation, requests cancellation.
+
+See the [initial-turn persistence fix](../fixes/ORCHESTRATION_INITIAL_TURN_PERSISTENCE_FIX.md)
+for the storage, worker, cancellation, and recovery boundaries.
 
 Version **0.261.125** added the internal
 [Gather / Reason / Render result foundation](ORCHESTRATION_GATHER_REASON_RENDER.md)

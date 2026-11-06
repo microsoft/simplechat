@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the identifiers that let an orchestration turn be found again.
-Version: 0.261.270
+Version: 0.261.415
 Implemented in: 0.261.099
 Chat content-check metadata binding included in: 0.261.131
 Shared conversation question posting included in: 0.261.270
@@ -202,7 +202,9 @@ def test_run_route_refuses_a_plan_that_already_ran():
     """A second approval, from a second device, is refused rather than doing the work twice."""
     print("Testing the run route refuses an already-run plan...")
     try:
-        body = _function_source("orchestration_run")
+        route_body = _function_source("orchestration_run")
+        assert "return _run_saved_plan(" in route_body
+        body = _function_source("_run_saved_plan")
 
         guard = re.search(
             r"if\s+(?:record\.get\('started_at'\)\s+or\s+)?record\.get\('status'\)\s+in\s+\(([^)]*)\)", body
@@ -233,7 +235,9 @@ def test_run_route_trusts_the_record_not_the_request():
     """The plan, seeds and question come from the stored run, not from whoever posted."""
     print("Testing the run route reads the plan from the stored record...")
     try:
-        body = _function_source("orchestration_run")
+        route_body = _function_source("orchestration_run")
+        assert "return _run_saved_plan(" in route_body
+        body = _function_source("_run_saved_plan")
 
         for field in ("plan", "seeds", "user_message"):
             assert re.search(rf"record\.get\('{field}'", body), (

@@ -1,7 +1,7 @@
 # test_v2_orchestration_planning_retry.py
 """
 Browser regressions for failed, unpersisted orchestration planning turns.
-Version: 0.261.323
+Version: 0.261.415
 Implemented in: 0.261.115
 Leaving a planning turn for a new chat also releases its Thinking state and Stop: 0.261.226
 
@@ -12,7 +12,7 @@ deployment, source permission, or workspace content is changed.
 
 import copy
 import json
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import pytest
 from playwright.sync_api import expect
@@ -86,8 +86,22 @@ class PlanningApi:
         if is_pending_actions_list(request.method, path):
             route.fulfill(json=pending_actions_payload())
             return
+        if request.method == "GET" and path in {
+            "/api/action-credentials/pending", "/api/v2/user-input/pending",
+        }:
+            route.fulfill(json={"requests": [], "csrf_token": "fixture-csrf"})
+            return
+        if request.method == "GET" and path == "/api/v2/orchestration/questions":
+            route.fulfill(json={"questions": [], "csrf_token": "fixture-csrf"})
+            return
         body = request.post_data_json if request.post_data else None
         self.requests.append({"path": path, "method": request.method, "body": copy.deepcopy(body)})
+        if path.startswith("/api/v2/orchestration/turns/") and path.endswith("/cancel"):
+            route.fulfill(json={
+                "success": True, "turn_id": unquote(path.split("/")[-2]),
+                "submission_id": body["submission_id"],
+            })
+            return
         if path == PLAN:
             if self.mode == "held":
                 self.pending.append((route, body))
@@ -245,7 +259,12 @@ def test_failed_planning_retry_reuses_exact_context_without_a_second_bubble(plan
     page.get_by_role("button", name="Retry", exact=True).click()
     expect(page.get_by_role("button", name="Approve and run the plan").first).to_be_visible()
     assert len(api.calls(PLAN)) == 2
-    assert api.calls(PLAN)[1]["body"] == {**api.calls(PLAN)[0]["body"], "requires_fresh_review": True}
+    original_body, retry_body = [request["body"] for request in api.calls(PLAN)]
+    assert retry_body == {
+        **original_body, "requires_fresh_review": True,
+        "planning_submission_id": retry_body["planning_submission_id"],
+    }
+    assert retry_body["planning_submission_id"] != original_body["planning_submission_id"]
     state = page.evaluate("""() => {
         const S = window.OrchHarness.stores.chat.useChatStore.getState();
         return {messages: S.messages, error: S.streamError, streaming: S.streaming};
@@ -286,7 +305,12 @@ def test_failed_planning_retry_keeps_the_original_group_agent(planning_ui):
     api.mode = "plan"
     page.get_by_role("button", name="Retry", exact=True).click()
     expect(page.get_by_role("button", name="Approve and run the plan").first).to_be_visible()
-    assert api.calls(PLAN)[1]["body"] == {**api.calls(PLAN)[0]["body"], "requires_fresh_review": True}
+    original_body, retry_body = [request["body"] for request in api.calls(PLAN)]
+    assert retry_body == {
+        **original_body, "requires_fresh_review": True,
+        "planning_submission_id": retry_body["planning_submission_id"],
+    }
+    assert retry_body["planning_submission_id"] != original_body["planning_submission_id"]
     assert api.calls(PLAN)[1]["body"]["agent_info"] == seeds["agent_info"]
     assert "model_deployment" not in api.calls(PLAN)[1]["body"]
 

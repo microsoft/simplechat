@@ -82,7 +82,7 @@ import { ImageEditor } from './ImageEditor';
 import { ImageReferenceThumbnail } from './ImageReferenceThumbnail';
 import { ImageProposalScope } from './ImageProposalContext';
 import { normalizeFoundryAuthUrl } from '../../lib/foundryAuth';
-import { messageOrchestrationTurn, savedResponseAttempt, selectedAttemptError } from '../../lib/chatRetryAttempts';
+import { initialPlanningState, messageOrchestrationTurn, savedResponseAttempt, selectedAttemptError } from '../../lib/chatRetryAttempts';
 import {
     answerGeneratedImages,
     extractProposalSpecs,
@@ -1796,6 +1796,9 @@ export function MessageList() {
                                     {error && <div data-retry-error={message.id}><ResponseError message={error} authUrl={localRetry?.authUrl} /></div>}
                                     {!here && savedResponseAttempt(message).state === 'prepared' && (
                                         <p role="status" className="px-1 text-sm text-text-3">This retry is prepared. Select Retry to generate its response.</p>
+                                    )}
+                                    {!here && initialPlanningState(message).status === 'cancelled' && (
+                                        <p role="status" className="px-1 text-sm text-text-3">Planning stopped. Your question was saved.</p>
                                     )}
                                     {activeConversationId && planAnchor === message.id && !(localRetry && !localRetry.admitted) && (
                                         <ActiveOrchestrationCard conversationId={activeConversationId} />
