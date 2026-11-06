@@ -4,12 +4,27 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.416"
+version: "0.261.417"
 ---
 
 ## How to use this reference
 
 Use this page when you can see a control in Chat but are not sure what it does or when to use it. The generated inventory lists 47 real controls plus 3 child sub-elements. The child elements `document-comparison-edit-btn-label`, `fork-conversation-button-label`, and `fork-conversation-button-spinner` are mentioned with their parent controls instead of receiving separate rows.
+
+### Native workbook evidence
+
+Fixed/Implemented in version: **0.261.417**
+(`application/single_app/config.py`).
+
+| Control | Purpose | Availability |
+| --- | --- | --- |
+| Native note/comment citation | Opens exact retained reviewer text and its worksheet/cell, author, reply metadata, and saved cell value. | A citation with an unambiguous retained native-evidence reference |
+| Open workbook preview (separate from annotation evidence) | Opens worksheet data independently; the preview is not presented as the cited reviewer text. | Successfully authorized native-evidence view |
+
+Source access and the inspected workbook version are rechecked when evidence
+opens. An unavailable historical reference stays unavailable rather than choosing
+a newer comment at the same cell. See
+[Inspect Excel data, comments, and structure]({{ '/guides/inspect-excel-workbooks/' | relative_url }}).
 
 ## Conversation list
 

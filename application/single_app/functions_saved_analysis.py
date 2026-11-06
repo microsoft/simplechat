@@ -2072,7 +2072,7 @@ def cleanup_chat_analysis_messages(
                 ) if value
             }
             for user_id in thought_owners:
-                delete_thoughts(conversation_id, message["id"], user_id)
+                delete_thoughts(message["id"], user_id)
         descriptors = list(metadata.get("saved_analyses") or [])
         if metadata.get("saved_analysis"):
             descriptors.append(metadata["saved_analysis"])

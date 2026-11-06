@@ -1,7 +1,7 @@
 # test_v2_orchestration_quiet_activity.py
 """
 Real shipped component/controller tests for quiet activity, checking and answer acceptance.
-Version: 0.261.416
+Version: 0.261.417
 Implemented in: 0.261.416
 
 Uses production CSS and the existing Python/Azure Playwright connection fixtures.
@@ -104,7 +104,7 @@ def test_quiet_activity_has_light_steps_and_honest_checking(editor_ui, width, da
         {"plan": plan, "report": report()},
     )
     activity = page.get_by_test_id("quiet-activity")
-    expect(activity.get_by_role("status")).to_have_text("Checking answer")
+    expect(activity.get_by_role("status")).to_have_text("Reasoning: Write the comparison")
     expect(activity.get_by_text("private_criterion")).to_have_count(0)
     expect(activity.get_by_text("private_checker_diagnostic")).to_have_count(0)
     expect(activity.get_by_role("button", name="Stop execution")).to_have_count(0)
@@ -123,7 +123,8 @@ def test_quiet_activity_has_light_steps_and_honest_checking(editor_ui, width, da
                     { status: 'running', task_completeness: report })""",
             {"plan": plan, "report": report(status, corrections=corrections)},
         )
-        expect(activity.get_by_role("status")).to_have_text(text)
+        expect(activity.get_by_role("status")).to_have_text("Reasoning: Write the comparison")
+        expect(activity.get_by_text(text, exact=True)).to_be_visible()
         expect(activity.get_by_text("Answer prepared — Completed")).to_be_visible()
     geometry = activity.evaluate(
         """(element) => ({border: getComputedStyle(element).borderTopWidth,

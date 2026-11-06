@@ -23,6 +23,9 @@ export interface ParsedCitation {
     locationValue: string;
     documentId: string;
     pageNumber: string;
+    nativeEvidence?: Record<string, unknown>;
+    conversationId?: string;
+    nativeUnavailable?: boolean;
 }
 
 export interface CitationGroup {
@@ -43,7 +46,7 @@ export interface CitationGroup {
  * citation when two appear back to back.
  */
 const CITATION_MARKER =
-    /\(Source:\s*((?:(?!\(Source:).)+?),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*((?:(?!\(Source:).)+?)\)\s*((?:\[#.*?\]\s*)+)/gi;
+    /\(Source:\s*((?:(?!\(Source:).)+?),\s*(Page(?:s)?|Sheet(?:s)?|Location|Worksheet cell):\s*((?:(?!\(Source:).)+?)\)\s*((?:\[#.*?\]\s*)+)/gi;
 
 const RAW_DOCUMENT_MARKER =
     /\u3010\s*#?([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}_[a-z0-9_.-]{1,128})\s*\u3011/gi;
@@ -94,6 +97,8 @@ function rawDocumentSources(records: readonly HybridCitation[]): Map<string, Cit
         const id = record.citation_id.trim().replace(/^#/, '');
         const fileName = record.file_name.trim();
         if (!id || !fileName) continue;
+        const native = /:native-comments:/.test(id) || Boolean(record.native_evidence);
+        const explicitDocumentId = typeof record.document_id === 'string' ? record.document_id.trim() : '';
         const location = record.location_value ?? record.sheet_name ?? record.page_number;
         const locationValue = typeof location === 'string' || typeof location === 'number' && Number.isFinite(location) ? String(location) : '';
         const source: CitationGroup = {
@@ -104,9 +109,15 @@ function rawDocumentSources(records: readonly HybridCitation[]): Map<string, Cit
                 ? record.location_label : typeof record.sheet_name === 'string' ? 'Sheet' : record.page_number != null ? 'Page' : 'Location',
             citations: [{
                 citationId: id,
-                documentId: typeof record.document_id === 'string' ? record.document_id : splitCitationId(id).documentId,
+                documentId: explicitDocumentId || (native ? '' : splitCitationId(id).documentId),
                 pageNumber: typeof record.page_number === 'string' || typeof record.page_number === 'number' ? String(record.page_number) : '',
                 locationValue,
+                ...(explicitDocumentId && record.native_evidence && typeof record.native_evidence === 'object'
+                    && !Array.isArray(record.native_evidence) ? {
+                        nativeEvidence: record.native_evidence as Record<string, unknown>,
+                        conversationId: (record.native_evidence as { producer?: { conversation_id?: string } }).producer?.conversation_id,
+                    } : {}),
+                ...(native && (!record.native_evidence || !explicitDocumentId) ? { nativeUnavailable: true } : {}),
             }],
         };
         // A later matching duplicate must not undo an earlier conflicting source.
@@ -207,7 +218,16 @@ export function parseCitations(
                 for (const part of inner.split(/[;,]/)) {
                     const trimmed = part.trim();
                     if (trimmed) {
-                        citations.push(splitCitationId(trimmed));
+                        const id = trimmed.replace(/^#/, '');
+                        const retained = rawSources.get(id);
+                        if (/:native-comments:/.test(id) || locationLabel.toLowerCase() === 'worksheet cell') {
+                            if (!retained?.citations[0].nativeEvidence) {
+                                return `${fileName.trim()} — ${locations.trim()} [Source unavailable]${trailingWhitespace}`;
+                            }
+                            citations.push({ ...retained.citations[0] });
+                        } else {
+                            citations.push(retained ? { ...retained.citations[0] } : splitCitationId(trimmed));
+                        }
                     }
                 }
             }
@@ -225,7 +245,7 @@ export function parseCitations(
                 : [locations.trim()];
 
             citations.forEach((citation, index) => {
-                citation.locationValue = tokens[index] ?? citation.pageNumber ?? '';
+                if (!citation.nativeEvidence) citation.locationValue = tokens[index] ?? citation.pageNumber ?? '';
             });
 
             const kind = classify(fileName, citations);
@@ -316,7 +336,17 @@ export function parseCitations(
 
     // Any bracket run that survives had no Source prefix to give it meaning, so it is
     // removed rather than shown to the user as raw ids.
-    text = text.replace(ORPHAN_BRACKET_RUN, '');
+    text = text.replace(ORPHAN_BRACKET_RUN, (run) => {
+        if (!run.includes(':native-comments:')) return '';
+        const ids = [...run.matchAll(/\[#([^\]]+)\]/g)].map((match) => match[1].trim());
+        return ids.map((id) => {
+            const source = rawSources.get(id);
+            if (!source?.citations[0].nativeEvidence) return '[Source unavailable]';
+            const index = groups.length;
+            groups.push({ ...source, id: `cite-${index}` });
+            return CITATION_PLACEHOLDER(index);
+        }).join(' ');
+    });
 
     // Collapse runs of blank lines, matching the classic UI's `\n{3,}` -> `\n\n`. With
     // remark-breaks enabled every newline becomes a line break, so an unclipped run of

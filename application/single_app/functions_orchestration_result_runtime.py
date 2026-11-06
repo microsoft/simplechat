@@ -6,6 +6,7 @@ Version: 0.261.365
 
 from copy import deepcopy
 from dataclasses import replace
+import json
 
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_analysis_access import analysis_source_snapshot
@@ -266,6 +267,7 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
         'citation_id', 'chunk_id', 'file_name', 'title', 'page_number', 'chunk_sequence',
         'sheet_name', 'location_label', 'location_value', 'classification', 'document_classification', 'score',
         'evidence_id',
+        'annotation_id', 'evidence_kind', 'cell', 'sheet',
     )
 
     def source_key(source):
@@ -306,6 +308,7 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
             for parent in lineage['upstream']:
                 visit(ResultRef.from_dict(parent))
         retained_citations = []
+        native_reference = None
         if (
             producer.capability_id == 'document_search'
             and (current.output_name, current.kind) in (
@@ -334,6 +337,8 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                     _search_evidence_citations(reader, prepared)
                     if current.output_name == 'evidence' else prepared['citations']
                 )
+                if prepared['content_scope'] == 'native_excel_annotations':
+                    native_reference = prepared_reader.reference.to_dict()
                 for source in lineage['sources']:
                     search_counts.setdefault(source_key(source), set())
         elif producer.capability_id in ('document_analyze', 'document_compare'):
@@ -367,10 +372,19 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
             if len(matches) != 1:
                 raise ResultContractError('result_citation_source_invalid')
             projected = project(matches[0], citation)
+            if native_reference is not None:
+                projected.update({
+                    'native_evidence': deepcopy(native_reference),
+                    'source_version': matches[0]['source_version'],
+                    'source_revision': matches[0].get('source_revision'),
+                })
             identity_key = source_key(matches[0])
             if isinstance(citation.get('file_name'), str) and citation['file_name'].strip():
                 source_names[identity_key] = citation['file_name'].strip()
-            if producer.capability_id == 'document_search' and identity_key in search_counts:
+            if (
+                producer.capability_id == 'document_search' and identity_key in search_counts
+                and citation.get('evidence_kind') != 'native_annotation_coverage'
+            ):
                 search_counts[identity_key].add((
                     producer, current.manifest_sha256,
                     canonical_digest({name: value for name, value in projected.items() if name != 'evidence_id'}),
@@ -402,6 +416,66 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
             rows.append(row)
         evidence_status_out["value"] = evidence_status_from_sources(rows)
     return projected
+
+
+def read_native_citation_evidence(service, reference, *, citation_id, document_id):
+    """Resolve an exact committed annotation, with current source access and version.
+
+    Unlike ordinary retained-result inspection, a source citation also authorizes the
+    workbook it offers to preview. Never search a current inventory by cell or decode
+    a document identity from the synthetic citation ID.
+    """
+    if (
+        type(reference) is not ResultRef or reference.producer.capability_id != 'document_search'
+        or reference.output_name != 'prepared' or reference.kind != 'structured-v1'
+    ):
+        raise ResultContractError('native_citation_reference_invalid')
+    reader = service.open_result(reference, allow_partial=True, require_current_sources=True)
+    prepared = read_complete_input(reader)
+    if (
+        type(prepared) is not dict or prepared.get('content_scope') != 'native_excel_annotations'
+        or type(prepared.get('citations')) is not list or type(prepared.get('search_results')) is not list
+    ):
+        raise ResultContractError('native_citation_reference_invalid')
+    citations = [
+        item for item in prepared['citations']
+        if type(item) is dict and item.get('citation_id') == citation_id and item.get('document_id') == document_id
+    ]
+    hits = [
+        item for item in prepared['search_results']
+        if type(item) is dict and item.get('id') == citation_id and item.get('document_id') == document_id
+    ]
+    manifest = service._load_manifest(reference)
+    sources = [item for item in manifest['lineage']['sources'] if item['document_id'] == document_id]
+    if len(citations) != 1 or len(hits) != 1 or len(sources) != 1:
+        raise ResultUnavailableError('native_citation_unavailable')
+    service.access.authorize_input_sources(sources, require_snapshot=True)
+    try:
+        value = json.loads(hits[0]['chunk_text'])
+    except (KeyError, TypeError, ValueError):
+        raise ResultContractError('native_citation_evidence_invalid') from None
+    if type(value) is not dict:
+        raise ResultContractError('native_citation_evidence_invalid')
+    annotation = value.get('excel_annotation')
+    coverage = value.get('native_coverage')
+    if type(annotation) is dict:
+        citation = citations[0]
+        if any(citation.get(field) != annotation.get(record_field) for field, record_field in (
+            ('annotation_id', 'id'), ('sheet', 'sheet'), ('cell', 'cell'),
+        )):
+            raise ResultContractError('native_citation_evidence_invalid')
+        response = {'native_annotation': deepcopy(annotation), 'cited_text': annotation.get('text') or ''}
+    elif type(coverage) is dict:
+        response = {'native_coverage': deepcopy(coverage), 'cited_text': ''}
+    else:
+        raise ResultContractError('native_citation_evidence_invalid')
+    reader.recheck()
+    service.access.authorize_input_sources(sources, require_snapshot=True)
+    return {
+        **response, 'citation_id': citation_id, 'document_id': document_id,
+        'file_name': hits[0].get('file_name') or '', 'source_version': sources[0]['source_version'],
+        'evidence_kind': 'native_excel_annotation' if annotation is not None else 'native_annotation_coverage',
+    }
 
 
 def _authorize_task_result(step, context, task, *, reused=False):

@@ -1171,6 +1171,8 @@ export interface CitationRequest {
     document_id?: string;
     page_number?: string;
     chunk_id?: string;
+    native_evidence?: Record<string, unknown>;
+    conversation_id?: string;
 }
 
 export const fetchCitation = (payload: CitationRequest) =>
