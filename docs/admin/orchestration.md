@@ -904,6 +904,15 @@ run ID to correlate its hashed identifier in
 The HTTP status alone is insufficient: a planning stream can return HTTP 200 and
 then report a rejected proposal.
 
+Since **0.261.411**, invalid Analyze declarations and omitted selected documents
+share the planner's one correction round. Selecting a file does not run Analyze:
+upload extraction and bounded planning previews are separate from approved step
+execution. For repeat failures, enable the existing debug logging setting and
+compare the initial proposal, normalized source bindings, and specific rejection
+rule in [selected-document planning diagnostics]({{ '/reference/logging-tags/#selected-document-planning-diagnostics' | relative_url }}).
+Do not treat a limited preview as proof that the file is missing or ask for a
+blanket re-upload. Turn debug logging off after collecting the needed evidence.
+
 Since **0.261.291**, when a web search, linked-page, deep research, agent, action or
 memory step is refused, `[ORCHESTRATION_EXTERNAL_SOURCES] A step's source was refused.`
 names the check that failed in `sc_reason`. It shares `sc_run_id_hash` and
@@ -914,6 +923,7 @@ names the check that failed in `sc_reason`. It shares `sc_run_id_hash` and
 | No orchestration control appears in chat | The setting is off, or the user is in the classic interface. | Confirm Enable Chat Orchestration is on, and that the user is on a V2 chat page. |
 | A saved run says it was created by an earlier orchestration version | The run predates the current plan architecture and is refused rather than interpreted. | Start a new request in the same conversation. Earlier-version runs are omitted from the run list and cannot be rerun. |
 | Plans never mention documents | No workspace capability is enabled, or nothing in the user's documents matched the question. | Confirm at least one workspace type is enabled, and that the user has documents that have finished processing. |
+| Picking a document ends with a planning error before any steps run | The proposed plan omitted a selected source or used incompatible internal Analyze options. Before 0.261.411 these errors could stop without correction. | Upgrade to 0.261.411 or later. A repeated failure logs `selected_requirements_missing` or `analysis_options_invalid` with a specific rule and proposal attempt. Debug diagnostics show whether the binding was absent in the model proposal or changed during normalization; the message is not an instruction to change an Analyze setting. |
 | Every plan is a single answering step | Capabilities are narrowed to answering only, or the retrieval capabilities are disabled elsewhere. | Review Capabilities on this page, then confirm document search and web search are enabled in their own settings groups. |
 | A plan is smaller than expected | The step cap trimmed it. | Raise Maximum steps in a plan, or ask a narrower question. |
 | A follow-up loses its subject | The relevant message is outside the history window, masked, inactive, or truncated. | Check Conversation History Limit in Chat settings and whether the earlier turn is still eligible. Repeat the missing detail if it is outside the retained context. |

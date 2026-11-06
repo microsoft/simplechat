@@ -60,41 +60,80 @@ _EVIDENCE_FOLDS = str.maketrans({
 })
 
 
+class AnalysisOptionsError(ValueError):
+    """An application-owned option rejection, without recording supplied values."""
+
+    def __init__(self, message, *, rule):
+        super().__init__(message)
+        self.rule = rule
+
+
 def normalize_analysis_options(analysis_options=None, transformation_spec=None):
     """Normalize explicit semantics while preserving unversioned record behavior."""
     options = {} if analysis_options is None else deepcopy(analysis_options)
-    if not isinstance(options, dict) or set(options) - {
-        'version', 'mode', 'required_fields', 'transformation_spec',
-    }:
-        raise ValueError('Unsupported analysis options. Declare required field names or supported calculation rules.')
+    if not isinstance(options, dict):
+        raise AnalysisOptionsError('Analysis options must be an object.', rule='options_object_required')
+    if set(options) - {'version', 'mode', 'required_fields', 'transformation_spec'}:
+        raise AnalysisOptionsError(
+            'Unsupported analysis options. Declare required field names or supported calculation rules.',
+            rule='unsupported_option_fields',
+        )
     version = options.get('version', ANALYSIS_OPTIONS_VERSION)
     if version not in (ANALYSIS_OPTIONS_VERSION, ANALYSIS_SEMANTICS_VERSION):
-        raise ValueError('Unsupported analysis options version.')
+        raise AnalysisOptionsError('Unsupported analysis options version.', rule='unsupported_options_version')
     mode = options.get('mode', 'narrative_findings' if version == ANALYSIS_OPTIONS_VERSION else None)
     if version == ANALYSIS_OPTIONS_VERSION and mode != 'narrative_findings':
-        raise ValueError('This Analyze path supports narrative findings, not a required row cardinality or custom schema.')
+        raise AnalysisOptionsError(
+            'This Analyze path supports narrative findings, not a required row cardinality or custom schema.',
+            rule='version_mode_mismatch',
+        )
     if version == ANALYSIS_SEMANTICS_VERSION and mode not in (SOURCE_OBSERVATIONS, RECONCILED_RECORDS):
-        raise ValueError('Declare supported Analyze semantics; no mode is inferred from source text.')
+        raise AnalysisOptionsError(
+            'Declare supported Analyze semantics; no mode is inferred from source text.',
+            rule='supported_mode_required',
+        )
     fields = options.get('required_fields', [])
     if (
         not isinstance(fields, list) or len(fields) > 200
         or any(not isinstance(field, str) or not field.strip() or len(field) > 128 for field in fields)
         or len({field.strip() for field in fields}) != len(fields)
     ):
-        raise ValueError('Required analysis fields must be a unique list of at most 200 nonempty field names.')
+        raise AnalysisOptionsError(
+            'Required analysis fields must be a unique list of at most 200 nonempty field names.',
+            rule='required_fields_invalid',
+        )
     supplied_spec = options.get('transformation_spec')
     if supplied_spec is not None and not isinstance(supplied_spec, dict):
-        raise ValueError('Explicit analysis calculation rules must be a supported rule object.')
-    if transformation_spec is not None:
-        if not isinstance(transformation_spec, dict):
-            raise ValueError('Explicit analysis calculation rules must be a supported rule object.')
-        normalized_explicit = normalize_tabular_transformation_spec(transformation_spec)
-        if supplied_spec is not None and normalize_tabular_transformation_spec(supplied_spec) != normalized_explicit:
-            raise ValueError('Conflicting explicit analysis calculation rules were supplied.')
-        supplied_spec = transformation_spec
-    normalized_spec = normalize_tabular_transformation_spec(supplied_spec)
+        raise AnalysisOptionsError(
+            'Explicit analysis calculation rules must be a supported rule object.',
+            rule='calculation_rules_object_required',
+        )
+    try:
+        if transformation_spec is not None:
+            if not isinstance(transformation_spec, dict):
+                raise AnalysisOptionsError(
+                    'Explicit analysis calculation rules must be a supported rule object.',
+                    rule='calculation_rules_object_required',
+                )
+            normalized_explicit = normalize_tabular_transformation_spec(transformation_spec)
+            if supplied_spec is not None and normalize_tabular_transformation_spec(supplied_spec) != normalized_explicit:
+                raise AnalysisOptionsError(
+                    'Conflicting explicit analysis calculation rules were supplied.',
+                    rule='calculation_rules_conflict',
+                )
+            supplied_spec = transformation_spec
+        normalized_spec = normalize_tabular_transformation_spec(supplied_spec)
+    except AnalysisOptionsError:
+        raise
+    except ValueError as exc:
+        raise AnalysisOptionsError(
+            'Explicit analysis calculation rules are unsupported.', rule='calculation_rules_invalid',
+        ) from exc
     if mode == SOURCE_OBSERVATIONS and (fields or normalized_spec):
-        raise ValueError('Source observations cannot declare reconciled fields or calculations.')
+        raise AnalysisOptionsError(
+            'Source observations cannot declare reconciled fields or calculations.',
+            rule='observation_requirements_conflict',
+        )
     return {
         'version': version,
         'mode': mode,
