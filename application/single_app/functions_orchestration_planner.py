@@ -25,10 +25,10 @@ error, not evidence that the task can be answered without gathering information.
 Every plan uses the Gather / Reason / Render contract. There is one planner prompt,
 ``PLANNER_SYSTEM_PROMPT``, and one validator.
 
-Version: 0.261.411
+Version: 0.261.413
 Gathered results must be read, and an action's chart reaches the answer, in: 0.261.293
 Empty-history clarification continuation fixed in: 0.261.367
-Selected-document planning recovery and debug diagnostics added in: 0.261.411
+Selected-document planning recovery and debug diagnostics added in: 0.261.413
 """
 
 import hashlib
@@ -849,7 +849,14 @@ this instead:
 "candidate_ids":["<actual candidate id>"]}}}}
 The schema must be a FLAT object of simple fields. No nested objects. For genuine fixed
 choices, use a scalar enum for single choice or array items.enum for multiple choices. For
-ordinary explanations, use a string without enum. For ANY question asking the user to supply
+ordinary explanations, use a string without enum. For an open-ended preference with useful
+suggestions, keep the string (or string-array) schema
+WITHOUT an enum and use ui_hints.fields[field] = {"input":"choices","allow_custom":true,
+"choices":[{"value":"<answer>","label":"<short label>","description":"<optional explanation>"}]}.
+The user can choose a suggestion or write their own answer. Never use open suggestions for
+permissions, approvals, or constrained resource identities. Ask all currently known, genuinely
+blocking facts in one question set, usually two to four, with one field per page. Do not invent
+an interview or ask optional cosmetic questions simply to populate these controls. For ANY question asking the user to supply
 files, set ui_hints.fields[field].input to "files". Use type "string" for one file, or type
 "array" with items.type "string" for multiple files. NEVER put an enum on a file field.
 candidate_ids are optional, non-exhaustive suggestions drawn ONLY from actual

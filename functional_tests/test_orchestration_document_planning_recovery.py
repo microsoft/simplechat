@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional regressions for picked-document planning and debug diagnostics.
-Version: 0.261.411
-Implemented in: 0.261.411
+Version: 0.261.413
+Implemented in: 0.261.413
 
 Real authenticated routes, source metadata, planner, validation and logger
 serialization run with external model/storage I/O isolated. Diagnostics must

@@ -49,6 +49,7 @@ from azure.core.exceptions import ServiceRequestError
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from openai import APIConnectionError, APITimeoutError
+from elicitation_choices import normalize_choice_hint, choice_answer_errors
 
 from blob_container_readiness import STORAGE_FAILURE_CODE, STORAGE_FAILURE_MESSAGE
 from agent_execution_context import AgentDelegationTimeout
@@ -2443,6 +2444,12 @@ def normalize_elicitation(elicitation, run_id, revision=0, candidate_references=
     for name, hint in fields.items():
         if name not in schema['properties'] or not isinstance(hint, dict):
             continue
+        if hint.get('input') == 'choices':
+            try:
+                resource_fields[name] = normalize_choice_hint(schema['properties'][name], hint)
+            except ValueError as exc:
+                raise PlanValidationError('The planner supplied an invalid choice question.') from exc
+            continue
         if hint.get('input') != 'files':
             continue
         rules = schema['properties'][name]
@@ -2557,6 +2564,7 @@ def validate_elicitation_response(elicitation, response):
         if name not in cleaned or cleaned[name] == []:
             errors.append(f"'{name}' is required.")
 
+    errors.extend(choice_answer_errors(elicitation or {}, cleaned))
     if errors:
         return None, errors
 

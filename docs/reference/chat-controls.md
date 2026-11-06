@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.408"
+version: "0.261.411"
 ---
 
 ## How to use this reference
@@ -282,6 +282,29 @@ arrived during streaming. After granting access, send the message again.
 | `confirm-scope-lock-toggle-btn` | Confirms a scope-lock change from the scope-lock modal. | Use it when you intentionally want to lock or unlock the conversation scope after reviewing the warning. | Always available |
 
 ## Chat tools and composer
+
+### Guided follow-up questions (V2)
+
+Implemented in version **0.261.411** (`application/single_app/config.py`).
+Orchestration and interactive local agents can collect necessary facts as a
+focused question set. Single-select suggestions, multi-select checkboxes, and
+custom input avoid forcing an answer into an unsuitable empty field.
+
+| Control | Behavior | Use it for |
+| --- | --- | --- |
+| Next / Back and question steps | Navigate the set without sending answers or calling a model. Required answers must be valid before advancing. | Work through related decisions while retaining your draft in this tab. |
+| Write my own | Opens custom text only for open questions; it replaces a single suggestion or accompanies multiple selected answers. | Give an answer not represented by the suggestions. Closed enums remain constrained. |
+| Add context or a file | Reveals the existing rich editor with authorized references, uploads, and saved prompts. | Explain an answer or identify a source without replacing a required closed choice. |
+| Review answers / Edit | Shows the complete set and returns to a chosen question. | Correct assumptions before anything is sent. |
+| Use these answers | Submits the full set once and continues the saved request. | Resume planning or local-agent work; not approve outgoing operations. |
+| Continue without answers / Cancel | Declines without forwarding draft content, or abandons the request. Completed actions are not undone. | Make refusal explicit rather than hiding a pending decision. |
+| Minimize / Show questions | Hides or restores a local-agent interview without answering it. | Keep conversation context visible while deciding. |
+| Continue saved work / Refresh saved status | Continues already accepted answers, or checks an existing continuation rather than replaying it. | Recover after a connection loss. |
+| Stop / Stop saved work | Targets the active saved standalone request, including while its provider is waiting. Orchestration keeps its run-level Stop control. | Stop remaining work without repeating or undoing completed operations. |
+
+See [Answer an agent's follow-up questions]({{ '/guides/answer-agent-questions/' | relative_url }}).
+Foundry-backed agents and classic chat retain their existing behavior. Unsent
+drafts are not written to persistent browser storage and can be lost on refresh.
 
 ### React V2 model, agent, and prompt search
 

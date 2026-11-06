@@ -32,6 +32,7 @@ Version: 0.261.270
 """
 
 import hashlib
+import hmac
 import json
 import logging
 import queue
@@ -52,6 +53,7 @@ from config import cosmos_conversations_container, cosmos_messages_container
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_activity_logging import log_workflow_creation
 from functions_appinsights import log_event, workflow_log_context
+from functions_interaction_csrf import get_interaction_csrf_token
 from functions_assist_submissions import SubmissionIdError, normalize_submission_id
 from public_chat_scope import prepare_public_chat_scope, public_chat_scope_required
 from public_chat_scope_state import PublicChatScopeError, current_public_chat_scope
@@ -203,6 +205,7 @@ from functions_orchestration_registry import (
 )
 from functions_orchestration_runs import (
     ElicitationStateError,
+    cancel_pending_question,
     claim_elicitation_submission,
     complete_elicitation_submission,
     create_orchestration_run,
@@ -213,6 +216,7 @@ from functions_orchestration_runs import (
     get_pending_turn_context,
     get_orchestration_run,
     list_conversation_runs,
+    list_pending_questions,
     list_run_steps,
     prepare_elicitation_outcome,
     release_elicitation_submission,
@@ -3452,6 +3456,55 @@ def register_route_backend_orchestration(bp):
             return jsonify({'error': 'The run could not be cancelled.'}), 500
 
         return jsonify({'success': True, 'run_id': run_id}), 200
+
+    @bp.route("/api/v2/orchestration/questions", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_questions():
+        if not _orchestration_enabled(get_settings()):
+            return jsonify({"questions": [], "csrf_token": get_interaction_csrf_token()}), 200, {"Cache-Control": "no-store"}
+        conversation_id = _text(request.args.get("conversation_id"))
+        user_id = get_current_user_id()
+        try:
+            _authorize_context_conversation(conversation_id, user_id)
+            questions = list_pending_questions(user_id, conversation_id)
+            return jsonify({"questions": questions, "csrf_token": get_interaction_csrf_token()}), 200, {"Cache-Control": "no-store"}
+        except ConversationContextError:
+            return jsonify({"error": "Conversation not found."}), 404, {"Cache-Control": "no-store"}
+        except Exception as error:
+            log_event("[ORCHESTRATION_RUNS] Pending questions could not be loaded.",
+                      extra={"error_type": type(error).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Pending questions could not be loaded."}), 503, {"Cache-Control": "no-store"}
+
+    @bp.route("/api/v2/orchestration/questions/cancel", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_cancel_question():
+        if request.content_length is None or request.content_length > 8192:
+            return jsonify({"error": "Invalid cancellation."}), 400
+        body = request.get_json(silent=True)
+        if type(body) is not dict or set(body) != {"conversation_id", "turn_id", "elicitation_id", "revision", "csrf_token"}:
+            return jsonify({"error": "Invalid cancellation."}), 400
+        if type(body["revision"]) is not int:
+            return jsonify({"error": "Invalid cancellation."}), 400
+        token = session.get("action_credentials_csrf_token") or ""
+        if not token or not isinstance(body["csrf_token"], str) or not hmac.compare_digest(token, body["csrf_token"]):
+            return jsonify({"error": "Refresh the conversation before cancelling."}), 403
+        try:
+            user_id = get_current_user_id()
+            _authorize_context_conversation(body["conversation_id"], user_id)
+            cancel_pending_question(user_id, body["conversation_id"], body["turn_id"], body["elicitation_id"], body["revision"])
+            return jsonify({"cancelled": True})
+        except ConversationContextError:
+            return jsonify({"error": "Conversation not found."}), 404
+        except ElicitationStateError as error:
+            return jsonify({"error": error.message, "code": error.code}), error.status_code
+        except Exception as error:
+            log_event("[ORCHESTRATION_RUNS] Question cancellation could not be saved.",
+                      extra={"error_type": type(error).__name__}, level=logging.ERROR)
+            return jsonify({"error": "The cancellation could not be confirmed. Refresh this conversation."}), 503
 
     @bp.route("/api/v2/orchestration/runs", methods=["GET"])
     @swagger_route(security=get_auth_security())

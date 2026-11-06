@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.411** (tracked in `application/single_app/config.py`)
+**Version: 0.261.413** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -29,7 +29,7 @@
 **Current-message source interpretation and memory-aware request resolution fixed in version: 0.261.349**
 **Private conversation references (`~`), `conversation_search` / `conversation_read`, and queued `conversation_send` handoffs added in version: 0.261.381**
 **Search evidence citation harness expectations aligned in version: 0.261.399**
-**Selected-document planning recovery and debug diagnostics fixed/implemented in version: 0.261.411**
+**Selected-document planning recovery and debug diagnostics fixed/implemented in version: 0.261.413**
 
 ## Overview
 
@@ -78,7 +78,7 @@ choose compatible work. Neither is execution of an orchestration Analyze step.
 Only a validated, approved plan reaches the execution adapters. Automatic approval
 does not bypass validation.
 
-Since **0.261.411**, a proposal that omits a selected file or declares incompatible
+Since **0.261.413**, a proposal that omits a selected file or declares incompatible
 Analyze options receives targeted correction feedback. It shares the existing
 single correction with other repairable planning failures: a second, different
 failure does not start another retry budget. The server keeps source access,

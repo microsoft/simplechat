@@ -1324,6 +1324,7 @@ export interface WorkspaceAvailability {
  * why almost everything here is optional.
  */
 export interface ChatStreamEvent {
+    input_request?: import('../stores/userInputStore').UserInputRequest;
     credential_request?: CredentialRequest;
     role?: MessageRole;
     blocked?: boolean;

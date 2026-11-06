@@ -1,6 +1,6 @@
-# Selected-document orchestration planning recovery (v0.261.411)
+# Selected-document orchestration planning recovery (v0.261.413)
 
-Fixed/Implemented in version: **0.261.411**, recorded in
+Fixed/Implemented in version: **0.261.413**, recorded in
 `application/single_app/config.py`.
 
 ## Issue and root cause
@@ -119,8 +119,9 @@ conversations are not modified by this implementation.
 
 ### Executed checks
 
-The combined picked-document, observation-identity, internal-analysis,
-selected-source-planning, and available-information selection passed **214 tests**:
+Before updating to the guided-question base, the combined picked-document,
+observation-identity, internal-analysis, selected-source-planning, and
+available-information selection passed **214 tests**:
 
 ```powershell
 python -m pytest -q -p no:cacheprovider --disable-warnings --tb=short --show-capture=no .\functional_tests\test_orchestration_document_planning_recovery.py .\functional_tests\test_document_analysis_observation_identity.py .\functional_tests\test_orchestration_internal_analysis.py .\functional_tests\test_orchestration_selected_source_planning.py .\functional_tests\test_orchestration_available_information.py
@@ -135,6 +136,17 @@ are not presented as an aggregate count.
 The new Auto-routing HTTP fixture replaces only external Graph profile-photo I/O;
 the real routing and user-preference paths run with the offline network guard
 still active. No blocked network attempt is suppressed or cleared.
+
+After merging the guided-question base at `bc3d2584e`, the document-planning
+regressions and guided-input unit/execution tests passed **79 tests** together:
+
+```powershell
+python -m pytest -q -p no:cacheprovider --disable-warnings --tb=short --show-capture=no .\functional_tests\test_orchestration_document_planning_recovery.py .\functional_tests\test_guided_user_input.py .\functional_tests\test_guided_user_input_orchestration.py
+```
+
+The version conflict was reconciled at **0.261.413** after the base reached
+0.261.412. Documentation surface coverage (**7/7**), site quality (**6/6**) and
+the staged whitespace check also passed on the merged tree.
 
 ### Existing baseline limitations
 

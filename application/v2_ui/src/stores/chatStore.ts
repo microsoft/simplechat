@@ -950,6 +950,7 @@ let streamingConversationId: string | null = null;
  * rather than re-derived from whatever is on screen when Stop is pressed.
  */
 let streamingConversationKind: ConversationKind = 'personal';
+let activeStreamCancellation: (() => Promise<void>) | null = null;
 
 /**
  * Conversations whose orchestration turn currently holds the streaming surface, and in which phase.
@@ -1005,6 +1006,7 @@ function detachActiveStream(): void {
     }
     activeStreamController.abort();
     activeStreamController = null;
+    activeStreamCancellation = null;
     streamingConversationId = null;
     // The reply is no longer being read, so its turn stops being a streaming one. Left
     // registered, the next send in this conversation would take the old turn for a renamed
@@ -1624,6 +1626,7 @@ async function runChatStream(
         /** Optimistic user message to reconcile with the server's id. */
         pendingUserMessageId?: string | null;
         transport?: (handlers: ChatStreamHandlers, signal: AbortSignal) => Promise<unknown>;
+        cancel?: () => Promise<void>;
     } = {},
 ): Promise<void | false> {
     const { set, getState } = {
@@ -1636,6 +1639,7 @@ async function runChatStream(
     activeStreamController = controller;
     streamingConversationId = conversationId;
     streamingConversationKind = options.kind ?? 'personal';
+    activeStreamCancellation = options.cancel ?? null;
 
     // Two different questions, and conflating them breaks one case each way.
     //
@@ -1688,6 +1692,7 @@ async function runChatStream(
     const wasCurrent = isCurrent();
     if (ownsController()) {
         activeStreamController = null;
+        activeStreamCancellation = null;
         streamingConversationId = null;
         chatPendingActionsStore.getState().setLiveStream(null);
         set({ streaming: false, reconnectPhase: null });
@@ -1749,9 +1754,19 @@ export async function resumeActionRecoveryChat(body: ChatStreamRequest): Promise
 }
 
 export async function continueCredentialChat(credentialRequest: CredentialRequest): Promise<void> {
+    return continueInteractionChat(
+        credentialRequest.conversation_id, credentialRequest.conversation_kind ?? 'personal',
+        (signal) => openCredentialContinuation(credentialRequest, signal),
+    );
+}
+
+export async function continueInteractionChat(
+    conversationId: string, kind: ConversationKind,
+    openContinuation: (signal: AbortSignal) => Promise<Response>,
+    cancel?: () => Promise<void>,
+): Promise<void> {
     const state = useChatStore.getState();
-    const kind = credentialRequest.conversation_kind ?? 'personal';
-    if (state.activeConversationId !== credentialRequest.conversation_id || state.streaming ||
+    if (state.activeConversationId !== conversationId || state.streaming ||
         (state.activeConversationKind && state.activeConversationKind !== kind)) {
         throw new Error('Open this conversation and wait for its current response before continuing.');
     }
@@ -1763,12 +1778,13 @@ export async function continueCredentialChat(credentialRequest: CredentialReques
         streamError: null, streamAuthUrl: null, thoughts: [],
     });
     let failure: Error | null = null;
-    await runChatStream(null, credentialRequest.conversation_id, {
+    await runChatStream(null, conversationId, {
         reloadOnDone: true,
         kind,
+        cancel,
         transport: async (handlers, signal) => {
             try {
-                const response = await openCredentialContinuation(credentialRequest, signal);
+                const response = await openContinuation(signal);
                 const result = await consumeCredentialChatResponse(response, handlers, signal);
                 if (result.errored) failure = new Error('The action could not finish. Review the conversation before continuing.');
             } catch (error) {
@@ -3702,12 +3718,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // The reply is detached below, so its ending is never seen here. Read the list
             // once the server has the request instead. An action the reply was still saving
             // is picked up by the next read: window focus, Refresh, or a collaboration event.
-            void cancelStream(
+            const cancellation = activeStreamCancellation ? activeStreamCancellation() : cancelStream(
                 stoppedConversationId,
                 streamingConversationKind === 'collaborative'
                     ? cancelCollaborationStreamUrl(stoppedConversationId)
                     : undefined,
-            ).then(() => refreshPendingActionsAfterReply(stoppedConversationId));
+            );
+            void cancellation.then(() => refreshPendingActionsAfterReply(stoppedConversationId)).catch(() => {
+                if (get().activeConversationId === stoppedConversationId) {
+                    set({ streamError: 'Stopping could not be confirmed. Refresh the conversation to check saved work.' });
+                }
+            });
         }
         detachActiveStream();
     },
