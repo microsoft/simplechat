@@ -119,7 +119,7 @@ environment="dev"
 pwsh ./Initialize-EntraApplication.ps1 -AppName "$appName" -Environment "$environment" -AppRolesJsonPath "./azurecli/appRegistrationRoles.json"
 ```
 
-This script will create an Entra Enterprise Application, with an App Registration named *\<appName\>*-*\<environment\>*-ar for the web service called *\<appName\>*-*\<environment\>*-app.  The web service name may be overriden with the `-AppServceName` parameter. A user can also specify a different expiration date for the secret which defaults to 180 days with the `-SecretExpirationDays` parameter.
+This script will create an Entra Enterprise Application, with an App Registration named *\<appName\>*-*\<environment\>*-ar for the web service called *\<appName\>*-*\<environment\>*-app.  The web service name may be overridden with the `-AppServiceName` parameter. A user can also specify a different expiration date for the secret which defaults to 180 days with the `-SecretExpirationDays` parameter.
 
 By default, the script also saves the generated app registration values into the resolved AZD environment using `azd env set`:
 
@@ -279,7 +279,7 @@ During `azd up`, the predeploy hook now builds the application image in Azure Co
 - Enter a value for the 'appName' infrastructure parameter: *\<appName\>*
 - Enter a value for the 'authenticationType' infrastructure parameter: *\<key | managed_identity>*
 - Enter a value for the 'redisAuthenticationType' infrastructure parameter: *\<key | managed_identity>*; use *key* for MAG/Azure Government deployments where Redis managed identity authentication is unavailable.
-- Enter a vaule for the 'cloudEnvironment' infrastructure parameter: *\<AzureCloud | AzureUSGovernment\>*
+- Enter a value for the 'cloudEnvironment' infrastructure parameter: *\<AzureCloud | AzureUSGovernment\>*
 - Enter a value for the 'openAIDeploymentType' infrastructure parameter: *\<Standard | DatazoneStandard | GlobalStandard\>*
 - Enter a value for the 'configureApplicationPermissions' infrastructure parameter: \<true | false\>*
 - Enter a value for the 'deployContentSafety' infrastructure parameter: *\<true | false\>*
