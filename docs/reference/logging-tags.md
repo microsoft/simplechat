@@ -550,10 +550,10 @@ Insights `customDimensions` or Log Analytics `AppTraces.Properties`.
 | --- | --- |
 | `sc_conversation_id_hash`, `sc_turn_id_hash`, `sc_run_id_hash`, `sc_step_id_hash` | SHA-256 of the exact workflow identifier encoded as UTF-8. Only applicable identifiers are present; these hashes do not grant access to the underlying records. Step IDs repeat across runs, so narrow by the run hash before the step hash. |
 | `sc_stage` | The failing boundary, such as `plan_normalization`, `claim_validation`, `settings`, `context`, `identity`, `result_binding`, `model_binding`, `run_detail`, or `scheduler_item`. On `[ORCHESTRATION_EXTERNAL_SOURCES]` refusal events, `external_source_preflight` (before or during the step's acquisition), `external_source_admission` (saving the step's result), or `external_source_read` (reading a saved result again). |
-| `sc_validation_code` | Validation category, including `deliverables_invalid`, `source_kind_invalid`, or `source_binding_required`. |
+| `sc_validation_code` | Validation category, including `deliverables_invalid`, `source_kind_invalid`, `source_binding_required`, `analysis_options_invalid`, or `selected_requirements_missing`. |
 | `sc_validation_rule` | Specific application-owned rejection, such as `invalid_quantity`, `non_file_format`, `answer_producer_mismatch`, `missing_final_response`, `file_format_mismatch`, `narrative_source_required`, or `document_sources_required`. |
 | `sc_response_failure` | A missing, incomplete, or refused planner completion, when applicable. |
-| `sc_attempt` | Planner proposal number: 1 for the initial proposal and 2 for its single correction. Present on deliverables correction/failure events. |
+| `sc_attempt` | Planner proposal number: 1 for the initial proposal and 2 for its single shared correction. Since 0.261.413, also present on Analyze-option and selected-requirement correction/failure events. |
 | `sc_execution_code`, `sc_output_code` | Safe execution or output-store failure category, where available. |
 | `sc_failure_code` | On step and adapter events, a step failure category, such as `step_timeout`, `run_timeout`, or `context_unavailable`. On `[CONTENT_SCREENING]` events, the source-authority code, such as `source_authority_unverified`, `source_authority_unavailable`, or `screening_revision_conflict`. |
 | `sc_authority_reason` | Which check failed for a source. With `source_authority_unverified`, the check that could not verify the source's current authority: `document_record_invalid`, `screening_marker_invalid`, `screening_state_unknown`, `screening_marker_incomplete`, `document_scope_invalid`, `workspace_record_invalid`, `scan_record_invalid`, `provenance_mismatch`, `document_id_invalid`, `manifest_context_invalid`, `manifest_scope_missing`, `manifest_revision_invalid`, or `manifest_batch_invalid`. With `screening_revision_conflict`, what saved evidence no longer matches in the current document: `source_revision_changed` (the document was re-versioned), `screening_generation_changed` (it was re-screened or remediated), `source_scope_changed` (its id or workspace differs), `provenance_shape_invalid` (the saved provenance has a different set of fields), `screened_record_changed` (a saved copy of the screened record differs), `source_version_changed` (a legacy reference without provenance), or `cached_evidence_unproven` (cached evidence from before screening enrollment). On `[ORCHESTRATION_EXECUTOR]` step, saved-wait, finalization and content-preparation failure events (since 0.261.209), the stable code of a refused external source, such as `external_identity_session_unavailable` (the step ran in a background continuation with no signed-in session), `external_identity_role_required`, `external_identity_access_restricted`, `external_identity_conversation_unavailable`, `external_identity_settings_unavailable`, or `external_configuration_changed`. On `[ORCHESTRATION_EXTERNAL_SOURCES]` refusal events (since 0.261.291), the same refusal code, such as `result_external_source_unavailable` or `result_external_capability_unavailable`, with the check that failed in `sc_reason`. |
@@ -609,6 +609,76 @@ AppTraces
     durableStatus = tostring(Properties.sc_durable_status)
 | order by TimeGenerated asc
 | take 200
+```
+
+### Selected-document planning diagnostics
+
+Implemented in version **0.261.413**, tracked in
+`application/single_app/config.py`. The existing **Enable Debug Logging** setting
+gates these three events in both App Service console logs and Application Insights.
+They use the normal application logger after the debug gate; they do not enable
+third-party SDK payload logging. Normal correction and terminal failure events
+remain available with debug logging off.
+
+| Event message | Meaning |
+| --- | --- |
+| `[ORCHESTRATION_PLANNER] Planning diagnostic.` | Source-coverage summary, counts, model-binding fingerprint, and an owned rejection rule when applicable. |
+| `[ORCHESTRATION_PLANNER] Source binding diagnostic.` | One bounded, hashed source entry: selected, used, authorized when an explicit authorization set exists, server-resolved kind, availability, and limited-preview state. |
+| `[ORCHESTRATION_PLANNER] Step binding diagnostic.` | One bounded step entry: hashed step ID, known capability, enabled state, binding-field presence, and Analyze option shape/known-value flags. |
+
+Stages are `planner_input`, `plan_proposal` (before defaults), `analysis_defaults`,
+`plan_normalized`, and `plan_validated`. A rejected attempt also uses its actual
+boundary, such as `plan_normalization` or `selected_requirements`.
+
+| Property | Meaning |
+| --- | --- |
+| `sc_document_id_hash` | SHA-256 of a referenced source ID, never its raw ID or filename. |
+| `sc_planner_binding_hash` | Fingerprint of the selected deployment and available binding source/model/endpoint IDs, provider, and behavior name; never a URL, key, or client object. |
+| `sc_document_set_hash` | Fingerprint of the sorted effective document references for comparison between stages. |
+| `sc_selected_document_count`, `sc_used_document_count`, `sc_matched_document_count`, `sc_missing_document_count`, `sc_unselected_document_count` | Source-coverage counts from the canonical document-reference/effective-search helpers. |
+| `sc_authorization_scope_supplied`, `sc_authorized_document_count` | Whether an explicit authorization set was supplied and its size. An absent set is not reported as a verified denial. |
+| `sc_source_availability_known`, `sc_source_available` | Whether server availability metadata exists and whether it declares the source available; absence is not a verified missing file. |
+| `sc_required_capability_count`, `sc_missing_capability_count` | Positive-operation coverage, separate from document coverage. |
+| `sc_normalization_lost_document_count` | References present in the raw proposal but absent after normalization. Zero missing references at proposal time followed by loss here differs from a model omission. |
+| `sc_remaining_corrections` | Remaining shared proposal-correction allowance; never a new per-error budget. |
+| `sc_model_routing_auto`, `sc_planner_binding_provided` | Auto-routing selection and whether planning uses a resolved binding rather than the legacy client resolver. |
+| `sc_step_count`, `sc_omitted_step_count`, `sc_omitted_document_count` | Total steps and explicit diagnostic omissions. At most 32 source and 32 step detail events are emitted per snapshot; summaries still count all references. |
+| `sc_options_version_present`, `sc_options_version_v1`, `sc_options_version_v2`, `sc_options_mode_present`, `sc_options_mode_observations`, `sc_options_mode_records`, `sc_options_mode_legacy` | Presence/known-value flags, not arbitrary supplied option strings. |
+| `sc_required_field_count`, `sc_calculation_rules_present`, `sc_unknown_option_field_count` | Structural Analyze requirements without field names, rule bodies, or values. |
+
+`selected_requirements_missing` rules distinguish `selected_documents_missing`,
+`selected_capabilities_missing`, and `selected_documents_and_capabilities_missing`.
+Analyze rules include `options_object_required`, `unsupported_option_fields`,
+`unsupported_options_version`, `version_mode_mismatch`, `supported_mode_required`,
+`required_fields_invalid`, `calculation_rules_object_required`,
+`calculation_rules_conflict`, `calculation_rules_invalid`,
+`observation_requirements_conflict`, and `analysis_options_schema_invalid`.
+
+A picked document missing from both `plan_proposal` and `plan_normalized` indicates
+an omitted recognized binding in the proposal, not a normalization loss. These
+structural diagnostics do not establish extraction fidelity or prove that every
+source was read at execution. Do not log the raw prompt, model reply, source text,
+filenames, arbitrary option fields/values, settings, or credentials to investigate.
+
+```kusto
+let conversationHash = hash_sha256("<conversation-id>");
+traces
+| where timestamp > ago(2h)
+| where tostring(customDimensions.sc_conversation_id_hash) == conversationHash
+| where tostring(customDimensions.sc_message) startswith "[ORCHESTRATION_PLANNER]"
+| project timestamp,
+    event=tostring(customDimensions.sc_message),
+    stage=tostring(customDimensions.sc_stage),
+    attempt=toint(customDimensions.sc_attempt),
+    documentHash=tostring(customDimensions.sc_document_id_hash),
+    selected=customDimensions.sc_selected,
+    used=customDimensions.sc_used,
+    missing=toint(customDimensions.sc_missing_document_count),
+    normalizationLoss=toint(customDimensions.sc_normalization_lost_document_count),
+    rule=tostring(customDimensions.sc_validation_rule),
+    omittedDocuments=toint(customDimensions.sc_omitted_document_count)
+| order by timestamp asc
+| take 500
 ```
 
 ### Step, render and content-preparation events
