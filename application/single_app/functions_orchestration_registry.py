@@ -847,7 +847,9 @@ CAPABILITY_REGISTRY = (
                 'analysis_options': {
                     'type': 'object',
                     'description': (
-                        'Explicit result semantics. Use analysis-options-v2 with source_observations '
+                        'Omit for ordinary narrative analysis; the server supplies observation semantics. '
+                        'When declaring options, pair the version with a compatible mode. '
+                        'Use analysis-options-v2 with source_observations '
                         'for independently cited source statements; use reconciled_records for values '
                         'that must be reconciled or satisfy declared fields/calculations. Repeated '
                         'subject labels are allowed for observations. Observations expose findings, '
@@ -865,6 +867,33 @@ CAPABILITY_REGISTRY = (
                         },
                         'transformation_spec': {'type': 'object'},
                     },
+                    'allOf': [
+                        {
+                            'if': {
+                                'required': ['version'],
+                                'properties': {'version': {'const': 'analysis-options-v2'}},
+                            },
+                            'then': {
+                                'required': ['mode'],
+                                'properties': {'mode': {'enum': ['source_observations', 'reconciled_records']}},
+                            },
+                            'else': {'properties': {'mode': {'const': 'narrative_findings'}}},
+                        },
+                        {
+                            'if': {
+                                'required': ['mode'],
+                                'properties': {'mode': {'const': 'source_observations'}},
+                            },
+                            'then': {'properties': {
+                                'required_fields': {'maxItems': 0},
+                                'transformation_spec': {'maxProperties': 0},
+                            }},
+                        },
+                    ],
+                    'examples': [
+                        {'version': 'analysis-options-v2', 'mode': 'source_observations'},
+                        {'version': 'analysis-options-v2', 'mode': 'reconciled_records'},
+                    ],
                     'additionalProperties': False,
                 },
             },

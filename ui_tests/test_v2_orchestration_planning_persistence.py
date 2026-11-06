@@ -1,8 +1,8 @@
 # test_v2_orchestration_planning_persistence.py
 """
 Browser regressions for durable initial Orchestrate turns.
-Version: 0.261.411
-Implemented in: 0.261.411
+Version: 0.261.415
+Implemented in: 0.261.415
 
 The production controller, stores, SSE reader, message list, composer, and CSS run
 unchanged. A deterministic HTTP boundary retains accepted turns independently of
@@ -331,7 +331,8 @@ def test_clarification_is_restored_and_answered_after_reload(durable_ui):
     expect(page.get_by_text(PROMPT, exact=True)).to_have_count(1)
     page.get_by_role("textbox", name="Response style", exact=True).fill("A concise explanation.")
     api.outcome = "plan"
-    page.get_by_role("button", name="Finish", exact=True).click()
+    page.get_by_role("button", name="Review answers", exact=True).click()
+    page.get_by_role("button", name="Use these answers", exact=True).click()
     expect(page.get_by_role("button", name="Approve and run the plan").first).to_be_visible()
     submitted = api.calls(PLAN)[1]["body"]
     assert submitted["message"] == PROMPT

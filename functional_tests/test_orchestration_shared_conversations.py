@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Orchestrate in shared conversations.
-Version: 0.261.411
+Version: 0.261.415
 Implemented in: 0.261.270
 
 Before 0.261.270 an orchestrated request in a shared conversation created a private

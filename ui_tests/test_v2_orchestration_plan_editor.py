@@ -1,10 +1,11 @@
 # test_v2_orchestration_plan_editor.py
 """
 Focused real-component browser tests for conversational orchestration plan editing.
-Version: 0.261.201
+Version: 0.261.411
 Implemented in: 0.261.102
 Shared assist thread covered in: 0.261.200
 Document references covered in: 0.261.201
+Focus flow reviewed submission covered in: 0.261.411
 
 Only HTTP boundaries are mocked. The real store, shared SSE reader, controller,
 MessageList, Review drawer, editor, and elicitation inputs run in Chromium with
@@ -306,6 +307,12 @@ class EditorApi:
         # before the request is recorded, so a suite about something else counts only its own.
         if is_pending_actions_list(request.method, path):
             route.fulfill(json=pending_actions_payload())
+            return
+        if request.method == "GET" and path in {"/api/v2/user-input/pending", "/api/action-credentials/pending"}:
+            route.fulfill(json={"requests": [], "csrf_token": "fixture-token"})
+            return
+        if request.method == "GET" and path == "/api/v2/orchestration/questions":
+            route.fulfill(json={"questions": [], "csrf_token": "fixture-token"})
             return
         body = request.post_data_json if request.method == "POST" else {}
         self.requests.append({"path": path, "method": request.method, "body": body, "query": parsed.query})
@@ -790,10 +797,13 @@ def test_editor_question_answer_retry_close_and_discard_keep_live_plan(editor_ui
     dialog = open_editor(page)
     expect(dialog.get_by_role("radio", name="Pricing", exact=True)).to_be_checked()
     api.next_revision = "error"
-    dialog.get_by_role("button", name="Finish", exact=True).click()
+    dialog.get_by_role("button", name="Review answers", exact=True).click()
+    dialog.get_by_role("button", name="Use these answers", exact=True).click()
     expect(dialog.get_by_role("alert")).to_be_visible()
+    dialog.get_by_role("button", name="Back", exact=True).click()
     expect(dialog.get_by_role("radio", name="Pricing", exact=True)).to_be_checked()
-    dialog.get_by_role("button", name="Finish", exact=True).click()
+    dialog.get_by_role("button", name="Review answers", exact=True).click()
+    dialog.get_by_role("button", name="Use these answers", exact=True).click()
     wait_revision(page, 1)
     answers = [call["body"] for call in api.calls("/revisions") if call["body"]["action"] == "answer"]
     assert answers[0] == answers[1]
@@ -1030,7 +1040,8 @@ def test_editor_question_is_hydrated_after_reload_without_becoming_a_main_questi
     dialog = open_editor(page)
     expect(dialog.get_by_text("Change the plan focus", exact=True)).to_be_visible()
     dialog.get_by_role("radio", name="Delivery", exact=True).check()
-    dialog.get_by_role("button", name="Finish", exact=True).click()
+    dialog.get_by_role("button", name="Review answers", exact=True).click()
+    dialog.get_by_role("button", name="Use these answers", exact=True).click()
     wait_revision(page, 1)
     assert api.calls("/revisions")[-1]["body"]["elicitation_id"] == saved_pending["elicitation_id"]
     assert len(state(page)["messages"]) == 1

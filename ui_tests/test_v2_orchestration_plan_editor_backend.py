@@ -1,8 +1,9 @@
 # test_v2_orchestration_plan_editor_backend.py
 """
 Browser-to-Flask regression for editing and running an orchestration plan.
-Version: 0.261.200
+Version: 0.261.411
 Implemented in: 0.261.102
+Focus flow reviewed submission updated in: 0.261.411
 Selected model continuity through editing and execution: 0.261.103
 Retrying a failed ask resends the same request under its submission id: 0.261.200
 
@@ -90,6 +91,9 @@ def integrated_editor(request, editor_browser, editor_assets):
         if url.path == '/favicon.ico':
             route.fulfill(status=204)
             return
+        if request.method == 'GET' and url.path in {'/api/v2/user-input/pending', '/api/action-credentials/pending'}:
+            route.fulfill(json={'requests': [], 'csrf_token': 'fixture-token'})
+            return
         if not url.path.startswith('/api/v2/orchestration/'):
             errors.append(f'Unexpected browser request: {request.method} {url.path}')
             route.abort()
@@ -175,7 +179,8 @@ def test_real_editor_add_remove_question_restore_and_run(integrated_editor):
     expect(dialog.get_by_role('button', name='Run saved revision')).to_be_disabled()
     questions.get_by_role('radio', name='Friday', exact=True).check()
     backend.edit_responses.append(backend_tests.revised_plan('Compare winery prices on Friday.', searches=1))
-    questions.get_by_role('button', name='Finish', exact=True).click()
+    questions.get_by_role('button', name='Review answers', exact=True).click()
+    questions.get_by_role('button', name='Use these answers', exact=True).click()
     editor_tests.wait_revision(page, 3, 'conv1', 'turn1')
     expect(questions).to_have_count(0)
     answer = next(entry['body'] for entry in requests if entry['body'] and entry['body'].get('action') == 'answer')

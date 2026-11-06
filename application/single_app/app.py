@@ -75,6 +75,7 @@ from route_backend_v2 import (
 )
 from route_backend_orchestration import register_route_backend_orchestration
 from route_backend_action_credentials import register_route_backend_action_credentials
+from route_backend_user_input import register_route_backend_user_input
 from functions_action_credential_state import configure_action_credential_state
 from functions_action_credential_runtime import configure_action_credential_runtime
 from config import cosmos_action_credential_state_container
@@ -1637,6 +1638,7 @@ register_route_blueprint('backend_workspace_identities', register_route_backend_
 configure_action_credential_state(cosmos_action_credential_state_container)
 configure_action_credential_runtime()
 register_route_blueprint('backend_action_credentials', register_route_backend_action_credentials, user_required_blueprint)
+register_route_blueprint('backend_user_input', register_route_backend_user_input, user_required_blueprint)
 
 # ------------------- API User Agreement Routes ----------
 register_route_blueprint('backend_user_agreement', register_route_backend_user_agreement, user_required_blueprint)

@@ -22,6 +22,7 @@ Review center ids, bulk, detail and approvals summary policy coverage: 0.261.298
 Review center AI assist policy coverage: 0.261.299
 V2 Agents catalogue policy coverage: 0.261.305
 Native personal identity policy coverage: 0.261.315
+V2 user input policy coverage: 0.261.411
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.
@@ -57,6 +58,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "access_restriction": ("login_required",),
     "backend_analysis_results": ("login_required", "user_required"),
     "backend_action_credentials": ("login_required", "user_required"),
+    "backend_user_input": ("login_required", "user_required"),
     "backend_chats": ("login_required", "user_required"),
     "backend_collaboration": ("login_required", "user_required"),
     "backend_content_screening": ("login_required", "user_required"),

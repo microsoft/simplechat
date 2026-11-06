@@ -1,7 +1,7 @@
 # test_orchestration_followup_citation_provenance.py
 """Selected sourced answers retain provenance through formatting-only follow-ups.
 
-Version: 0.261.411
+Version: 0.261.415
 Implemented in: 0.261.370
 
 Real planning routes, retained results, composition and publication run with

@@ -21,6 +21,8 @@ export type ElicitationFieldKind =
     | 'files'
     | 'radio'
     | 'checkboxes'
+    | 'suggestedSingle'
+    | 'suggestedMultiple'
     | 'boolean'
     | 'number'
     | 'arrayText'
@@ -31,6 +33,8 @@ export interface ElicitationDraft {
     revision: number;
     values: Record<string, unknown>;
     editors: Record<string, ComposerDraft>;
+    customFields: Record<string, boolean>;
+    customValues: Record<string, string>;
     pageIndex: number;
     submitting: boolean;
     error: string | null;
@@ -43,6 +47,9 @@ export function elicitationFieldKind(
     name: string,
 ): ElicitationFieldKind {
     const field = elicitation.requested_schema.properties[name];
+    if (elicitation.ui_hints.fields?.[name]?.input === 'choices') {
+        return field.type === 'array' ? 'suggestedMultiple' : 'suggestedSingle';
+    }
     if (elicitation.ui_hints.fields?.[name]?.input === 'files'
         && (field.type === 'string' || (field.type === 'array' && field.items?.type === 'string'))) {
         return 'files';
@@ -89,6 +96,8 @@ export function createElicitationDraft(elicitation: Elicitation): ElicitationDra
         revision: elicitation.revision ?? 0,
         values,
         editors,
+        customFields: {},
+        customValues: {},
         pageIndex: 0,
         submitting: false,
         error: null,
@@ -215,7 +224,23 @@ export function buildElicitationAnswer(
         }
 
         const raw = draft.values[name];
-        if (kind === 'files') {
+        if (kind === 'suggestedSingle' || kind === 'suggestedMultiple') {
+            const hint = elicitation.ui_hints.fields?.[name];
+            const allowed = (hint?.choices ?? []).map((choice) => choice.value);
+            const selected = kind === 'suggestedMultiple'
+                ? (Array.isArray(raw) ? raw : [])
+                : draft.customFields?.[name] ? [] : raw === undefined ? [] : [raw];
+            if (selected.some((value) => typeof value !== 'string' || !allowed.includes(value))) {
+                errors[name] = 'Choose from the suggestions or write your own answer.';
+            } else {
+                const custom = draft.customFields?.[name] ? (draft.customValues?.[name] ?? '').trim() : '';
+                if (draft.customFields?.[name] && (!hint?.allow_custom || !custom || custom.length > 4000)) {
+                    errors[name] = 'Enter your answer (up to 4,000 characters).';
+                }
+                const values = [...new Set([...selected, ...(custom ? [custom] : [])])];
+                if (values.length) content[name] = kind === 'suggestedMultiple' ? values : values[0];
+            }
+        } else if (kind === 'files') {
             if (field.type !== 'array' && files.length > 1) {
                 errors[name] = 'Choose one file, or remove the extra file references.';
             } else if (files.length) {
@@ -263,6 +288,11 @@ export function buildElicitationAnswer(
             }
         }
 
+        const values = content[name];
+        if (Array.isArray(values)) {
+            if (values.length < (field.minItems ?? 0)) errors[name] = `Choose at least ${field.minItems} answers.`;
+            if (values.length > (field.maxItems ?? 100)) errors[name] = `Choose at most ${field.maxItems ?? 100} answers.`;
+        }
         if (elicitation.requested_schema.required.includes(name) && !(name in content) && !errors[name]) {
             errors[name] = kind === 'files' ? 'Choose, reference, or upload a file.' : 'An answer is required.';
         }

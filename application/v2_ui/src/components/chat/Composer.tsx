@@ -26,7 +26,7 @@ import {
     Workflow,
     X,
 } from 'lucide-react';
-import { useChatStore, type ComposerOptions } from '../../stores/chatStore';
+import { currentConversationEpoch, useChatStore, type ComposerOptions } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useCollaborationStore } from '../../stores/collaborationStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
@@ -36,8 +36,13 @@ import { buildSelectionFields, hasResolvableAgent } from '../../lib/chatRequestS
 import { modelSearchText, modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
 import { promptUrls, resolveGating } from '../../lib/composerGating';
 import { resolveDocumentScope } from '../../lib/documentScope';
-import { documentSourceSelection, restoreDocumentSources, isDocumentSourceSelection } from '../../lib/documentSourceSelection';
-import { fetchDocumentSources } from '../../lib/endpoints';
+import {
+    conversationSourceDocuments, DOCUMENT_DETAILS_UNAVAILABLE,
+    documentSourceSelection, restoreDocumentSources, isDocumentSourceSelection,
+} from '../../lib/documentSourceSelection';
+import { fetchDocumentSources, fetchPersonalDocument } from '../../lib/endpoints';
+import { fetchScopedGroupDocument, fetchScopedPublicDocument } from '../../lib/documentReadAdapter';
+import { documentId } from '../../lib/documentExplorer';
 import { usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import {
     addContextItem,
@@ -60,13 +65,13 @@ import {
     addComposerDraftImageReference,
     buildComposerDraftSubmission,
     composerDraftContextItems,
-    composerDraftHasContent,
     composerDraftHasPendingUploads,
     composerDraftImageReferences,
     composerDraftUnfilledVariables,
     composerDraftUserPromptValues,
     createComposerDraft,
 } from '../../lib/composerDraft';
+import { composerAttachmentDrafts, composerAttachmentOwner, useComposerAttachmentDraft } from '../../lib/composerAttachmentDrafts';
 import { clearChatUploadLocalPreviews } from '../../lib/chatUploads';
 import { ComposerEditor, type ComposerEditorActions } from './ComposerEditor';
 import {
@@ -186,6 +191,16 @@ function ToolToggle({
     );
 }
 
+function currentAttachmentOwner() {
+    const state = useChatStore.getState();
+    return composerAttachmentOwner(
+        useBootstrapStore.getState().data?.user?.id ?? '',
+        state.activeConversationId,
+        state.activeConversationKind === 'collaborative' ? 'collaborative' : 'personal',
+        currentConversationEpoch(),
+    );
+}
+
 export function Composer({ initialAgentSelection }: { initialAgentSelection?: string } = {}) {
     const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
     const publicWorkspaceSelection = useChatStore((state) => state.publicWorkspaceSelection);
@@ -278,7 +293,10 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const fileInputRef = useRef<HTMLInputElement>(null);
     const editorActionsRef = useRef<ComposerEditorActions>(null);
 
-    const [draft, setDraft] = useState(createComposerDraft);
+    const navigationEpoch = currentConversationEpoch();
+    const { owner, attachments, draft, setDraft, setDocumentSearch, recoverDraft } = useComposerAttachmentDraft(
+        bootstrap?.user?.id ?? '', activeConversationId, shared, navigationEpoch, currentAttachmentOwner,
+    );
     const { text, attachedPrompt } = draft;
     const [voiceStatus, setVoiceStatus] = useState<RecordingState>('idle');
     const voiceBaselineRef = useRef('');
@@ -298,12 +316,13 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         draftImageReferences.some((item) => imageReferenceKey(item) === imageReferenceKey(reference)));
     const uploading = composerDraftHasPendingUploads(draft);
     const uploadsBlocked = uploading || draft.uploads.some((upload) => upload.state === 'failed');
-    const uploadConversationRef = useRef<string | null>(null);
-    // The conversation a first upload created, adopted as active when its message is sent. Its
-    // local previews are kept so the sent image shows before the server preview loads.
-    const adoptedUploadConversationRef = useRef<string | null>(null);
-    // The conversation explicit image references in the draft belong to.
-    const imageReferenceConversationRef = useRef<string | null>(activeConversationId);
+    const uploadConversationId = attachments.uploadConversationId;
+    const previousAttachmentOwner = useRef(owner);
+    const previewAccount = useRef(owner.accountId);
+    useEffect(() => {
+        if (previewAccount.current !== owner.accountId) clearChatUploadLocalPreviews();
+        previewAccount.current = owner.accountId;
+    }, [owner.accountId]);
     const setText: React.Dispatch<React.SetStateAction<string>> = (update) => setDraft((current) => {
         const value = typeof update === 'function' ? update(current.text) : update;
         return {
@@ -335,37 +354,97 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const [savingPrompt, setSavingPrompt] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
 
-    const [options, setOptions] = useState<Omit<ComposerOptions, 'contextItems' | 'promptId'>>({
-        documentSearch: false,
+    const [manualOptions, setOptions] = useState<Omit<ComposerOptions, 'contextItems' | 'promptId' | 'documentSearch'>>({
         webSearch: false,
         imageGeneration: false,
         deepResearch: false,
         urlAccess: false,
         agentSelection: initialAgentSelection,
     });
+    const options = { ...manualOptions, documentSearch: attachments.documentSearch };
     const messagesLoading = useChatStore((state) => state.messagesLoading);
-    const restoredSourcesConversation = useRef<string | null>(null);
+    const conversationMetadata = useChatStore((state) => state.metadata);
+    const metadataLoading = useChatStore((state) => state.metadataLoading);
+    const sourceDocuments = useMemo(
+        () => conversationSourceDocuments(activeConversationId, messages, conversationMetadata),
+        [activeConversationId, messages, conversationMetadata],
+    );
     const [sourceMigrationError, setSourceMigrationError] = useState<string>();
     const [sourceMigrationRetry, setSourceMigrationRetry] = useState(0);
     useEffect(() => {
-        if (!activeConversationId) { restoredSourcesConversation.current = null; return; }
-        if (shared || messagesLoading || restoredSourcesConversation.current === activeConversationId) return;
-        restoredSourcesConversation.current = activeConversationId;
-        const latest = [...messages].reverse().find((message) => message.role === 'user');
+        if (!activeConversationId || shared || messagesLoading || attachments.initialized) return;
+        const latest = [...messages].reverse().find((message) =>
+            message.role === 'user' && message.conversation_id === activeConversationId);
         const metadata = latest?.metadata;
         const workspaceSearch = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
             ? metadata.workspace_search : undefined;
         const saved = workspaceSearch && typeof workspaceSearch === 'object' && !Array.isArray(workspaceSearch)
             && 'document_source_selection' in workspaceSearch
             ? workspaceSearch.document_source_selection : undefined;
-        if (!isDocumentSourceSelection(saved)) return;
         const workspaces = [
             ...(bootstrap?.scope?.groups ?? []).map((item) => ({ kind: 'group', ...item })),
             ...(bootstrap?.scope?.public_workspaces ?? []).map((item) => ({ kind: 'public', ...item })),
         ];
-        setOptions((current) => ({ ...current, documentSearch: saved.mode === 'all' }));
-        setDraft((current) => ({ ...current, contextItems: restoreDocumentSources(saved, workspaces) }));
-    }, [activeConversationId, messagesLoading, messages, shared, bootstrap?.scope]);
+        composerAttachmentDrafts.initialize(
+            owner,
+            isDocumentSourceSelection(saved) ? restoreDocumentSources(saved, workspaces, sourceDocuments) : [],
+            isDocumentSourceSelection(saved) && saved.mode === 'all',
+        );
+    }, [activeConversationId, messagesLoading, messages, shared, bootstrap?.scope, owner, attachments.initialized, sourceDocuments]);
+    const missingSourceDetails = draft.contextItems.filter((item) =>
+        item.kind === 'document' && item.label === DOCUMENT_DETAILS_UNAVAILABLE);
+    const missingSourceDetailsKey = JSON.stringify(missingSourceDetails.map((item) => item.key));
+    const sourceDetailAttempts = useMemo(() => new Set<string>(), [owner]);
+    useEffect(() => {
+        if (metadataLoading || !missingSourceDetails.length) return;
+        const controller = new AbortController();
+        const hydrate = async () => {
+            const results = await Promise.allSettled(missingSourceDetails
+                .filter((item) => !sourceDetailAttempts.has(item.key)).map(async (item) => {
+                    const selection = {
+                        version: 1 as const, mode: 'selected' as const,
+                        sources: [{
+                            kind: 'document' as const, id: item.id,
+                            scope: item.scope.kind === 'personal' ? { kind: 'personal' as const }
+                                : { kind: item.scope.kind, id: item.scope.id ?? '' },
+                        }],
+                    };
+                    let named = restoreDocumentSources(selection, [item.scope], sourceDocuments)[0];
+                    if (named.label === DOCUMENT_DETAILS_UNAVAILABLE) {
+                        const document = item.scope.kind === 'personal'
+                            ? await fetchPersonalDocument(item.id, controller.signal)
+                            : item.scope.kind === 'group'
+                                ? await fetchScopedGroupDocument(item.scope.id ?? '', item.id, controller.signal)
+                                : await fetchScopedPublicDocument(item.scope.id ?? '', item.id, controller.signal);
+                        if (documentId(document) !== item.id) throw new Error('Attachment metadata does not match.');
+                        named = restoreDocumentSources(selection, [item.scope], [{
+                            document_id: item.id, title: document.title, file_name: document.file_name,
+                            scope: { type: item.scope.kind, id: item.scope.id ?? undefined },
+                        }])[0];
+                    }
+                    if (named.label === DOCUMENT_DETAILS_UNAVAILABLE) throw new Error('Attachment details are unavailable.');
+                    return { key: item.key, named };
+                }));
+            if (controller.signal.aborted) return;
+            for (const item of missingSourceDetails) sourceDetailAttempts.add(item.key);
+            const resolved = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+            if (resolved.length) setDraft((current) => ({
+                ...current,
+                contextItems: current.contextItems.map((item) => {
+                    const detail = resolved.find((result) => result.key === item.key);
+                    return detail && item.label === DOCUMENT_DETAILS_UNAVAILABLE
+                        ? { ...item, label: detail.named.label, token: detail.named.token, meta: detail.named.meta } : item;
+                }),
+            }));
+            if (results.some((result) => result.status === 'rejected')) {
+                toast.error('Could not load attachment details. Remove the unavailable source and choose it again in Documents.');
+            }
+        };
+        void hydrate();
+        return () => controller.abort();
+        // Selection changes cancel the read; keystrokes do not restart metadata requests.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [owner, missingSourceDetailsKey, sourceDocuments, metadataLoading, setDraft, sourceDetailAttempts]);
     useEffect(() => {
         if (!publicWorkspaceSelection || shared || messagesLoading) return;
         const controller = new AbortController();
@@ -390,24 +469,25 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                 sources: workspaces.map((item) => ({ kind: 'workspace', scope: { kind: 'public', id: item.id ?? '' } })),
             }, workspaces);
             setDraft((current) => ({ ...current, contextItems: selected }));
-            setOptions((current) => ({ ...current, documentSearch: false }));
+            setDocumentSearch(false);
             setPublicWorkspaceSelection(null);
         };
         void migrate().catch(() => {
             if (!controller.signal.aborted) setSourceMigrationError('Could not load public sources. Retry before sending.');
         });
         return () => controller.abort();
-    }, [publicWorkspaceSelection, activeConversationId, shared, messagesLoading, sourceMigrationRetry, setPublicWorkspaceSelection]);
+    }, [publicWorkspaceSelection, activeConversationId, shared, messagesLoading, sourceMigrationRetry, setPublicWorkspaceSelection, owner, setDraft, setDocumentSearch]);
     useEffect(() => {
         if (storedResult) {
             setOptions((current) => ({
-                ...current, documentSearch: false, webSearch: false, imageGeneration: false,
+                ...current, webSearch: false, imageGeneration: false,
                 deepResearch: false, urlAccess: false,
             }));
+            setDocumentSearch(false);
             setDraft((current) => ({ ...current, contextItems: [], conversationReferences: [] }));
             setPickerOpen(false);
         }
-    }, [storedResult]);
+    }, [storedResult, setDraft, setDocumentSearch]);
 
     // A new picked/mentioned/uploaded source wins over a response that completes later.
     const conversationReferenceIds = (draft.conversationReferences ?? []).map((item) => item.id);
@@ -705,7 +785,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         previousConversationIdRef.current = activeConversationId;
         if (previousConversationId !== null && activeConversationId === null) {
             setUserOverrodeNewChatDefaults(false);
-            setOptions((current) => ({ ...current, documentSearch: false }));
             setPickerOpen(false);
             if (useAdminNewChatDefaults) {
                 const initial = bootstrap?.catalogs?.initial_model_selection;
@@ -774,36 +853,15 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     );
 
     useEffect(() => {
-        // A conversation change invalidates both the draft's mention state and any typing
-        // claim made in the conversation being left.
         typingRef.current = false;
-        uploadConversationRef.current = null;
-        const adoptedUploadConversation = Boolean(activeConversationId)
-            && adoptedUploadConversationRef.current === activeConversationId;
-        adoptedUploadConversationRef.current = null;
-        if (!adoptedUploadConversation) {
-            clearChatUploadLocalPreviews();
+        const changed = previousAttachmentOwner.current.key !== owner.key
+            || previousAttachmentOwner.current.epoch !== owner.epoch;
+        previousAttachmentOwner.current = owner;
+        if (changed) {
+            setPickerOpen(false);
+            setDraft((current) => current.mentions?.length ? { ...current, mentions: [] } : current);
         }
-        // Explicit image references point at messages in the conversation being left, which
-        // the server would refuse in any other one. Compared with the previous id so the
-        // first run, on mount, cannot discard a reference handed over as the composer opened.
-        const conversationChanged = imageReferenceConversationRef.current !== activeConversationId;
-        imageReferenceConversationRef.current = activeConversationId;
-        setDraft((current) => {
-            const clearReferences = conversationChanged && Boolean(current.imageReferences?.length);
-            // Mention chips name the people and agents of the conversation being left.
-            const clearMentions = conversationChanged && Boolean(current.mentions?.length);
-            if (!current.uploads.length && !clearReferences && !clearMentions) {
-                return current;
-            }
-            return {
-                ...current,
-                uploads: [],
-                ...(clearReferences ? { imageReferences: [] } : {}),
-                ...(clearMentions ? { mentions: [] } : {}),
-            };
-        });
-    }, [activeConversationId]);
+    }, [owner, setDraft]);
 
     /**
      * Consume a prompt handed over from the workspace as `/chat?prompt=<id>`.
@@ -1169,7 +1227,14 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             promptContext(), options, orchestrating,
         ]);
 
+    const ensureCurrentDraft = () => {
+        if (composerAttachmentDrafts.canSubmit(owner, currentAttachmentOwner(), attachments.revision)) return true;
+        toast.info('The conversation or attachments changed. Review your message before sending.');
+        return false;
+    };
+
     const submit = (allowUnfilled = false) => {
+        if (!ensureCurrentDraft()) return;
         if (publicWorkspaceSelection && !shared) {
             toast.error(sourceMigrationError ?? 'Public sources are still loading. Please wait before sending.');
             return;
@@ -1271,23 +1336,24 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         editorActionsRef.current?.cancelKnowledge();
         setDraft(createComposerDraft());
         setPickerOpen(false);
-        uploadConversationRef.current = null;
+        composerAttachmentDrafts.update(owner, (current) => current.uploadConversationId
+            ? { ...current, uploadConversationId: null } : current);
         setShowPromptWarning(false);
         setPromptReview({ instance: 0, request: 0 });
-        return createComposerDraft();
+        return composerAttachmentDrafts.read(owner).revision;
     };
 
     const dispatch = (outgoing: { message: string; promptInfo: Json | null }) => {
+        if (!ensureCurrentDraft()) return;
         // Remembered only once the message is actually on its way, so a prompt that was
         // filled in and then abandoned leaves nothing behind.
         if (attachedPrompt && outgoing.promptInfo) {
             rememberPromptValues(attachedPrompt.id, composerDraftUserPromptValues(draft));
         }
-        if (!activeConversationId && uploadConversationRef.current) {
-            adoptedUploadConversationRef.current = uploadConversationRef.current;
-            adoptConversationModeDraft(conversationModes.captureDraft(modeAccountId), uploadConversationRef.current);
+        if (!activeConversationId && uploadConversationId) {
+            adoptConversationModeDraft(conversationModes.captureDraft(modeAccountId), uploadConversationId);
             useChatStore.setState({
-                activeConversationId: uploadConversationRef.current,
+                activeConversationId: uploadConversationId,
                 activeConversationKind: 'personal',
             });
         }
@@ -1297,7 +1363,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         // `options` is read before the clear below replaces it, so the request carries the
         // references this message was written with.
         const sentDraft = draft;
-        const actorId = bootstrap?.user?.id;
         const sending = sendMessage(outgoing.message, {
             ...options,
             publicWorkspaceSelection,
@@ -1306,20 +1371,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             imageReferences: options.imageGeneration && !orchestrating ? draftImageReferences : [],
             promptInfo: outgoing.promptInfo,
         });
-        const emptyDraft = clearDraft();
+        const clearedRevision = clearDraft();
         void sending.then((result) => {
-            if (result === false && actorId === useBootstrapStore.getState().data?.user?.id) {
-                setDraft((current) => {
-                    // Navigation can replace an empty draft object without changing its content.
-                    const untouched = current === emptyDraft || (
-                        !composerDraftHasContent(current) && !current.text
-                        && !current.uploads.length && !current.imageReferences?.length
-                        && !current.conversationReferences?.length
-                        && !current.mentions?.length
-                    );
-                    return untouched ? sentDraft : current;
-                });
-            }
+            if (result === false) recoverDraft(sentDraft, clearedRevision);
         });
         // Sent, so the indicator other people can see must stop now rather than when the
         // idle timer happens to fire.
@@ -1454,12 +1508,12 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         promptInfo: Json | null = null,
         sharedDetails: Record<string, unknown> | null = null,
     ) => {
+        if (!ensureCurrentDraft()) return;
         if (attachedPrompt && promptInfo) {
             rememberPromptValues(attachedPrompt.id, composerDraftUserPromptValues(draft));
         }
-        const conversationId = activeConversationId ?? uploadConversationRef.current;
+        const conversationId = activeConversationId ?? uploadConversationId;
         if (!activeConversationId && conversationId) {
-            adoptedUploadConversationRef.current = conversationId;
             adoptConversationModeDraft(conversationModes.captureDraft(modeAccountId), conversationId);
             useChatStore.setState({ activeConversationId: conversationId, activeConversationKind: 'personal' });
         }
@@ -1881,6 +1935,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         draft={draft}
                         onChange={setDraft}
                         conversationId={activeConversationId}
+                        draftOwnerKey={`${owner.key}:${owner.epoch}`}
                         disabled={!canPost}
                         voiceStatus={voiceStatus}
                         rows={1}
@@ -1916,7 +1971,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         onToggleSearchAll={() => {
                             clearAnalysisResultContext();
                             if (publicWorkspaceSelection) setPublicWorkspaceSelection(null);
-                            setOptions((current) => ({ ...current, documentSearch: !current.documentSearch }));
+                            setDocumentSearch(!options.documentSearch);
                         }}
                         mentionsEnabled={shared && canPost}
                         onMentionSelected={applySuggestion}
@@ -1931,12 +1986,14 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         }}
                         onSubmit={() => submit()}
                         onUploadComplete={(response, ownerConversationId) => {
-                            if (useChatStore.getState().activeConversationId !== ownerConversationId) {
+                            if (useChatStore.getState().activeConversationId !== ownerConversationId
+                                || currentConversationEpoch() !== navigationEpoch) {
                                 return;
                             }
-                            if (!ownerConversationId && response.conversation_id) {
-                                uploadConversationRef.current = response.conversation_id;
-                            } else if (ownerConversationId) {
+                            if (response.conversation_id) {
+                                composerAttachmentDrafts.bindUploadConversation(owner, response.conversation_id);
+                            }
+                            if (ownerConversationId) {
                                 void useChatStore.getState().reloadMessages();
                             }
                         }}

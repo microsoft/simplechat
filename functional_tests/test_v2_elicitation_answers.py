@@ -1,8 +1,9 @@
 # test_v2_elicitation_answers.py
 """
 Functional tests for primitive inline answers and composer reference context.
-Version: 0.261.096
+Version: 0.261.411
 Implemented in: 0.261.096
+Open-choice and Focus flow coverage added in: 0.261.411
 
 Run the real TypeScript answer builders using the existing V2 esbuild toolchain.
 No browser, signed-in account, or Azure service is required.

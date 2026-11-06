@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.411"
+version: "0.261.415"
 ---
 
 ## Decide what should run
@@ -27,6 +27,12 @@ that have not started.
 
 ## Answer necessary follow-up questions
 
+Since **0.261.411**, follow-ups use a focused question flow with suggested choices
+where useful, custom answers for open questions, Back/Next navigation, and a final
+review before one submission. Local agents running inside a plan can also pause
+for necessary input without restarting completed tool calls.
+See [Answer an agent's follow-up questions]({{ '/guides/answer-agent-questions/' | relative_url }}).
+
 Fixed/Implemented in version: **0.261.367**
 (`application/single_app/config.py`).
 
@@ -42,12 +48,12 @@ your requested scope, not become an additional required interview.
 
 A genuinely missing source, business rule, or other essential fact can still need
 another question. There is no one-question limit, and unanswered required fields
-still prevent **Finish**. When your plan is ready, the selected approval mode still
+still prevent submission. When your plan is ready, the selected approval mode still
 applies; answering a question does not authorize execution by itself.
 
 ## Leave or refresh without losing an accepted question
 
-Fixed/Implemented in version: **0.261.411**
+Fixed/Implemented in version: **0.261.415**
 (`application/single_app/config.py`).
 
 Once the server accepts your question, it saves the question and its planning

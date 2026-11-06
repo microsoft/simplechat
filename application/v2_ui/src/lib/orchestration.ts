@@ -37,6 +37,7 @@ import {
 } from './orchestrationOutputs';
 import { LEGACY_PLAN_ERROR_CODE } from './orchestrationErrors';
 import { publishCredentialRequest } from './actionCredentialEvents';
+import { publishUserInput } from './userInput';
 import { openCredentialContinuation } from './actionCredentials';
 import type { CredentialRequest } from './actionCredentialTypes';
 
@@ -618,6 +619,8 @@ export interface PlanEdits {
  */
 export interface ElicitationFieldSchema {
     type: ElicitationPrimitiveType | 'array';
+    minItems?: number;
+    maxItems?: number;
     items?: {
         type: ElicitationPrimitiveType;
         enum?: unknown[];
@@ -646,8 +649,10 @@ export interface ElicitationUiHints {
     order: string[];
     pages: string[][];
     fields?: Record<string, {
-        input: 'files';
-        candidates: ComposerReference[];
+        input: 'files' | 'choices';
+        candidates?: ComposerReference[];
+        choices?: { value: string; label: string; description?: string }[];
+        allow_custom?: boolean;
     }>;
 }
 
@@ -1506,6 +1511,7 @@ export async function runOrchestration(
     handlers: RunStreamHandlers,
     signal?: AbortSignal,
     credentialRequest?: CredentialRequest,
+    openContinuation?: (signal?: AbortSignal) => Promise<Response>,
 ): Promise<RunStreamResult> {
     const result: RunStreamResult = {
         accumulated: '',
@@ -1517,9 +1523,10 @@ export async function runOrchestration(
     let requiresExecutionOutcome = false;
 
     let credentialResponse: Response | undefined;
-    if (credentialRequest) {
+    if (credentialRequest || openContinuation) {
         try {
-            credentialResponse = await openCredentialContinuation(credentialRequest, signal);
+            if (openContinuation) credentialResponse = await openContinuation(signal);
+            else if (credentialRequest) credentialResponse = await openCredentialContinuation(credentialRequest, signal);
         } catch (error) {
             result.transportUnknown = true;
             handlers.onError?.(error instanceof Error ? error.message : 'The action could not be continued.');
@@ -1573,6 +1580,12 @@ export async function runOrchestration(
     const onEvent = (event: RunStreamEvent): boolean => {
         if ((event.conversation_id && event.conversation_id !== body.conversation_id)
             || (event.run_id && event.run_id !== body.run_id)) return false;
+        if (event.type === 'user_input_required' && event.input_request) {
+            publishUserInput(event.input_request);
+            result.waiting = true;
+            handlers.onWaiting?.({ ...event, status: 'waiting' });
+            return true;
+        }
         if (event.type === 'action_credentials_required') {
             publishCredentialRequest(event.credential_request);
             result.waiting = true;

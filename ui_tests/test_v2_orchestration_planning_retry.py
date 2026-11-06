@@ -1,7 +1,7 @@
 # test_v2_orchestration_planning_retry.py
 """
 Browser regressions for failed, unpersisted orchestration planning turns.
-Version: 0.261.411
+Version: 0.261.415
 Implemented in: 0.261.115
 Leaving a planning turn for a new chat also releases its Thinking state and Stop: 0.261.226
 
@@ -86,8 +86,13 @@ class PlanningApi:
         if is_pending_actions_list(request.method, path):
             route.fulfill(json=pending_actions_payload())
             return
-        if request.method == "GET" and path == "/api/action-credentials/pending":
+        if request.method == "GET" and path in {
+            "/api/action-credentials/pending", "/api/v2/user-input/pending",
+        }:
             route.fulfill(json={"requests": [], "csrf_token": "fixture-csrf"})
+            return
+        if request.method == "GET" and path == "/api/v2/orchestration/questions":
+            route.fulfill(json={"questions": [], "csrf_token": "fixture-csrf"})
             return
         body = request.post_data_json if request.post_data else None
         self.requests.append({"path": path, "method": request.method, "body": copy.deepcopy(body)})

@@ -1,6 +1,6 @@
 # Orchestration Checkpoint Recovery
 
-**Version: 0.261.411**
+**Version: 0.261.415**
 
 Implemented in version: **0.261.105**, recorded in
 `application/single_app/config.py`.
@@ -55,7 +55,7 @@ plan.
 
 ### A failure before a plan exists
 
-Fixed/Implemented in version: **0.261.411**
+Fixed/Implemented in version: **0.261.415**
 (`application/single_app/config.py`).
 
 Initial planning now saves its accepted question and lifecycle before producing

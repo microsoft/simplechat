@@ -16,15 +16,16 @@ from semantic_kernel.agents import ChatHistoryAgentThread
 from semantic_kernel.contents import ChatHistory, ChatMessageContent, FunctionCallContent, FunctionResultContent
 from semantic_kernel.filters import FilterTypes
 
-from action_credential_contracts import ActionCredentialError, find_credential_stop
-from agent_execution_context import current_agent_execution
+from action_credential_contracts import ActionCredentialError
+from agent_interaction_contracts import find_agent_interaction, agent_tool_call_id, UserInputError
+from agent_execution_context import current_agent_execution, current_workflow_identity
 from functions_action_manifest import get_action_origin
 import functions_action_credential_state as state
 from functions_action_credentials import _continuation, authorize_conversation
 
 
 _journal = ContextVar("action_credential_journal", default=None)
-_call_id = ContextVar("action_credential_call_id", default=None)
+_call_id = agent_tool_call_id
 WAIT_MARKER = "simplechat_action_credentials_waiting"
 _services = None
 
@@ -65,12 +66,13 @@ async def _function_boundary(context, next):
             authorize_conversation(journal.user_id, journal.conversation_id)
         await next(context)
     except Exception as error:
-        pending = find_credential_stop(error)
+        pending = find_agent_interaction(error)
+        input_failure = find_agent_interaction(error, UserInputError)
         if pending:
             journal.pending = pending
             journal.deferred.add(_call_id.get())
-        elif isinstance(error, ActionCredentialError):
-            journal.failure = error
+        elif isinstance(error, ActionCredentialError) or input_failure is not None:
+            journal.failure = input_failure or error
         raise
     return None
 
@@ -246,6 +248,18 @@ def _journal_for(agent, messages):
         or not all(hasattr(agent, field) for field in ("kernel", "name", "instructions", "arguments", "function_choice_behavior"))
     ):
         return None
+    if (
+        descriptor.get("user_input_enabled") and agent.function_choice_behavior is not None
+        and current_workflow_identity(frame.identity.user_id, frame.identity.conversation_id) is None
+    ):
+        # Only invocation-owned interactive kernels reach this path.
+        from semantic_kernel_plugins.user_input_plugin import UserInputPlugin, INTERACTIVE_INPUT_INSTRUCTIONS
+
+        if "UserInput" not in agent.kernel.plugins:
+            agent.kernel.add_plugin(UserInputPlugin(), plugin_name="UserInput")
+        instructions = agent.instructions or ""
+        if not instructions.endswith(INTERACTIVE_INPUT_INSTRUCTIONS):
+            agent.instructions = f"{instructions}\n\n{INTERACTIVE_INPUT_INSTRUCTIONS}"
     key = "root" if frame.depth == 0 and descriptor.get("mode") == "chat" else state.key_for(
         agent.name, [
             message.to_dict() if hasattr(message, "to_dict") else str(message)

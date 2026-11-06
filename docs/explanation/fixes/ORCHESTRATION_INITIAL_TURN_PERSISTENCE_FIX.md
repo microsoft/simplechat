@@ -1,8 +1,8 @@
 # Initial orchestration turn persistence
 
-**Version: 0.261.411**
+**Version: 0.261.415**
 
-Fixed/Implemented in version: **0.261.411**, tracked in
+Fixed/Implemented in version: **0.261.415**, tracked in
 `application/single_app/config.py`.
 
 Issue: [microsoft/simplechat#1893](https://github.com/microsoft/simplechat/issues/1893).
@@ -131,16 +131,23 @@ preserving those failure expectations.
 ### Validation results
 
 The complete `scripts/check_cosmos_response_boundaries.py --run-contracts`
-bank passed **2,000 tests** and **431 subtests** with network access blocked
-and zero inventory review gaps. Focused source-selection, citation-provenance,
-and initial-planning coverage passed **79 tests**. Planning, regeneration, and
-shared-conversation regressions also passed their **68-test** selection.
+bank passed **2,002 tests** and **431 subtests** with network access blocked
+and zero inventory review gaps after merging the 0.261.414 base. The combined
+selected-document correction, durable planning/Auto, and guided-input backend
+selection passed **96 tests**.
 
-Navigation/reload and planning-retry browser coverage passed **32 tests** using
-local Chromium. Existing run hydration passed **7/7**, and streaming/progress
-Node contracts passed **36/36**. TypeScript checking, the production UI build,
-route policies, documentation checks, and changed-line BAC/XSS checks passed.
-These are local validation results, not evidence of deployment to Azure.
+The merged navigation, planning-retry, guided-input, and attachment-isolation
+browser selection passed **72 tests** using local Chromium. Existing elicitation
+and run-hydration scripts passed **6/6** and **7/7** with their required standalone
+setup. The attachment ownership Node contract, TypeScript checking, production
+UI build, route policies, and documentation checks passed.
+
+The base's guided answer-review flow, document-planning corrections, and
+conversation attachment isolation are preserved. Planner-only fixtures now
+separate side-effect-free planning from the approved Auto execution handoff;
+browser fixtures cover the new pending-input reads and durable Stop acknowledgement
+without relaxing unexpected-request checks. These are local validation results,
+not evidence of deployment to Azure.
 
 ## Compatibility and limitations
 

@@ -189,6 +189,7 @@ def _continuation_guards(record, authorize, message_container):
 def claim_run_continuation(
     run_id, user_id, conversation_id, *, authorize, message_container, mode="execute",
     credential_request_id=None,
+    input_request_id=None,
 ):
     """CAS-claim one existing attempt; a live or no-longer-due run returns None.
 
@@ -201,20 +202,27 @@ def claim_run_continuation(
     record = _read_owned(run_id, user_id, conversation_id, authorize)
     credential_waits = [
         row for row in record.get("execution_steps") or []
-        if row.get("status") == "waiting" and (row.get("wait") or {}).get("kind") == "action_credentials"
+        if row.get("status") == "waiting" and (row.get("wait") or {}).get("kind") in {"action_credentials", "user_input"}
     ]
     if credential_waits and mode == "execute":
         # Scheduler/recovery reads never consume an interactive credential wait.
-        if not credential_request_id:
+        if not credential_request_id and not input_request_id:
             return None
         from functions_action_credentials import authorize_request
 
-        request, _manifest = authorize_request(user_id, credential_request_id)
+        if input_request_id:
+            from functions_user_input import read_request
+
+            request = read_request(user_id, input_request_id)
+        else:
+            request, _manifest = authorize_request(user_id, credential_request_id)
+        request_id = input_request_id or credential_request_id
+        wait_kind = "user_input" if input_request_id else "action_credentials"
         if (
             request["status"] != "continuing"
             or request["continuation"].get("run_id") != run_id
             or request["conversation_id"] != conversation_id
-            or not any(row["wait"]["request_id"] == credential_request_id for row in credential_waits)
+            or not any(row["wait"]["request_id"] == request_id and row["wait"]["kind"] == wait_kind for row in credential_waits)
         ):
             raise CheckpointError("context_unavailable")
     if _lease_live(record):

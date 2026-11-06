@@ -15,7 +15,7 @@
 // same reason.
 
 import { createConversation, type AttemptOrchestrationRequest } from './endpoints';
-import { ApiError } from './apiClient';
+import { api, ApiError } from './apiClient';
 import { adoptConversationModeDraft, conversationModes } from './conversationMode';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import type { CredentialRequest } from './actionCredentialTypes';
@@ -169,6 +169,21 @@ interface TurnContext {
 }
 
 const turnContexts = new Map<string, TurnContext>();
+
+export async function restorePendingQuestions(conversationId: string, signal?: AbortSignal): Promise<void> {
+    if (selectActiveTurn(useOrchestrationStore.getState(), conversationId)) return;
+    const result = await api.get<{ questions: Elicitation[] }>(
+        `/api/v2/orchestration/questions?${new URLSearchParams({ conversation_id: conversationId })}`, signal,
+    );
+    if (signal?.aborted || useChatStore.getState().activeConversationId !== conversationId) return;
+    const store = useOrchestrationStore.getState();
+    if (selectActiveTurn(store, conversationId)) return;
+    const question = result.questions[0];
+    if (question?.turn_id) {
+        store.setActiveTurn(conversationId, question.turn_id);
+        store.setElicitation(conversationId, question.turn_id, question);
+    }
+}
 
 /**
  * The in-flight plan or run per conversation.
@@ -1048,6 +1063,18 @@ export async function answerElicitation(params: {
         return { ok: false, error: 'An answer is already being submitted.' };
     }
     if (response.action === 'cancel') {
+        try {
+            const pending = await api.get<{ csrf_token: string }>(
+                `/api/v2/orchestration/questions?${new URLSearchParams({ conversation_id: conversationId })}`,
+            );
+            await api.post('/api/v2/orchestration/questions/cancel', {
+                conversation_id: conversationId, turn_id: turnId,
+                elicitation_id: elicitation.elicitation_id, revision: elicitation.revision ?? 0,
+                csrf_token: pending.csrf_token,
+            });
+        } catch {
+            return fail('The cancellation could not be confirmed. Refresh this conversation.');
+        }
         cancelOrchestration(conversationId);
         turnContexts.delete(key);
         store.clearElicitation(conversationId, turnId);
@@ -1058,10 +1085,12 @@ export async function answerElicitation(params: {
         });
         return { ok: true };
     }
-    const previous = turnContexts.get(key);
-    if (!previous) {
-        return fail('This request is no longer available in this browser session. Send the request again.');
-    }
+    // On reload the server, not browser storage, restores original seeds and approval mode.
+    const previous = turnContexts.get(key) ?? {
+        message: '', seeds: {}, revision: elicitation.revision ?? 0,
+        approvalMode: 'manual' as const, pendingUserMessageId: '',
+    };
+    turnContexts.set(key, previous);
     const cleanedResponse: ElicitationResponse = {
         action: response.action,
         content: response.action === 'accept' ? response.content : {},
@@ -1141,6 +1170,7 @@ async function executeSavedPlan(
     edits?: PlanEdits,
     reviewedRegeneration = false,
     credentialRequest?: CredentialRequest,
+    openContinuation?: (signal?: AbortSignal) => Promise<Response>,
 ): Promise<void> {
     const store = useOrchestrationStore.getState();
 
@@ -1154,7 +1184,7 @@ async function executeSavedPlan(
         startedAt: Date.now(),
     });
     if (!began) {
-        if (credentialRequest) throw new Error('This action is already continuing in this tab.');
+        if (credentialRequest || openContinuation) throw new Error('This action is already continuing in this tab.');
         return;
     }
     if (store.editorTarget?.conversationId === conversationId && store.editorTarget.turnId === turnId) {
@@ -1331,6 +1361,7 @@ async function executeSavedPlan(
         },
         controller.signal,
         credentialRequest,
+        openContinuation,
     );
     if (currentPendingStream()) chatPendingActionsStore.getState().setLiveStream(null);
     // A draft may have been saved even when the stream ended without its terminal frame.
@@ -1385,13 +1416,21 @@ async function executeSavedPlan(
         }
         await reconcileOrchestrationRun(conversationId, runId);
     }
-    if (credentialRequest && (result.transportUnknown || result.errored || result.conflict || result.rejection)) {
+    if ((credentialRequest || openContinuation) && (result.transportUnknown || result.errored || result.conflict || result.rejection)) {
         throw new Error('The continuation could not be confirmed. Review the saved attempt; no steps were replayed.');
     }
 }
 
 export async function continueCredentialOrchestration(credentialRequest: CredentialRequest): Promise<void> {
-    const { conversation_id: conversationId, run_id: runId } = credentialRequest;
+    return continueSavedInteraction(credentialRequest, credentialRequest);
+}
+
+export async function continueSavedInteraction(
+    interaction: { conversation_id: string; run_id?: string; turn_id?: string },
+    credentialRequest?: CredentialRequest,
+    openContinuation?: (signal?: AbortSignal) => Promise<Response>,
+): Promise<void> {
+    const { conversation_id: conversationId, run_id: runId } = interaction;
     if (!runId || useChatStore.getState().activeConversationId !== conversationId ||
         useChatStore.getState().streaming || activeControllers.has(conversationId)) {
         throw new Error('Open this conversation and wait for its current response before continuing.');
@@ -1400,14 +1439,14 @@ export async function continueCredentialOrchestration(credentialRequest: Credent
     if (!record) throw new Error('The saved action could not be read. Reload this conversation.');
     const plan = normalizePlan(persistedRunPlan(record));
     if (!plan || plan.run_id !== runId || plan.conversation_id !== conversationId ||
-        (credentialRequest.turn_id && credentialRequest.turn_id !== plan.turn_id) ||
+        (interaction.turn_id && interaction.turn_id !== plan.turn_id) ||
         !isOrchestrationRunWaiting(record)) {
         throw new Error('The saved action is no longer waiting for these credentials. Reload requests.');
     }
     const store = useOrchestrationStore.getState();
     store.setPlan(conversationId, plan.turn_id, plan);
     store.releaseRunAttempt(runId);
-    await executeSavedPlan(conversationId, plan.turn_id, plan, undefined, false, credentialRequest);
+    await executeSavedPlan(conversationId, plan.turn_id, plan, undefined, false, credentialRequest, openContinuation);
 }
 
 const reconciliationTimers = new Map<string, ReturnType<typeof setTimeout>>();

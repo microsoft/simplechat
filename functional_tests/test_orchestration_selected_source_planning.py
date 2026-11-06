@@ -1,7 +1,7 @@
 # test_orchestration_selected_source_planning.py
 """Selected attachments remain usable during planning and clarification.
 
-Version: 0.261.411
+Version: 0.261.415
 Implemented in: 0.261.355
 
 Uses real source projection, parsers, resolution and HTTP planning with external

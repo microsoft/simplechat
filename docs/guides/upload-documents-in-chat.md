@@ -72,6 +72,26 @@ File paste depends on what the browser receives from the source application. Sim
 attach actual clipboard files, but a copied path, link, or HTML image is not automatically a
 file upload. If pasting does not provide a file, use **Attach a file** instead.
 
+## Switching conversations in V2
+
+Fixed/Implemented in version: **0.261.414**
+(`application/single_app/config.py`).
+
+Unsent attachment selections stay with the conversation where you added them.
+Opening another chat does not attach those files there. Return to the original
+conversation in the same browser tab to recover its unsent selections, with their
+filenames and processing state.
+
+Leaving during the file transfer cancels that browser transfer. Its original
+selection shows **Retry** or **Remove** when you return; you may need to choose
+the file again. If the upload already returned a processing reference, the
+original conversation resumes checking that document rather than uploading a copy.
+
+Switching chats, removing a selection, and sending a message do not move or delete
+an already uploaded file. New chats start without the previous conversation's
+attachments. These unsent selections are kept in tab memory, not as drafts that
+survive a browser refresh.
+
 ## Answer an inline file question in V2
 
 From version **0.261.096**, an orchestration follow-up can ask for missing files directly.

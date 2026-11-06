@@ -5,16 +5,17 @@ from functools import wraps
 import hashlib
 import hmac
 import logging
-import secrets
 from datetime import datetime, timezone
 
 from flask import Response, jsonify, request, session, stream_with_context
 
 from action_credential_contracts import ActionCredentialError, ActionCredentialsRequired
+from agent_interaction_contracts import AgentInteractionRequired
 from action_runtime_contracts import ActionRecoveryError
 from functions_action_recovery import check_chat_actions, read_recovery, report_action_failure
 from functions_authentication import get_current_user_id, login_required, user_required
 from functions_appinsights import log_event, workflow_log_context
+from functions_interaction_csrf import get_interaction_csrf_token as _csrf_token
 from functions_action_credentials import (
     authorize_conversation, authorize_request, credential_continuation, credential_services,
     pending_execution_ids, request_conversation, safe_request, submit_credentials,
@@ -37,12 +38,6 @@ def _log_continuation_failure(error, item, stage):
         "stage": stage, "error_type": type(error).__name__,
         "failure_code": code if code in CONTINUATION_FAILURE_CODES else "credentials_unavailable",
     })
-
-
-def _csrf_token():
-    if not session.get("action_credentials_csrf_token"):
-        session["action_credentials_csrf_token"] = secrets.token_urlsafe(32)
-    return session["action_credentials_csrf_token"]
 
 
 def _body(fields):
@@ -121,8 +116,8 @@ def _recovery_body(fields):
     return body
 
 
-def _finish_request(user_id, request_id, claim, status):
-    current = state.read(user_id, request_id, record_type="credential_request")
+def _finish_request(user_id, request_id, claim, status, record_type="credential_request"):
+    current = state.read(user_id, request_id, record_type=record_type)
     if current["status"] == "continuing" and current.get("continuation_claim") == claim:
         state.replace(user_id, current, {"status": status}, current["_etag"])
 
@@ -139,7 +134,10 @@ class _CredentialExecution:
         finally:
             try:
                 status = self.execution.credential_continuation_status(self.item)
-                _finish_request(self.user_id, self.item["id"], self.item["continuation_claim"], status)
+                _finish_request(
+                    self.user_id, self.item["id"], self.item["continuation_claim"], status,
+                    record_type=self.item.get("record_type", "credential_request"),
+                )
             except Exception as error:
                 log_event("[PLUGINS] Credential continuation outcome could not be confirmed.", level=logging.WARNING, extra={
                     **workflow_log_context(
@@ -168,7 +166,9 @@ def _orchestration_continue(item, user_id):
     owned = claim_run_continuation(
         run_id, user_id, conversation_id,
         authorize=lambda: request_conversation(item),
-        message_container=cosmos_messages_container, credential_request_id=item["id"],
+        message_container=cosmos_messages_container,
+        **({"input_request_id": item["id"]} if item.get("record_type") == "user_input_request"
+           else {"credential_request_id": item["id"]}),
     )
     if owned is None:
         raise ActionCredentialError("credential_execution_busy")
@@ -263,7 +263,7 @@ def _chat_continue(item, user_id):
                 "message_id": saved["id"],
                 "reload_messages": True,
             })
-        except ActionCredentialsRequired as error:
+        except AgentInteractionRequired as error:
             _finish_request(user_id, item["id"], item["continuation_claim"], "superseded")
             yield serialize_sse(error.event)
         except Exception as error:
