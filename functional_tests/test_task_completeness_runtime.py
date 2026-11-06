@@ -1,23 +1,31 @@
 # test_task_completeness_runtime.py
 """Real-module verification, correction, result eligibility and durable storage.
 
-Version: 0.261.416
-Implemented in: 0.261.382; 0.261.384; 0.261.416
+Version: 0.261.418
+Implemented in: 0.261.382; 0.261.384; 0.261.416; 0.261.418
 """
 
 import importlib
 import json
 import sys
-from copy import copy
+from copy import copy, deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from azure.core import MatchConditions
+from openai import (
+    APIConnectionError, AuthenticationError, BadRequestError, PermissionDeniedError, RateLimitError,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "single_app"))
 from test_orchestration_harness_execution import harness, initialized_application  # noqa: F401
 from test_orchestration_reason_render_pipeline import narrative_io  # noqa: F401
-from test_support.orchestration_harness_execution import compose_step, input_binding, render_step
+from functions_task_completeness import NARRATIVE_OBLIGATIONS
+from test_support.orchestration_harness_execution import (
+    CompletionClient, compose_step, decoded_frames, input_binding, render_step,
+)
 
 
 def report(status, quote="Evaluation", refs=None):
@@ -83,6 +91,241 @@ def test_unavailable_checker_never_publishes_success(harness):
     assert harness.read()["status"] == "failed"
     assert stored_steps(harness)[0]["failure"]["code"] == "completeness_unavailable"
     assert len(harness.model_calls) == 3
+
+
+SOURCE_MESSAGE = (
+    "Please rewrite this as a polished note: Our project demonstration went really well. "
+    "Alex asked whether the service was already deployed. It is deployed, and the team "
+    "was pleased with the reception."
+)
+PREPARED_DRAFT = (
+    "Our project demonstration went exceptionally well. Alex asked whether the service "
+    "was already deployed, and we confirmed that it is. The team was delighted with the reception."
+)
+
+
+def draft_assessment():
+    return json.dumps({"requirements": {
+        identifier: {"status": "satisfied", "reason": "", "evidence_refs": ["user_provided_content"],
+                     "answer_quote": PREPARED_DRAFT}
+        for identifier, _ in NARRATIVE_OBLIGATIONS
+    }})
+
+
+def create_context_draft(harness, replies, *, review="auto", intent="transform_supplied_text"):
+    harness.settings["enable_chat_orchestration_completeness_check"] = True
+    harness.turn["content"] = SOURCE_MESSAGE
+    current = harness.messages.read_item(harness.turn["id"], harness.turn["conversation_id"])
+    harness.messages.replace_item(
+        harness.turn["id"], harness.turn, etag=current["_etag"], match_condition=MatchConditions.IfNotModified,
+    )
+    step = compose_step()
+    step["arguments"].update(
+        instruction="Rewrite the user's account as a polished note without adding facts.",
+        response_policy="available_information", semantic_review=review,
+    )
+    if intent is not None:
+        step["arguments"]["content_intent"] = intent
+    harness.create([step], replies=replies, final_response=input_binding("prepare", "answer"))
+    return step
+
+
+@pytest.mark.parametrize("checker_reply", [
+    "Not JSON", '{"requirements":{"personalized_check":{}}}', "",
+    APIConnectionError(request=httpx.Request("POST", "https://offline.invalid")),
+    RateLimitError("Unavailable", response=httpx.Response(
+        429, request=httpx.Request("POST", "https://offline.invalid"),
+    ), body=None),
+])
+def test_real_context_only_auto_delivers_retained_draft_after_checker_error(harness, checker_reply):
+    create_context_draft(harness, [PREPARED_DRAFT, checker_reply])
+    execution = harness.prepare()
+    frames = execution.execute()
+    saved = harness.read()
+    rows = stored_steps(harness)
+    messages = harness.assistant_messages()
+    assert saved["status"] == "completed", saved.get("failure")
+    final = decoded_frames(frames)[-1]
+    assert final["full_content"] == messages[-1]["content"] == PREPARED_DRAFT
+    assert len(harness.model_calls) == 2 and harness.replies == []
+    checked = rows[0]["task_completeness"]
+    assert checked["status"] == "complete" and checked["deterministic_status"] == "passed"
+    assert checked["semantic_enabled"] is True and checked["stages"][-1]["status"] == "skipped"
+    assert checked["evidence_basis"] == "user_message" and checked["corrections"] == 0
+    assert checked["semantic_skip_reason"].startswith("completeness_")
+    payload = json.loads(harness.model_calls[1]["messages"][-1]["content"])
+    assert payload["evidence"]["user_provided_content"] == SOURCE_MESSAGE
+    assert payload["instruction"]["approved_request"] == SOURCE_MESSAGE
+    response_format = harness.model_calls[1]["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["schema"]["properties"]["requirements"]["required"] == [
+        identifier for identifier, _ in NARRATIVE_OBLIGATIONS
+    ]
+    read_store = harness.recovery.checkpoint_store(
+        saved, lambda: harness.bootstrap.read_owned_conversation("owner", "conversation-1"),
+    )
+    checkpoint = read_store.load_completeness("prepare", binding=execution.context.completeness_binding)
+    assert checkpoint["candidate"] == PREPARED_DRAFT and checkpoint["original"] == PREPARED_DRAFT
+    assert checkpoint["semantic_status"] == "skipped"
+    calls = len(harness.model_calls)
+    reloaded = harness.read()
+    rows_after_reload = stored_steps(harness)
+    assert reloaded["status"] == "completed" and rows_after_reload[0]["task_completeness"] == checked
+    assert len(harness.model_calls) == calls
+
+
+@pytest.mark.parametrize("review,intent", [
+    ("on", "transform_supplied_text"), ("auto", None), ("auto", "substantive"),
+])
+def test_on_or_unproven_context_tasks_keep_the_review_failure_gate(harness, review, intent):
+    create_context_draft(harness, [PREPARED_DRAFT, "Not JSON", "Not JSON"], review=review, intent=intent)
+    harness.prepare().execute()
+    saved = harness.read()
+    rows = stored_steps(harness)
+    assert saved["status"] == "failed" and len(harness.model_calls) == 3
+    assert rows[0]["failure"]["code"] == "completeness_unavailable"
+    assert "semantic_skip_reason" not in rows[0]["task_completeness"]
+
+
+def response_format_rejected():
+    return BadRequestError("Unsupported response format.", response=httpx.Response(
+        400, request=httpx.Request("POST", "https://offline.invalid"),
+    ), body={"error": {"param": "response_format", "code": "unsupported_parameter"}})
+
+
+def test_schema_rejection_uses_same_closed_review_in_json_compatibility_mode(harness):
+    create_context_draft(harness, [PREPARED_DRAFT, response_format_rejected(), draft_assessment()])
+    harness.prepare().execute()
+    saved = harness.read()
+    rows = stored_steps(harness)
+    assert saved["status"] == "completed" and len(harness.model_calls) == 3
+    assert harness.model_calls[1]["response_format"]["type"] == "json_schema"
+    assert harness.model_calls[2]["response_format"] == {"type": "json_object"}
+    assert harness.model_calls[1]["messages"] == harness.model_calls[2]["messages"]
+    assert rows[0]["task_completeness"]["stages"][-1]["status"] == "completed"
+    assert "semantic_skip_reason" not in rows[0]["task_completeness"]
+
+
+def test_two_format_rejections_use_bounded_prompt_only_compatibility(harness):
+    create_context_draft(harness, [
+        PREPARED_DRAFT, response_format_rejected(), response_format_rejected(), draft_assessment(),
+    ])
+    harness.prepare().execute()
+    saved = harness.read()
+    assert saved["status"] == "completed" and len(harness.model_calls) == 4
+    assert "response_format" not in harness.model_calls[-1]
+    assert harness.model_calls[-1]["messages"] == harness.model_calls[1]["messages"]
+
+
+@pytest.mark.parametrize("error_type,status", [
+    (BadRequestError, 400), (AuthenticationError, 401), (PermissionDeniedError, 403),
+])
+def test_unrelated_provider_rejections_neither_downgrade_format_nor_skip_review(harness, error_type, status):
+    failure = error_type("Request rejected.", response=httpx.Response(
+        status, request=httpx.Request("POST", "https://offline.invalid"),
+    ), body={"error": {"param": "messages", "code": "invalid_request"}})
+    create_context_draft(harness, [PREPARED_DRAFT, failure])
+    harness.prepare().execute()
+    saved = harness.read()
+    rows = stored_steps(harness)
+    assert saved["status"] == "failed" and len(harness.model_calls) == 2
+    assert "semantic_skip_reason" not in rows[0]["task_completeness"]
+
+
+@pytest.mark.parametrize("filtered", [True, False])
+def test_checker_refusal_and_content_filter_are_not_optional_outages(harness, monkeypatch, filtered):
+    original = CompletionClient.create
+
+    def create(client, **kwargs):
+        if kwargs["messages"][0]["content"].startswith("Independently check"):
+            client.environment.model_calls.append(deepcopy(kwargs))
+            return SimpleNamespace(usage=None, choices=[SimpleNamespace(
+                finish_reason="content_filter" if filtered else "stop",
+                message=SimpleNamespace(content="", refusal=None if filtered else "Refused"),
+            )])
+        return original(client, **kwargs)
+
+    monkeypatch.setattr(CompletionClient, "create", create)
+    create_context_draft(harness, [PREPARED_DRAFT])
+    harness.prepare().execute()
+    saved = harness.read()
+    rows = stored_steps(harness)
+    assert saved["status"] == "failed" and len(harness.model_calls) == 2
+    assert "semantic_skip_reason" not in rows[0]["task_completeness"]
+
+
+def test_source_authority_loss_during_checker_outage_still_blocks_delivery(harness):
+    def unavailable_after_access_loss():
+        current = harness.conversations.read_item(harness.conversation["id"], harness.conversation["id"])
+        harness.conversations.replace_item(
+            harness.conversation["id"], {**harness.conversation, "user_id": "another-owner"},
+            etag=current["_etag"], match_condition=MatchConditions.IfNotModified,
+        )
+        return APIConnectionError(request=httpx.Request("POST", "https://offline.invalid"))
+
+    create_context_draft(harness, [PREPARED_DRAFT, unavailable_after_access_loss])
+    execution = harness.prepare()
+    execution.execute()
+    saved = harness.read()
+    messages = harness.assistant_messages()
+    assert saved["status"] != "completed" and messages == [] and len(harness.model_calls) == 2
+    assert execution.lease.stopped.is_set()
+
+
+@pytest.mark.parametrize("masked", [False, True])
+def test_user_message_changed_during_checker_outage_cannot_complete_optional_recovery(harness, masked):
+    def unavailable_after_source_change():
+        current = harness.messages.read_item(harness.turn["id"], harness.turn["conversation_id"])
+        changed = (
+            {**current, "metadata": {**(current.get("metadata") or {}), "masked": True}}
+            if masked else {**current, "content": "A different request replaced the original message."}
+        )
+        harness.messages.replace_item(
+            harness.turn["id"], changed, etag=current["_etag"], match_condition=MatchConditions.IfNotModified,
+        )
+        return APIConnectionError(request=httpx.Request("POST", "https://offline.invalid"))
+
+    create_context_draft(harness, [PREPARED_DRAFT, unavailable_after_source_change])
+    execution = harness.prepare()
+    execution.execute()
+    saved = harness.read()
+    rows = stored_steps(harness)
+    messages = harness.assistant_messages()
+    assert saved["status"] != "completed" and len(harness.model_calls) == 2
+    assert all(message.get("content") != PREPARED_DRAFT for message in messages)
+    assert all(row.get("task_completeness", {}).get("status") != "complete" for row in rows)
+    assert execution.lease.stopped.is_set()
+
+
+def test_context_intent_cannot_bypass_required_structured_output(harness):
+    harness.settings["chat_orchestration_completeness_max_corrections"] = 0
+    step = compose_step()
+    step["arguments"].update(
+        response_policy="available_information", content_intent="draft_supplied_text",
+    )
+    step["outputs"] = [{
+        "name": "answer", "kind": "structured-v1",
+        "schema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]},
+    }]
+    harness.settings["enable_chat_orchestration_completeness_check"] = True
+    with pytest.raises(harness.schema.PlanValidationError, match="require narrative outputs"):
+        harness.create([step])
+    step["arguments"]["response_policy"] = "complete_inputs"
+    harness.create([step], replies=['{"answer":{"total":"12"}}'])
+    harness.prepare().execute()
+    saved = harness.read()
+    rows = stored_steps(harness)
+    assert saved["status"] == "failed" and len(harness.model_calls) == 1
+    assert rows[0]["failure"]["code"] == "completeness_incomplete"
+    assert rows[0]["task_completeness"]["deterministic_status"] == "failed"
+
+
+@pytest.mark.parametrize("intent", ["unknown", True, None])
+def test_content_intent_is_a_validated_plan_argument(harness, intent):
+    step = compose_step()
+    step["arguments"]["content_intent"] = intent
+    with pytest.raises(harness.schema.PlanValidationError):
+        harness.create([step])
 
 
 @pytest.mark.parametrize("with_corrections", [False, True])

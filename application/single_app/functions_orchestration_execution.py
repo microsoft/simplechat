@@ -189,8 +189,10 @@ from functions_workflow_context import (
     WorkflowContextBudgetError,
     calculate_workflow_context_budget,
 )
+from functions_task_completeness import CompletenessError
 from model_endpoint_clients import (
-    ModelEndpointBehavior, extract_chat_completion_response_text, is_response_format_rejection,
+    ModelEndpointBehavior, create_completion_with_response_format,
+    extract_chat_completion_response_text, is_transient_model_error,
 )
 
 
@@ -321,27 +323,24 @@ def _execution_bound_external_callback(callback, lease):
     return guarded
 
 
-def _create_answer_completion(model, messages, *, json_output, stage):
-    """Request JSON mode when asked, resending without it if the endpoint refuses the option."""
+def _create_answer_completion(model, messages, *, json_output, stage, response_format=None):
+    """Preserve the review schema, with bounded endpoint-format compatibility."""
     options = {
         "messages": messages, "temperature": ANSWER_TEMPERATURE,
         "max_tokens": ANSWER_MAX_TOKENS, "use_model_response_length": True,
     }
-    if not json_output:
-        return model.create_completion(**options)
-    try:
-        return model.create_completion(**options, response_format={"type": "json_object"})
-    except Exception as exc:
-        if not is_response_format_rejection(exc):
-            raise
-        # JSON-mode support differs by endpoint and API version; the prompt already asks
-        # for one JSON object, and the caller validates the reply either way.
+    def adjusted(details):
         log_event(
-            "[ORCHESTRATION] Retrying the answer model without a JSON response format.",
+            "[ORCHESTRATION] Retrying the answer model with a compatible response format.",
             level=logging.INFO,
-            extra={"stage": stage, "reason": "json_format_retry", "error_type": type(exc).__name__},
+            extra={"stage": stage, "reason": "json_format_retry", **details},
         )
-        return model.create_completion(**options)
+
+    return create_completion_with_response_format(
+        model.create_completion, options,
+        response_format=response_format or ({"type": "json_object"} if json_output else None),
+        on_adjustment=adjusted,
+    )
 
 
 def build_harness_invoke_prompt(model, *, token_usage, revalidate):
@@ -378,14 +377,20 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
         try:
             response = _create_answer_completion(
                 model, messages, json_output=(metadata or {}).get("json_output") is True, stage=stage,
+                response_format=(metadata or {}).get("response_format"),
             )
-        except (OpenAIError, AzureError) as exc:
-            log_event(
-                "[ORCHESTRATION] The answer model request failed.",
-                level=logging.WARNING,
-                extra={"stage": stage, "error_type": type(exc).__name__},
-            )
-            raise HarnessExecutionError("model_failed") from exc
+        except Exception as exc:
+            transient_check = stage == "completeness_check" and is_transient_model_error(exc)
+            if transient_check or isinstance(exc, (OpenAIError, AzureError)):
+                log_event(
+                    "[ORCHESTRATION] The answer model request failed.",
+                    level=logging.WARNING,
+                    extra={"stage": stage, "error_type": type(exc).__name__},
+                )
+                if transient_check:
+                    raise CompletenessError("completeness_checker_unavailable") from exc
+                raise HarnessExecutionError("model_failed") from exc
+            raise
         usage = getattr(response, "usage", None)
         for field in _USAGE_FIELDS:
             value = getattr(usage, field, None)
@@ -394,12 +399,16 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
         revalidate()
         assert_current_request_sources_available()
         if not response or not response.choices:
+            if stage == "completeness_check":
+                raise CompletenessError("completeness_report_invalid")
             raise HarnessExecutionError("model_failed")
         choice = response.choices[0]
         if choice.finish_reason == "content_filter" or getattr(choice.message, "refusal", None):
             raise HarnessExecutionError("model_failed")
         text = extract_chat_completion_response_text(response)
         if not text.strip():
+            if stage == "completeness_check":
+                raise CompletenessError("completeness_report_invalid")
             raise HarnessExecutionError("model_failed")
         return text
 

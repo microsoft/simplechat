@@ -247,7 +247,7 @@ export function OrchestrationPlanCard({
                                         : state === 'waiting' ? 'Waiting for results' : state === 'pending' ? 'Next'
                                         : state === 'skipped' ? 'Skipped' : state === 'cancelled' ? 'Stopped' : 'Needs attention'}
                                 </span>
-                                <CheckStageList value={runtime?.task_completeness} />
+                                <CheckStageList value={runtime?.task_completeness} showOptionalSkip={false} />
                             </li>;
                         })}
                     </ol>

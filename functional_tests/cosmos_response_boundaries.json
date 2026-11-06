@@ -19981,10 +19981,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "54959c0170bcbc8875906db57cd89e95be6643e46725a2087136e4df6b6ec38a"
+        "module_sha256": "9a7de6fa7f15f0e382e67661b7d68d00f069fa71d364db940e367f8c3d510e93"
       },
       "classification": "sdk-compatible",
-      "contract": "Read-only retained-result projection ends before screening and publication; its operation cache never contains message responses or conditional publication state. The published SDK point mapping is projected with items() into plain message JSON and compared with publication_documents_match, accepting only lossless integral-float/integer round trips. Stored guard fingerprints, all domain fields and Mapping-compatible mirroring remain unchanged; durable outcome telemetry reads finalized scalar fields. Review renewed for 0.261.388: The added evidence_status is plain projected JSON from verified retained readers. The only direct SDK point response is still compared through saved.items() and publication_documents_match; ETags, lease authorization, and conditional publication are unchanged. Verified retained-analysis descriptors add plain JSON metadata before publication; the saved SDK point document is still consumed via mapping/comprehension before publication_documents_match, with no ETag or domain-value repair.",
+      "contract": "Read-only retained-result projection ends before screening and publication; its operation cache never contains message responses or conditional publication state. The published SDK point mapping is projected with items() into plain message JSON and compared with publication_documents_match, accepting only lossless integral-float/integer round trips. Stored guard fingerprints, all domain fields and Mapping-compatible mirroring remain unchanged; durable outcome telemetry reads finalized scalar fields. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -20010,10 +20010,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "54959c0170bcbc8875906db57cd89e95be6643e46725a2087136e4df6b6ec38a"
+        "module_sha256": "9a7de6fa7f15f0e382e67661b7d68d00f069fa71d364db940e367f8c3d510e93"
       },
       "classification": "sdk-compatible",
-      "contract": "The previous assistant point mapping is checked for conversation/run ownership; model and reasoning fields are projected into plain dictionaries, without passing the SDK wrapper to an exact-dictionary contract. Read-operation reuse does not wrap this metadata lookup. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract.",
+      "contract": "The previous assistant point mapping is checked for conversation/run ownership; model and reasoning fields are projected into plain dictionaries, without passing the SDK wrapper to an exact-dictionary contract. Read-operation reuse does not wrap this metadata lookup. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -20033,10 +20033,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "54959c0170bcbc8875906db57cd89e95be6643e46725a2087136e4df6b6ec38a"
+        "module_sha256": "9a7de6fa7f15f0e382e67661b7d68d00f069fa71d364db940e367f8c3d510e93"
       },
       "classification": "sdk-compatible",
-      "contract": "The question point mapping supplies role and nested plain thread metadata; only a deepcopy of the validated nested thread dictionary is returned. Regeneration metadata is outside the retained-result read scope. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract.",
+      "contract": "The question point mapping supplies role and nested plain thread metadata; only a deepcopy of the validated nested thread dictionary is returned. Regeneration metadata is outside the retained-result read scope. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -20056,10 +20056,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "54959c0170bcbc8875906db57cd89e95be6643e46725a2087136e4df6b6ec38a"
+        "module_sha256": "9a7de6fa7f15f0e382e67661b7d68d00f069fa71d364db940e367f8c3d510e93"
       },
       "classification": "sdk-compatible",
-      "contract": "A normalized owned conversation retains its _etag for IfNotModified replacement; the returned SDK mapping is consumed only by the Mapping-compatible cache invalidator. Lost-CAS retries retain current ownership. This write remains outside read-operation reuse. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract.",
+      "contract": "A normalized owned conversation retains its _etag for IfNotModified replacement; the returned SDK mapping is consumed only by the Mapping-compatible cache invalidator. Lost-CAS retries retain current ownership. This write remains outside read-operation reuse. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -20084,10 +20084,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "54959c0170bcbc8875906db57cd89e95be6643e46725a2087136e4df6b6ec38a"
+        "module_sha256": "9a7de6fa7f15f0e382e67661b7d68d00f069fa71d364db940e367f8c3d510e93"
       },
       "classification": "sdk-compatible",
-      "contract": "Partitioned turn/source point mappings are reauthorized, checked for visibility and converted by normalize_history_message before strict saved-snapshot validation. Full source messages are resolved only after fingerprint checks; history disablement and revoked shared access cannot broaden reads. Result-operation snapshots never replace these message reads. Review renewed for 0.261.388: Function body and SDK point/query/batch operations are unchanged; module-only model-policy, source-presentation, or export-helper changes do not alter this Mapping consumer or its conditional-write contract.",
+      "contract": "Partitioned turn/source point mappings are reauthorized, checked for visibility and converted by normalize_history_message before strict saved-snapshot validation. Full source messages are resolved only after fingerprint checks; history disablement and revoked shared access cannot broaden reads. Result-operation snapshots never replace these message reads. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -20455,7 +20455,9 @@
       "classification": "sdk-compatible",
       "contract": "Review 0.261.416: guard admission owner AST is unchanged. Returned writes are unused; conflicting SDK guard mappings supply owner/token/claim fields and original _etag for conditional replacement. Metadata stripping constructs a plain replacement.",
       "evidence_scope": "owner-runtime",
-      "tests": ["functional_tests/test_orchestration_cosmos_response_contract.py"]
+      "tests": [
+        "functional_tests/test_orchestration_cosmos_response_contract.py"
+      ]
     },
     "application/single_app/functions_orchestration_recovery.py::ExecutionLease.publish_message": {
       "boundary": {
@@ -20490,7 +20492,9 @@
       "classification": "sdk-compatible",
       "contract": "Review 0.261.416: message publication owner AST is unchanged. SDK point mappings feed ownership/retraction checks; metadata-stripped plain bodies and original ETags fence atomic publication. Batch responses are unused.",
       "evidence_scope": "owner-runtime",
-      "tests": ["functional_tests/test_orchestration_cosmos_response_contract.py"]
+      "tests": [
+        "functional_tests/test_orchestration_cosmos_response_contract.py"
+      ]
     },
     "application/single_app/functions_orchestration_recovery.py::_replace": {
       "boundary": {
@@ -20509,7 +20513,9 @@
       "classification": "normalized-strict",
       "contract": "Review 0.261.416: run replacement owner AST is unchanged. Input ETags fence IfNotModified; normalize_cosmos_document returns a plain document before downstream lease/checkpoint contracts. Non-document responses take CheckpointError.",
       "evidence_scope": "owner-runtime",
-      "tests": ["functional_tests/test_orchestration_cosmos_response_contract.py"]
+      "tests": [
+        "functional_tests/test_orchestration_cosmos_response_contract.py"
+      ]
     },
     "application/single_app/functions_orchestration_recovery.py::claim_waiting_continuation": {
       "boundary": {
@@ -20528,7 +20534,9 @@
       "classification": "sdk-compatible",
       "contract": "Review 0.261.416: waiting-continuation owner AST is unchanged. SDK publication-guard mappings are checked for actor/conversation/run identity before constructing a plain claim descriptor; run claims use the normalized replacement owner and conditional ETags.",
       "evidence_scope": "owner-runtime",
-      "tests": ["functional_tests/test_orchestration_cosmos_response_contract.py"]
+      "tests": [
+        "functional_tests/test_orchestration_cosmos_response_contract.py"
+      ]
     },
     "application/single_app/functions_orchestration_recovery.py::cleanup_conversation_checkpoints": {
       "boundary": {
@@ -20558,7 +20566,9 @@
       "classification": "sdk-compatible",
       "contract": "Review 0.261.416: cleanup owner AST is unchanged. Conversation SDK mappings supply owner/_etag; metadata-stripped plain replacements fence deletion and write responses are unused. Partitioned query rows remain plain.",
       "evidence_scope": "owner-runtime",
-      "tests": ["functional_tests/test_orchestration_cosmos_response_contract.py"]
+      "tests": [
+        "functional_tests/test_orchestration_cosmos_response_contract.py"
+      ]
     },
     "application/single_app/functions_orchestration_recovery.py::fence_publication": {
       "boundary": {
@@ -20587,7 +20597,9 @@
       "classification": "sdk-compatible",
       "contract": "Review 0.261.416: publication-fence owner AST is unchanged. SDK guard mappings supply owner/_etag; metadata-stripped plain tombstones use conditional replacement. Write responses are unused and conflicts cannot borrow another owner.",
       "evidence_scope": "owner-runtime",
-      "tests": ["functional_tests/test_orchestration_cosmos_response_contract.py"]
+      "tests": [
+        "functional_tests/test_orchestration_cosmos_response_contract.py"
+      ]
     },
     "application/single_app/functions_orchestration_recovery.py::prepare_retry": {
       "boundary": {
@@ -25915,10 +25927,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "normalized-strict",
-      "contract": "Audit ownership and existing target checks use Mapping fields. Retained file/image/chunk point documents are normalized before strict source authorization and reference remapping; returned writes are unused. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "Audit ownership and existing target checks use Mapping fields. Retained file/image/chunk point documents are normalized before strict source authorization and reference remapping; returned writes are unused. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_results_delivery.py"
@@ -25941,10 +25953,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "response-unused",
-      "contract": "Assistant, citation and conversation upsert responses are discarded. The authored assistant dictionary is returned without SDK metadata; unread state is persisted on the Mapping-compatible conversation input. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "Assistant, citation and conversation upsert responses are discarded. The authored assistant dictionary is returned without SDK metadata; unread state is persisted on the Mapping-compatible conversation input. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_assistant_and_citation_owners_discard_sdk_write_responses"
@@ -25967,10 +25979,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "sdk-compatible",
-      "contract": "A replayed SDK message is checked through nested metadata/run_id field reads and returned unchanged. Assistant tracking consumes its id and thread metadata through Mapping access; new-message upsert responses are discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "A replayed SDK message is checked through nested metadata/run_id field reads and returned unchanged. Assistant tracking consumes its id and thread metadata through Mapping access; new-message upsert responses are discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_conversation_and_replayed_user_message_accept_sdk_points"
@@ -25988,10 +26000,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "normalized-strict",
-      "contract": "A copied-image SDK point response is normalized before collaboration mirroring. Other backing and destination messages go through their existing authorized delivery owners. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "A copied-image SDK point response is normalized before collaboration mirroring. Other backing and destination messages go through their existing authorized delivery owners. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_results_delivery.py"
@@ -26029,10 +26041,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "normalized-strict",
-      "contract": "Existing/collision audit point documents are owner-checked and normalized before returning to the workflow runner. New create/upsert responses are unused; run-bound IDs preserve retries and manual titles. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "Existing/collision audit point documents are owner-checked and normalized before returning to the workflow runner. New create/upsert responses are unused; run-bound IDs preserve retries and manual titles. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_conversation_and_replayed_user_message_accept_sdk_points",
@@ -26051,10 +26063,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "sdk-compatible",
-      "contract": "_get_latest_thread_id: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "_get_latest_thread_id: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_query_owners_consume_plain_query_rows"
@@ -26077,10 +26089,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "sdk-compatible",
-      "contract": "SDK point messages are read through Mapping access, checked for posted_via=agent_action, and assigned plain nested supersession metadata. Upsert responses are discarded; missing or failed messages retain the existing best-effort path. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "SDK point messages are read through Mapping access, checked for posted_via=agent_action, and assigned plain nested supersession metadata. Upsert responses are discarded; missing or failed messages retain the existing best-effort path. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_delivery_owners_mutate_sdk_points_and_mirror_a_reply"
@@ -26103,10 +26115,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "sdk-compatible",
-      "contract": "The SDK conversation is inspected and mutated through Mapping access for workflow/hidden state. Its upsert response is discarded, and the cache update uses the user_id field; read/write failures retain the existing False result. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "The SDK conversation is inspected and mutated through Mapping access for workflow/hidden state. Its upsert response is discarded, and the cache update uses the user_id field; read/write failures retain the existing False result. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_delivery_owners_mutate_sdk_points_and_mirror_a_reply"
@@ -26134,10 +26146,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "sdk-compatible",
-      "contract": "SDK conversations use Mapping ownership/group checks and unread/citation updates. Existing SDK messages feed the same Mapping-compatible summary update and are normalized before returning; new authored message upsert responses are discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "SDK conversations use Mapping ownership/group checks and unread/citation updates. Existing SDK messages feed the same Mapping-compatible summary update and are normalized before returning; new authored message upsert responses are discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_delivery_owners_mutate_sdk_points_and_mirror_a_reply"
@@ -26155,10 +26167,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "response-unused",
-      "contract": "Artifact upsert responses are discarded; compact citation dictionaries returned by the artifact builder are retained. Failed writes use the existing citation fallback without consuming an SDK response. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "Artifact upsert responses are discarded; compact citation dictionaries returned by the artifact builder are retained. Failed writes use the existing citation fallback without consuming an SDK response. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_assistant_and_citation_owners_discard_sdk_write_responses"
@@ -26176,10 +26188,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_merge_candidate_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "_query_merge_candidate_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_query_owners_consume_plain_query_rows"
@@ -26197,10 +26209,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_recent_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "_query_recent_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_runner_query_owners_consume_plain_query_rows"
@@ -26218,10 +26230,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "sdk-compatible",
-      "contract": "A resumed SDK user-message point response supplies id and nested thread metadata through Mapping access to assistant tracking. Policy failures add application-owned error/error_code strings to the locally authored run record; no point wrapper enters a new strict sink. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "A resumed SDK user-message point response supplies id and nested thread metadata through Mapping access to assistant tracking. Policy failures add application-owned error/error_code strings to the locally authored run record; no point wrapper enters a new strict sink. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_run_owner_consumes_sdk_replayed_message_before_model_processing",
@@ -26240,10 +26252,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "622f529ccb094099769727c2b233a046ec0348ddd9dbaf8e40d7956a1bed43f8"
+        "module_sha256": "4ae89b1011123192789d81654af55aee8876943207de0a233dcbb0da2a74789d"
       },
       "classification": "response-unused",
-      "contract": "The unread/citation summary mutates its Mapping-compatible conversation input; the returned upsert response is discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.380: Module-only completeness evaluation and private evidence capture outside effectful invocation; this point-response owner AST and response consumer are unchanged. Review renewed for 0.261.389: The legacy model-client factory now shares chat transport construction. Workflow run/checkpoint/result storage, authorization, idempotency receipts and SDK mapping consumers are unchanged; no gateway effect is replayed.",
+      "contract": "The unread/citation summary mutates its Mapping-compatible conversation input; the returned upsert response is discarded. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_results_delivery.py"

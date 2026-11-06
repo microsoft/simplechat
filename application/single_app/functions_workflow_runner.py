@@ -224,6 +224,8 @@ from model_endpoint_clients import (
     bind_callable_with_timeout,
     build_openai_client_timeout,
     build_openai_client_timeout_options,
+    create_completion_with_response_format,
+    is_transient_model_error,
     resolve_document_action_timeout_seconds,
     resolve_model_call_max_retries,
     resolve_model_stream_read_timeout_seconds,
@@ -7379,16 +7381,27 @@ def _check_workflow_completeness(result, envelope, *, workflow, task, settings, 
                    'corrections': state['corrections'], 'checks': state['checks']},
         )
 
-    def invoke(messages, stage):
+    def invoke(messages, stage, *, response_format=None):
         recheck()
         if evidence_overflow:
             raise CompletenessError('completeness_context_limit')
         if not client_binding:
             client_binding.extend(_resolve_model_workflow_client(workflow, settings))
         client, deployment, provider = client_binding
-        completion = client.chat.completions.create(
-            model=deployment, messages=messages, timeout=120,
-        )
+        try:
+            completion = create_completion_with_response_format(
+                client.chat.completions.create,
+                {"model": deployment, "messages": messages, "timeout": 120},
+                response_format=response_format,
+                on_adjustment=lambda details: log_event(
+                    '[WORKFLOW_RUNNER] Retrying answer checking with a compatible response format.',
+                    level=logging.INFO, extra={'run_id': run_id, 'task_id': task['id'], 'stage': stage, **details},
+                ),
+            )
+        except Exception as error:
+            if stage == 'completeness_check' and is_transient_model_error(error):
+                raise CompletenessError('completeness_checker_unavailable') from error
+            raise
         recheck()
         if not completion.choices or getattr(completion.choices[0].message, 'refusal', None):
             raise ValueError('completeness_model_unavailable')

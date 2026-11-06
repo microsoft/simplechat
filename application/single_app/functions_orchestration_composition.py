@@ -61,7 +61,7 @@ from functions_orchestration_schema import (
     build_step_result, failure_from_exception, safe_failure, step_input_specs, validate_inline_output_schema,
 )
 from functions_orchestration_visuals import (
-    build_answer_visual_guidance, build_existing_charts_note, collect_run_charts,
+    any_visual, build_answer_visual_guidance, build_existing_charts_note, collect_run_charts,
     image_proposals_available, place_chart_blocks,
 )
 from functions_orchestration_workflow_context import resolve_turn_time_zone, workflow_answer_time_line
@@ -490,6 +490,8 @@ def check_retained_final_response(step, result, context, *, settings, emit=None,
                    'value': read_complete_input(reader)}
             for name, reader in readers.items() if name != reference.output_name
         }
+        legacy_evidence = dict(evidence)
+        evidence['user_provided_content'] = context.user_request
         store = getattr(context, 'completeness_store', None)
         binding = getattr(context, 'completeness_binding', None)
         saved = store.load_completeness(step['step_id'], binding=binding) if store is not None else None
@@ -497,7 +499,7 @@ def check_retained_final_response(step, result, context, *, settings, emit=None,
         # Context budgeting is an execution dependency, not a bootstrap dependency.
         from functions_workflow_context import WorkflowContextBudgetError, calculate_workflow_context_budget
 
-        def invoke_check(messages, stage):
+        def invoke_check(messages, stage, *, response_format=None):
             recheck()
             audit = calculate_workflow_context_budget(
                 messages, getattr(invoke, 'model_metadata', None) or context.gpt_model or '',
@@ -507,6 +509,7 @@ def check_retained_final_response(step, result, context, *, settings, emit=None,
                 raise WorkflowContextBudgetError(audit)
             reply = invoke(messages, stage=stage, metadata={
                 'run_id': context.run_id, 'step_id': step['step_id'], 'json_output': True,
+                **({'response_format': response_format} if response_format is not None else {}),
             })
             recheck()
             return reply
@@ -533,6 +536,7 @@ def check_retained_final_response(step, result, context, *, settings, emit=None,
             evidence=evidence, policy=policy, invoke=invoke_check,
             validate=lambda value: [], checkpoint=checkpoint, saved_state=saved, recheck=recheck,
             owner_step_id=step['step_id'],
+            evidence_basis='mixed' if legacy_evidence else 'request', legacy_evidence=legacy_evidence,
             on_error=lambda error_type: log_event(
                 '[ORCHESTRATION_EXECUTOR] Retained final-answer verification unavailable.',
                 level=logging.WARNING, extra={'error_type': error_type, 'step_id': step['step_id']},
@@ -785,6 +789,11 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         check_policy = completeness_policy(
             settings, 'chat_orchestration',
             semantic_review=step['arguments'].get('semantic_review', 'auto'),
+            allow_semantic_error_skip=(
+                step['step_id'] in getattr(context, 'completeness_context_only_step_ids', ())
+                and not readers and not unavailable and not images and not any_visual(visuals) and not charts
+                and callable(getattr(context, 'revalidate_conversation_context', None))
+            ),
         )
         completeness_store = getattr(context, 'completeness_store', None)
         completeness_binding = getattr(context, 'completeness_binding', None)
@@ -798,6 +807,8 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 saved_completeness = deepcopy(retained_check)
                 # This is an explicit new checking attempt, never a replay of an ambiguous correction.
                 if saved_completeness.get('status') in ('verification_unavailable', 'incomplete'):
+                    if saved_completeness['status'] == 'verification_unavailable':
+                        saved_completeness['retry_semantic_error'] = saved_completeness.get('reason_code')
                     saved_completeness.update(
                         status='checking', reason_code='', report_repairs=0,
                         deterministic_status='pending', semantic_status='pending',
@@ -826,7 +837,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 visual_rules = _compose_visual_rules(step, prepared)
                 return [visual_rules] if visual_rules else []
 
-            def invoke_check(check_messages, stage):
+            def invoke_check(check_messages, stage, *, response_format=None):
                 recheck()
                 check_audit = calculate_workflow_context_budget(
                     check_messages, getattr(invoke, 'model_metadata', None) or context.gpt_model or '',
@@ -837,6 +848,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     raise WorkflowContextBudgetError(check_audit)
                 reply = invoke(check_messages, stage=stage, metadata={
                     **metadata, 'json_output': stage == 'completeness_check' or not plain_text,
+                    **({'response_format': response_format} if response_format is not None else {}),
                 })
                 recheck()
                 return normalized_candidate(reply) if stage == 'completeness_correct' else reply
@@ -844,9 +856,22 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             def save_completeness(state):
                 state['model_binding'] = step.get('model_binding') or {'model_id': str(context.gpt_model or '')}
                 state['owner_step_id'] = step['step_id']
+                if state['status'] == 'complete' and state.get('semantic_skip_reason'):
+                    context.revalidate_conversation_context()
                 if completeness_store is not None:
                     completeness_store.save_completeness(
                         step['step_id'], state, binding=completeness_binding,
+                    )
+                if state['status'] == 'complete' and state.get('semantic_skip_reason'):
+                    log_event(
+                        '[ORCHESTRATION_EXECUTOR] Optional answer review skipped after a checker error.',
+                        level=logging.INFO, extra={
+                            **workflow_log_context(
+                                run_id=context.run_id, conversation_id=getattr(context, 'conversation_id', None),
+                                step_id=step['step_id'],
+                            ),
+                            'semantic_outcome': 'skipped', 'reason_code': state['semantic_skip_reason'],
+                        },
                     )
                 if callable(emit):
                     emit({
@@ -856,6 +881,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                             else 'Checking the prepared answer.' if state['status'] not in ('complete', 'incomplete', 'verification_unavailable')
                             else 'Answer prepared; checking could not finish.' if state['status'] == 'verification_unavailable'
                             else 'Answer needs an adjustment.' if state['status'] == 'incomplete'
+                            else 'Prepared answer; required checks completed.' if state.get('semantic_skip_reason')
                             else 'Prepared answer checks completed.'
                         ),
                         'task_completeness': public_completeness_report(state),
@@ -876,6 +902,8 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 **({'saved_memory': memory['context_messages']} if memory.get('context_messages') else {}),
                 **({'conversation_history': history} if history else {}),
             }
+            legacy_evidence = dict(completeness_evidence)
+            completeness_evidence['user_provided_content'] = context.user_request
             response, completeness_state = check_and_correct(
                 response,
                 instruction={
@@ -898,6 +926,13 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 policy=check_policy, invoke=invoke_check, validate=validate_candidate,
                 checkpoint=save_completeness, saved_state=saved_completeness, recheck=recheck,
                 owner_step_id=step['step_id'],
+                evidence_basis=(
+                    'mixed' if inputs or missing or images else
+                    'user_message' if step['arguments'].get('content_intent') in (
+                        'transform_supplied_text', 'draft_supplied_text',
+                    ) else 'request'
+                ),
+                legacy_evidence=legacy_evidence,
                 on_error=lambda error_type: log_event(
                     '[ORCHESTRATION_EXECUTOR] Task completeness verification unavailable.',
                     level=logging.WARNING, extra={'error_type': error_type, 'step_id': step['step_id']},

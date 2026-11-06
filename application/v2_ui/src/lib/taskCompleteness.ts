@@ -23,7 +23,10 @@ export function completenessActivity(value: unknown): string | null {
             : report.check_kind === 'deterministic' ? 'Validating format' : 'Checking answer';
         case 'repairing_assessment': return 'Checking answer';
         case 'correcting': return 'Adjusting answer';
-        case 'complete': return report.semantic_enabled === false ? 'Required checks complete'
+        case 'complete': return report.semantic_enabled === false
+            || (completenessStages(report).some((stage) => stage.id === 'semantic')
+                && !stageCompletedAtCurrentRevision(report, 'semantic'))
+            ? 'Required checks complete'
             : Number(report.corrections) > 0 ? 'Reviewed after adjustment' : 'Review complete';
         case 'incomplete': return 'Answer needs revision';
         case 'verification_unavailable': return "Checking couldn't finish";
@@ -55,6 +58,31 @@ function candidateRevision(report: Record<string, unknown> | null): number | nul
     return revisions.length ? Math.max(...revisions) : null;
 }
 
+function stageCompletedAtCurrentRevision(report: Record<string, unknown>, id: CheckStage['id']): boolean {
+    const revision = candidateRevision(report);
+    return Array.isArray(report.stages) && report.stages.some((item: unknown) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+        const stage = item as Record<string, unknown>;
+        return stage.id === id && stage.status === 'completed' && typeof stage.label === 'string'
+            && (revision === null || stage.candidate_revision === revision);
+    });
+}
+
+export function completenessValidationSummary(value: unknown): string | null {
+    const report = completenessReport(value);
+    if (report?.version !== 2 || report.status !== 'complete'
+        || !stageCompletedAtCurrentRevision(report, 'format')) return null;
+    if (stageCompletedAtCurrentRevision(report, 'semantic')) {
+        switch (report.evidence_basis) {
+            case 'user_message': return 'Reviewed against your supplied text';
+            case 'gathered_information': return 'Reviewed against gathered information';
+            case 'mixed': return 'Reviewed against your message and gathered information';
+            case 'request': return 'Reviewed against your request';
+        }
+    }
+    return 'Required output format validated';
+}
+
 /** Late progress must not certify an older candidate or reopen a settled check. */
 export function canAdoptCompletenessReport(current: unknown, next: unknown): boolean {
     const previous = completenessReport(current);
@@ -75,6 +103,8 @@ export function plannedCheckStages(step: OrchestrationStep): string[] {
         const semantic = step.arguments.semantic_review;
         return ['Prepare answer', 'Validate required format',
             semantic === 'off' ? 'Semantic review off'
+                : ['transform_supplied_text', 'draft_supplied_text'].includes(String(step.arguments.content_intent))
+                    ? 'Review against your supplied text'
                 : step.arguments.knowledge_basis === 'general_knowledge' ? 'Review against your instructions'
                     : 'Review against your request and available evidence'];
     }

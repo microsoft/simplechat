@@ -1,6 +1,8 @@
 // TaskCompletenessDetails.tsx
 // Inert, allowlisted verification metadata shared by workflow and orchestration views.
-import { completenessActivity, completenessReport, completenessStages } from '../../lib/taskCompleteness';
+import {
+    completenessActivity, completenessReport, completenessStages, completenessValidationSummary,
+} from '../../lib/taskCompleteness';
 
 const labels: Record<string, string> = {
     complete: 'Complete',
@@ -36,9 +38,15 @@ export function TaskCompletenessDetails({ value }: { value: unknown }) {
             <div className="space-y-2 py-2">
                 <CheckStageList value={value} />
                 {!stages.length ? <p>Detailed stage history was not saved for this report.</p> : null}
+                {typeof report.semantic_skip_reason === 'string'
+                    && stages.some((stage) => stage.id === 'semantic' && stage.status === 'skipped') ? (
+                    <p>Optional review was skipped after a checker error. Required checks completed.</p>
+                ) : null}
                 <p>Model-assisted review is not a guarantee of factual accuracy. Required format and safety checks remain separate.</p>
                 <p>{corrections} adjustment{corrections === 1 ? '' : 's'}</p>
                 {typeof report.reason_code === 'string' && report.reason_code ? <p>{report.reason_code}</p> : null}
+                {typeof report.semantic_skip_reason === 'string' && report.semantic_skip_reason
+                    ? <p>{report.semantic_skip_reason}</p> : null}
                 <ul className="space-y-2">
                     {requirements.map((item, index) => (
                         <li key={index} className="break-words">
@@ -53,9 +61,20 @@ export function TaskCompletenessDetails({ value }: { value: unknown }) {
     );
 }
 
-export function CheckStageList({ value }: { value: unknown }) {
+export function ValidationStatement({ value }: { value: unknown }) {
+    const summary = completenessValidationSummary(value);
+    return summary ? (
+        <p className="mt-2 text-xs font-medium text-ok-strong" data-testid="answer-validation-summary">
+            {summary}
+        </p>
+    ) : null;
+}
+
+export function CheckStageList({ value, showOptionalSkip = true }: { value: unknown; showOptionalSkip?: boolean }) {
     const report = completenessReport(value);
-    const stages = completenessStages(value);
+    const stages = completenessStages(value).filter((stage) => showOptionalSkip
+        || stage.id !== 'semantic' || stage.status !== 'skipped'
+        || typeof report?.semantic_skip_reason !== 'string');
     if (!stages.length && report?.preparation_status !== 'prepared') return null;
     return (
         <ul aria-label="Answer checking stages" className="mt-1 space-y-1 text-xs text-text-2">

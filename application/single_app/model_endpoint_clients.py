@@ -16,9 +16,10 @@ import httpcore
 import httpx
 import requests
 from openai import (
-    APIError, AsyncStream, BadRequestError, DEFAULT_CONNECTION_LIMITS,
+    APIConnectionError, APIError, AsyncStream, BadRequestError, DEFAULT_CONNECTION_LIMITS,
     DefaultAsyncHttpxClient, DefaultHttpxClient, OpenAI,
 )
+from azure.core.exceptions import HttpResponseError, ServiceRequestError, ServiceResponseError
 from openai.types.chat import ChatCompletionChunk
 from pydantic import Field
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
@@ -420,6 +421,49 @@ def is_response_format_rejection(error: Exception) -> bool:
         or "not supported" in message
         or "unsupported" in message
     )
+
+
+def create_completion_with_response_format(create_callable, parameters, *, response_format=None, on_adjustment=None):
+    """Downgrade only an explicitly rejected response-format option, at most twice."""
+    if response_format is None:
+        return create_callable(**parameters)
+    if type(response_format) is not dict or response_format.get("type") not in ("json_schema", "json_object"):
+        raise ValueError("Unsupported response format.")
+    formats = [response_format]
+    if response_format["type"] == "json_schema":
+        formats.append({"type": "json_object"})
+    formats.append(None)
+    for index, requested in enumerate(formats):
+        try:
+            return create_callable(**parameters, **({"response_format": requested} if requested else {}))
+        except Exception as error:
+            if index == len(formats) - 1 or not is_response_format_rejection(error):
+                raise
+            if on_adjustment is not None:
+                on_adjustment({
+                    "error_type": type(error).__name__,
+                    "requested_format": requested["type"],
+                    "next_format": formats[index + 1]["type"] if formats[index + 1] else "prompt_only",
+                })
+
+
+def is_transient_model_error(error):
+    """Recognize provider availability failures, never refusals or authorization failures."""
+    seen = set()
+    while isinstance(error, SanitizedModelEndpointError):
+        if id(error) in seen or error.__cause__ is None:
+            return False
+        seen.add(id(error))
+        error = error.__cause__
+    if isinstance(error, (
+        APIConnectionError, httpx.TimeoutException, httpx.NetworkError,
+        requests.Timeout, requests.ConnectionError, ServiceRequestError, ServiceResponseError,
+    )):
+        return True
+    if isinstance(error, (APIError, HttpResponseError)):
+        status = getattr(error, "status_code", None)
+        return type(status) is int and (status == 429 or 500 <= status <= 599)
+    return False
 
 
 def create_completion_with_reasoning(create_callable, params, model_name, *, on_resolution=None):
