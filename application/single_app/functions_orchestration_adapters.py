@@ -876,7 +876,8 @@ def _run_excel_comments(step, context, *, settings, user_id, emit, cancel_reques
             citations.append({
                 'source_type': 'document', 'document_id': source['document_id'],
                 'file_name': source.get('file_name'), 'citation_id': results[-1]['id'],
-                'location_label': 'Native annotation coverage',
+                'evidence_kind': 'native_annotation_coverage',
+                'location_label': 'Location', 'location_value': 'Native annotation inventory',
             })
             for index, record in enumerate(records):
                 results.append({
@@ -889,9 +890,13 @@ def _run_excel_comments(step, context, *, settings, user_id, emit, cancel_reques
                     'source_type': 'document', 'document_id': source['document_id'],
                     'file_name': source.get('file_name'), 'sheet': record.get('sheet'),
                     'cell': record.get('cell'), 'annotation_id': record.get('id'),
+                    'evidence_kind': 'native_excel_annotation',
                     'citation_id': results[-1]['id'], 'sheet_name': record.get('sheet'),
-                    'location_label': 'Worksheet cell',
-                    'location_value': f"{record.get('sheet')}!{record.get('cell')}",
+                    'location_label': 'Location',
+                    'location_value': (
+                        f"{record['sheet']}!{record['cell']}"
+                        if record.get('sheet') and record.get('cell') else 'Workbook annotation'
+                    ),
                 })
         current_manifest = resolve_context_source_manifest(
             context, identifiers, settings=settings, user_id=user_id, cancel_requested=cancel_requested,

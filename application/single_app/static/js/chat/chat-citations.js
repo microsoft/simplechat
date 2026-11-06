@@ -155,7 +155,7 @@ function buildRawDocumentSourceLookup(records) {
 
 export function parseCitations(message, options = {}) {
   // ... (keep existing implementation)
-  const citationRegex = /\(Source:\s*((?:(?!\(Source:).)+?),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*((?:(?!\(Source:).)+?)\)\s*((?:\[#.*?\]\s*)+)/gi;
+  const citationRegex = /\(Source:\s*((?:(?!\(Source:).)+?),\s*(Page(?:s)?|Sheet(?:s)?|Location|Worksheet cell):\s*((?:(?!\(Source:).)+?)\)\s*((?:\[#.*?\]\s*)+)/gi;
   const m365CitationLookup = buildM365CitationLookup(options.m365Citations);
   const documentFileNames = buildDocumentFileNameLookup(options.documentCitations);
   const rawDocumentSources = buildRawDocumentSourceLookup(options.documentCitations);
@@ -194,6 +194,27 @@ export function parseCitations(message, options = {}) {
         pageToRefMap[pageNumber] = ref; // ref is the full citationId like 'docid_pagenum'
       });
     });
+
+    if (orderedRefs.some(ref => ref.includes(':native-comments:')) || locationLabel.toLowerCase() === 'worksheet cell') {
+        const links = orderedRefs.map(ref => {
+            const records = (options.documentCitations || []).filter(record => record?.citation_id === ref);
+            if (!records.length || records.some(record => JSON.stringify(record) !== JSON.stringify(records[0]))
+                || !records[0].native_evidence || !records[0].document_id) {
+                return '[Source unavailable]';
+            }
+            const record = records[0];
+            const link = document.createElement('a');
+            link.href = '#';
+            link.className = 'citation-link';
+            link.dataset.citationId = ref;
+            link.dataset.documentId = record.document_id;
+            link.dataset.nativeEvidence = JSON.stringify(record.native_evidence);
+            link.dataset.conversationId = record.native_evidence.producer?.conversation_id || '';
+            link.textContent = record.location_value || locations.trim();
+            return serializeSafeElement(link);
+        });
+        return `(Source: ${filenameHtml}, Location: ${links.join(', ')})${trailingWhitespace}`;
+    }
 
     // A Microsoft 365 email, event or file has no workspace passage to fetch, so its
     // citation links to the item itself, or is plain text when no link was recorded.
@@ -371,6 +392,10 @@ export function fetchCitedText(citationId, citationContext = {}) {
   if (chunkId) {
     requestPayload.chunk_id = chunkId;
   }
+  if (citationContext.nativeEvidence) {
+      requestPayload.native_evidence = citationContext.nativeEvidence;
+      requestPayload.conversation_id = citationContext.conversationId;
+  }
 
   fetch("/api/get_citation", {
     method: "POST",
@@ -394,7 +419,29 @@ export function fetchCitedText(citationId, citationContext = {}) {
       hideLoadingIndicator();
 
       // Check for expected data fields explicitly
-      if (data.cited_text !== undefined && data.file_name && data.page_number !== undefined) {
+      if (data.native_annotation || data.native_coverage) {
+        const record = data.native_annotation;
+        const text = record ? [
+            record.kind === 'note' ? 'Workbook note' : record.parent_id ? 'Threaded comment reply' : 'Threaded comment',
+            `Author: ${record.author || 'Unavailable'}`,
+            `Worksheet / cell: ${record.sheet || 'Unavailable'} / ${record.cell || 'Unavailable'}`,
+            `Date: ${record.date || 'Unavailable'}`,
+            `Reply to: ${record.parent_id || 'Not a reply'}`,
+            `Saved cell value: ${record.cell_value_status === 'blank' ? 'Blank' : record.cell_value == null ? 'Unavailable (not recalculated)' : JSON.stringify(record.cell_value)}`,
+            '', 'Reviewer text', data.cited_text || 'No stored reviewer text.',
+        ].join('\n') : [
+            'Native annotation inventory',
+            `${data.native_coverage.returned_records} of ${data.native_coverage.total_records} records retained.`,
+            data.native_coverage.partial ? 'Partial inventory.' : 'Complete saved inventory.',
+            'Inventory coverage is not a worksheet cell or reviewer comment.',
+        ].join('\n');
+        showCitedTextPopup(text, data.file_name, '', {
+            title: `Native workbook evidence: ${data.file_name}`,
+            workbookPreview: () => showEnhancedCitationModal(
+                data.document_id, record?.sheet || '', null, record?.sheet || null,
+            ),
+        });
+      } else if (data.cited_text !== undefined && data.file_name && data.page_number !== undefined) {
         showCitedTextPopup(data.cited_text, data.file_name, data.page_number);
       } else if (data.error) { // Handle explicit errors from server even on 200 OK
          showToast(`Could not retrieve citation: ${data.error}`, "warning");
@@ -482,6 +529,7 @@ export function showCitedTextPopup(citedText, fileName, pageNumber, options = {}
   }
 
   const citedTextContent = ensureCitedTextContentElement(modalContainer, renderMarkdown);
+  modalContainer.querySelector('.native-workbook-preview')?.remove();
   if (citedTextContent) {
     citedTextContent.className = renderMarkdown
       ? "generated-analysis-preview-block generated-analysis-markdown-preview citation-markdown-content p-3"
@@ -492,6 +540,14 @@ export function showCitedTextPopup(citedText, fileName, pageNumber, options = {}
       renderMarkdownIntoCitationElement(citedTextContent, citedText);
     } else {
       citedTextContent.textContent = citedText;
+    }
+    if (options.workbookPreview) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-outline-primary mt-3 native-workbook-preview';
+        button.textContent = 'Open workbook preview (separate from annotation evidence)';
+        button.addEventListener('click', options.workbookPreview);
+        modalContainer.querySelector('.modal-body').appendChild(button);
     }
   }
 
@@ -1111,6 +1167,21 @@ if (chatboxEl) {
       }
       // Microsoft 365 ids never name a workspace passage; their links open the item itself.
       if (isM365CitationId(citationId)) {
+          return;
+      }
+      if (citationId.includes(':native-comments:')) {
+          let nativeEvidence;
+          try {
+              nativeEvidence = JSON.parse(target.dataset.nativeEvidence || 'null');
+          } catch {
+              showToast('Retained native citation evidence is unavailable.', 'warning');
+              return;
+          }
+          fetchCitedText(citationId, {
+              documentId: target.dataset.documentId,
+              nativeEvidence,
+              conversationId: target.dataset.conversationId,
+          });
           return;
       }
 

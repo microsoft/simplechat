@@ -1,7 +1,7 @@
 # test_v2_stream_citation_delivery.py
 """
 UI regressions for live tool/web evidence and recorded tool outcomes.
-Version: 0.261.367
+Version: 0.261.417
 Implemented in: 0.261.365
 
 Drives the real send/SSE/store/message inspector locally with synthetic HTTP boundaries.
@@ -136,6 +136,88 @@ def test_live_tool_and_web_evidence_match_reopened_message(citation_page, viewpo
         message.get_by_role("button", name=re.compile(r"^Show sources")).click()
     expect(message).to_contain_text("Example.lookupRecord")
     expect(message.get_by_role("link", name="Record reference")).to_be_visible()
+
+
+@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 900}, {"width": 390, "height": 844}])
+@pytest.mark.parametrize("kind,parent", [("note", None), ("threaded_comment", None), ("threaded_comment", "root-budget")])
+def test_native_annotation_first_preserves_streamed_and_saved_identity(citation_page, viewport, kind, parent):
+    page = citation_page
+    page.set_viewport_size(viewport)
+    reference = {
+        "producer": {"user_id": "owner", "conversation_id": "evidence-chat", "run_id": "native-run",
+                     "step_id": "comments", "attempt_index": 1, "capability_id": "document_search"},
+        "output_name": "prepared", "kind": "structured-v1", "manifest_sha256": "a" * 64,
+    }
+    citation = {
+        "citation_id": "workbook:native-comments:2", "document_id": "workbook", "file_name": "review.xlsx",
+        "location_label": "Location", "location_value": "Budget!B4", "sheet_name": "Budget",
+        "native_evidence": reference, "source_version": 1, "annotation_id": "annotation-2",
+    }
+    annotation = {
+        "id": "annotation-2", "kind": kind, "parent_id": parent, "sheet": "Budget", "cell": "B4",
+        "author": "Reviewer A", "date": "2026-01-01T10:00:00Z", "cell_value": 15000, "resolved": False,
+    }
+    content = "Review (Source: review.xlsx, Worksheet cell: Budget!B4) [#workbook:native-comments:2]"
+    message = _send(page, {"full_content": content, "hybrid_citations": [citation], "augmented": True})
+    page.evaluate("""({annotation}) => {
+        window.nativeRequests = [];
+        window.nativeDenied = false;
+        const originalFetch = window.fetch;
+        window.fetch = async (url, init = {}) => {
+            const path = new URL(String(url), location.origin).pathname;
+            if (path === '/api/get_citation') {
+                window.nativeRequests.push(JSON.parse(init.body));
+                return new Response(JSON.stringify(window.nativeDenied
+                    ? {error: 'The cited workbook or retained evidence is no longer available.'}
+                    : {file_name: 'review.xlsx', document_id: 'workbook', native_annotation: annotation,
+                       cited_text: 'Keep cap at 15000. <script>unsafe()</script>'}),
+                    {status: window.nativeDenied ? 403 : 200, headers: {'Content-Type': 'application/json'}});
+            }
+            if (path === '/api/enhanced_citations/tabular_preview') {
+                return new Response(JSON.stringify({
+                    filename: 'review.xlsx', sheet_names: ['Budget'], selected_sheet: 'Budget',
+                    columns: ['Amount'], rows: [['15000']], row_numbers: [4], total_rows: 1,
+                    tables: [], start_row: 0, has_more: false,
+                }), {headers: {'Content-Type': 'application/json'}});
+            }
+            return originalFetch(url, init);
+        };
+        const B = window.OrchHarness.stores.bootstrap.useBootstrapStore;
+        B.setState({data: {...B.getState().data, features: {enable_enhanced_citations: true}}});
+    }""", {"annotation": annotation})
+    chip = message.get_by_role("button", name="review.xlsx Budget!B4", exact=True)
+    chip.focus()
+    chip.press("Enter")
+    dialog = page.get_by_role("dialog", name="Citation", exact=True)
+    expect(dialog.get_by_text("Author: Reviewer A", exact=True)).to_be_visible()
+    expect(dialog.get_by_text("Saved cell value: 15000", exact=True)).to_be_visible()
+    expect(dialog.get_by_text("Keep cap at 15000. <script>unsafe()</script>", exact=True)).to_be_visible()
+    assert dialog.locator("script").count() == 0
+    expect(page.get_by_role("dialog", name="Cited source", exact=True)).to_have_count(0)
+    preview = dialog.get_by_role("button", name="Open workbook preview (separate from annotation evidence)", exact=True)
+    expect(preview).to_be_visible()
+    assert page.evaluate("() => window.nativeRequests[0]") == {
+        "citation_id": citation["citation_id"], "document_id": "workbook", "page_number": "Budget!B4",
+        "native_evidence": reference, "conversation_id": "evidence-chat",
+    }
+    assert dialog.evaluate("element => element.scrollWidth <= element.clientWidth")
+    preview.click()
+    source = page.get_by_role("dialog", name="Cited source", exact=True)
+    expect(source).to_be_visible()
+    source.get_by_role("button", name="Close cited source").click()
+    expect(dialog.get_by_text("Author: Reviewer A", exact=True)).to_be_visible()
+    dialog.get_by_role("button", name="Close citation", exact=True).click()
+    page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.getState().reloadMessages()")
+    chip.click()
+    expect(dialog.get_by_text("Author: Reviewer A", exact=True)).to_be_visible()
+    requests = page.evaluate("() => window.nativeRequests")
+    assert all(request == requests[0] for request in requests)
+    dialog.get_by_role("button", name="Close citation", exact=True).click()
+    page.evaluate("() => window.nativeDenied = true")
+    chip.click()
+    expect(dialog.get_by_text("The cited workbook or retained evidence is no longer available.", exact=True)).to_be_visible()
+    expect(dialog.get_by_text("Author: Reviewer A", exact=True)).to_have_count(0)
+    expect(dialog.get_by_role("button", name="Open workbook preview (separate from annotation evidence)", exact=True)).to_have_count(0)
 
 
 @pytest.mark.parametrize("result", [{"error": "HTTP 502", "status_code": 502}, None])

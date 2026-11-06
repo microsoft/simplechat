@@ -220,9 +220,8 @@ export function OrchestrationPlanCard({
     // what the run is doing in words.
     if (runInFlight || waiting) {
         const uncertain = recovery?.transportUnknown === true;
-        const runningStep = editedPlan?.steps.find((step) => step.enabled && stepRuntime[step.step_id]?.status === 'running');
-        const checkActivity = runningStep ? completenessActivity(stepRuntime[runningStep.step_id]?.task_completeness) : null;
-        const progress = checkActivity ?? describeRunProgress(editedPlan?.steps ?? [], stepRuntime, waiting);
+        const progress = recovery?.status && ['completed', 'failed', 'cancelled'].includes(recovery.status)
+            ? 'Saving final response' : describeRunProgress(editedPlan?.steps ?? [], stepRuntime, waiting);
         return (
             <div className="my-3 min-w-0 text-sm text-text-2" data-testid="quiet-activity">
                 <details>
@@ -231,7 +230,8 @@ export function OrchestrationPlanCard({
                             {waiting || uncertain ? <Clock3 size={14} className="shrink-0" aria-hidden="true" />
                                 : <Loader2 size={14} className="shrink-0 motion-safe:animate-spin" aria-hidden="true" />}
                             <span role="status" aria-live="polite" className="min-w-0 break-words">
-                                {uncertain ? 'Execution status not confirmed' : waiting ? 'Waiting for results' : progress || 'Thinking'}
+                                {uncertain ? `Reconnecting to progress…${progress ? ` Last known: ${progress}` : ''}`
+                                    : waiting ? 'Waiting for results' : progress || 'Thinking'}
                             </span>
                         </span>
                     </summary>
@@ -243,7 +243,7 @@ export function OrchestrationPlanCard({
                                 <span className="break-words">{step.title}</span>
                                 <span className="ml-2 text-text-3">
                                     {state === 'completed' ? 'Done' : state === 'partial' ? 'Results with limits'
-                                        : state === 'running' ? uncertain ? 'Status unconfirmed' : completenessActivity(runtime?.task_completeness) || 'In progress'
+                                        : state === 'running' ? uncertain ? 'Last known: in progress' : completenessActivity(runtime?.task_completeness) || 'In progress'
                                         : state === 'waiting' ? 'Waiting for results' : state === 'pending' ? 'Next'
                                         : state === 'skipped' ? 'Skipped' : state === 'cancelled' ? 'Stopped' : 'Needs attention'}
                                 </span>
@@ -254,7 +254,7 @@ export function OrchestrationPlanCard({
                     <GlassButton size="sm" variant="ghost" onClick={openReview} aria-label="Review the running plan">
                         Run details
                     </GlassButton>
-                    {uncertain || waiting ? <OrchestrationRecoveryNotice conversationId={conversationId}
+                    {uncertain || waiting || recovery?.error ? <OrchestrationRecoveryNotice conversationId={conversationId}
                         runId={plan.run_id} plan={plan} status={plan.status} /> : null}
                 </details>
                 <OrchestrationOutputs conversationId={conversationId} runId={plan.run_id} />

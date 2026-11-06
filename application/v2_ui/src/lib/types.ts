@@ -1447,6 +1447,23 @@ export interface Citation {
     cited_text?: string;
     file_name?: string;
     page_number?: number | string;
+    native_annotation?: {
+        kind?: string;
+        author?: string;
+        date?: string;
+        sheet?: string;
+        cell?: string;
+        parent_id?: string;
+        resolved?: boolean;
+        cell_value?: unknown;
+        cell_value_status?: string;
+    };
+    native_coverage?: {
+        returned_records?: number;
+        total_records?: number;
+        partial?: boolean;
+        inventory_complete?: boolean;
+    };
     [key: string]: unknown;
 }
 

@@ -4,7 +4,7 @@ title: "Inspect Excel data, comments, and structure"
 description: "Read workbook feedback and metadata without confusing them with saved values or table calculations."
 section: "Guides"
 audience: user
-version: "0.261.408"
+version: "0.261.417"
 ---
 
 Implemented in version: **0.261.408**, tracked in
@@ -38,6 +38,28 @@ A schema preview is a sample. Use tabular analysis for exact counts, filters,
 totals, and grouped results over all intended records.
 
 ## Inspect a citation
+
+Fixed/Implemented in version: **0.261.417**, recorded in
+`application/single_app/config.py`.
+
+A native note or threaded-comment citation opens the exact retained reviewer
+text first. Its evidence view identifies the worksheet/cell, author, available
+timestamp, reply relationship, resolution status, and saved cell value.
+Reviewer suggestions are not worksheet values; unavailable fields remain
+unavailable and formulas are not recalculated.
+
+Use **Open workbook preview (separate from annotation evidence)** to inspect
+the workbook independently. A table preview is not proof of the cited comment.
+Replies and separate comments at the same cell keep distinct retained identities.
+Inventory-coverage references describe inspected records, including zero comments;
+they do not invent a worksheet cell or reviewer quotation.
+
+Opening native evidence requires access to both the original conversation/run
+and the exact workbook version/revision that was inspected. A changed, held,
+deleted, or inaccessible source can make the citation unavailable. Older
+references work only when retained metadata identifies their exact evidence;
+SimpleChat does not choose between same-cell comments or rerun an inventory
+to guess what an old answer meant.
 
 Open the workbook citation. The viewer identifies the selected worksheet,
 table/range, and header row. Choose another **Table** when several regions are

@@ -1,7 +1,7 @@
 # test_orchestration_attachment_native_evidence.py
 """Real planning, inventory paging, retained evidence and composition regressions.
 
-Version: 0.261.416
+Version: 0.261.417
 Implemented in: 0.261.416
 Only external storage/model I/O is replaced; no provider calls are made.
 """
@@ -17,15 +17,24 @@ from PIL import Image
 from azure.core import MatchConditions
 from openpyxl import Workbook
 from openpyxl.comments import Comment
+from flask import Blueprint
+from types import SimpleNamespace
 
 from test_orchestration_harness_routes import modules, real_http_harness
 from test_orchestration_dependency_runtime import runtime, execute, compose, binding, source_input
 from test_excel_inventory_persistence import inventory_store, review_workbook
 from test_support.orchestration_harness_execution import compose_step, input_binding
 from test_support.orchestration_results import source
+from functions_workflow_result_store import WorkflowResultIntegrityError
 
 
 __all__ = ["modules", "real_http_harness", "runtime", "inventory_store", "review_workbook"]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def offline_native_modules(modules):
+    """Native tests must also work alone, without an earlier image test importing config."""
+    yield modules
 
 
 def frames(response):
@@ -288,6 +297,105 @@ def test_native_workbook_comments_reach_retained_evidence_and_composition(
     assert "Set cap to 19500." in json.dumps(payload)
     assert "Keep cap at 15000." in json.dumps(payload)
     assert task.output("prepared").completeness.status == "complete"
+    citations = runtime.composition.read_result_document_citations(case.context, task.output("prepared"))
+    annotated = [citation for citation in citations if citation.get("evidence_kind") == "native_excel_annotation"]
+    assert len(annotated) == 5
+    assert all(citation["location_label"] == "Location" for citation in annotated)
+    assert all(citation["document_id"] == "document-1" and citation["native_evidence"] for citation in annotated)
+    reader = importlib.import_module("functions_orchestration_result_runtime")
+    contracts = importlib.import_module("functions_orchestration_result_contracts")
+    for citation in citations:
+        evidence = reader.read_native_citation_evidence(
+            case.fixture.restart(), contracts.ResultRef.from_dict(citation["native_evidence"]),
+            citation_id=citation["citation_id"], document_id=citation["document_id"],
+        )
+        if citation.get("evidence_kind") == "native_excel_annotation":
+            assert evidence["native_annotation"].get("id") == citation.get("annotation_id")
+            assert evidence["native_annotation"]["sheet"] == citation["sheet_name"]
+        else:
+            assert evidence["native_coverage"]["returned_records"] == 5
+            assert "native_annotation" not in evidence
+    assert "native_evidence" not in json.dumps(payload)
+
+
+@pytest.mark.parametrize("unavailable", ["changed", "revision", "denied", "held", "foreign_document", "foreign_owner", "digest"])
+def test_native_citation_lookup_rejects_stale_or_untrusted_evidence(
+    runtime, monkeypatch, inventory_store, review_workbook, unavailable,
+):
+    step, _, _ = configure_inventory(runtime, monkeypatch, inventory_store, review_workbook)
+    case = runtime.make([step])
+    case.fixture.sources["document-1"] = {**source(), "file_name": "review.xlsx"}
+    result = execute(runtime, case)
+    assert result["status"] == "completed"
+    task = case.context.task_results["comments"]
+    reader = importlib.import_module("functions_orchestration_result_runtime")
+    reference = task.output("prepared")
+    citation = reader.read_result_document_citations(case.context, reference)[1]
+    document_id = "document-1"
+    if unavailable == "changed":
+        case.fixture.sources[document_id]["source_version"] = 2
+    elif unavailable == "revision":
+        case.fixture.sources[document_id]["source_revision"] = "new-revision"
+    elif unavailable == "denied":
+        case.fixture.denied.add(document_id)
+    elif unavailable == "held":
+        case.fixture.held.add(document_id)
+    elif unavailable == "foreign_document":
+        document_id = "another-document"
+    elif unavailable == "foreign_owner":
+        case.fixture.conversation["user_id"] = "another-owner"
+    else:
+        from dataclasses import replace
+        reference = replace(reference, manifest_sha256="a" * 64)
+    with pytest.raises((PermissionError, reader.ResultContractError, reader.ScreeningError, WorkflowResultIntegrityError)):
+        reader.read_native_citation_evidence(
+            case.fixture.restart(), reference, citation_id=citation["citation_id"], document_id=document_id,
+        )
+
+
+def test_native_citation_http_lookup_uses_retained_result_not_search(
+    runtime, real_http_harness, monkeypatch, inventory_store, review_workbook,
+):
+    step, _, _ = configure_inventory(runtime, monkeypatch, inventory_store, review_workbook)
+    case = runtime.make([step])
+    case.fixture.sources["document-1"] = {**source(), "file_name": "review.xlsx"}
+    result = execute(runtime, case)
+    assert result["status"] == "completed"
+    reader = importlib.import_module("functions_orchestration_result_runtime")
+    citation = reader.read_result_document_citations(case.context, case.context.task_results["comments"].output("prepared"))[1]
+    activity = importlib.import_module("functions_activity_logging")
+    for name in ("log_document_upload", "log_document_metadata_update_transaction"):
+        monkeypatch.setattr(activity, name, lambda *args, **kwargs: None, raising=False)
+    route = importlib.import_module("route_backend_documents")
+    bootstrap = importlib.import_module("functions_orchestration_bootstrap")
+    screening = importlib.import_module("content_screening.access")
+    monkeypatch.setattr(screening, "_read_authorized_document", lambda document_id, user_id, **kwargs: case.fixture.metadata(
+        document_id, user_id, kwargs.get("group_id"), kwargs.get("public_workspace_id"),
+    ))
+    monkeypatch.setattr(bootstrap, "build_orchestration_services", lambda user_id, conversation_id: SimpleNamespace(results=case.fixture.restart()))
+    monkeypatch.setattr(route, "_resolve_citation_chunk", lambda *args, **kwargs: pytest.fail("Native evidence must not enter Search."))
+    blueprint = Blueprint("native_citation_documents", __name__)
+    auth = importlib.import_module("functions_authentication")
+    blueprint.before_request(auth.user_required_blueprint())
+    route.register_route_backend_documents(blueprint)
+    real_http_harness.app.register_blueprint(blueprint)
+    body = {
+        "citation_id": citation["citation_id"], "document_id": "document-1",
+        "conversation_id": "conversation-1", "native_evidence": citation["native_evidence"],
+    }
+    response = real_http_harness.client.post("/api/get_citation", json=body)
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert response.json["native_annotation"]["id"] == citation["annotation_id"]
+    missing = {key: value for key, value in body.items() if key != "native_evidence"}
+    response = real_http_harness.client.post("/api/get_citation", json=missing)
+    assert response.status_code == 404
+    foreign = deepcopy(body)
+    foreign["native_evidence"]["producer"]["user_id"] = "foreign-owner"
+    response = real_http_harness.client.post("/api/get_citation", json=foreign)
+    assert response.status_code == 403
+    case.fixture.denied.add("document-1")
+    response = real_http_harness.client.post("/api/get_citation", json=body)
+    assert response.status_code in (403, 404) and "native_annotation" not in response.json
 
 
 @pytest.mark.parametrize("annotated", [False, True])
