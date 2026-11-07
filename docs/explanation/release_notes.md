@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.422)**
+
+#### Bug Fixes
+
+*   **Group Agent API Tests Execute Requests Outside Assertions**
+    *   Preserves all API response and state assertions while ensuring Python optimization cannot remove the requests they validate.
+    *   Adds fresh-process normal/optimized coverage for 12 scenarios and 49 request/status contracts using the existing isolated backend harness.
+    *   Corrects a proven PR-introduced CodeQL finding cluster without changing application authorization, checks, or the remaining integration blockers.
+    *   (Ref: `test_group_agent_apis.py`, `test_group_agent_assertion_execution.py`, `GROUP_AGENT_API_ASSERTION_EXECUTION_FIX.md`, [PR #1903](https://github.com/microsoft/simplechat/pull/1903))
+
 ### **(v0.261.421)**
 
 #### Bug Fixes

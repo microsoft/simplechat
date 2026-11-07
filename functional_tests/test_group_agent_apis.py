@@ -1,9 +1,10 @@
 # test_group_agent_apis.py
 """
 Functional tests for the immutable-target group agent APIs.
-Version: 0.261.161
+Version: 0.261.422
 Implemented in: 0.261.138
 Backend harness extracted to test_support/group_agent_harness.py: 0.261.161
+Assertion-safe API requests implemented in: 0.261.422
 
 The real policy, access, projection and route modules run against the real
 personal-editor authoring engine (``functions_workspace_authoring``), executed
@@ -92,8 +93,10 @@ def test_list_envelope_and_single_resource_shape(environment):
 
 def test_unknown_group_is_404_and_unknown_agent_is_404(environment):
     as_user(environment, "owner")
-    assert environment.client.get("/api/groups/no-such-group/agents").status_code == 404
-    assert environment.client.get(f"{LIST_PATH}/ghost").status_code == 404
+    unknown_group = environment.client.get("/api/groups/no-such-group/agents")
+    assert unknown_group.status_code == 404
+    unknown_agent = environment.client.get(f"{LIST_PATH}/ghost")
+    assert unknown_agent.status_code == 404
 
 
 @pytest.mark.parametrize("group_id", ["locked-grp", "upload-disabled-grp"])
@@ -115,8 +118,10 @@ def test_read_only_statuses_are_readable(environment, group_id):
 def test_inactive_and_unknown_statuses_are_denied(environment, group_id):
     seed_agent(environment.group_container, "a1", group_id=group_id)
     as_user(environment, "owner")
-    assert environment.client.get(f"/api/groups/{group_id}/agents").status_code == 403
-    assert environment.client.get(f"/api/groups/{group_id}/agents/a1").status_code == 403
+    listing = environment.client.get(f"/api/groups/{group_id}/agents")
+    assert listing.status_code == 403
+    single = environment.client.get(f"/api/groups/{group_id}/agents/a1")
+    assert single.status_code == 403
 
 
 # --------------------------------------------------------------------------
@@ -147,7 +152,8 @@ def test_chat_hint_disappears_when_governance_denies_it(environment):
     environment.governance.is_governance_access_allowed.return_value = False
     as_user(environment, "owner")
     # The whole surface is unavailable, so the list itself is refused.
-    assert environment.client.get(LIST_PATH).status_code == 403
+    listing = environment.client.get(LIST_PATH)
+    assert listing.status_code == 403
 
 
 # --------------------------------------------------------------------------
@@ -185,9 +191,11 @@ def test_owner_only_setting_refuses_admin_writes(environment):
     environment.settings["require_owner_for_group_agent_management"] = True
     seed_agent(environment.group_container, "a1")
     as_user(environment, "admin")
-    assert environment.client.post(LIST_PATH, json=create_body(name="x")).status_code == 403
+    denied = environment.client.post(LIST_PATH, json=create_body(name="x"))
+    assert denied.status_code == 403
     as_user(environment, "owner")
-    assert environment.client.post(LIST_PATH, json=create_body(name="owner-write")).status_code == 201
+    created = environment.client.post(LIST_PATH, json=create_body(name="owner-write"))
+    assert created.status_code == 201
 
 
 # --------------------------------------------------------------------------
@@ -199,10 +207,12 @@ def test_writes_are_refused_outside_active_status(environment, group_id):
     seed = seed_agent(environment.group_container, "a1", group_id=group_id)
     as_user(environment, "owner")
     path = f"/api/groups/{group_id}/agents"
-    assert environment.client.post(path, json=create_body(name="x")).status_code == 403
+    create = environment.client.post(path, json=create_body(name="x"))
+    assert create.status_code == 403
     update = environment.client.patch(f"{path}/a1", json=write_body(seed["_etag"], description="y"))
     assert update.status_code == 403
-    assert environment.client.delete(f"{path}/a1").status_code == 403
+    delete = environment.client.delete(f"{path}/a1")
+    assert delete.status_code == 403
 
 
 # --------------------------------------------------------------------------
@@ -327,7 +337,8 @@ def test_save_and_delete_bump_the_bootstrap_cache(environment):
 def test_list_rejects_query_parameters(environment):
     seed_agent(environment.group_container, "a1")
     as_user(environment, "owner")
-    assert environment.client.get(f"{LIST_PATH}?scope=global").status_code == 400
+    response = environment.client.get(f"{LIST_PATH}?scope=global")
+    assert response.status_code == 400
 
 
 def test_delete_rejects_expected_revision_as_a_query_parameter(environment):
@@ -405,15 +416,18 @@ def test_agent_options_non_manager_gets_no_models(environment):
 def test_agent_options_refused_when_unavailable(environment):
     environment.settings["allow_group_agents"] = False
     as_user(environment, "owner")
-    assert environment.client.get(OPTIONS_PATH).status_code == 403
+    response = environment.client.get(OPTIONS_PATH)
+    assert response.status_code == 403
 
 
 def test_agent_options_rejects_query_and_body(environment):
     as_user(environment, "owner")
-    assert environment.client.get(f"{OPTIONS_PATH}?view=editor").status_code == 400
-    assert environment.client.get(
+    query = environment.client.get(f"{OPTIONS_PATH}?view=editor")
+    assert query.status_code == 400
+    body_response = environment.client.get(
         OPTIONS_PATH, data=b"{}", content_type="application/json",
-    ).status_code == 400
+    )
+    assert body_response.status_code == 400
 
 
 # --------------------------------------------------------------------------
@@ -505,12 +519,14 @@ def test_agent_knowledge_ignores_the_active_group(environment):
 
 def test_agent_knowledge_refused_to_non_members(environment):
     as_user(environment, "stranger")
-    assert environment.client.get(KNOWLEDGE_PATH).status_code == 403
+    response = environment.client.get(KNOWLEDGE_PATH)
+    assert response.status_code == 403
 
 
 def test_agent_knowledge_refused_for_inactive_group(environment):
     as_user(environment, "owner")
-    assert environment.client.get("/api/groups/inactive-grp/agent-knowledge").status_code == 403
+    response = environment.client.get("/api/groups/inactive-grp/agent-knowledge")
+    assert response.status_code == 403
 
 
 # --------------------------------------------------------------------------
@@ -553,7 +569,8 @@ def test_single_read_of_a_global_id_is_404_when_merge_is_off(environment):
     environment.settings["merge_global_semantic_kernel_with_workspace"] = False
     _seed_global(environment)
     as_user(environment, "owner")
-    assert environment.client.get(f"{LIST_PATH}/g1").status_code == 404
+    response = environment.client.get(f"{LIST_PATH}/g1")
+    assert response.status_code == 404
 
 
 def test_writes_on_a_global_id_are_refused(environment):
@@ -562,7 +579,8 @@ def test_writes_on_a_global_id_are_refused(environment):
     as_user(environment, "owner")
     update = environment.client.patch(f"{LIST_PATH}/g1", json=write_body('"etag-1"', description="x"))
     assert update.status_code == 404
-    assert environment.client.delete(f"{LIST_PATH}/g1").status_code == 404
+    delete = environment.client.delete(f"{LIST_PATH}/g1")
+    assert delete.status_code == 404
     assert ("g1", "g1") in environment.global_container.records
 
 
@@ -574,9 +592,11 @@ def test_a_saved_agent_is_read_from_the_path_group_only(environment):
     seed_agent(environment.group_container, "a1", group_id="group-a")
     as_user(environment, "owner")
     # group-b in the path must not surface group-a's agent.
-    assert environment.client.get("/api/groups/group-b/agents/a1").status_code == 404
-    assert [item["id"] for item in environment.client.get(
-        "/api/groups/group-b/agents").get_json()["agents"]] == []
+    single = environment.client.get("/api/groups/group-b/agents/a1")
+    assert single.status_code == 404
+    listing = environment.client.get("/api/groups/group-b/agents")
+    body = listing.get_json()
+    assert [item["id"] for item in body["agents"]] == []
 
 
 # --------------------------------------------------------------------------
@@ -591,26 +611,40 @@ def test_every_route_refuses_when_an_availability_flag_is_off(environment, flag)
     seed = seed_agent(environment.group_container, "a1")
     environment.settings[flag] = False
     as_user(environment, "owner")
-    assert environment.client.get(LIST_PATH).status_code == 403
-    assert environment.client.get(f"{LIST_PATH}/a1").status_code == 403
-    assert environment.client.get(OPTIONS_PATH).status_code == 403
-    assert environment.client.get(KNOWLEDGE_PATH).status_code == 403
-    assert environment.client.post(LIST_PATH, json=create_body(name="x")).status_code == 403
-    assert environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="y")).status_code == 403
-    assert environment.client.delete(f"{LIST_PATH}/a1").status_code == 403
+    listing = environment.client.get(LIST_PATH)
+    assert listing.status_code == 403
+    single = environment.client.get(f"{LIST_PATH}/a1")
+    assert single.status_code == 403
+    options = environment.client.get(OPTIONS_PATH)
+    assert options.status_code == 403
+    knowledge = environment.client.get(KNOWLEDGE_PATH)
+    assert knowledge.status_code == 403
+    create = environment.client.post(LIST_PATH, json=create_body(name="x"))
+    assert create.status_code == 403
+    update = environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="y"))
+    assert update.status_code == 403
+    delete = environment.client.delete(f"{LIST_PATH}/a1")
+    assert delete.status_code == 403
 
 
 def test_every_route_refuses_when_governance_denies(environment):
     seed = seed_agent(environment.group_container, "a1")
     environment.governance.is_governance_access_allowed.return_value = False
     as_user(environment, "owner")
-    assert environment.client.get(LIST_PATH).status_code == 403
-    assert environment.client.get(f"{LIST_PATH}/a1").status_code == 403
-    assert environment.client.get(OPTIONS_PATH).status_code == 403
-    assert environment.client.get(KNOWLEDGE_PATH).status_code == 403
-    assert environment.client.post(LIST_PATH, json=create_body(name="x")).status_code == 403
-    assert environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="y")).status_code == 403
-    assert environment.client.delete(f"{LIST_PATH}/a1").status_code == 403
+    listing = environment.client.get(LIST_PATH)
+    assert listing.status_code == 403
+    single = environment.client.get(f"{LIST_PATH}/a1")
+    assert single.status_code == 403
+    options = environment.client.get(OPTIONS_PATH)
+    assert options.status_code == 403
+    knowledge = environment.client.get(KNOWLEDGE_PATH)
+    assert knowledge.status_code == 403
+    create = environment.client.post(LIST_PATH, json=create_body(name="x"))
+    assert create.status_code == 403
+    update = environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="y"))
+    assert update.status_code == 403
+    delete = environment.client.delete(f"{LIST_PATH}/a1")
+    assert delete.status_code == 403
 
 
 def test_management_projection_is_empty_when_unavailable(environment):
@@ -671,7 +705,8 @@ def test_update_logs_agent_update_with_group_scope(environment):
 def test_delete_logs_agent_deletion_with_group_scope(environment):
     seed_agent(environment.group_container, "a1")
     as_user(environment, "owner")
-    assert environment.client.delete(f"{LIST_PATH}/a1").status_code == 200
+    response = environment.client.delete(f"{LIST_PATH}/a1")
+    assert response.status_code == 200
     environment.activity.log_agent_deletion.assert_called_once()
     kwargs = environment.activity.log_agent_deletion.call_args.kwargs
     assert kwargs["scope"] == "group" and kwargs["group_id"] == "group-a"
@@ -699,13 +734,16 @@ def test_a_refused_write_logs_nothing(environment, role):
     seed = seed_agent(environment.group_container, "a1")
     # 403 (role), 409 (stale) and 400 (bad create) must each record no activity.
     as_user(environment, ROLE_USER[role])
-    assert environment.client.post(LIST_PATH, json=create_body(name="x")).status_code == 403
-    assert environment.client.delete(f"{LIST_PATH}/a1").status_code == 403
+    create = environment.client.post(LIST_PATH, json=create_body(name="x"))
+    assert create.status_code == 403
+    delete = environment.client.delete(f"{LIST_PATH}/a1")
+    assert delete.status_code == 403
     as_user(environment, "owner")
     environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="first"))
     conflict = environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="second"))
     assert conflict.status_code == 409
-    assert environment.client.post(LIST_PATH, json={"updates": {"name": "no-id"}}).status_code == 400
+    invalid_create = environment.client.post(LIST_PATH, json={"updates": {"name": "no-id"}})
+    assert invalid_create.status_code == 400
     environment.activity.log_agent_creation.assert_not_called()
     environment.activity.log_agent_deletion.assert_not_called()
     # Exactly one committed update (the first PATCH) was logged.
